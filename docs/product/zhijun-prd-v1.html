@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>知君 V1 · 产品开发 PRD 摘要</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f4f1ea;
+      --ink: #18201f;
+      --slate: #5f6966;
+      --line: #cfd2c9;
+      --white: #fffefa;
+      --jade: #1f6b57;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #e8e5de;
+      color: var(--ink);
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.48;
+    }
+    main {
+      width: min(1180px, calc(100% - 32px));
+      margin: 24px auto;
+      padding: 34px 38px 38px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+    }
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: start;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--ink);
+    }
+    h1, h2, h3 {
+      margin: 0;
+      font-family: "Noto Serif SC", "Songti SC", serif;
+      font-weight: 600;
+    }
+    h1 { font-size: clamp(34px, 5vw, 62px); letter-spacing: -.04em; }
+    h2 { margin-bottom: 12px; font-size: 22px; }
+    h3 { margin-bottom: 7px; font-size: 17px; }
+    p { margin: 0; }
+    .eyebrow, .meta, th, .owner, .phase-num {
+      font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+      letter-spacing: .04em;
+    }
+    .eyebrow { margin-bottom: 8px; color: var(--slate); font-size: 12px; text-transform: uppercase; }
+    .subtitle { max-width: 760px; margin-top: 12px; color: var(--slate); font-size: 17px; }
+    .status {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: var(--jade);
+      color: white;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 22px;
+      margin-top: 18px;
+      color: var(--slate);
+      font-size: 12px;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin: 26px 0;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .summary article {
+      min-height: 112px;
+      padding: 18px;
+      background: var(--white);
+    }
+    .summary strong { display: block; margin-bottom: 7px; font-size: 14px; }
+    .summary p, li { color: #35403d; font-size: 13px; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.15fr .85fr;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    section, aside {
+      padding: 20px;
+      border: 1px solid var(--line);
+      background: rgba(255, 254, 250, .68);
+    }
+    blockquote {
+      margin: 16px 0 0;
+      padding: 14px 16px;
+      border-left: 3px solid var(--ink);
+      background: var(--white);
+      font-family: "Noto Serif SC", "Songti SC", serif;
+      font-size: 17px;
+    }
+    ul { margin: 8px 0 0; padding-left: 19px; }
+    li + li { margin-top: 5px; }
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .split > div + div { border-left: 1px solid var(--line); padding-left: 16px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    th, td {
+      padding: 9px 8px;
+      border-top: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--slate); font-size: 10px; text-transform: uppercase; }
+    .phases { display: grid; gap: 9px; }
+    .phase {
+      display: grid;
+      grid-template-columns: 62px 1fr;
+      gap: 12px;
+      padding-top: 9px;
+      border-top: 1px solid var(--line);
+    }
+    .phase:first-child { padding-top: 0; border-top: 0; }
+    .phase-num { color: var(--slate); font-size: 11px; }
+    .phase p { color: #35403d; font-size: 12px; }
+    .bar {
+      height: 5px;
+      margin: 7px 0 8px;
+      overflow: hidden;
+      background: #dfe1da;
+    }
+    .bar span { display: block; width: 60%; height: 100%; background: var(--jade); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip {
+      padding: 4px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--white);
+      color: var(--slate);
+      font-size: 10px;
+    }
+    .repo {
+      margin-top: 20px;
+      padding: 16px 20px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: var(--paper);
+    }
+    .repo h2 { color: var(--paper); }
+    .repo p { color: #d9dedb; font-size: 12px; }
+    .repo code { word-break: break-all; color: white; }
+    footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      margin-top: 20px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      color: var(--slate);
+      font-size: 10px;
+    }
+    @media (max-width: 760px) {
+      main { width: 100%; margin: 0; padding: 24px 18px; border: 0; }
+      header, .summary, .grid, .two-col, .split { grid-template-columns: 1fr; }
+      .split > div + div { padding: 14px 0 0; border: 0; border-top: 1px solid var(--line); }
+    }
+    @media print {
+      @page { size: A3 landscape; margin: 10mm; }
+      body { background: white; }
+      main { width: 100%; margin: 0; border: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">CentaurAI · Product Requirement Document</p>
+        <h1>知君 V1</h1>
+        <p class="subtitle">运行在私人记忆盒子上的个人本体 Data Agent：先成为可信的镜子，再成为有边界的良师益友。</p>
+        <div class="meta-row">
+          <span class="meta">DATE 2026-09-01</span>
+          <span class="meta">OWNER 半人马AI</span>
+          <span class="meta">TARGET 24周 / 20人邀请Beta</span>
+        </div>
+      </div>
+      <span class="status">REVIEW</span>
+    </header>
+
+    <div class="summary" aria-label="三行摘要">
+      <article>
+        <strong>是什么</strong>
+        <p>把零碎资料治理成可核对、可纠正、可持续成长的个人本体，并为其他 Agent 提供最小可信上下文。</p>
+      </article>
+      <article>
+        <strong>服务谁</strong>
+        <p>首发面向企业主与核心决策者：数据敏感、上下文密集、独立决策、单位时间价值高。</p>
+      </article>
+      <article>
+        <strong>为什么现在</strong>
+        <p>现有主仓已经具备采集、解析、检索、问答和治理骨架，可以从个人知识库演进为真正的个人本体。</p>
+      </article>
+    </div>
+
+    <div class="grid">
+      <section>
+        <h2>Problem</h2>
+        <p>高价值用户的数据散落在文档、聊天、录音、照片和脑海里。传统工具能保存或搜索，却不能区分事实、愿望和推测，也不能把一次次判断转化为长期成长。</p>
+        <blockquote>“把个人日常零碎的数据整理成一个完整的、能够帮助用户实现自我成长的另一个 AI 的自己。”</blockquote>
+      </section>
+      <aside>
+        <h2>角色路径</h2>
+        <div class="phases">
+          <div class="phase"><span class="phase-num">L1 / V1</span><p><strong>镜子</strong><br>可信回忆、出处、纠正和完整上下文。</p></div>
+          <div class="phase"><span class="phase-num">L2 / BETA</span><p><strong>良师</strong><br>模式、反向问题、可选建议和行动复盘。</p></div>
+          <div class="phase"><span class="phase-num">L3 / LATER</span><p><strong>分身</strong><br>未来才允许代表用户表达或行动。</p></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="two-col">
+      <section>
+        <h2>Goals &amp; non-goals</h2>
+        <div class="split">
+          <div>
+            <h3>Goals</h3>
+            <ul>
+              <li>统一 Source–Evidence–Entity–Claim 权威链</li>
+              <li>交付首次“被真正理解”时刻</li>
+              <li>跑通判断–行动–结果–复盘</li>
+              <li>良师建议有依据、可关闭、可纠正</li>
+              <li>为万象和 Agent 提供最小 Context</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Non-goals</h3>
+            <ul>
+              <li>账号自动连接与常开采集</li>
+              <li>实时语音与数字人</li>
+              <li>心理治疗或高风险决策替代</li>
+              <li>代表用户发送或执行动作</li>
+              <li>团队共享本体</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+      <section>
+        <h2>User stories</h2>
+        <ul>
+          <li>作为企业主，我想记录判断和依据，以便用真实结果校正自己。</li>
+          <li>作为长期用户，我想区分现实自我和理想自我，以免愿望被当成事实。</li>
+          <li>作为资料所有者，我想展开每项理解的出处，并能确认、纠正或删除。</li>
+          <li>作为万象用户，我想让 Agent 懂我，但不能让它直接读取全部原件。</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="grid">
+      <section>
+        <h2>Success metrics</h2>
+        <table>
+          <thead><tr><th>Metric</th><th>Target</th><th>Measurement</th></tr></thead>
+          <tbody>
+            <tr><td>7日激活率</td><td>≥ 80%</td><td>建档、导入、5条确认、首次可信对话</td></tr>
+            <tr><td>首次被理解时刻</td><td>≤ 60分钟</td><td>从首次导入到确认跨来源理解</td></tr>
+            <tr><td>事实带出处率</td><td>100%</td><td>事实句映射 EvidenceRef</td></tr>
+            <tr><td>引用一致率</td><td>≥ 95%</td><td>人工金标双人复核</td></tr>
+            <tr><td>每周可信成长闭环</td><td>≥ 60%</td><td>Beta最后连续四周</td></tr>
+            <tr><td>未授权出盒 / P0-P1</td><td>0</td><td>审计、安全测试与发布门禁</td></tr>
+          </tbody>
+        </table>
+      </section>
+      <aside>
+        <h2>North star</h2>
+        <h3>每周可信成长闭环用户率</h3>
+        <p>用户查看一项带证据的观察，确认或纠正知君的理解，并形成一个可跟踪的下一步行动。</p>
+        <div class="bar" aria-label="目标百分之六十"><span></span></div>
+        <p class="owner">TARGET · 60% / LAST 4 WEEKS</p>
+      </aside>
+    </div>
+
+    <div class="two-col">
+      <section>
+        <h2>Scope · 24 weeks</h2>
+        <div class="phases">
+          <div class="phase"><span class="phase-num">W01–04</span><p><strong>基础可信链路</strong>　修复上传、locator、检索、权限和桌面安全。</p></div>
+          <div class="phase"><span class="phase-num">W05–10</span><p><strong>可信个人本体</strong>　建档、人生章程、Entity/Claim、治理与删除。</p></div>
+          <div class="phase"><span class="phase-num">W11–16</span><p><strong>问知君与判断簿</strong>　今日页、出处对话、DecisionEpisode、出盒回执。</p></div>
+          <div class="phase"><span class="phase-num">W17–24</span><p><strong>成长闭环与 Beta</strong>　周复盘、良师建议、5→10→20人扩容。</p></div>
+        </div>
+      </section>
+      <section>
+        <h2>Open decisions</h2>
+        <p>不改变 V1 范围，但必须在对应门禁前锁定：</p>
+        <ul>
+          <li>硬件容量与本地模型档位</li>
+          <li>云模型地域、保留和合同</li>
+          <li>正式售价与顾问服务包装</li>
+          <li>后续分身表达和外部动作边界</li>
+        </ul>
+        <div class="chips">
+          <span class="chip">硬件 / CentaurOS</span>
+          <span class="chip">安全 / 法务</span>
+          <span class="chip">商业负责人</span>
+          <span class="chip">产品 / 安全</span>
+        </div>
+      </section>
+    </div>
+
+    <section class="repo">
+      <h2>唯一开发底座</h2>
+      <p><code>git@codeup.aliyun.com:667637d76d5f7b05cc5d9ed7/nexusaos/nexusaos-data-engine.git</code></p>
+      <p>继承解析、OCR/ASR、资料版本、Snapshot Saga、混合检索、证据问答、治理、Agent 接口与多端客户端；Wiki、卡片、图谱和摘要迁移为 Candidate 或 Projection，不再作为本体权威。</p>
+    </section>
+
+    <footer>
+      <span>知君 V1 · Product Review Summary</span>
+      <span>原件不出盒 · 必要片段受控出盒 · 用户拥有最终解释权</span>
+    </footer>
+  </main>
+</body>
+</html>

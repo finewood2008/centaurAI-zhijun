@@ -1,0 +1,69 @@
+venv/
+.venv/
+.env
+.lan_config.json
+node_modules/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.pytest_cache/
+.pw-browsers/
+models_cache/
+backend/models_cache
+models_cache_ms/
+whisper_models/
+# 默认运行时数据根。源码、模型和依赖与用户资料/索引/SQLite 数据库隔离。
+data/
+# 旧版本在项目根目录写入的数据路径；迁移完成前继续忽略，避免误提交。
+chroma_data/
+video_frames/
+video_work/
+test_videos/
+annotations.json
+groups.json
+file_center.db
+file_center.db-wal
+file_center.db-shm
+job_store.db
+job_store.db-wal
+job_store.db-shm
+derived_content.db
+derived_content.db-wal
+derived_content.db-shm
+governance.db
+governance.db-wal
+governance.db-shm
+.trash/
+memory/
+wiki/
+gbrain_data/
+.mobile_config.json
+.context_packs.json
+.personal_context_snapshot.json
+.DS_Store
+*.log
+watch_folder/*
+!watch_folder/.gitkeep
+.remote-mcp-test/
+# 前端构建产物，由源码构建生成，不应入库
+frontend/mindos-web/dist/
+
+# Codeup/IDE build artifacts
+# Build and Release Folders
+bin-debug/
+bin-release/
+[Oo]bj/
+[Bb]in/
+
+# Other files and folders
+.settings/
+
+# Executables
+*.swf
+*.air
+*.ipa
+*.apk
+
+# Project files, i.e. `.project`, `.actionScriptProperties` and `.flexProperties`
+# should NOT be excluded as they contain compiler settings and other important
+# information for Eclipse / Flash Builder.

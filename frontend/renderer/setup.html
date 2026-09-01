@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>添加 AI 盒子</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { background: #0f1420; color: #e8ecf4; font-family: system-ui, sans-serif; }
+    .setup-shell { max-width: 560px; margin: 40px auto; padding: 0 24px; }
+    .setup-card { background: #1a2130; border: 1px solid #2c3e50; border-radius: 12px; padding: 24px; }
+    .setup-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .setup-badge { padding: 4px 10px; border-radius: 999px; font-size: 12px; background: #3b2f14; color: #f5c14d; }
+    .setup-title { font-size: 18px; margin: 0; }
+    .setup-status { color: #9aa5b5; font-size: 13px; line-height: 1.6; min-height: 20px; }
+    .setup-progress { font-size: 12px; color: #6f7d92; margin-top: 4px; }
+    .setup-candidates { list-style: none; margin: 16px 0 0; padding: 0; }
+    .setup-candidates li { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid #2c3e50; border-radius: 8px; margin-bottom: 8px; cursor: pointer; }
+    .setup-candidates li:hover { border-color: #f5c14d; }
+    .setup-candidates li.selected { border-color: #4d9df5; background: #1d2b42; }
+    .setup-candidates .rssi { color: #6f7d92; font-size: 12px; }
+    .setup-actions { display: flex; gap: 10px; margin-top: 20px; }
+    .setup-btn { padding: 8px 18px; border-radius: 8px; border: 1px solid #3a4a63; background: #243349; color: #e8ecf4; cursor: pointer; font-size: 14px; }
+    .setup-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .setup-btn.primary { background: #f5c14d; border-color: #f5c14d; color: #1a2130; }
+    .setup-error { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #3a1d1d; color: #f2a0a0; font-size: 13px; display: none; }
+    .setup-success { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #16301f; color: #8ee6a8; font-size: 13px; display: none; }
+    .setup-wifi { display: flex; gap: 8px; margin-top: 16px; }
+    .setup-wifi input { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid #3a4a63; background: #0f1420; color: #e8ecf4; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="setup-shell">
+    <div class="setup-card">
+      <div class="setup-head">
+        <span class="setup-badge" id="setup-badge">待开始</span>
+        <h1 class="setup-title">添加 AI 盒子</h1>
+      </div>
+      <p class="setup-status" id="setup-status">正在初始化…</p>
+      <p class="setup-progress" id="setup-progress"></p>
+      <ul class="setup-candidates" id="setup-candidates"></ul>
+      <div class="setup-wifi" id="setup-wifi" hidden>
+        <input id="setup-wifi-ssid" type="text" placeholder="Wi-Fi 名称" autocomplete="off">
+        <input id="setup-wifi-password" type="password" placeholder="Wi-Fi 密码" autocomplete="off">
+        <button class="setup-btn primary" id="setup-wifi-confirm" type="button">确认并继续</button>
+      </div>
+      <div class="setup-actions">
+        <button class="setup-btn primary" id="setup-start" type="button" hidden>开始添加</button>
+        <button class="setup-btn primary" id="setup-action" type="button" hidden>继续</button>
+        <button class="setup-btn" id="setup-resume" type="button" hidden>重试</button>
+        <button class="setup-btn" id="setup-cancel" type="button" hidden>取消</button>
+      </div>
+      <div class="setup-error" id="setup-error"></div>
+      <div class="setup-success" id="setup-success"></div>
+    </div>
+  </div>
+  <script src="../setup-view-state.js"></script>
+  <script src="../setup-ui-model.js"></script>
+  <script src="setup.js"></script>
+</body>
+</html>

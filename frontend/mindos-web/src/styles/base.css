@@ -1,0 +1,75 @@
+/* ============================================================
+   MindOS 基础样式：重置、排版、焦点、滚动条（无框架依赖）
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", "Hiragino Sans GB", Arial,
+    sans-serif;
+  font-size: var(--ws-font-size, 12px);
+  color: var(--ws-text-primary-color, #303133);
+  background: var(--ws-card-bg, #f5f7fa);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+a {
+  color: var(--ws-main-color, #1b99ff);
+  text-decoration: none;
+}
+a:hover {
+  color: var(--ws-main-color-hover, #298cff);
+}
+
+/* 可访问焦点：不能只改变阴影 */
+:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #0077ff);
+  outline-offset: 2px;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c7c9cc;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 通用工具类 */
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+input::-ms-reveal {
+  display: none;
+}

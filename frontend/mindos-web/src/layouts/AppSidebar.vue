@@ -1,0 +1,409 @@
+<script setup lang="ts">
+// 侧栏分组导航：工作台 / 知识库 / 智能与治理；底部设置（P1 开放「模型与运行时」）。
+// 桌面 ≥768px 常驻（768-1199 折叠为图标栏），<768px 转为抽屉（由 open 控制）。
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+// 系统品牌 logo（CentaurAI）：与前端根目录下的 logo.jpg 对应，由 Vite 打包
+import logoUrl from '../../logo.jpg'
+import {
+  BrainCircuit,
+  FileText,
+  Home,
+  Layers,
+  MessageCircle,
+  Network,
+  Scale,
+  Search,
+  Settings,
+  Sprout,
+  Trash2,
+  X,
+  type LucideIcon,
+} from 'lucide-vue-next'
+
+interface NavItem {
+  to: string
+  label: string
+  icon: LucideIcon
+  exact?: boolean
+}
+
+interface NavGroup {
+  title: string
+  items: NavItem[]
+}
+
+const groups: NavGroup[] = [
+  {
+    title: '今日与成长',
+    items: [
+      { to: '/', label: '今日', icon: Home, exact: true },
+      { to: '/growth', label: '成长', icon: Sprout },
+    ],
+  },
+  {
+    title: '我的资料',
+    items: [
+      { to: '/materials', label: '原材料', icon: FileText },
+      { to: '/knowledge', label: '知识档案', icon: Layers },
+      { to: '/recycle-bin', label: '回收站', icon: Trash2 },
+    ],
+  },
+  {
+    title: '理解与探索',
+    items: [
+      { to: '/search', label: '搜索记忆', icon: Search },
+      { to: '/qa', label: '问知君', icon: MessageCircle },
+      { to: '/graph', label: '关系图谱', icon: Network },
+      { to: '/governance', label: '本体治理', icon: Scale },
+    ],
+  },
+]
+
+const props = defineProps<{
+  open?: boolean
+}>()
+
+const emit = defineEmits<{ (e: 'close'): void; (e: 'navigate'): void }>()
+
+const route = useRoute()
+const currentPath = computed(() => route.path)
+
+// ---- 移动端抽屉：关闭时不可聚焦、不可被读屏器访问 ----
+const MOBILE_QUERY = '(max-width: 767px)'
+const isMobile = ref(typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches)
+
+function onMobileChange(e: MediaQueryListEvent) {
+  const wasMobile = isMobile.value
+  isMobile.value = e.matches
+  // 从移动端切回桌面时，若抽屉仍打开，同步重置父级 open，避免遮罩残留覆盖桌面页面
+  if (wasMobile && !e.matches && props.open) {
+    emit('close')
+  }
+}
+
+const mq = typeof window !== 'undefined' ? window.matchMedia(MOBILE_QUERY) : null
+mq?.addEventListener('change', onMobileChange)
+onBeforeUnmount(() => mq?.removeEventListener('change', onMobileChange))
+
+// 移动端且抽屉打开：进入对话框/焦点陷阱模式
+const drawerActive = computed(() => isMobile.value && !!props.open)
+// 移动端且抽屉关闭：从 Tab 顺序与读屏器树中移除
+const hidden = computed(() => isMobile.value && !props.open)
+
+const closeBtn = ref<HTMLElement | null>(null)
+const sidebarRef = ref<HTMLElement | null>(null)
+
+// 打开后焦点移到关闭按钮；关闭后焦点还给顶栏菜单按钮
+watch(
+  () => props.open,
+  async (open) => {
+    if (!isMobile.value) return
+    await nextTick()
+    if (open) {
+      closeBtn.value?.focus()
+    } else {
+      document.querySelector<HTMLElement>('.ws-topbar__menu')?.focus()
+    }
+  },
+)
+
+// 抽屉打开时限制 Tab 焦点在抽屉内循环，避免键盘用户聚焦被遮罩的主内容
+function onDrawerKeydown(e: KeyboardEvent) {
+  if (!drawerActive.value) return
+  if (e.key !== 'Tab') return
+  const focusables = Array.from(
+    sidebarRef.value?.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? [],
+  ).filter((el) => !el.hasAttribute('disabled'))
+  if (!focusables.length) return
+  const first = focusables[0]
+  const last = focusables[focusables.length - 1]
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+watch(
+  drawerActive,
+  (active) => {
+    if (active) window.addEventListener('keydown', onDrawerKeydown)
+    else window.removeEventListener('keydown', onDrawerKeydown)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown))
+
+function isActive(item: NavItem): boolean {
+  if (item.exact) return currentPath.value === item.to
+  return currentPath.value === item.to || currentPath.value.startsWith(`${item.to}/`)
+}
+</script>
+
+<template>
+  <aside
+    ref="sidebarRef"
+    class="ws-sidebar"
+    :class="{ 'is-open': open }"
+    :inert="hidden || undefined"
+    :aria-hidden="hidden || undefined"
+    :role="drawerActive ? 'dialog' : undefined"
+    :aria-modal="drawerActive ? 'true' : undefined"
+    :aria-label="drawerActive ? '导航菜单' : undefined"
+  >
+    <div class="ws-sidebar__brand">
+      <img class="ws-sidebar__logo" :src="logoUrl" alt="" aria-hidden="true" />
+      <span class="ws-sidebar__brand-text"><BrainCircuit :size="16" aria-hidden="true" />知君</span>
+      <button
+        ref="closeBtn"
+        class="ws-sidebar__close"
+        type="button"
+        aria-label="关闭导航"
+        @click="emit('close')"
+      >
+        <X :size="18" aria-hidden="true" />
+      </button>
+    </div>
+
+    <nav class="ws-sidebar__nav" aria-label="主导航">
+      <section v-for="group in groups" :key="group.title" class="ws-sidebar__group">
+        <h2 class="ws-sidebar__group-title">{{ group.title }}</h2>
+        <ul class="ws-sidebar__list">
+          <li v-for="item in group.items" :key="item.to">
+            <RouterLink
+              :to="item.to"
+              class="ws-sidebar__item"
+              :class="{ 'is-active': isActive(item) }"
+              :aria-current="isActive(item) ? 'page' : undefined"
+              :aria-label="item.label"
+              :title="item.label"
+              @click="emit('navigate')"
+            >
+              <component :is="item.icon" class="ws-sidebar__icon" :size="18" aria-hidden="true" />
+              <span class="ws-sidebar__label">{{ item.label }}</span>
+            </RouterLink>
+          </li>
+        </ul>
+      </section>
+    </nav>
+
+    <div class="ws-sidebar__footer">
+      <RouterLink
+        to="/settings"
+        class="ws-sidebar__item"
+        :class="{ 'is-active': currentPath === '/settings' }"
+        :aria-current="currentPath === '/settings' ? 'page' : undefined"
+        aria-label="设置"
+        :title="'设置'"
+        @click="emit('navigate')"
+      >
+        <Settings class="ws-sidebar__icon" :size="18" aria-hidden="true" />
+        <span class="ws-sidebar__label">设置</span>
+      </RouterLink>
+    </div>
+  </aside>
+
+  <Teleport to="body">
+    <div
+      v-if="drawerActive"
+      class="ws-sidebar-backdrop"
+      aria-hidden="true"
+      @click="emit('close')"
+    />
+  </Teleport>
+</template>
+
+<style scoped>
+.ws-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--ws-body-bg, #fff);
+  border-right: 1px solid var(--ws-border-color-2, #e4e7ed);
+}
+
+.ws-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 60px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ws-border-color-3, #ebeef5);
+  flex-shrink: 0;
+}
+
+.ws-sidebar__logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: contain;
+  background: transparent;
+}
+
+.ws-sidebar__brand-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--ws-text-primary-color, #303133);
+  white-space: nowrap;
+}
+
+.ws-sidebar__close {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--ws-radius, 6px);
+  background: transparent;
+  color: var(--ws-text-secondary-color, #909399);
+  cursor: pointer;
+}
+.ws-sidebar__close:hover {
+  background: var(--ws-card-bg, #f5f7fa);
+  color: var(--ws-text-primary-color, #303133);
+}
+
+.ws-sidebar__nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 8px;
+}
+
+.ws-sidebar__group {
+  margin-bottom: 16px;
+}
+
+.ws-sidebar__group-title {
+  margin: 0 0 4px;
+  padding: 0 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ws-text-secondary-color, #909399);
+  letter-spacing: 0.04em;
+}
+
+.ws-sidebar__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ws-sidebar__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--ws-radius, 6px);
+  color: var(--ws-text-color, #606266);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.ws-sidebar__item:hover {
+  background: var(--ws-card-bg, #f5f7fa);
+  color: var(--ws-text-primary-color, #303133);
+}
+
+.ws-sidebar__item.is-active {
+  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
+  color: var(--ws-primary-color, #0077ff);
+  font-weight: 600;
+}
+
+.ws-sidebar__item.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ws-sidebar__icon {
+  flex-shrink: 0;
+}
+
+.ws-sidebar__footer {
+  padding: 12px 8px;
+  border-top: 1px solid var(--ws-border-color-3, #ebeef5);
+}
+
+/* 768-1199px：折叠为图标栏 */
+@media (max-width: 1199px) {
+  .ws-sidebar {
+    width: 64px;
+  }
+  .ws-sidebar__brand {
+    justify-content: center;
+    padding: 0;
+  }
+  .ws-sidebar__brand-text,
+  .ws-sidebar__group-title,
+  .ws-sidebar__label {
+    display: none;
+  }
+  .ws-sidebar__item {
+    justify-content: center;
+    padding: 9px;
+  }
+}
+
+/* <768px：转为抽屉 */
+@media (max-width: 767px) {
+  .ws-sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2100;
+    width: 240px;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: var(--ws-shadow-lg, 0 16px 48px rgba(0, 0, 0, 0.18));
+  }
+  .ws-sidebar.is-open {
+    transform: translateX(0);
+  }
+  .ws-sidebar__brand {
+    justify-content: flex-start;
+    padding: 0 16px;
+  }
+  .ws-sidebar__brand-text,
+  .ws-sidebar__group-title,
+  .ws-sidebar__label {
+    display: inline;
+  }
+  .ws-sidebar__item {
+    justify-content: flex-start;
+    padding: 9px 12px;
+  }
+  .ws-sidebar__close {
+    display: inline-flex;
+  }
+}
+
+.ws-sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2090;
+  background: rgba(15, 23, 42, 0.45);
+}
+</style>

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>半人马个人 AI 节点</title>
+  <link rel="manifest" href="/mobile/manifest.json">
+  <link rel="stylesheet" href="/mobile/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>个人 AI 节点</h1>
+      <p id="node-status">连接中...</p>
+    </div>
+    <button id="refresh-btn" class="icon-btn" type="button" aria-label="刷新">↻</button>
+  </header>
+
+  <main>
+    <section class="panel token-panel">
+      <label for="server-url-input">节点地址</label>
+      <div class="input-row">
+        <input id="server-url-input" type="url" inputmode="url" autocomplete="url" placeholder="http://100.x.y.z:8618">
+        <button id="save-server-url" type="button">保存</button>
+      </div>
+      <div class="hint">从服务器打开时可留空；原生 App 中填写 Tailscale 节点地址。</div>
+
+      <label for="token-input">App Token</label>
+      <div class="input-row">
+        <input id="token-input" type="password" autocomplete="off" placeholder="粘贴桌面端生成的 App Token">
+        <button id="save-token" type="button">保存</button>
+      </div>
+      <div id="endpoint-info" class="hint"></div>
+      <div class="sync-strip">
+        <span id="outbox-status">待同步 0</span>
+        <button id="outbox-sync" type="button" class="link-btn">同步</button>
+      </div>
+    </section>
+
+    <nav class="tabs" aria-label="功能">
+      <button class="tab active" data-tab="record" type="button">录音</button>
+      <button class="tab" data-tab="files" type="button">文件</button>
+      <button class="tab" data-tab="clips" type="button">剪藏</button>
+      <button class="tab" data-tab="search" type="button">搜索</button>
+      <button class="tab" data-tab="results" type="button">结果</button>
+      <button class="tab" data-tab="work" type="button">Context</button>
+      <button class="tab" data-tab="context" type="button">A2A</button>
+    </nav>
+
+    <section id="tab-record" class="tab-panel active">
+      <div class="panel">
+        <div class="section-head">
+          <h2>录音采集</h2>
+          <span id="record-state" class="state">待机</span>
+        </div>
+        <input id="record-title" type="text" placeholder="录音标题">
+        <textarea id="record-note" rows="3" placeholder="备注"></textarea>
+        <div class="record-meter">
+          <div id="record-time">00:00</div>
+          <div id="record-dot"></div>
+        </div>
+        <div class="button-grid">
+          <button id="record-start" type="button">开始录音</button>
+          <button id="record-stop" type="button" disabled>停止并上传</button>
+        </div>
+        <div class="divider"></div>
+        <label class="file-label">
+          <span>上传系统录音文件</span>
+          <input id="record-file" type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.ogg,.opus,.flac,.webm">
+        </label>
+        <button id="record-file-upload" type="button" class="secondary">上传录音文件</button>
+        <p class="hint">浏览器录音通常需要 HTTPS；若当前环境不允许录音，可用手机系统录音后上传文件。</p>
+      </div>
+    </section>
+
+    <section id="tab-files" class="tab-panel">
+      <div class="panel">
+        <h2>文件导入</h2>
+        <label class="file-label">
+          <span>选择文件</span>
+          <input id="generic-file" type="file">
+        </label>
+        <button id="generic-upload" type="button">上传并入库</button>
+      </div>
+    </section>
+
+    <section id="tab-clips" class="tab-panel">
+      <div class="panel">
+        <h2>文本剪藏</h2>
+        <input id="clip-title" type="text" placeholder="标题">
+        <input id="clip-url" type="url" placeholder="来源 URL">
+        <textarea id="clip-text" rows="8" placeholder="粘贴网页摘录、想法、会议要点"></textarea>
+        <button id="clip-submit" type="button">提交剪藏</button>
+      </div>
+    </section>
+
+    <section id="tab-search" class="tab-panel">
+      <div class="panel">
+        <h2>语义搜索</h2>
+        <textarea id="search-query" rows="4" placeholder="搜索你的资料、录音、Wiki 或记忆"></textarea>
+        <div class="input-row compact-row">
+          <select id="search-mode">
+            <option value="text">文本</option>
+            <option value="hybrid">混合</option>
+            <option value="visual">图片</option>
+          </select>
+          <button id="search-run" type="button">搜索</button>
+        </div>
+        <div id="search-output" class="recent-list"></div>
+      </div>
+    </section>
+
+    <section id="tab-results" class="tab-panel">
+      <div class="panel">
+        <div class="section-head">
+          <h2>处理结果</h2>
+          <button id="clear-results" class="link-btn" type="button">清空本机记录</button>
+        </div>
+        <div id="recent-list" class="recent-list"></div>
+        <article id="result-detail" class="result-detail empty">暂无结果</article>
+      </div>
+    </section>
+
+    <section id="tab-work" class="tab-panel">
+      <div class="panel">
+        <h2>个人 Context</h2>
+        <textarea id="context-query" rows="5" placeholder="输入你现在要做的事，例如：准备客户复盘、写项目周报、回忆某个会议结论"></textarea>
+        <div class="checks">
+          <label><input id="context-memory" type="checkbox" checked> 记忆</label>
+          <label><input id="context-wiki" type="checkbox" checked> Wiki</label>
+          <label><input id="context-docs" type="checkbox" checked> 文档</label>
+        </div>
+        <div class="button-grid">
+          <button id="context-run" type="button">生成 Context</button>
+          <button id="context-copy" type="button" class="secondary">复制</button>
+          <button id="context-snapshot" type="button" class="secondary">查看快照</button>
+          <button id="context-refresh" type="button" class="secondary">刷新快照</button>
+        </div>
+        <article id="context-output" class="result-detail empty">暂无 Context</article>
+      </div>
+    </section>
+
+    <section id="tab-context" class="tab-panel">
+      <div class="panel">
+        <h2>A2A Context Pack</h2>
+        <input id="pack-name" type="text" placeholder="端点名称">
+        <input id="pack-query" type="text" placeholder="检索范围，例如：产品、合同、项目">
+        <textarea id="pack-desc" rows="3" placeholder="端点说明"></textarea>
+        <div class="checks">
+          <label><input id="pack-memory" type="checkbox" checked> 记忆</label>
+          <label><input id="pack-wiki" type="checkbox" checked> Wiki</label>
+          <label><input id="pack-docs" type="checkbox" checked> 文档</label>
+        </div>
+        <button id="pack-create" type="button">创建并复制 Token</button>
+        <button id="pack-share-last" type="button" class="secondary" disabled>分享最近邀请</button>
+        <div id="pack-list" class="pack-list"></div>
+        <article id="pack-detail" class="result-detail empty">暂无 A2A 邀请</article>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/mobile/app.js"></script>
+</body>
+</html>

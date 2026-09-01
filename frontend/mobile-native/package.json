@@ -1,0 +1,26 @@
+{
+  "name": "centaur-personal-ai-node-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native shell for the Centaur personal AI node mobile client",
+  "scripts": {
+    "prepare:web": "node scripts/prepare-web.js",
+    "add:android": "npm run prepare:web && cap add android",
+    "add:ios": "npm run prepare:web && cap add ios",
+    "sync": "npm run prepare:web && cap sync",
+    "sync:android": "npm run prepare:web && cap sync android",
+    "sync:ios": "npm run prepare:web && cap sync ios",
+    "open:android": "cap open android",
+    "open:ios": "cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/ios": "^8.0.0",
+    "@capacitor/share": "^8.0.1",
+    "@capgo/capacitor-share-target": "^8.0.43"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.0.0"
+  }
+}

@@ -1,0 +1,39 @@
+services:
+  mindos:
+    image: mindos:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mindos
+    restart: unless-stopped
+    # The application deliberately binds 127.0.0.1 and validates loopback clients.
+    # Host networking preserves that security model on Linux; do not add `ports:` here.
+    network_mode: host
+    environment:
+      CENTAURAI_DATABASE_DATA_ROOT: /var/lib/mindos
+      TOKENIZERS_PARALLELISM: "false"
+      # VDB_IDLE_UNLOAD_MINUTES: "30"
+    volumes:
+      - type: bind
+        source: ${MINDOS_DATA_ROOT:?Set MINDOS_DATA_ROOT in .env to an absolute host data directory}
+        target: /var/lib/mindos
+      # Required BGE model. Populate this host directory before starting the container.
+      - type: bind
+        source: ${MINDOS_MODELS_ROOT:?Set MINDOS_MODELS_ROOT in .env to the host model directory}
+        target: /opt/mindos/app/backend/models_cache
+        read_only: true
+      # Optional local models. Create these directories even when the capability is disabled.
+      - type: bind
+        source: ${MINDOS_MODELS_MS_ROOT:?Set MINDOS_MODELS_MS_ROOT in .env to the host optional-model directory}
+        target: /opt/mindos/app/backend/models_cache_ms
+        read_only: true
+      - type: bind
+        source: ${MINDOS_WHISPER_MODELS_ROOT:?Set MINDOS_WHISPER_MODELS_ROOT in .env to the host Whisper-model directory}
+        target: /opt/mindos/app/backend/whisper_models
+        read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8618/api/health', timeout=5).read()"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 3

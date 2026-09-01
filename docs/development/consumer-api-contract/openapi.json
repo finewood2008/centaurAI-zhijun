@@ -1,0 +1,1282 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Consumer API v1 (Stateful Strict Mock)",
+    "version": "1.0.0-mock"
+  },
+  "paths": {
+    "/api/consumer/v1/auth/phone-code": {
+      "post": {
+        "summary": "Send Phone Code",
+        "operationId": "send_phone_code_api_consumer_v1_auth_phone_code_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/protocol": {
+      "get": {
+        "summary": "Get Protocol",
+        "description": "客户端发现当前协议版本；登录后返回的 protocol 字段用于首次/升级确认。",
+        "operationId": "get_protocol_api_consumer_v1_auth_protocol_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/login": {
+      "post": {
+        "summary": "Login",
+        "operationId": "login_api_consumer_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhoneLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/refresh": {
+      "post": {
+        "summary": "Refresh",
+        "operationId": "refresh_api_consumer_v1_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/logout": {
+      "post": {
+        "summary": "Logout",
+        "operationId": "logout_api_consumer_v1_auth_logout_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/clients": {
+      "get": {
+        "summary": "List Clients",
+        "operationId": "list_clients_api_consumer_v1_auth_clients_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/clients/{client_id}/revoke": {
+      "post": {
+        "summary": "Revoke Client",
+        "operationId": "revoke_client_api_consumer_v1_auth_clients__client_id__revoke_post",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/step-up/sms/send": {
+      "post": {
+        "summary": "Stepup Send",
+        "operationId": "stepup_send_api_consumer_v1_auth_step_up_sms_send_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepUpSendRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/step-up/sms/verify": {
+      "post": {
+        "summary": "Stepup Verify",
+        "operationId": "stepup_verify_api_consumer_v1_auth_step_up_sms_verify_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StepUpVerifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/auth/clients/{client_id}": {
+      "delete": {
+        "summary": "Remove Client",
+        "description": "移除其他终端：必须携带 Step-up 凭证，且仅重放原始 client.revoke 动作。",
+        "operationId": "remove_client_api_consumer_v1_auth_clients__client_id__delete",
+        "parameters": [
+          {
+            "name": "client_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Client Id"
+            }
+          },
+          {
+            "name": "x-nexus-step-up",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Nexus-Step-Up"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/devices": {
+      "get": {
+        "summary": "List Devices",
+        "operationId": "list_devices_api_consumer_v1_devices_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/devices/{device_id}": {
+      "get": {
+        "summary": "Get Device",
+        "operationId": "get_device_api_consumer_v1_devices__device_id__get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Rename Device",
+        "operationId": "rename_device_api_consumer_v1_devices__device_id__patch",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameDeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/devices/{device_id}/claim": {
+      "post": {
+        "summary": "Claim Device",
+        "operationId": "claim_device_api_consumer_v1_devices__device_id__claim_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimDeviceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/devices/{device_id}/ota": {
+      "post": {
+        "summary": "Update Ota",
+        "operationId": "update_ota_api_consumer_v1_devices__device_id__ota_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OtaStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/sync/bootstrap": {
+      "get": {
+        "summary": "Sync Bootstrap",
+        "operationId": "sync_bootstrap_api_consumer_v1_sync_bootstrap_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/sync/changes": {
+      "get": {
+        "summary": "Sync Changes",
+        "operationId": "sync_changes_api_consumer_v1_sync_changes_get",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/connectivity/sessions": {
+      "post": {
+        "summary": "Create Connectivity Session",
+        "operationId": "create_connectivity_session_api_consumer_v1_connectivity_sessions_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectivitySessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "summary": "Jwks",
+        "operationId": "jwks__well_known_jwks_json_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/__mock/state": {
+      "get": {
+        "summary": "Mock State",
+        "operationId": "mock_state_api_consumer_v1___mock_state_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/__mock/revocations": {
+      "get": {
+        "summary": "Mock Revocations",
+        "operationId": "mock_revocations_api_consumer_v1___mock_revocations_get",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/consumer/v1/__mock/devices": {
+      "post": {
+        "summary": "Mock Create Device",
+        "operationId": "mock_create_device_api_consumer_v1___mock_devices_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeviceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ClaimDeviceRequest": {
+        "properties": {
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 128,
+            "title": "Idempotencykey",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ClaimDeviceRequest"
+      },
+      "ConnectivitySessionRequest": {
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Deviceid"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Idempotencykey"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "deviceId",
+          "idempotencyKey"
+        ],
+        "title": "ConnectivitySessionRequest"
+      },
+      "CreateDeviceRequest": {
+        "properties": {
+          "deviceId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Deviceid"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Name",
+            "default": ""
+          },
+          "otaStatus": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Otastatus",
+            "default": "up_to_date"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "deviceId"
+        ],
+        "title": "CreateDeviceRequest",
+        "description": "Mock 专属：创建一个可被认领的未绑定设备。"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "OtaStatusRequest": {
+        "properties": {
+          "otaStatus": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Otastatus"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "otaStatus"
+        ],
+        "title": "OtaStatusRequest"
+      },
+      "PhoneCodeRequest": {
+        "properties": {
+          "phone": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 5,
+            "pattern": "^\\+?[0-9]{5,32}$",
+            "title": "Phone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "phone"
+        ],
+        "title": "PhoneCodeRequest"
+      },
+      "PhoneLoginRequest": {
+        "properties": {
+          "phone": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 5,
+            "pattern": "^\\+?[0-9]{5,32}$",
+            "title": "Phone"
+          },
+          "code": {
+            "type": "string",
+            "maxLength": 8,
+            "minLength": 4,
+            "title": "Code"
+          },
+          "clientName": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Clientname",
+            "default": ""
+          },
+          "protocolVersion": {
+            "type": "integer",
+            "maximum": 64.0,
+            "minimum": 0.0,
+            "title": "Protocolversion",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "phone",
+          "code"
+        ],
+        "title": "PhoneLoginRequest"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 8,
+            "title": "Refreshtoken"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "refreshToken"
+        ],
+        "title": "RefreshRequest"
+      },
+      "RenameDeviceRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RenameDeviceRequest"
+      },
+      "StepUpSendRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Action"
+          },
+          "target": {
+            "$ref": "#/components/schemas/StepUpTarget"
+          },
+          "requestDigest": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Requestdigest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "target",
+          "requestDigest"
+        ],
+        "title": "StepUpSendRequest",
+        "description": "敏感操作 Step-up 发送：绑定 action / target / requestDigest。"
+      },
+      "StepUpTarget": {
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Clientid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "clientId"
+        ],
+        "title": "StepUpTarget"
+      },
+      "StepUpVerifyRequest": {
+        "properties": {
+          "challengeId": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Challengeid"
+          },
+          "code": {
+            "type": "string",
+            "maxLength": 8,
+            "minLength": 4,
+            "title": "Code"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "challengeId",
+          "code"
+        ],
+        "title": "StepUpVerifyRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
