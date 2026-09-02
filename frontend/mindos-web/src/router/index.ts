@@ -1,9 +1,9 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 
-// 五个一级入口：今日（首屏）/ 对话 / 我的本体 / 判断 / 资料与边界。
+// 五个一级入口：今日来信（首屏）/ 对话 / 我的本体 / 判断 / 资料与边界。
 // 旧的资料管理页面保留为隐藏路由（不进侧栏），由「资料与边界」枢纽链接过去。
 const routes: RouteRecordRaw[] = [
-  { path: '/', name: 'today', component: () => import('@/pages/TodayPage.vue'), meta: { title: '今日' } },
+  { path: '/', name: 'today', component: () => import('@/pages/TodayPage.vue'), meta: { title: '今日来信' } },
   { path: '/chat', name: 'conversation', component: () => import('@/pages/ConversationPage.vue'), meta: { title: '对话' } },
   { path: '/c/:conversationId', name: 'conversation-detail', component: () => import('@/pages/ConversationPage.vue'), meta: { title: '对话' } },
   { path: '/me', name: 'ontology', component: () => import('@/pages/OntologyPage.vue'), meta: { title: '我的本体' } },

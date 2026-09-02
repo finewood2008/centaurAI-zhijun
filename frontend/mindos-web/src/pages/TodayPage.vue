@@ -136,8 +136,11 @@ onBeforeUnmount(() => {
 <template>
   <main class="zj-today">
     <header class="zj-today__greeting">
-      <p>{{ dateLine }}</p>
-      <span>知君在这里，陪你看清正在发生的事。</span>
+      <div>
+        <p>你的今日来信</p>
+        <span>知君根据你留下的理解、判断与结果，为今天写来这一封。</span>
+      </div>
+      <time>{{ dateLine }}</time>
     </header>
 
     <div v-if="loading" class="zj-today__skeleton" aria-label="正在打开共同地图">
@@ -152,6 +155,42 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <div class="zj-today__grid">
+        <article class="zj-letter" aria-label="知君写给你的今日来信">
+          <header class="zj-letter__identity">
+            <span class="zj-letter__seal" aria-hidden="true">知</span>
+            <div>
+              <strong>知君写给你的今日来信</strong>
+              <small>{{ dateLine }} · 今日已送达</small>
+            </div>
+            <i v-if="overview.brief.status === 'refreshing'">我在重新整理</i>
+          </header>
+          <h1>{{ overview.brief.headline }}</h1>
+          <p>{{ overview.brief.message }}</p>
+
+          <section v-if="overview.brief.sourceRefs.length" class="zj-letter__sources" aria-label="这封来信的依据">
+            <p>为什么今天写给你</p>
+            <div>
+              <button
+                v-for="source in overview.brief.sourceRefs"
+                :key="`${source.sourceType}:${source.id}`"
+                type="button"
+                @click="openSource(source)"
+              >
+                <span>{{ source.label }}</span>
+                {{ source.title }}
+              </button>
+            </div>
+          </section>
+
+          <button class="zj-letter__action" type="button" :disabled="actionBusy" @click="runPrimaryAction">
+            <span>
+              <small>读完这封信，可以从这里继续</small>
+              <strong>{{ overview.nextAction.title }}</strong>
+            </span>
+            <ArrowRight :size="18" aria-hidden="true" />
+          </button>
+        </article>
+
         <RelationshipMap
           class="zj-today__map"
           :nodes="overview.map.nodes"
@@ -160,35 +199,6 @@ onBeforeUnmount(() => {
           :empty="overview.state === 'first_meet'"
           @select="selectNode"
         />
-
-        <article class="zj-letter">
-          <div class="zj-letter__eyebrow">
-            <span>知君 · 今日来信</span>
-            <i v-if="overview.brief.status === 'refreshing'">我在重新整理</i>
-          </div>
-          <h1>{{ overview.brief.headline }}</h1>
-          <p>{{ overview.brief.message }}</p>
-
-          <div v-if="overview.brief.sourceRefs.length" class="zj-letter__sources" aria-label="这封来信的依据">
-            <button
-              v-for="source in overview.brief.sourceRefs"
-              :key="`${source.sourceType}:${source.id}`"
-              type="button"
-              @click="openSource(source)"
-            >
-              <span>{{ source.label }}</span>
-              {{ source.title }}
-            </button>
-          </div>
-
-          <button class="zj-letter__action" type="button" :disabled="actionBusy" @click="runPrimaryAction">
-            <span>
-              <small>现在最值得做的一件事</small>
-              <strong>{{ overview.nextAction.title }}</strong>
-            </span>
-            <ArrowRight :size="18" aria-hidden="true" />
-          </button>
-        </article>
 
         <div v-if="selectedNode" ref="panelAnchor" class="zj-today__panel">
           <HomeNodePanel :node="selectedNode" @close="selectedId = null" @changed="handleNodeChanged" />
@@ -214,26 +224,31 @@ onBeforeUnmount(() => {
 }
 .zj-today__greeting {
   display: flex;
-  align-items: baseline;
+  align-items: end;
   justify-content: space-between;
   gap: 18px;
   padding: 0 4px;
 }
+.zj-today__greeting div { display: grid; gap: 4px; }
 .zj-today__greeting p,
-.zj-today__greeting span { margin: 0; }
+.zj-today__greeting span,
+.zj-today__greeting time { margin: 0; }
 .zj-today__greeting p {
   font-family: var(--ws-font-display, serif);
   color: var(--ws-text-primary-color, #1d211f);
-  font-size: 17px;
+  font-size: 21px;
+  font-weight: 600;
 }
-.zj-today__greeting span {
+.zj-today__greeting span,
+.zj-today__greeting time {
   color: var(--ws-text-placeholder-color, #92958f);
   font-size: 11px;
 }
+.zj-today__greeting time { white-space: nowrap; }
 .zj-today__grid {
   display: grid;
-  grid-template-areas: "map letter" "map panel";
-  grid-template-columns: minmax(0, 1.42fr) minmax(300px, .78fr);
+  grid-template-areas: "letter map" "panel map";
+  grid-template-columns: minmax(340px, .86fr) minmax(0, 1.14fr);
   align-items: start;
   gap: 16px;
 }
@@ -244,26 +259,52 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 16px;
   min-width: 0;
-  padding: 26px 24px 22px;
+  min-height: 430px;
+  padding: 24px 24px 22px;
   border: 1px solid rgba(166, 69, 46, .25);
+  border-top: 3px solid var(--ws-primary-color, #a6452e);
   border-radius: 18px;
-  background: #fffdf8;
-  box-shadow: 0 18px 50px rgba(55, 45, 35, .05);
+  background: linear-gradient(155deg, #fffdf8 0%, #fbf4e9 100%);
+  box-shadow: 0 20px 56px rgba(55, 45, 35, .08);
 }
-.zj-letter__eyebrow {
+.zj-letter__identity {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  color: var(--ws-primary-color, #a6452e);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .13em;
+  gap: 10px;
 }
-.zj-letter__eyebrow i {
+.zj-letter__identity > div {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+.zj-letter__identity strong {
+  color: var(--ws-primary-color, #a6452e);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+.zj-letter__identity small {
   color: var(--ws-text-placeholder-color, #92958f);
+  font-size: 10px;
+}
+.zj-letter__identity i {
+  color: var(--ws-text-placeholder-color, #92958f);
+  font-size: 10px;
   font-style: normal;
   font-weight: 400;
-  letter-spacing: 0;
+  white-space: nowrap;
+}
+.zj-letter__seal {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--ws-primary-color, #a6452e);
+  border-radius: 8px;
+  color: var(--ws-primary-color, #a6452e);
+  font-family: var(--ws-font-display, serif);
+  font-size: 17px;
 }
 .zj-letter h1 {
   margin: 0;
@@ -282,6 +323,19 @@ onBeforeUnmount(() => {
   line-height: 1.9;
 }
 .zj-letter__sources {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ws-border-color-3, #e8e2d7);
+}
+.zj-letter__sources > p {
+  margin: 0;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+.zj-letter__sources > div {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
@@ -369,12 +423,13 @@ onBeforeUnmount(() => {
 @media (max-width: 800px) {
   .zj-today { gap: 14px; padding-bottom: 26px; }
   .zj-today__greeting { display: grid; gap: 4px; padding: 0 2px; }
+  .zj-today__greeting p { font-size: 18px; }
   .zj-today__greeting span { font-size: 10px; }
   .zj-today__grid {
     grid-template-areas: "letter" "map" "panel";
     grid-template-columns: minmax(0, 1fr);
   }
-  .zj-letter { padding: 20px 18px 18px; }
+  .zj-letter { min-height: 0; padding: 20px 18px 18px; }
   .zj-letter h1 { font-size: 27px; }
   .zj-today__skeleton { grid-template-columns: 1fr; }
   .zj-today__skeleton span { min-height: 320px; }

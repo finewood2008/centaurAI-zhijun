@@ -20,7 +20,7 @@ const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url
 for (const path of ["path: '/'", "path: '/chat'", "path: '/c/:conversationId'", "path: '/me'", "path: '/me/inbox'", "path: '/judgments'", "path: '/data'"]) {
   assert.ok(router.includes(path), `router 缺少 ${path}`)
 }
-assert.match(router, /path: '\/', name: 'today', component: \(\) => import\('@\/pages\/TodayPage\.vue'\), meta: \{ title: '今日' \}/)
+assert.match(router, /path: '\/', name: 'today', component: \(\) => import\('@\/pages\/TodayPage\.vue'\), meta: \{ title: '今日来信' \}/)
 assert.match(router, /path: '\/chat', name: 'conversation', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\), meta: \{ title: '对话' \}/)
 assert.match(router, /path: '\/c\/:conversationId', name: 'conversation-detail'/)
 
@@ -35,8 +35,11 @@ assert.match(today, /brief\.status !== 'refreshing'/)
 assert.match(today, /path: '\/chat', query: \{ onboarding: '1' \}/)
 assert.match(today, /createConversation\(\{ mode: 'review', decisionId: action\.targetId \}\)/)
 assert.match(today, /这封来信的依据/)
-assert.match(today, /现在最值得做的一件事/)
-assert.match(today, /知君 · 今日来信/)
+assert.match(today, /知君写给你的今日来信/)
+assert.match(today, /今日已送达/)
+assert.match(today, /为什么今天写给你/)
+assert.match(today, /读完这封信，可以从这里继续/)
+assert.match(today, /grid-template-areas: "letter map" "panel map"/)
 assert.match(today, /grid-template-areas: "letter" "map" "panel"/)
 assert.doesNotMatch(today, /fetch\(/)
 for (const label of ['知君记得', '一起跟进', '等你确认']) assert.match(relationshipMap, new RegExp(label))
@@ -73,12 +76,12 @@ for (const gone of ["'/qa'", "'/generate'", "'/governance'", "'/corrections'", '
 }
 
 // 侧栏：单组五项，今日在最上
-for (const label of ["label: '今日'", "label: '对话'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
+for (const label of ["label: '今日来信'", "label: '对话'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
   assert.ok(sidebar.includes(label), `sidebar 缺少 ${label}`)
 }
 assert.doesNotMatch(sidebar, /问知君|本体治理|logo\.jpg/)
 assert.match(sidebar, /ws-sidebar__seal/)
-assert.ok(sidebar.indexOf("label: '今日'") < sidebar.indexOf("label: '对话'"), '侧栏「今日」应在「对话」上方')
+assert.ok(sidebar.indexOf("label: '今日来信'") < sidebar.indexOf("label: '对话'"), '侧栏「今日来信」应在「对话」上方')
 
 // 今日页的纯函数：问候行 / 汇总句 / 称呼 / 最近留下的 / 相对时间
 const labels = await import('../src/shared/labels.ts')

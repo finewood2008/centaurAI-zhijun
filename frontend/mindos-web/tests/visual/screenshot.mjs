@@ -18,7 +18,7 @@ mkdirSync(OUT_DIR, { recursive: true })
 
 // 核心页面路由（与 src/router/index.ts 一致）：五个一级入口 + 两个隐藏路由
 const ROUTES = [
-  { name: 'today', path: '/', title: '今日' },
+  { name: 'today', path: '/', title: '今日来信' },
   { name: 'conversation', path: '/chat', title: '对话' },
   { name: 'ontology', path: '/me', title: '我的本体' },
   { name: 'judgments', path: '/judgments', title: '判断' },
