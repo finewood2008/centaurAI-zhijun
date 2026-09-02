@@ -1569,7 +1569,7 @@ export type Layer = 'observed' | 'self_declared' | 'aspirational' | 'hypothesis'
 export type TrustState = 'working' | 'confirmed' | 'retracted' | 'superseded'
 export type TrustOrigin = 'utterance' | 'user_confirm' | 'user_edit' | 'user_created' | 'material' | 'model'
 export type ReviewAction = 'confirm' | 'partial' | 'context_only' | 'reject' | 'defer' | 'retract' | 'reaffirm'
-export type ReviewSurface = 'conversation' | 'ontology_page' | 'onboarding'
+export type ReviewSurface = 'conversation' | 'ontology_page' | 'onboarding' | 'today'
 
 export interface ClaimBrief {
   id: string
@@ -1732,6 +1732,64 @@ export interface ZhijunStatus {
   // 模型是否配置好了；error 非空表示当前不可用（页头与输入区据此降级）
   configured?: boolean
   error?: string | null
+}
+
+export type ZhijunHomeState = 'first_meet' | 'building' | 'established'
+export type HomeRing = 'remembered' | 'tracking' | 'uncertain'
+export type HomeSourceType = 'claim' | 'decision' | 'commitment'
+
+export interface HomeSourceRef {
+  id: string
+  sourceType: HomeSourceType
+  label: string
+  title: string
+  trust: 'confirmed' | 'working' | 'recorded'
+}
+
+export interface HomeMapNode {
+  id: string
+  ring: HomeRing
+  sourceType: HomeSourceType
+  title: string
+  summary: string
+  occurredAt: string | null
+  claim: Claim | null
+  decision: GrowthDecision | null
+}
+
+export interface HomeBrief {
+  status: 'ready' | 'refreshing'
+  headline: string
+  message: string
+  generatedBy: string
+  sourceRefs: HomeSourceRef[]
+}
+
+export interface HomeNextAction {
+  kind: 'onboarding' | 'resume_onboarding' | 'review' | 'reflect' | 'commitment' | 'confirm' | 'nudge' | 'chat'
+  title: string
+  description: string
+  targetId: string | null
+  say: string | null
+}
+
+export interface HomeTimelineEvent {
+  id: string
+  kind: 'remembered' | 'decision' | 'outcome' | 'review'
+  title: string
+  detail: string
+  occurredAt: string | null
+  sourceRef: HomeSourceRef
+}
+
+export interface ZhijunHomeOverview {
+  state: ZhijunHomeState
+  brief: HomeBrief
+  map: { relationshipDays: number; nodes: HomeMapNode[] }
+  nextAction: HomeNextAction
+  timeline: HomeTimelineEvent[]
+  generatedAt: string
+  sourceHash: string
 }
 
 // SSE 事件载荷（POST /mindos/conversations/{id}/messages）
@@ -1915,6 +1973,10 @@ export function getProjection() {
 
 export function getZhijunStatus() {
   return request<ZhijunStatus>('/mindos/zhijun/status')
+}
+
+export function getZhijunHome() {
+  return request<ZhijunHomeOverview>('/mindos/zhijun/home')
 }
 
 // ---- P3：整合与裁决、导出 / 全量删除

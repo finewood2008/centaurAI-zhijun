@@ -114,6 +114,11 @@ def enqueue_first_observation(conversation_id: str, message_id: str | None, *, s
     return store.enqueue_job("first_observation", conversation_id, payload={"conversationId": conversation_id, "messageId": message_id}, priority=4)
 
 
+def enqueue_home_brief(source_hash: str, *, store: OntologyStore | None = None) -> str | None:
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("home_brief", "today", payload={"sourceHash": source_hash}, priority=2, input_hash=source_hash)
+
+
 def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -> dict:
     kind = job["kind"]
     payload = job.get("payload") or {}
@@ -196,6 +201,10 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
         finally:
             provider_gate.release(channel)
         return result
+    if kind == "home_brief":
+        from .. import zhijun_home
+
+        return zhijun_home.generate_home_brief(str(payload.get("sourceHash") or job.get("inputHash") or ""), store=store, conv_store=conv_store)
     if kind == "project":
         return projection.write_projection(store)
     if kind == "nudge_scan":

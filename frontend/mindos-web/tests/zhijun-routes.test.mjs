@@ -8,8 +8,9 @@ const sidebar = await readFile(new URL('../src/layouts/AppSidebar.vue', import.m
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 const sse = await readFile(new URL('../src/services/sse.ts', import.meta.url), 'utf8')
 const conversation = await readFile(new URL('../src/pages/ConversationPage.vue', import.meta.url), 'utf8')
-const nextSteps = await readFile(new URL('../src/components/conversation/NextStepsPanel.vue', import.meta.url), 'utf8')
-const recentOutcomes = await readFile(new URL('../src/components/today/RecentOutcomes.vue', import.meta.url), 'utf8')
+const relationshipMap = await readFile(new URL('../src/components/today/RelationshipMap.vue', import.meta.url), 'utf8')
+const relationshipTimeline = await readFile(new URL('../src/components/today/RelationshipTimeline.vue', import.meta.url), 'utf8')
+const homeNodePanel = await readFile(new URL('../src/components/today/HomeNodePanel.vue', import.meta.url), 'utf8')
 const selfMap = await readFile(new URL('../src/components/ontology/SelfMap.vue', import.meta.url), 'utf8')
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
@@ -21,34 +22,34 @@ assert.match(router, /path: '\/', name: 'today', component: \(\) => import\('@\/
 assert.match(router, /path: '\/chat', name: 'conversation', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\), meta: \{ title: '对话' \}/)
 assert.match(router, /path: '\/c\/:conversationId', name: 'conversation-detail'/)
 
-// 今日页：五个区块的组件都在，动作走 /chat?say= 与 /c/:id，不用 fetch
+// 今日页：来信、共同地图、节点详情与轨迹统一由专用首页接口驱动；刷新保留当前内容。
 const today = await readFile(new URL('../src/pages/TodayPage.vue', import.meta.url), 'utf8')
-for (const part of ['GreetingLine', 'FirstMeetCard', 'TodayNudges', 'TodayValueHero', 'NextStepsPanel', 'RecentOutcomes', 'BringSomething']) {
+for (const part of ['RelationshipMap', 'RelationshipTimeline', 'HomeNodePanel']) {
   assert.ok(today.includes(`import ${part} from`), `TodayPage 缺少 ${part}`)
 }
-assert.match(today, /Promise\.allSettled\(/)
+assert.match(today, /getZhijunHome\(\)/)
+assert.match(today, /1500/)
+assert.match(today, /brief\.status !== 'refreshing'/)
 assert.match(today, /path: '\/chat', query: \{ onboarding: '1' \}/)
-assert.match(today, /path: '\/chat', query: /)
-assert.match(today, /router\.push\(`\/c\/\$\{encodeURIComponent\(id\)\}`\)/)
+assert.match(today, /createConversation\(\{ mode: 'review', decisionId: action\.targetId \}\)/)
+assert.match(today, /这封来信的依据/)
+assert.match(today, /现在最值得做的一件事/)
+assert.match(today, /grid-template-areas: "letter" "map" "panel"/)
 assert.doesNotMatch(today, /fetch\(/)
-const todayValue = await readFile(new URL('../src/components/today/TodayValueHero.vue', import.meta.url), 'utf8')
-assert.match(todayValue, /把今天聊过的/)
-assert.match(todayValue, /变成明天用得上的判断/)
-assert.match(todayValue, /不必反复交代自己/)
-assert.match(todayValue, /重要选择不再凭印象/)
-assert.match(todayValue, /结果回来，经验留下/)
-assert.match(todayValue, /来自你的真实使用/)
+for (const label of ['我记得', '我们在跟进', '我还不确定']) assert.match(relationshipMap, new RegExp(label))
+assert.match(relationshipMap, /aspect-ratio: 1/)
+assert.match(relationshipMap, /prefers-reduced-motion/)
+assert.match(relationshipTimeline, /我们一起走过/)
+assert.match(homeNodePanel, /surface: 'today'/)
+assert.match(homeNodePanel, /createConversation\(\{ mode: 'review', decisionId: item\.id \}\)/)
 // 对话页与今日页的接缝：?say= / ?deliberate=1 / ?onboarding=1 三个 query 都被读取；空白态跳转走 /chat，不再 import 提醒条与下一步面板
 assert.match(conversation, /route\.query\.say/)
 assert.match(conversation, /route\.query\.deliberate/)
 assert.match(conversation, /route\.query\.onboarding/)
 assert.doesNotMatch(conversation, /import (NudgeStrip|NextStepsPanel) from/)
 assert.doesNotMatch(conversation, /router\.(push|replace)\('\/'\)/)
-// 成果回执能跨页面重开；今日页有唯一主动作与明确的可点击线索；本体边界说明移出图内，避免顶端碰撞。
+// 成果回执能跨页面重开；本体边界说明移出图内，避免顶端碰撞。
 assert.match(conversation, /turnOutcomes\.value = null[\s\S]*refreshOutcomes\(id, true\)/)
-assert.match(nextSteps, /'is-primary': index === 0/)
-assert.match(nextSteps, /ChevronRight/)
-assert.match(recentOutcomes, /ChevronRight/)
 assert.match(selfMap, /v-if="compact"[\s\S]*zj-map__ring-label--boundary/)
 assert.match(selfMap, /class="zj-map__boundary-note"/)
 // 其它页「去对话」类跳转都指向 /chat，不再落到今日页
@@ -117,12 +118,14 @@ for (const endpoint of [
   '/mindos/ontology/entities',
   '/mindos/ontology/projection',
   '/mindos/zhijun/status',
+  '/mindos/zhijun/home',
 ]) {
   assert.ok(api.includes(endpoint), `api 缺少 ${endpoint}`)
 }
 assert.match(api, /export function buildHeaders/)
 assert.match(api, /export async function throwApiError/)
 assert.match(api, /export function reviewClaim/)
+assert.match(api, /export type ReviewSurface = 'conversation' \| 'ontology_page' \| 'onboarding' \| 'today'/)
 
 // SSE 客户端：fetch + ReadableStream，复用统一头部；不用 EventSource
 assert.match(sse, /export async function streamPost/)

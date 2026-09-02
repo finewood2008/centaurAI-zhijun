@@ -117,7 +117,7 @@ interface ReviewRequest {
   editedContent?: string          // partial 必填
   contextRef?: string             // context_only 可选，默认当前 conversationId
   note?: string
-  surface: 'conversation' | 'ontology_page' | 'onboarding'
+  surface: 'conversation' | 'ontology_page' | 'onboarding' | 'today'
   conversationId?: string; messageId?: string
 }
 interface Entity {
@@ -339,3 +339,29 @@ provenance    {..., pastDecisions: {id, title, choice, status}[], anchorClaimIds
 ### 17. 静默领域来自建档
 
 提醒扫描（`nudges.scan`）的静默词除章程 `quietDomains` 外，还从本体 `principles` 分区的已确认 / 待确认理解里抽：`predicate=boundary`，或内容含「不希望 / 不要 / 不用 / 别 … 提 / 聊 / 谈 / 碰 / 问」句式。去掉句式词（我不希望、AI、知君、主动提起、这些话题、的话题 等）后按「和、或、以及、与、，」切分，保留 2 到 8 字的话题词。例：「我不希望AI主动提起健康和家里的矛盾这些话题」→ `健康`、`家里的矛盾`；标题或内容命中的到期判断与承诺不生成提醒。
+
+---
+
+## 关系首页增补 · 版本 relationship-home-v4-2026-09-03
+
+### 18. 共同地图 `GET /api/mindos/zhijun/home`
+
+旧 `/api/mindos/home` 保持不变。新接口同步返回真实数据模板，并在来源指纹变化时入队 `home_brief` 后台任务；前端仅在 `brief.status=refreshing` 时轮询，不等待模型。
+
+```ts
+interface ZhijunHomeOverview {
+  state: 'first_meet' | 'building' | 'established'
+  brief: { status: 'ready' | 'refreshing'; headline: string; message: string; generatedBy: string; sourceRefs: HomeSourceRef[] }
+  map: { relationshipDays: number; nodes: HomeMapNode[] }
+  nextAction: { kind: 'onboarding' | 'resume_onboarding' | 'review' | 'reflect' | 'commitment' | 'confirm' | 'nudge' | 'chat'; title: string; description: string; targetId: string | null; say: string | null }
+  timeline: HomeTimelineEvent[]
+  generatedAt: string
+  sourceHash: string
+}
+```
+
+- 节点 `ring` 为 `remembered | tracking | uncertain`，`sourceType` 为 `claim | decision | commitment`，并内嵌完整 `Claim` 或判断摘要供详情面板使用。
+- 地图上限固定为 4 条已确认理解、3 条跟进中的判断/承诺、3 条未确认理解；轨迹只取最近 6 个“记住、判断、结果、复盘”事件。
+- `sourceRefs.label` 只使用“你确认过 / 我的推测 / 判断簿”，每条同时带可点击的 `id`、`sourceType`、`title` 和 `trust`。
+- 缓存存于 `ontology_meta.zhijun_home_snapshot_v1`。模型只可返回 `headline / message / focusIds`，非法来源 id 会使整份模型结果回退到模板。
+- 外部模型不接收 `sensitive/restricted` 理解；判断仅发送标题、选择、状态和回访时间。

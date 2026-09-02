@@ -1271,6 +1271,8 @@ mindos_ontology.configure_write_guard(require_local)
 app.include_router(mindos_ontology.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import zhijun_status as mindos_zhijun_status
 app.include_router(mindos_zhijun_status.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos import zhijun_home as mindos_zhijun_home
+app.include_router(mindos_zhijun_home.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import nudges as mindos_nudges
 mindos_nudges.configure_write_guard(require_local)
 app.include_router(mindos_nudges.router, dependencies=_MINDOS_WEB_DEPENDENCIES)

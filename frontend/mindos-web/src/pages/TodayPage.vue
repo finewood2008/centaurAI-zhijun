@@ -1,224 +1,383 @@
 <script setup lang="ts">
-// 今日：打开应用的首屏。安静，无红点无计数徽章；没有内容的区块整块不渲染。
-// 自上而下：问候一行 → 知君想跟你聊的（提醒）→ 下一步 → 最近留下的 → 带一件事来。
-// 还没建档时只剩问候 + 「先让我认识真实的你」；有没聊完的建档会话则在起手卡上方给「继续建档」。
-// 数据一次 Promise.allSettled 并行拉取，谁失败只影响谁的那块；拉完之前显示灰块骨架。
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ArrowRight } from 'lucide-vue-next'
 import {
-  api,
-  getOntologyStats,
-  listClaims,
-  listConversations,
-  type Claim,
-  type Conversation,
-  type GrowthToday,
-  type OntologyStats,
+  createConversation,
+  getZhijunHome,
+  type HomeMapNode,
+  type HomeSourceRef,
+  type ZhijunHomeOverview,
 } from '@/services/api'
-import {
-  ONBOARDING_TOTAL_TURNS,
-  buildNextSteps,
-  greetingLine,
-  isDueByToday,
-  nicknameFromClaims,
-  onboardingUserTurns,
-  recentOutcomeConversations,
-  todaySummaryLine,
-} from '@/shared/labels'
-import GreetingLine from '@/components/today/GreetingLine.vue'
-import FirstMeetCard from '@/components/today/FirstMeetCard.vue'
-import TodayNudges from '@/components/today/TodayNudges.vue'
-import TodayValueHero from '@/components/today/TodayValueHero.vue'
-import RecentOutcomes from '@/components/today/RecentOutcomes.vue'
-import BringSomething from '@/components/today/BringSomething.vue'
-import NextStepsPanel from '@/components/conversation/NextStepsPanel.vue'
+import { useToast } from '@/composables/useToast'
+import { greetingLine } from '@/shared/labels'
+import RelationshipMap from '@/components/today/RelationshipMap.vue'
+import RelationshipTimeline from '@/components/today/RelationshipTimeline.vue'
+import HomeNodePanel from '@/components/today/HomeNodePanel.vue'
 
 const router = useRouter()
+const toast = useToast()
 
+const overview = ref<ZhijunHomeOverview | null>(null)
 const loading = ref(true)
+const error = ref('')
+const actionBusy = ref(false)
+const selectedId = ref<string | null>(null)
+const panelAnchor = ref<HTMLElement | null>(null)
+
 let alive = true
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let pollCount = 0
 
-// 各块数据：请求失败保持 null / 空，绝不把 hasOntology 当真
-const stats = ref<OntologyStats | null>(null)
-const conversations = ref<Conversation[]>([])
-const growthToday = ref<GrowthToday | null>(null)
-const claims = ref<Claim[]>([])
+const dateLine = computed(() => greetingLine(''))
+const selectedNode = computed(() => overview.value?.map.nodes.find((node) => node.id === selectedId.value) ?? null)
 
-// 建档的七个问题（与对话页一致）：用来算「还差 N 问」
-const ONBOARDING_QUESTIONS = 7
-
-const nickname = computed(() => nicknameFromClaims(claims.value))
-const nudgeCount = ref(0)
-const greeting = computed(() => greetingLine(nickname.value))
-
-const dueCommitments = computed(() => claims.value.filter((c) => c.predicate === 'committed_to' && isDueByToday(c.validTo)))
-
-const summary = computed(() =>
-  todaySummaryLine({
-    dueReview: growthToday.value?.dueDecisions?.length ?? 0,
-    inbox: stats.value?.inbox ?? 0,
-    dueCommitments: dueCommitments.value.length,
-    pendingReviews: growthToday.value?.pendingReviews?.length ?? 0,
-    nudges: nudgeCount.value,
-  }),
-)
-
-const nextSteps = computed(() => {
-  const g = growthToday.value
-  return buildNextSteps({
-    overdue: (g?.dueDecisions ?? []).filter((d) => d.dueState === 'overdue').map((d) => ({ id: d.id, title: d.title })),
-    pendingReviews: (g?.pendingReviews ?? []).map((d) => ({ id: d.id, title: d.title })),
-    dueCommitments: dueCommitments.value.map((c) => ({ id: c.id, content: c.content })),
-    inbox: stats.value?.inbox,
-  })
-})
-
-const recent = computed(() => recentOutcomeConversations(conversations.value, 3))
-
-// 建档状态：不存在 mode=onboarding 的会话，且（stats 未知 或 hasOntology 为假）→ 只剩「先认识你」
-const onboardingConversation = computed(() => conversations.value.find((c) => c.mode === 'onboarding') ?? null)
-const showFirstMeet = computed(() => !loading.value && !onboardingConversation.value && (stats.value === null || !stats.value.hasOntology))
-// 没聊完的建档会话（用户轮数 < 8）：「继续建档 · 还差 N 问」
-const pendingOnboarding = computed(() => {
-  const conv = onboardingConversation.value
-  if (!conv) return null
-  const turns = onboardingUserTurns(conv.messageCount)
-  if (turns >= ONBOARDING_TOTAL_TURNS) return null
-  return { id: conv.id, remaining: ONBOARDING_QUESTIONS - Math.max(0, turns - 1) }
-})
-
-function goChat(say: string, deliberate = false) {
-  router.push({ path: '/chat', query: deliberate ? { say, deliberate: '1' } : { say } })
+function clearPoll() {
+  if (pollTimer) clearTimeout(pollTimer)
+  pollTimer = null
 }
-function openConversation(id: string) {
-  router.push(`/c/${encodeURIComponent(id)}`)
+
+function scheduleRefresh() {
+  clearPoll()
+  if (!alive || overview.value?.brief.status !== 'refreshing' || pollCount >= 7) return
+  pollTimer = setTimeout(async () => {
+    pollCount += 1
+    await loadHome(false)
+  }, 1500)
 }
-function startOnboarding() {
-  router.push({ path: '/chat', query: { onboarding: '1' } })
+
+async function loadHome(showLoading = true) {
+  if (showLoading) loading.value = true
+  error.value = ''
+  try {
+    const result = await getZhijunHome()
+    if (!alive) return
+    overview.value = result
+    if (selectedId.value && !result.map.nodes.some((node) => node.id === selectedId.value)) {
+      selectedId.value = null
+    }
+    scheduleRefresh()
+  } catch (err) {
+    if (!alive) return
+    error.value = err instanceof Error ? err.message : '共同地图暂时没有打开'
+    if (overview.value) scheduleRefresh()
+  } finally {
+    if (alive) loading.value = false
+  }
 }
-function startFromHero() {
-  if (showFirstMeet.value) {
-    startOnboarding()
+
+async function selectNode(node: HomeMapNode) {
+  selectedId.value = node.id
+  await nextTick()
+  panelAnchor.value?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+}
+
+function openSource(source: HomeSourceRef) {
+  const node = overview.value?.map.nodes.find((item) => item.id === source.id)
+  if (node) {
+    void selectNode(node)
     return
   }
-  router.push('/chat')
-}
-function openValueTarget(target: 'ontology' | 'judgments') {
-  router.push(target === 'ontology' ? '/me' : '/judgments')
-}
-
-async function loadAll() {
-  const [s, c, g, cl] = await Promise.allSettled([
-    getOntologyStats(),
-    listConversations(50),
-    api.getGrowthToday(),
-    listClaims({ trust: ['confirmed', 'working'], limit: 500 }),
-  ])
-  if (!alive) return
-  stats.value = s.status === 'fulfilled' ? s.value : null
-  conversations.value = c.status === 'fulfilled' ? c.value.items : []
-  growthToday.value = g.status === 'fulfilled' ? g.value : null
-  claims.value = cl.status === 'fulfilled' ? cl.value.items : []
-  loading.value = false
+  if (source.sourceType === 'decision') {
+    router.push({ path: '/judgments', query: { decisionId: source.id.replace(/^decision:/, '') } })
+    return
+  }
+  router.push({ path: '/me', query: { claim: source.id.replace(/^claim:/, '') } })
 }
 
-onMounted(() => {
-  void loadAll()
-})
+async function runPrimaryAction() {
+  const action = overview.value?.nextAction
+  if (!action || actionBusy.value) return
+  if (action.kind === 'onboarding') {
+    router.push({ path: '/chat', query: { onboarding: '1' } })
+    return
+  }
+  if (action.kind === 'resume_onboarding' && action.targetId) {
+    router.push(`/c/${encodeURIComponent(action.targetId)}`)
+    return
+  }
+  if (action.kind === 'confirm') {
+    const node = overview.value?.map.nodes.find((item) => item.claim?.id === action.targetId)
+    if (node) await selectNode(node)
+    else router.push('/me/inbox')
+    return
+  }
+  if (action.kind === 'reflect') {
+    router.push({ path: '/judgments', query: action.targetId ? { decisionId: action.targetId } : undefined })
+    return
+  }
+  if (action.kind === 'review' && action.targetId) {
+    actionBusy.value = true
+    try {
+      const conversation = await createConversation({ mode: 'review', decisionId: action.targetId })
+      router.push(`/c/${encodeURIComponent(conversation.id)}`)
+    } catch (err) {
+      toast({ type: 'error', message: err instanceof Error ? err.message : '无法开始回访' })
+      actionBusy.value = false
+    }
+    return
+  }
+  router.push({ path: '/chat', query: action.say ? { say: action.say } : undefined })
+}
+
+async function handleNodeChanged() {
+  selectedId.value = null
+  pollCount = 0
+  await loadHome(false)
+}
+
+onMounted(() => void loadHome())
 onBeforeUnmount(() => {
   alive = false
+  clearPoll()
 })
 </script>
 
 <template>
-  <div class="zj-today">
-    <GreetingLine :line="greeting" :summary="summary" :loading="loading" />
+  <main class="zj-today">
+    <header class="zj-today__greeting">
+      <p>{{ dateLine }}</p>
+      <span>知君在这里，陪你看清正在发生的事。</span>
+    </header>
 
-    <TodayValueHero
-      v-if="!loading"
-      :established="!!stats?.hasOntology"
-      :confirmed="stats?.claims.confirmed ?? 0"
-      :decisions="growthToday?.stats.totalDecisions ?? 0"
-      :reviews="growthToday?.stats.totalReviews ?? 0"
-      :primary-label="showFirstMeet ? '先让知君认识我' : '带一件事来聊'"
-      @start="startFromHero"
-      @open="openValueTarget"
-    />
-
-    <div v-if="loading" class="zj-today__skeleton" aria-hidden="true">
-      <span class="zj-today__block" />
-      <span class="zj-today__block is-short" />
-      <span class="zj-today__block" />
+    <div v-if="loading" class="zj-today__skeleton" aria-label="正在打开共同地图">
+      <span />
+      <span />
     </div>
 
-    <div v-else-if="showFirstMeet" class="zj-today__stream">
-      <FirstMeetCard @start="startOnboarding" />
-    </div>
+    <section v-else-if="!overview" class="zj-today__fallback" role="alert">
+      <p>{{ error || '共同地图暂时没有打开' }}</p>
+      <button type="button" @click="loadHome()">再试一次</button>
+    </section>
 
-    <div v-else class="zj-today__stream">
-      <TodayNudges  @count="(n) => (nudgeCount = n)" />
+    <template v-else>
+      <div class="zj-today__grid">
+        <RelationshipMap
+          class="zj-today__map"
+          :nodes="overview.map.nodes"
+          :relationship-days="overview.map.relationshipDays"
+          :selected-id="selectedId"
+          :empty="overview.state === 'first_meet'"
+          @select="selectNode"
+        />
 
-      <section v-if="nextSteps.length" class="zj-today-section zj-today__next" aria-label="下一步">
-        <NextStepsPanel :items="nextSteps" @say="(t) => goChat(t)" />
-      </section>
+        <article class="zj-letter">
+          <div class="zj-letter__eyebrow">
+            <span>今天我想告诉你</span>
+            <i v-if="overview.brief.status === 'refreshing'">我在重新整理</i>
+          </div>
+          <h1>{{ overview.brief.headline }}</h1>
+          <p>{{ overview.brief.message }}</p>
 
-      <RecentOutcomes :items="recent" @open="openConversation" />
+          <div v-if="overview.brief.sourceRefs.length" class="zj-letter__sources" aria-label="这封来信的依据">
+            <button
+              v-for="source in overview.brief.sourceRefs"
+              :key="`${source.sourceType}:${source.id}`"
+              type="button"
+              @click="openSource(source)"
+            >
+              <span>{{ source.label }}</span>
+              {{ source.title }}
+            </button>
+          </div>
 
-      <BringSomething :pending-onboarding="pendingOnboarding" @pick="goChat" @resume="openConversation" />
-    </div>
-  </div>
+          <button class="zj-letter__action" type="button" :disabled="actionBusy" @click="runPrimaryAction">
+            <span>
+              <small>现在最值得做的一件事</small>
+              <strong>{{ overview.nextAction.title }}</strong>
+            </span>
+            <ArrowRight :size="18" aria-hidden="true" />
+          </button>
+        </article>
+
+        <div v-if="selectedNode" ref="panelAnchor" class="zj-today__panel">
+          <HomeNodePanel :node="selectedNode" @close="selectedId = null" @changed="handleNodeChanged" />
+        </div>
+      </div>
+
+      <RelationshipTimeline :items="overview.timeline" @open="openSource" />
+
+      <p v-if="overview.state === 'first_meet'" class="zj-today__first-note">
+        你说过的原则、做过的选择和后来发生的结果，都会在这里留下位置。
+      </p>
+    </template>
+  </main>
 </template>
-
-<style>
-/* 今日页各区块共用的标题（子组件里也用，故不加 scoped）：小字、字距略宽、灰色，不做徽章 */
-.zj-today-section__title {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  color: var(--ws-text-secondary-color, #686b66);
-}
-</style>
 
 <style scoped>
 .zj-today {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 22px;
-  max-width: 960px;
+  width: min(100%, 1120px);
   margin: 0 auto;
-  padding: 8px 0 32px;
+  padding: 2px 0 40px;
 }
-.zj-today__stream {
+.zj-today__greeting {
   display: flex;
-  flex-direction: column;
-  gap: 28px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 4px;
+}
+.zj-today__greeting p,
+.zj-today__greeting span { margin: 0; }
+.zj-today__greeting p {
+  font-family: var(--ws-font-display, serif);
+  color: var(--ws-text-primary-color, #1d211f);
+  font-size: 17px;
+}
+.zj-today__greeting span {
+  color: var(--ws-text-placeholder-color, #92958f);
+  font-size: 11px;
+}
+.zj-today__grid {
+  display: grid;
+  grid-template-areas: "map letter" "map panel";
+  grid-template-columns: minmax(0, 1.42fr) minmax(300px, .78fr);
+  align-items: start;
+  gap: 16px;
+}
+.zj-today__map { grid-area: map; }
+.zj-today__panel { grid-area: panel; }
+.zj-letter {
+  grid-area: letter;
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  padding: 26px 24px 22px;
+  border: 1px solid rgba(166, 69, 46, .25);
+  border-radius: 18px;
+  background: #fffdf8;
+  box-shadow: 0 18px 50px rgba(55, 45, 35, .05);
+}
+.zj-letter__eyebrow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ws-primary-color, #a6452e);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .13em;
+}
+.zj-letter__eyebrow i {
+  color: var(--ws-text-placeholder-color, #92958f);
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.zj-letter h1 {
+  margin: 0;
+  font-family: var(--ws-font-display, serif);
+  color: var(--ws-text-primary-color, #1d211f);
+  font-size: clamp(25px, 2.4vw, 34px);
+  font-weight: 600;
+  line-height: 1.28;
+  letter-spacing: -.02em;
+}
+.zj-letter > p {
+  margin: -2px 0 0;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-family: var(--ws-font-display, serif);
+  font-size: 14px;
+  line-height: 1.9;
+}
+.zj-letter__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.zj-letter__sources button {
+  max-width: 100%;
+  padding: 5px 8px;
+  overflow: hidden;
+  border: 1px solid var(--ws-border-color-3, #e8e2d7);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font: inherit;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.zj-letter__sources button:hover,
+.zj-letter__sources button:focus-visible {
+  border-color: var(--ws-primary-color, #a6452e);
+  outline: none;
+}
+.zj-letter__sources span {
+  margin-right: 4px;
+  color: var(--ws-primary-color, #a6452e);
+  font-weight: 600;
+}
+.zj-letter__action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   width: 100%;
-  max-width: 760px;
-  margin: 6px auto 0;
+  margin-top: 3px;
+  padding: 14px 15px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ws-primary-color, #a6452e);
+  color: #fffaf2;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-/* NextStepsPanel 自带标题与上边距；这里把它的上边距抵掉，和其它区块一样对齐 */
-.zj-today__next :deep(.zj-next) {
-  margin-top: 0;
-}
-.zj-today__next :deep(.zj-next__title) {
-  margin-bottom: 8px;
+.zj-letter__action:disabled { cursor: wait; opacity: .7; }
+.zj-letter__action span { display: grid; gap: 3px; }
+.zj-letter__action small { opacity: .72; font-size: 9px; font-weight: 400; letter-spacing: .06em; }
+.zj-letter__action strong { font-size: 13px; font-weight: 600; }
+.zj-letter__action:hover:not(:disabled) { filter: brightness(.94); }
+.zj-letter__action:focus-visible { outline: 3px solid rgba(166, 69, 46, .2); outline-offset: 3px; }
+.zj-today__first-note {
+  margin: -6px 0 0;
+  text-align: center;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-family: var(--ws-font-display, serif);
+  font-size: 13px;
 }
 .zj-today__skeleton {
   display: grid;
-  gap: 10px;
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
+  grid-template-columns: 1.42fr .78fr;
+  gap: 16px;
 }
-.zj-today__block {
-  display: block;
-  height: 56px;
-  border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-border-color-4, #f1eee6);
+.zj-today__skeleton span {
+  min-height: 560px;
+  border-radius: 18px;
+  background: linear-gradient(110deg, #f4f0e8 25%, #faf7f0 45%, #f4f0e8 65%);
+  background-size: 220% 100%;
+  animation: zj-home-loading 1.4s ease infinite;
 }
-.zj-today__block.is-short {
-  height: 40px;
-  width: 70%;
+.zj-today__skeleton span:last-child { min-height: 330px; }
+.zj-today__fallback {
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  padding: 26px;
+  border: 1px solid var(--ws-border-color-3, #e8e2d7);
+  border-radius: 14px;
+}
+.zj-today__fallback p { margin: 0; color: var(--ws-text-secondary-color, #686b66); }
+.zj-today__fallback button { border: 0; background: none; color: var(--ws-primary-color, #a6452e); cursor: pointer; }
+@keyframes zj-home-loading { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .zj-today *, .zj-today *::before, .zj-today *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+}
+@media (max-width: 800px) {
+  .zj-today { gap: 14px; padding-bottom: 26px; }
+  .zj-today__greeting { display: grid; gap: 4px; padding: 0 2px; }
+  .zj-today__greeting span { font-size: 10px; }
+  .zj-today__grid {
+    grid-template-areas: "letter" "map" "panel";
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .zj-letter { padding: 20px 18px 18px; }
+  .zj-letter h1 { font-size: 27px; }
+  .zj-today__skeleton { grid-template-columns: 1fr; }
+  .zj-today__skeleton span { min-height: 320px; }
+  .zj-today__skeleton span:last-child { min-height: 420px; }
 }
 </style>

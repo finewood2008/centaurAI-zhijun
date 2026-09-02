@@ -47,7 +47,7 @@ class ReviewRequest(_StrictModel):
     editedContent: str | None = Field(default=None, max_length=120)
     contextRef: str | None = Field(default=None, max_length=120)
     note: str = Field(default="", max_length=500)
-    surface: Literal["conversation", "ontology_page", "onboarding"] = "ontology_page"
+    surface: Literal["conversation", "ontology_page", "onboarding", "today"] = "ontology_page"
     conversationId: str | None = Field(default=None, max_length=64)
     messageId: str | None = Field(default=None, max_length=64)
 
