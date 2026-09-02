@@ -14,6 +14,7 @@ import {
 import { formatDate } from '@/shared/format'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import DecisionStepper from '@/components/growth/DecisionStepper.vue'
+import JudgmentTimeline from '@/components/growth/JudgmentTimeline.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import { useToast } from '@/composables/useToast'
@@ -343,6 +344,19 @@ const latestReviewed = computed(() => {
   return reviewed.sort((a, b) => String(b.review?.createdAt ?? '').localeCompare(String(a.review?.createdAt ?? '')))[0]
 })
 
+// 时间线点了某个判断：滚到卡片并高亮 1.5 秒
+const highlightedId = ref('')
+let highlightTimer: ReturnType<typeof setTimeout> | null = null
+async function focusDecision(decisionId: string) {
+  highlightedId.value = decisionId
+  await nextTick()
+  document.getElementById(`decision-${decisionId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (highlightTimer) clearTimeout(highlightTimer)
+  highlightTimer = setTimeout(() => {
+    if (highlightedId.value === decisionId) highlightedId.value = ''
+  }, 1500)
+}
+
 function statusLabel(status: GrowthDecisionStatus): string {
   if (status === 'open') return '待观察结果'
   if (status === 'outcome_recorded') return '待复盘'
@@ -394,6 +408,8 @@ onMounted(async () => {
       <div class="form-actions"><BaseButton variant="secondary" :disabled="decisionSaving" @click="showDecisionForm = false">取消</BaseButton><BaseButton type="submit" variant="primary" :loading="decisionSaving">确认记录</BaseButton></div>
     </form>
 
+    <JudgmentTimeline v-if="decisions.length" :decisions="decisions" :selected-id="highlightedId || null" @select="focusDecision" />
+
     <section class="board-section" aria-labelledby="decisions-heading">
       <div class="section-head">
         <div class="growth-panel__title"><span class="panel-icon"><Target :size="19" aria-hidden="true" /></span><div><h2 id="decisions-heading">判断簿</h2><p>把事后解释变成当时可核对的记录。</p></div></div>
@@ -406,7 +422,7 @@ onMounted(async () => {
         <section v-for="column in boardColumns" :key="column.key" class="board__column" :aria-labelledby="`column-${column.key}`">
           <header class="board__column-head"><h3 :id="`column-${column.key}`">{{ column.title }}</h3><small>{{ column.hint }} · {{ column.items.length }}</small></header>
           <p v-if="!column.items.length" class="board__empty">{{ column.empty }}</p>
-          <article v-for="decision in column.items" :id="`decision-${decision.id}`" :key="decision.id" class="decision-card" :class="{ 'is-overdue': isOverdue(decision) }">
+          <article v-for="decision in column.items" :id="`decision-${decision.id}`" :key="decision.id" class="decision-card" :class="{ 'is-overdue': isOverdue(decision), 'is-highlighted': highlightedId === decision.id }">
             <div class="decision-card__head"><h4>{{ decision.title }}</h4><span v-if="isOverdue(decision)" class="overdue-tag">已逾期</span></div>
             <DecisionStepper :status="decision.status" />
             <p class="decision-context" :title="decision.context">{{ decision.context }}</p>
@@ -496,7 +512,7 @@ onMounted(async () => {
 .board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}
 .board__column-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 4px 4px}.board__column-head h3{margin:0;font-size:15px}.board__column-head small{color:var(--ws-text-secondary-color);font-size:11px}
 .board__empty{margin:0;padding:18px 8px;border:1px dashed var(--ws-border-color);border-radius:var(--ws-radius);color:var(--ws-text-secondary-color);font-size:12px;text-align:center}
-.decision-card{display:grid;gap:9px;padding:13px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.decision-card.is-overdue{border-color:rgba(166,69,46,.45)}
+.decision-card{display:grid;gap:9px;padding:13px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.decision-card.is-overdue{border-color:rgba(166,69,46,.45)}.decision-card.is-highlighted{outline:2px solid var(--ws-primary-color,#a6452e);outline-offset:2px;transition:outline-color .3s}
 .decision-card__head{align-items:flex-start;gap:8px}.decision-card__head h4{margin:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
 .overdue-tag{flex:none;padding:2px 7px;border-radius:999px;background:rgba(166,69,46,.1);color:var(--ws-primary-color);font-size:11px;font-weight:650}
 .decision-context{margin:0;color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -127,6 +127,12 @@ class TurnSseTests(unittest.TestCase):
         self.assertIn("【你告诉我的】我在做远川项目", reply)
         receipt = self.client.get(f"/api/mindos/conversations/{conv['id']}/messages/{events[0][1]['messageId']}/receipt").json()
         self.assertIn(told_id, receipt["confirmedClaimIds"])
+        # 刷新后历史回复也带出处（由回执还原）
+        history = self.client.get(f"/api/mindos/conversations/{conv['id']}").json()["messages"]
+        last_reply = [m for m in history if m["role"] == "assistant"][-1]
+        self.assertTrue(last_reply["provenance"]["fromReceipt"])
+        self.assertIn(told_id, [c["id"] for c in last_reply["provenance"]["confirmedClaims"]])
+        self.assertEqual(last_reply["provenance"]["confirmedClaims"][0]["content"], "我在做远川项目，压力很大")
 
         retract = self.client.post(f"/api/mindos/ontology/claims/{told_id}/review", json={"action": "retract", "surface": "ontology_page"})
         self.assertEqual(retract.status_code, 200)

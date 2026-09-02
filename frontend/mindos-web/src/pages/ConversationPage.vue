@@ -237,7 +237,9 @@ async function loadConversations() {
 }
 
 function toUi(m: Message): UiMessage {
-  return reactive({ ...m, provenance: null, turnMeta: null, candidates: [], streaming: false }) as UiMessage
+  // 历史回复：用后端由回执还原的出处播种，让旧回复也能展示出处条与出处小图；直播的 SSE provenance 会覆盖它。
+  const seeded = m.role === 'assistant' && m.provenance ? (m.provenance as ProvenanceEvent) : null
+  return reactive({ ...m, provenance: seeded, turnMeta: null, candidates: [], streaming: false }) as UiMessage
 }
 
 async function loadConversation(id: string) {

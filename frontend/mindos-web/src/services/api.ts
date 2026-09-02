@@ -1444,6 +1444,8 @@ export interface Message {
   model?: string | null
   external?: boolean
   meta?: Record<string, unknown>
+  // 历史回复：后端由本轮回执还原的出处（与 SSE provenance 同形，多 fromReceipt / channel）
+  provenance?: (ProvenanceEvent & { fromReceipt?: boolean; channel?: string }) | null
   createdAt: string
 }
 

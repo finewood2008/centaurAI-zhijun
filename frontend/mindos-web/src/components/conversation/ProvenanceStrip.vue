@@ -7,9 +7,10 @@ import type { ProvenanceEvent, TurnMetaEvent } from '@/services/api'
 import { sectionLabel } from '@/shared/ontology'
 import { confirmedFraction } from '@/shared/selfmap'
 import RingGlyph from '@/components/ui/RingGlyph.vue'
+import ProvenanceGraph from '@/components/conversation/ProvenanceGraph.vue'
 
 const props = defineProps<{
-  provenance: ProvenanceEvent
+  provenance: ProvenanceEvent & { fromReceipt?: boolean }
   meta?: TurnMetaEvent | null
 }>()
 
@@ -41,16 +42,19 @@ const channel = computed(() => {
     <button
       type="button"
       class="zj-prov__toggle"
+      data-testid="provenance-toggle"
       :aria-expanded="open"
       @click="open = !open"
     >
       <RingGlyph :fraction="fraction" :size="14" />
       <span class="zj-prov__lead">依据</span>
+      <span v-if="provenance.fromReceipt" class="zj-prov__receipt" title="由本轮回执还原">（回执）</span>
       <span class="zj-prov__summary">{{ summary }}</span>
       <span v-if="channel" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ meta?.external ? '外部模型' : (meta?.provider === 'fake' ? '演示模型' : '本地模型') }}</span>
       <component :is="open ? ChevronUp : ChevronDown" :size="14" aria-hidden="true" />
     </button>
     <div v-if="open" class="zj-prov__body">
+      <ProvenanceGraph :provenance="provenance" />
       <p v-if="channel" class="zj-prov__line">{{ channel }}</p>
       <p v-if="provenance.charterVersion" class="zj-prov__line">参考了人生章程第 {{ provenance.charterVersion }} 版。</p>
       <section v-if="provenance.confirmedClaims.length" class="zj-prov__group">
@@ -109,6 +113,11 @@ const channel = computed(() => {
 .zj-prov__toggle:hover {
   border-color: var(--ws-border-color, #d8d3c8);
 }
+.zj-prov__receipt {
+  font-size: 11px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+
 .zj-prov__lead {
   font-family: var(--ws-font-display, serif);
   font-weight: 600;

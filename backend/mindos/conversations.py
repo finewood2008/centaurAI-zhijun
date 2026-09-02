@@ -98,12 +98,51 @@ def list_conversations(limit: int = Query(50, ge=1, le=200)):
     return {"items": items, "total": len(items)}
 
 
+def _provenance_from_receipt(receipt: dict | None) -> dict | None:
+    """把落库的出设备回执还原成前端出处条需要的结构（刷新后历史回复也有出处）。"""
+    if not receipt:
+        return None
+    from .stores.ontology_store import OntologyStore
+
+    onto = OntologyStore.instance()
+
+    def _briefs(ids: list[str]) -> list[dict]:
+        items = []
+        for claim_id in ids:
+            claim = onto.get_claim(claim_id, with_evidence=False)
+            if claim is None:
+                continue
+            items.append({"id": claim["id"], "content": claim["content"], "section": claim["section"], "layer": claim["layer"], "trustState": claim["trustState"]})
+        return items
+
+    materials = []
+    for key in receipt.get("materialChunkKeys") or []:
+        material_id = str(key).split("::", 1)[0]
+        materials.append({"materialId": material_id, "title": material_id, "chunkKey": key})
+    return {
+        "confirmedClaims": _briefs(receipt.get("confirmedClaimIds") or []),
+        "workingClaims": _briefs(receipt.get("workingClaimIds") or []),
+        "materials": materials,
+        "retractedNotices": int(receipt.get("retractedNoticeCount") or 0),
+        "charterVersion": None,
+        "promptChars": int(receipt.get("promptChars") or 0),
+        "channel": "external" if receipt.get("external") else "local",
+        "fromReceipt": True,
+    }
+
+
 def get_conversation(conversation_id: str):
     store = _store()
     conversation = store.get_conversation(conversation_id)
     if conversation is None:
         raise _error(404, "CONVERSATION_NOT_FOUND", "会话不存在")
-    payload = {"conversation": conversation, "messages": store.list_messages(conversation_id)}
+    messages = store.list_messages(conversation_id)
+    for message in messages:
+        if message["role"] == "assistant":
+            provenance = _provenance_from_receipt(store.get_receipt(message["id"]))
+            if provenance is not None:
+                message["provenance"] = provenance
+    payload = {"conversation": conversation, "messages": messages}
     draft = store.get_draft(conversation_id)
     if draft is not None:
         payload["decisionDraft"] = draft

@@ -147,6 +147,15 @@ async function loadMap() {
     if (!mapGate.isCurrent(session)) return
     mapItems.value = res.items
     if (selected.value) selected.value = res.items.find((c) => c.id === selected.value?.id) ?? null
+    // 从出处小图跳过来：?claim=<id> → 在全景里选中这条理解并打开详情
+    if (pendingClaimId.value) {
+      const found = res.items.find((c) => c.id === pendingClaimId.value)
+      if (found) {
+        selected.value = found
+        focusSection.value = found.section
+      }
+      pendingClaimId.value = ''
+    }
   } catch (err) {
     if (!mapGate.isCurrent(session)) return
     mapError.value = friendlyError(err, '本体全景加载失败')
@@ -251,7 +260,14 @@ async function submitCreate() {
   }
 }
 
+const pendingClaimId = ref('')
+
 onMounted(() => {
+  const claimQuery = typeof route.query.claim === 'string' ? route.query.claim : ''
+  if (claimQuery) {
+    pendingClaimId.value = claimQuery
+    if (!showMap.value) setView('map')
+  }
   void loadStats()
   void load()
   if (showMap.value) void loadMap()
