@@ -191,3 +191,82 @@ export function isDueByToday(iso: string | null | undefined, now: Date = new Dat
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).valueOf()
   return t <= end
 }
+
+// ---- 今日首屏（纯函数，可在 node 下测试）
+
+const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+
+/** 问候行：「阿远，9月3日 周三。」；没有称呼就只写日期。 */
+export function greetingLine(name: string | null | undefined, now: Date = new Date()): string {
+  const date = `${now.getMonth() + 1}月${now.getDate()}日 ${WEEKDAYS[now.getDay()]}`
+  const who = (name ?? '').trim()
+  return who ? `${who}，${date}。` : `${date}。`
+}
+
+/** 问候下面那行灰字：只列非零项；全零写「今天没有要催你的事。」 */
+export function todaySummaryLine(input: {
+  dueReview?: number | null
+  inbox?: number | null
+  dueCommitments?: number | null
+  pendingReviews?: number | null
+  nudges?: number | null
+}): string {
+  const parts: string[] = []
+  const due = input.dueReview ?? 0
+  const inbox = input.inbox ?? 0
+  const commitments = input.dueCommitments ?? 0
+  const reviews = input.pendingReviews ?? 0
+  const nudges = input.nudges ?? 0
+  if (due > 0) parts.push(`有 ${due} 件事到了回访的时候`)
+  if (commitments > 0) parts.push(`${commitments} 个承诺到期了`)
+  if (reviews > 0) parts.push(`${reviews} 个判断记了结果，可以复盘`)
+  if (inbox > 0) parts.push(`${inbox} 条理解等你点头`)
+  // 提醒（张力 / 每周回顾）不属于以上任何一类时，也不能说「没有要催你的事」。
+  if (!parts.length && nudges > 0) parts.push(`有 ${nudges} 件事想和你聊聊`)
+  return parts.length ? parts.join(' · ') : '今天没有要催你的事。'
+}
+
+const NICKNAME_RE = /(?:偏好被称呼为|希望被称呼为|被称呼为|称呼为|叫我|称呼我|喊我|我叫|名叫|自称)\s*「?([一-龥A-Za-z·]{1,8}?)」?(?:就行|就好|吧|即可|，|,|。|；|;|\s|$)/
+
+/** 从「我是谁」分区里已确认的理解中找称呼（「叫我阿远」「偏好被称呼为阿远」）；找不到返回空串。 */
+export function nicknameFromClaims(
+  claims: ReadonlyArray<{ section: string; content: string; trustState?: string; predicate?: string }> | null | undefined,
+): string {
+  if (!claims) return ''
+  const who = claims.filter((c) => c.section === 'who' && (c.trustState ?? 'confirmed') === 'confirmed')
+  for (const c of who) {
+    const m = NICKNAME_RE.exec(c.content || '')
+    if (m && m[1]) return m[1]
+  }
+  return ''
+}
+
+/** 「最近留下的」：有产出（全零不算）的会话，按最近活动排序，最多 max 段。 */
+export function recentOutcomeConversations<T extends { lastMessageAt?: string | null; updatedAt: string; outcomes?: { confirmed?: number; working?: number; decision?: boolean; commitments?: number } | null }>(
+  items: ReadonlyArray<T>,
+  max = 3,
+): T[] {
+  const at = (c: T) => new Date(c.lastMessageAt || c.updatedAt).valueOf() || 0
+  return items
+    .filter((c) => outcomesLine(c.outcomes) !== '')
+    .slice()
+    .sort((a, b) => at(b) - at(a))
+    .slice(0, Math.max(0, max))
+}
+
+/** 相对时间：刚刚 / N 分钟前 / N 小时前 / 昨天 / N 天前 / M月D日（跨年带年份）。 */
+export function relativeTime(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.valueOf())) return ''
+  const diff = now.valueOf() - d.valueOf()
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOf(now) - startOf(d)) / 86_400_000)
+  if (days <= 0) return `${Math.floor(diff / 3_600_000)} 小时前`
+  if (days === 1) return '昨天'
+  if (days < 30) return `${days} 天前`
+  const md = `${d.getMonth() + 1}月${d.getDate()}日`
+  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}年${md}`
+}

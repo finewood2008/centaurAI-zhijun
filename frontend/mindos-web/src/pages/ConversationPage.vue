@@ -3,6 +3,7 @@
 // 流式回复（SSE）→ 出处条 → 抽取候选（轮询 inbox）→ 一键确认写回本体。
 // 切页不截断：卸载时不中断正在进行的流（服务端把这轮生成完并落库），只有用户点「停止」才中断；
 // 卸载后的回调用 alive 守卫，不再碰已销毁的状态。
+// 页头只有模型名与「还在整理 N 件事」；提醒、下一步等都在今日页。支持的 query：?say=（话头放进输入框，可配 ?deliberate=1 打开商量开关）与 ?onboarding=1（直接进建档态）。
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronUp, Sparkles } from 'lucide-vue-next'
@@ -31,7 +32,6 @@ import {
   type DecisionDraftEvent,
   type ExtractionEvent,
   type GrowthDecision,
-  type GrowthToday,
   type Message,
   type MessageDoneEvent,
   type OntologyStats,
@@ -48,25 +48,14 @@ import { useToast } from '@/composables/useToast'
 import { createSessionGate } from '@/composables/sessionGate'
 import { reviewNote } from '@/shared/ontology'
 import { MODEL_UNAVAILABLE_TEXT, channelShort, modelUnavailable } from '@/shared/model'
-import {
-  EXTRACTION_STILL_WORKING,
-  ONBOARDING_TOTAL_TURNS,
-  buildNextSteps,
-  extractionSkipNote,
-  hasConversationOutcomes,
-  headerAggregateItems,
-  isDueByToday,
-  onboardingUserTurns,
-} from '@/shared/labels'
+import { EXTRACTION_STILL_WORKING, ONBOARDING_TOTAL_TURNS, extractionSkipNote, hasConversationOutcomes, onboardingUserTurns } from '@/shared/labels'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
 import ClaimCandidateChip from '@/components/conversation/ClaimCandidateChip.vue'
 import ProvenanceStrip from '@/components/conversation/ProvenanceStrip.vue'
 import Composer from '@/components/conversation/Composer.vue'
 import ConversationList from '@/components/conversation/ConversationList.vue'
 import LiveObjectPanel from '@/components/conversation/LiveObjectPanel.vue'
-import NudgeStrip from '@/components/conversation/NudgeStrip.vue'
 import OutcomesCard from '@/components/conversation/OutcomesCard.vue'
-import NextStepsPanel from '@/components/conversation/NextStepsPanel.vue'
 import ReviewOutcomePanel from '@/components/conversation/ReviewOutcomePanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
@@ -107,7 +96,6 @@ const deleting = ref(false)
 const reviewBusy = reactive<Record<string, boolean>>({})
 const listRef = ref<HTMLElement | null>(null)
 const composerRef = ref<InstanceType<typeof Composer> | null>(null)
-const nudgeRef = ref<InstanceType<typeof NudgeStrip> | null>(null)
 
 // P2：判断草稿（商量模式）与回访会话
 const draft = ref<DecisionDraft | null>(null)
@@ -124,9 +112,8 @@ const outcomeError = ref('')
 const reviewSaving = ref(false)
 const reviewSaveError = ref('')
 
-// 页头聚合行与空白态「下一步」的数据：判断页的今日概况 + 到期的承诺（取不到就当没有）
-const growthToday = ref<GrowthToday | null>(null)
-const dueCommitments = ref<Claim[]>([])
+// ?onboarding=1：从今日页过来直接进建档态；即使统计说已有本体也允许开始建档
+const forceOnboarding = ref(false)
 // 「这段对话留下的」：本会话这次聊完（message_done 之后）拉到的产出；切会话清空
 const turnOutcomes = ref<ConversationOutcomes | null>(null)
 
@@ -238,7 +225,6 @@ async function onConfirmDraft(payload: DecisionDraftConfirmPayload) {
     })
     toast({ type: 'success', message: '已记进判断簿，到期知君会来回访' })
     void refreshOutcomes(current.value.id, true)
-    void loadGrowthToday()
     await scrollToBottom()
   } catch (err) {
     if (err instanceof ApiError && err.status === 400) draftError.value = err.message
@@ -305,9 +291,7 @@ async function onRecordOutcome(payload: { result: string; notes: string }) {
     decision.value = res.decision
     pushNote(`你记下了结果：${payload.result.slice(0, 200)}`, { kind: 'outcome_recorded', decisionId: res.decision.id })
     toast({ type: 'success', message: '结果已记下，接着在右边复盘' })
-    nudgeRef.value?.reload()
     void refreshOutcomes(current.value.id, true)
-    void loadGrowthToday()
     await scrollToBottom()
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) outcomeError.value = '这个判断已经记过结果'
@@ -327,9 +311,7 @@ async function onSubmitReview(payload: { reflection: string; lessons: string[]; 
     if (!alive) return
     decision.value = result.decision
     pushNote('复盘已记下，经验会变成你原则的候选', { kind: 'review_recorded', decisionId: d.id, reviewId: result.review.id })
-    nudgeRef.value?.reload()
     void refreshOutcomes(current.value.id, true)
-    void loadGrowthToday()
     await scrollToBottom()
   } catch (err) {
     if (!alive) return
@@ -361,51 +343,6 @@ async function refreshOutcomes(conversationId: string, showCard = false) {
 
 const showOutcomesCard = computed(() => !streaming.value && !!current.value && hasConversationOutcomes(turnOutcomes.value))
 
-async function loadGrowthToday() {
-  try {
-    const next = await api.getGrowthToday()
-    if (!alive) return
-    growthToday.value = next
-  } catch {
-    if (!alive) return
-    growthToday.value = null
-  }
-}
-
-async function loadDueCommitments() {
-  try {
-    const res = await listClaims({ trust: ['confirmed', 'working'], limit: 500 })
-    if (!alive) return
-    dueCommitments.value = res.items.filter((c) => c.predicate === 'committed_to' && isDueByToday(c.validTo))
-  } catch {
-    if (!alive) return
-    dueCommitments.value = []
-  }
-}
-
-// 页头标题下那行灰字：待确认 / 待回访（逾期）/ 待复盘 / 还在整理；只列非零项，无红点无徽章
-const headerItems = computed(() => {
-  const g = growthToday.value?.stats
-  return headerAggregateItems({
-    inbox: stats.value?.inbox,
-    dueReview: (g?.dueSoonDecisions ?? 0) + (g?.overdueDecisions ?? 0),
-    overdue: g?.overdueDecisions,
-    pendingReviews: g?.pendingReviews,
-    pendingJobs: status.value?.pendingJobs,
-  })
-})
-
-// 空白态「下一步」：最多三条
-const nextSteps = computed(() => {
-  const g = growthToday.value
-  return buildNextSteps({
-    overdue: (g?.dueDecisions ?? []).filter((d) => d.dueState === 'overdue').map((d) => ({ id: d.id, title: d.title })),
-    pendingReviews: (g?.pendingReviews ?? []).map((d) => ({ id: d.id, title: d.title })),
-    dueCommitments: dueCommitments.value.map((c) => ({ id: c.id, content: c.content })),
-    inbox: stats.value?.inbox,
-  })
-})
-
 const loadGate = createSessionGate()
 const pollGate = createSessionGate()
 const seenClaimIds = new Set<string>()
@@ -422,7 +359,10 @@ const currentId = computed(() => {
 const onboardingConversation = computed(() => conversations.value.find((c) => c.mode === 'onboarding') ?? null)
 const landingReady = computed(() => !conversationsLoading.value && statsLoaded.value)
 const showIntro = computed(
-  () => !currentId.value && landingReady.value && !onboardingConversation.value && (stats.value === null || !stats.value.hasOntology),
+  () =>
+    !currentId.value &&
+    landingReady.value &&
+    (forceOnboarding.value || (!onboardingConversation.value && (stats.value === null || !stats.value.hasOntology))),
 )
 const showBlank = computed(() => !currentId.value && !messages.value.length && landingReady.value && !showIntro.value)
 // 没聊完的建档会话（用户轮数 < 8）：空白态给一张「继续建档」卡
@@ -458,15 +398,30 @@ function useStarter(s: Starter) {
   composerRef.value?.setText(s.text)
 }
 
-// 从提醒条 / 其它页带着话头过来：?say=… → 放进输入框，然后把 query 清掉
+// 从今日页 / 其它页带着话头过来：?say=… → 放进输入框（?deliberate=1 时同时打开「商量」开关），然后把 query 清掉
 watch(
   () => route.query.say,
   (v) => {
     if (typeof v !== 'string' || !v) return
+    const d = route.query.deliberate
+    const deliberate = d === '1' || d === 'true'
     void nextTick(() => {
+      composerRef.value?.setDeliberate(deliberate)
       composerRef.value?.setText(v)
       void router.replace({ path: route.path, query: {} })
     })
+  },
+  { immediate: true },
+)
+
+// 从今日页点「开始建档」过来：?onboarding=1 → 直接进 intro / 建档态（已有本体也允许），然后把 query 清掉；
+// 一旦进了某个会话就不再强制
+watch(
+  () => route.query.onboarding,
+  (v) => {
+    if (v !== '1' && v !== 'true') return
+    forceOnboarding.value = true
+    void router.replace({ path: route.path, query: {} })
   },
   { immediate: true },
 )
@@ -569,7 +524,7 @@ async function loadConversation(id: string) {
     if (!loadGate.isCurrent(session)) return
     if (err instanceof ApiError && err.status === 404) {
       toast({ type: 'error', message: '会话不存在' })
-      router.replace('/')
+      router.replace('/chat')
       return
     }
     messagesError.value = friendlyError(err, '会话加载失败')
@@ -598,12 +553,8 @@ function resetToLanding() {
   turnOutcomes.value = null
   onboardingStep.value = null
   mapClaims.value = []
-  // 从会话回到空白态：页头聚合行与「下一步」用最新的数据（首次进页由 onMounted 负责，不重复拉）
-  if (mounted) {
-    void loadGrowthToday()
-    void loadDueCommitments()
-    void loadStats()
-  }
+  // 从会话回到空白态：建档入口按最新的统计判断（首次进页由 onMounted 负责，不重复拉）
+  if (mounted) void loadStats()
   newClaimIds.value = new Set()
   mapPollGate.invalidate()
 }
@@ -611,6 +562,8 @@ function resetToLanding() {
 watch(
   currentId,
   (id) => {
+    // 进了任何一个会话（含刚从强制建档态新建的），?onboarding=1 的强制就结束
+    if (id) forceOnboarding.value = false
     if (streaming.value && id && skipLoadFor === id) {
       skipLoadFor = null
       return
@@ -635,7 +588,7 @@ function selectConversation(id: string) {
 
 function newConversation() {
   listOpen.value = false
-  if (currentId.value) router.push('/')
+  if (currentId.value) router.push('/chat')
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -650,7 +603,7 @@ async function confirmDelete() {
   try {
     await deleteConversation(target.id)
     conversations.value = conversations.value.filter((c) => c.id !== target.id)
-    if (currentId.value === target.id) router.replace('/')
+    if (currentId.value === target.id) router.replace('/chat')
     toast({ type: 'success', message: '会话已删除' })
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '删除失败') })
@@ -965,8 +918,6 @@ onMounted(() => {
   void loadStats()
   void seedSeenClaims()
   void loadConversations()
-  void loadGrowthToday()
-  void loadDueCommitments()
 })
 
 onBeforeUnmount(() => {
@@ -1007,18 +958,15 @@ onBeforeUnmount(() => {
           <p class="zj-page__status">
             <RouterLink v-if="modelBlocked" to="/settings" class="zj-page__model-link">{{ MODEL_UNAVAILABLE_TEXT }} · 去偏好</RouterLink>
             <span v-else-if="statusLine">{{ statusLine }}</span>
-            <template v-for="(it, i) in headerItems" :key="it.key">
-              <span v-if="i > 0 || modelBlocked || statusLine" class="zj-page__dot" aria-hidden="true">·</span>
-              <RouterLink v-if="it.to" :to="it.to" class="zj-page__agg" :data-testid="`head-${it.key}`">{{ it.text }}</RouterLink>
-              <span v-else class="zj-page__pending" :data-testid="`head-${it.key}`">{{ it.text }}</span>
+            <template v-if="pendingJobs > 0">
+              <span v-if="modelBlocked || statusLine" class="zj-page__dot" aria-hidden="true">·</span>
+              <span class="zj-page__pending" data-testid="head-pending">还在整理 {{ pendingJobs }} 件事</span>
             </template>
             <span v-if="isReview" class="zj-seal zj-seal--accent">回访</span>
             <span v-if="status && !status.workerRunning" class="zj-seal zj-seal--warning" title="知君暂时不会从对话里提出新的理解">整理暂停</span>
           </p>
         </div>
       </header>
-
-      <NudgeStrip ref="nudgeRef" class="zj-page__nudges" @say="(t) => composerRef?.setText(t)" />
 
       <div class="zj-page__body">
       <div class="zj-page__stream">
@@ -1030,6 +978,9 @@ onBeforeUnmount(() => {
           <OntologyExplainer class="zj-intro__explainer" compact />
           <p class="zj-intro__trust">原件留在设备内 · 只有经过你确认的理解才会留下</p>
           <BaseButton variant="primary" :loading="streaming" @click="startOnboarding">开始第一次对话</BaseButton>
+          <button v-if="pendingOnboarding" type="button" class="zj-intro__resume" data-testid="intro-resume-onboarding" @click="selectConversation(pendingOnboarding.id)">
+            继续上次的建档 · 还差 {{ pendingOnboarding.remaining }} 问
+          </button>
           <p class="zj-intro__hint">也可以直接在下面打字，知君会从认识你开始。</p>
         </div>
 
@@ -1040,14 +991,13 @@ onBeforeUnmount(() => {
             <span class="zj-blank__resume-title">继续建档 · 还差 {{ pendingOnboarding.remaining }} 问</span>
             <span class="zj-blank__resume-desc">上次认识你的对话还没聊完，接着聊，本体图会继续亮起来。</span>
           </button>
-          <NextStepsPanel :items="nextSteps" @say="(t) => composerRef?.setText(t)" />
           <div class="zj-blank__cards" role="group" aria-label="起个头">
             <button v-for="s in STARTERS" :key="s.title" type="button" class="zj-blank__card" @click="useStarter(s)">
               <span class="zj-blank__card-title">{{ s.title }}</span>
               <span class="zj-blank__card-desc">{{ s.desc }}</span>
             </button>
           </div>
-          <p class="zj-blank__hint">知君会基于你确认过的理解来回应，并标出哪些是你说过的、哪些只是它的推测。</p>
+          <p class="zj-blank__hint">回应基于你确认过的理解，会标出哪些是你说过的、哪些只是推测。</p>
         </div>
 
         <div v-if="messagesLoading" class="loading-state">正在打开会话…</div>
@@ -1217,15 +1167,6 @@ onBeforeUnmount(() => {
 .zj-page__dot {
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
-.zj-page__agg {
-  color: var(--ws-text-secondary-color, #686b66);
-  text-decoration: none;
-  border-bottom: 1px dotted var(--ws-border-color, #d8d3c8);
-}
-.zj-page__agg:hover {
-  color: var(--ws-primary-color, #a6452e);
-  border-bottom-color: currentColor;
-}
 .zj-page__model-link {
   color: var(--ws-primary-color, #a6452e);
   text-decoration: underline;
@@ -1244,9 +1185,6 @@ onBeforeUnmount(() => {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
-}
-.zj-page__nudges {
-  margin: 0 4px 10px;
 }
 .zj-page__body {
   display: flex;
@@ -1405,6 +1343,16 @@ onBeforeUnmount(() => {
 .zj-intro__hint {
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
+.zj-intro__resume {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--ws-primary-color, #a6452e);
+  text-decoration: underline;
+  cursor: pointer;
+}
 .zj-blank__resume {
   display: flex;
   flex-direction: column;
@@ -1448,9 +1396,9 @@ onBeforeUnmount(() => {
 }
 .zj-blank__hint {
   margin: 0;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.7;
-  color: var(--ws-text-secondary-color, #686b66);
+  color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-blank__cards {
   display: grid;

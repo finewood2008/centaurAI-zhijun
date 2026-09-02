@@ -16,14 +16,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = resolve(__dirname, 'shots')
 mkdirSync(OUT_DIR, { recursive: true })
 
-// 核心页面路由（与 src/router/index.ts 一致）：四个一级入口 + 两个隐藏路由
+// 核心页面路由（与 src/router/index.ts 一致）：五个一级入口 + 两个隐藏路由
 const ROUTES = [
-  { name: 'conversation', path: '/', title: '对话' },
+  { name: 'today', path: '/', title: '今日' },
+  { name: 'conversation', path: '/chat', title: '对话' },
   { name: 'ontology', path: '/me', title: '我的本体' },
   { name: 'judgments', path: '/judgments', title: '判断' },
   { name: 'data', path: '/data', title: '资料与边界' },
   { name: 'materials', path: '/materials', title: '原材料' },
-  { name: 'settings', path: '/settings', title: '设置' },
+  { name: 'settings', path: '/settings', title: '偏好' },
 ]
 
 // 任务卡要求 390 / 768 / 1024 / 1440 四档视口

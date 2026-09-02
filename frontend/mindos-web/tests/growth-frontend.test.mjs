@@ -22,11 +22,19 @@ assert.match(api, /charterVersion: number \| null/)
 assert.match(api, /review: GrowthReview \| null/)
 assert.match(api, /todayItems: GrowthTodayItem\[\]/)
 
-// P1 IA：/growth 重定向到 /judgments，由 GrowthPage 承接；/today 与 HomePage 已删除；侧栏四入口以「判断」承接成长闭环
+// IA：/ 是「今日」首屏（TodayPage），/chat 是对话空白态，/c/:id 是具体会话；/growth 重定向到 /judgments，由 GrowthPage 承接；
+// 旧的 HomePage 与 /today 路径不再存在；侧栏五入口，今日在最上
 assert.match(router, /path: '\/growth', redirect: '\/judgments'/)
 assert.match(router, /path: '\/judgments', name: 'judgments', component: \(\) => import\('@\/pages\/GrowthPage\.vue'\), meta: \{ title: '判断' \}/)
-assert.doesNotMatch(router, /\/today|HomePage|title: '今日'/)
+assert.match(router, /path: '\/', name: 'today', component: \(\) => import\('@\/pages\/TodayPage\.vue'\), meta: \{ title: '今日' \}/)
+assert.match(router, /path: '\/chat', name: 'conversation', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\), meta: \{ title: '对话' \}/)
+assert.match(router, /path: '\/c\/:conversationId', name: 'conversation-detail', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\)/)
+assert.doesNotMatch(router, /\/today'|HomePage/)
 assert.equal(existsSync(new URL('../src/pages/HomePage.vue', import.meta.url)), false)
+assert.equal(existsSync(new URL('../src/pages/TodayPage.vue', import.meta.url)), true)
+assert.ok(sidebar.indexOf("label: '今日'") < sidebar.indexOf("label: '对话'"), '侧栏「今日」应在「对话」上方')
+assert.match(sidebar, /to: '\/', label: '今日'/)
+assert.match(sidebar, /to: '\/chat', label: '对话'/)
 assert.match(sidebar, /label: '对话'/)
 assert.match(sidebar, /label: '判断'/)
 assert.match(sidebar, /label: '我的本体'/)
@@ -53,4 +61,4 @@ assert.match(growth, /const saved = await api\.saveGrowthCharter[\s\S]*applyChar
 assert.match(growth, /const created = await api\.createGrowthDecision[\s\S]*decisions\.value = \[created[\s\S]*const updated = await api\.recordGrowthDecisionOutcome[\s\S]*replaceDecision\(updated\)[\s\S]*const result = await api\.createGrowthReview[\s\S]*replaceDecision\(result\.decision\)/)
 assert.doesNotMatch(growth, /fetch\(/)
 
-console.log('growth-frontend: 33 contract checks OK')
+console.log('growth-frontend: 40 contract checks OK')

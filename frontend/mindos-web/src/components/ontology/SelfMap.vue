@@ -252,7 +252,7 @@ const legendOpen = ref(false)
 
     <!-- 空状态动作 -->
     <div v-if="isEmpty" class="zj-map__empty-cta">
-      <RouterLink to="/" class="zj-map__cta">去聊几句</RouterLink>
+      <RouterLink to="/chat" class="zj-map__cta">去聊几句</RouterLink>
     </div>
 
     <!-- 图例（文字承载含义）默认收起；紧凑模式由外层说明 -->

@@ -393,7 +393,7 @@ onBeforeUnmount(() => {
             :description="current === 'inbox' ? '聊几句之后，知君提出的新理解会出现在这里。' : '先去聊几句，或者用「补一条」直接告诉它。'"
           >
             <template #action>
-              <RouterLink to="/" class="zj-me__link">去对话</RouterLink>
+              <RouterLink to="/chat" class="zj-me__link">去对话</RouterLink>
             </template>
           </EmptyState>
           <div v-else class="zj-me__list">

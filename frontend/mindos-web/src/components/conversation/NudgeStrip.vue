@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 今日提醒条：安静。默认只露一条，其余折在「还有 N 条」里；每条都说明「为何现在」。
+// 今日提醒条：安静。默认只露一条，其余折在「还有 N 条」里（今日页传 showAll 全部展开）；每条都说明「为何现在」。
 // 动作回到对话：原则张力 / 承诺到期的主动作把问句放进输入框（emit say），另留「看理解」跳到原位；
 // 判断回访仍开回访会话；每周回顾也是放进输入框。没有「检查」按钮，扫描由后台每小时做。
 import { computed, onMounted, ref } from 'vue'
@@ -12,14 +12,16 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 const router = useRouter()
 const route = useRoute()
 const toast = useToast()
-const emit = defineEmits<{ (e: 'say', text: string): void }>()
+const props = defineProps<{ showAll?: boolean }>()
+// count：加载 / 处理后当前还剩几条，父组件据此决定要不要渲染标题（没有内容整块不渲染）
+const emit = defineEmits<{ (e: 'say', text: string): void; (e: 'count', n: number): void }>()
 
 const items = ref<Nudge[]>([])
 const busy = ref<Record<string, boolean>>({})
 const expanded = ref(false)
 const silenceTarget = ref<Nudge | null>(null)
 
-const visible = computed(() => (expanded.value ? items.value : items.value.slice(0, 1)))
+const visible = computed(() => (expanded.value || props.showAll ? items.value : items.value.slice(0, 1)))
 const hiddenCount = computed(() => Math.max(0, items.value.length - visible.value.length))
 
 async function load() {
@@ -29,6 +31,7 @@ async function load() {
   } catch {
     items.value = []
   }
+  emit('count', items.value.length)
 }
 
 async function scan() {
@@ -42,6 +45,7 @@ async function scan() {
 
 function remove(id: string) {
   items.value = items.value.filter((i) => i.id !== id)
+  emit('count', items.value.length)
 }
 
 function primaryLabel(n: Nudge): string {
@@ -85,7 +89,7 @@ function say(n: Nudge) {
   const text = sayText(n)
   // 在对话页：由父组件把话头放进输入框；不在对话页时带着话头回到对话页
   if (route.name === 'conversation' || route.name === 'conversation-detail') emit('say', text)
-  else router.push({ path: '/', query: { say: text } })
+  else router.push({ path: '/chat', query: { say: text } })
 }
 
 async function primary(n: Nudge) {
@@ -174,7 +178,7 @@ defineExpose({ reload: load, scan })
       </div>
     </article>
     <button v-if="hiddenCount > 0" type="button" class="zj-nudges__more" @click="expanded = true">还有 {{ hiddenCount }} 条</button>
-    <button v-else-if="expanded && items.length > 1" type="button" class="zj-nudges__more" @click="expanded = false">收起</button>
+    <button v-else-if="expanded && !showAll && items.length > 1" type="button" class="zj-nudges__more" @click="expanded = false">收起</button>
 
     <ConfirmDialog
       :open="!!silenceTarget"

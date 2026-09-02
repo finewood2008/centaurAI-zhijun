@@ -72,7 +72,7 @@ async function doPurge() {
     purgeOpen.value = false
     const conv = r.conversations ? `，${r.conversations.conversations} 段对话` : ''
     toast({ type: 'success', message: `已删除 ${r.ontology.claims} 条理解、${r.ontology.entities} 个实体${conv}` })
-    router.push('/')
+    router.push('/chat')
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '删除失败' })
   } finally {

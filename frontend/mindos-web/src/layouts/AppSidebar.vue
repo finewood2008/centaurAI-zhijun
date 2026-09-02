@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 侧栏导航：四个一级入口 对话 / 我的本体 / 判断 / 资料与边界；底部设置。
+// 侧栏导航：五个一级入口 今日 / 对话 / 我的本体 / 判断 / 资料与边界；底部偏好。
 // 桌面 ≥768px 常驻（768-1199 折叠为图标栏），<768px 转为抽屉（由 open 控制）。
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -11,6 +11,7 @@ import {
   MessageCircle,
   Scale,
   Settings,
+  Sun,
   UserRound,
   X,
   type LucideIcon,
@@ -21,6 +22,8 @@ interface NavItem {
   label: string
   icon: LucideIcon
   exact?: boolean
+  // 额外算作本项激活的路径前缀（对话既是 /chat 也是 /c/:id）
+  alsoPrefix?: string
 }
 
 interface NavGroup {
@@ -32,7 +35,8 @@ const groups: NavGroup[] = [
   {
     title: '知君',
     items: [
-      { to: '/', label: '对话', icon: MessageCircle, exact: true },
+      { to: '/', label: '今日', icon: Sun, exact: true },
+      { to: '/chat', label: '对话', icon: MessageCircle, alsoPrefix: '/c/' },
       { to: '/me', label: '我的本体', icon: UserRound },
       { to: '/judgments', label: '判断', icon: Scale },
       { to: '/data', label: '资料与边界', icon: Database },
@@ -132,8 +136,8 @@ watch(
 onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown))
 
 function isActive(item: NavItem): boolean {
-  // 「对话」既是 / 也是 /c/:id
-  if (item.exact) return currentPath.value === item.to || currentPath.value.startsWith('/c/')
+  if (item.exact) return currentPath.value === item.to
+  if (item.alsoPrefix && currentPath.value.startsWith(item.alsoPrefix)) return true
   return currentPath.value === item.to || currentPath.value.startsWith(`${item.to}/`)
 }
 </script>
