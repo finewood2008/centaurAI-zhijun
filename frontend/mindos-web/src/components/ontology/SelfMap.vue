@@ -115,6 +115,12 @@ function isNew(id: string): boolean {
 
 // ---- 提示与选择
 const tip = ref<Node | null>(null)
+// 默认态不写对象名，只在 hover / 选中 / 聚焦分区时露出，图面才安静
+function showLabel(node: Node): boolean {
+  if (tip.value?.claim.id === node.claim.id) return true
+  if (props.selectedId === node.claim.id) return true
+  return !!props.focusSection && props.focusSection === node.claim.section
+}
 function showTip(node: Node) {
   tip.value = node
 }
@@ -136,6 +142,8 @@ const tipStyle = computed(() => {
 })
 
 const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, ...LAYER_META[key] }))
+// 图例默认收起，想看再点
+const legendOpen = ref(false)
 </script>
 
 <template>
@@ -163,19 +171,16 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
             @keydown.enter.prevent="toggleSection(s.key)"
             @keydown.space.prevent="toggleSection(s.key)"
           >
-            <text :x="s.lx" :y="s.ly" :text-anchor="s.anchor" class="zj-map__sector-title">{{ s.label }}</text>
-            <text :x="s.lx" :y="s.ly + 15" :text-anchor="s.anchor" class="zj-map__sector-count">{{ s.confirmed }} / {{ s.working }}</text>
+            <text :x="s.lx" :y="s.ly + 5" :text-anchor="s.anchor" class="zj-map__sector-title">{{ s.label }}</text>
           </g>
         </g>
       </g>
 
-      <!-- 三个环：已确认 / 需重申 / 信任边界 -->
+      <!-- 三个环：已确认 / 需重申 / 信任边界；只给信任边界配文字，另两环的含义在空状态三句与图例里 -->
       <g class="zj-map__rings" aria-hidden="true">
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.core" fill="none" stroke="#1D211F" stroke-width="1.2" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.reaffirm" fill="none" stroke="#8B8E88" stroke-width="1.2" stroke-dasharray="1.5 5" stroke-linecap="round" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.boundary" fill="none" stroke="#A6452E" stroke-width="1.5" stroke-dasharray="7 5" />
-        <text v-if="!compact" :x="CENTER" :y="CENTER - RINGS.core - 6" text-anchor="middle" class="zj-map__ring-label">已确认 · 进入本体</text>
-        <text v-if="!compact" :x="CENTER" :y="CENTER - RINGS.reaffirm - 6" text-anchor="middle" class="zj-map__ring-label">需重申 · 超过 60 天没再提</text>
         <text :x="CENTER" :y="CENTER - RINGS.boundary - 6" text-anchor="middle" class="zj-map__ring-label zj-map__ring-label--boundary">
           {{ compact ? '朱砂线外：知君的猜测，等你点头' : '信任边界 · 外面是知君的猜测，等你点头才进来' }}<tspan v-if="inboxCount > 0" class="zj-map__ring-inbox">　● {{ inboxCount }} 条等你点头</tspan>
         </text>
@@ -213,7 +218,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
             :y2="polar(n.angle, n.radius + n.size + 6).y"
             class="zj-map__tick"
           />
-          <text v-if="n.label" :x="n.x + n.size + 3" :y="n.y + 3.5" class="zj-map__obj">{{ n.label }}</text>
+          <text v-if="n.label && showLabel(n)" :x="n.x + n.size + 3" :y="n.y + 3.5" class="zj-map__obj">{{ n.label }}</text>
           <text v-if="n.band === 'challenged'" :x="n.x" :y="n.y - n.size - 4" text-anchor="middle" class="zj-map__conflict">有矛盾</text>
         </g>
       </g>
@@ -250,8 +255,11 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
       <RouterLink to="/" class="zj-map__cta">去聊几句</RouterLink>
     </div>
 
-    <!-- 图例（文字承载含义）；紧凑模式由外层说明 -->
-    <dl v-if="!compact" class="zj-map__legend">
+    <!-- 图例（文字承载含义）默认收起；紧凑模式由外层说明 -->
+    <div v-if="!compact" class="zj-map__legend-bar">
+      <button type="button" class="zj-map__legend-toggle" :aria-expanded="legendOpen" aria-controls="zj-map-legend" @click="legendOpen = !legendOpen">{{ legendOpen ? '收起图例' : '图例' }}</button>
+    </div>
+    <dl v-if="!compact && legendOpen" id="zj-map-legend" class="zj-map__legend">
       <div v-for="l in legendLayers" :key="l.key" class="zj-map__legend-item">
         <dt><span class="zj-map__swatch" :class="`zj-map__swatch--${l.key}`" aria-hidden="true" /></dt>
         <dd>{{ l.label }}</dd>
@@ -321,14 +329,9 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
 .zj-map.is-compact .zj-map__sector-title {
   font-size: 12px;
 }
-.zj-map.is-compact .zj-map__sector-count {
-  font-size: 9px;
-}
-.zj-map.is-compact .zj-map__ring-label {
-  font-size: 10px;
-}
+.zj-map.is-compact .zj-map__ring-label,
 .zj-map.is-compact .zj-map__seal-sub {
-  font-size: 10px;
+  font-size: 12px;
 }
 .zj-map__glow {
   fill: none;
@@ -336,14 +339,9 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
   stroke-width: 2;
   animation: zj-map-glow 2s ease-out both;
 }
-.zj-map__sector-count {
-  font-family: -apple-system, 'PingFang SC', sans-serif;
-  font-size: 11px;
-  fill: #8b8e88;
-}
 .zj-map__ring-label {
   font-family: -apple-system, 'PingFang SC', sans-serif;
-  font-size: 11px;
+  font-size: 12px;
   fill: #686b66;
   paint-order: stroke;
   stroke: #fffcf6;
@@ -362,7 +360,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
 }
 .zj-map__seal-sub {
   font-family: -apple-system, 'PingFang SC', sans-serif;
-  font-size: 11px;
+  font-size: 12px;
   fill: #686b66;
 }
 .zj-map__node {
@@ -420,7 +418,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
 .zj-map__obj,
 .zj-map__conflict {
   font-family: -apple-system, 'PingFang SC', sans-serif;
-  font-size: 10px;
+  font-size: 12px;
   fill: #686b66;
   pointer-events: none;
 }
@@ -480,14 +478,33 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
   align-items: center;
 }
 .zj-map__tip-note {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-map__legend-bar {
+  margin: 10px 0 0;
+  text-align: right;
+}
+.zj-map__legend-toggle {
+  padding: 2px 8px;
+  border: 1px solid var(--ws-border-color-3, #ebe7de);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zj-map__legend-toggle:hover,
+.zj-map__legend-toggle[aria-expanded='true'] {
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-primary-color, #a6452e);
 }
 .zj-map__legend {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
-  margin: 12px 0 0;
+  margin: 8px 0 0;
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
 }

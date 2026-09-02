@@ -71,6 +71,16 @@ def review_instruction(decision: dict | None, outcome_recorded: bool) -> str:
     )
 
 
+def review_opening(decision: dict | None) -> str:
+    """回访会话的开场白：模板生成、不调模型；先问感受，不催结果。"""
+    if not decision:
+        return "到了回访的时候，但我没找到当时那条判断记录。先别急着说结果，这段时间你感觉怎么样？"
+    title = str(decision.get("title") or "那件事").strip()
+    choice = str(decision.get("choice") or "").strip()
+    expected = str(decision.get("expectedOutcome") or "").strip()[:80]
+    return f"「{title}」到了回访的时候。当时你选了「{choice}」，预期是「{expected}」。先别急着说结果，这段时间你感觉怎么样？"
+
+
 def onboarding_instruction(user_turns: int) -> str:
     """建档模式：一次只问一个问题；user_turns 为用户已发出的消息数（含本轮）。"""
     total = len(ONBOARDING_QUESTIONS)

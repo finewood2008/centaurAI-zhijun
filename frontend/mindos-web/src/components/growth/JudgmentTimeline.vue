@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 判断时间线：横轴是时间，纵轴是「当时的把握」；一个点一个判断，点的填充说状态，朱砂描边说逾期。
-// 文字图例与摘要始终存在；点是可聚焦按钮；tooltip 是 HTML 覆盖层（pointer-events: none）。
+// 文字图例（三种填充）与摘要始终存在；逾期在点旁有字，今天在线上有标；点是可聚焦按钮；tooltip 是 HTML 覆盖层（pointer-events: none）。
 import { computed, ref } from 'vue'
 import type { GrowthDecision } from '@/services/api'
 import { formatDate } from '@/shared/format'
@@ -112,8 +112,6 @@ function onKey(event: KeyboardEvent, id: string) {
       <span><i class="zj-tl__key is-open" aria-hidden="true" />空心 = 等结果</span>
       <span><i class="zj-tl__key is-half" aria-hidden="true" />半实 = 已记结果</span>
       <span><i class="zj-tl__key is-done" aria-hidden="true" />实心 = 已复盘</span>
-      <span><i class="zj-tl__key is-overdue" aria-hidden="true" />朱砂描边 = 逾期</span>
-      <span><i class="zj-tl__key is-today" aria-hidden="true" />虚线 = 今天</span>
     </p>
   </figure>
 </template>
@@ -160,7 +158,7 @@ function onKey(event: KeyboardEvent, id: string) {
   stroke: var(--ws-border-color, #d8d3c8);
 }
 .zj-tl__axis {
-  font-size: 11px;
+  font-size: 12px;
   fill: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-tl__axis--label {
@@ -216,7 +214,7 @@ function onKey(event: KeyboardEvent, id: string) {
   opacity: 0.7;
 }
 .zj-tl__overdue {
-  font-size: 10px;
+  font-size: 12px;
   fill: var(--ws-primary-color, #a6452e);
 }
 .zj-tl__tip {
@@ -266,17 +264,6 @@ function onKey(event: KeyboardEvent, id: string) {
 }
 .zj-tl__key.is-done {
   background: var(--ws-text-primary-color, #1d211f);
-}
-.zj-tl__key.is-overdue {
-  border-color: var(--ws-primary-color, #a6452e);
-  border-width: 2px;
-}
-.zj-tl__key.is-today {
-  width: 14px;
-  height: 0;
-  border: 0;
-  border-top: 1px dashed var(--ws-primary-color, #a6452e);
-  border-radius: 0;
 }
 @media (prefers-reduced-motion: reduce) {
   .zj-tl__circle {

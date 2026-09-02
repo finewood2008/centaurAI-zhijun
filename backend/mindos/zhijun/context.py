@@ -93,7 +93,9 @@ def _render_history(messages: list[dict], budget: int) -> list[dict]:
     while len(rendered) > 1 and sum(len(m["content"]) for m in rendered) > budget:
         rendered.pop(0)
     if rendered and rendered[0]["role"] == "assistant":
-        rendered.insert(0, {"role": "user", "content": "（此前的对话已省略）"})
+        first_kind = str(((messages[0] if messages else {}).get("meta") or {}).get("kind") or "")
+        opener = "（回访由知君先开口）" if first_kind == "review_open" else "（此前的对话已省略）"
+        rendered.insert(0, {"role": "user", "content": opener})
     return rendered
 
 
@@ -133,9 +135,11 @@ def assemble(
 
     confirmed = ontology.search_claims(user_text, k=12, trust_states=("confirmed",), include_hidden=True)
     # 良师的底气来自原则与做法：商量 / 回访 / 深入时无论词面是否命中，都把已确认的原则与做法带上（最多 6 条）。
+    anchor_ids: list[str] = []
     if turn_mode == "deliberate" or mode == "review" or depth == "deep":
         seen = {c["id"] for c in confirmed}
         anchors = ontology.search_claims("", k=6, trust_states=("confirmed",), sections=("principles", "ways"), include_hidden=True)
+        anchor_ids = [c["id"] for c in anchors]
         confirmed = confirmed + [c for c in anchors if c["id"] not in seen]
     working = ontology.search_claims(user_text, k=6, trust_states=("working",), include_hidden=False)
     retracted = ontology.search_claims(
@@ -227,6 +231,12 @@ def assemble(
         "charterVersion": charter.get("version") if charter else None,
         "promptChars": prompt_chars,
         "channel": channel,
+        # 出处显式化：本轮引用的过去判断，以及无论词面是否命中都带上的原则 / 做法锚点（只列最终进入上下文的）。
+        "pastDecisions": [
+            {"id": d["id"], "title": d.get("title"), "choice": d.get("choice"), "status": d.get("status"), "createdAt": d.get("createdAt")}
+            for d in (past_decisions or [])
+        ],
+        "anchorClaimIds": [cid for cid in anchor_ids if cid in {c["id"] for c in confirmed}],
     }
     debug = {
         "mode": mode,

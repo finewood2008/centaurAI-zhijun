@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .stores.conversation_store import ConversationError, ConversationNotFoundError, ConversationStore
-from .zhijun import deliberate
+from .zhijun import deliberate, persona
 from .zhijun.turn import TurnError, run_turn
 
 _PREFIX = "/api/mindos/conversations"
@@ -74,6 +74,11 @@ def create_conversation(req: ConversationCreate):
         decision = _growth_store().get_decision(req.decisionId)
         if decision is None:
             raise _error(404, "DECISION_NOT_FOUND", "判断不存在")
+    if decision is not None:
+        # 同一判断只开一段回访：已有就回到它（响应带 reused: true）。
+        existing = store.find_conversation_by_decision(decision["id"], mode="review")
+        if existing is not None:
+            return {**existing, "reused": True}
     try:
         conversation = store.create_conversation(
             mode=req.mode,
@@ -83,18 +88,100 @@ def create_conversation(req: ConversationCreate):
     except ConversationError as exc:
         raise _error(400, "BAD_REQUEST", str(exc)) from None
     if decision is not None:
+        # 开场是知君的一句话（模板生成，不调模型）：先问感受，不催结果。
         store.append_message(
             conversation["id"],
-            "system",
-            f"这是对「{decision['title']}」的回访：当时你选了「{decision['choice']}」，把握 {decision['confidence']}%，预期「{decision['expectedOutcome']}」。",
+            "assistant",
+            persona.review_opening(decision),
+            provider="template",
+            model="template",
             meta={"kind": "review_open", "decisionId": decision["id"], "status": decision["status"]},
         )
         conversation = store.get_conversation(conversation["id"])
+        conversation["reused"] = False
     return conversation
 
 
+# ---------------------------------------------------------------- 对话产出
+def _ontology_store():
+    from .stores.ontology_store import OntologyStore
+
+    return OntologyStore.instance()
+
+
+def _decision_brief(decision: dict | None) -> dict | None:
+    if not decision:
+        return None
+    return {k: decision.get(k) for k in ("id", "title", "choice", "reviewAt", "status")}
+
+
+def _outcome_decision_id(store: ConversationStore, conversation: dict, confirmed_map: dict[str, str] | None = None) -> str | None:
+    """本会话确认入簿的判断：conversation.decisionId，或本会话里已确认草稿绑定的判断。"""
+    if conversation.get("decisionId"):
+        return str(conversation["decisionId"])
+    if confirmed_map is not None:
+        return confirmed_map.get(conversation["id"])
+    return store.confirmed_decision_id(conversation["id"])
+
+
+def _claim_brief(claim: dict) -> dict:
+    return {"id": claim["id"], "content": claim["content"], "section": claim["section"], "layer": claim["layer"]}
+
+
+def get_outcomes(conversation_id: str):
+    """这段对话留下了什么：本会话归属的已确认 / 待确认理解、确认入簿的判断、带期限的承诺、后台待处理数、已撤回数。"""
+    store = _store()
+    conversation = store.get_conversation(conversation_id)
+    if conversation is None:
+        raise _error(404, "CONVERSATION_NOT_FOUND", "会话不存在")
+    onto = _ontology_store()
+    claims = onto.claims_for_conversation(conversation_id, trust_states=("confirmed", "working"))
+    confirmed = [c for c in claims if c["trustState"] == "confirmed"]
+    working = [c for c in claims if c["trustState"] == "working"]
+    commitments = [
+        {"claimId": c["id"], "content": c["content"], "validTo": c["validTo"]}
+        for c in claims
+        if c.get("predicate") == "committed_to" and c.get("validTo")
+    ]
+    decision = None
+    decision_id = _outcome_decision_id(store, conversation)
+    if decision_id:
+        decision = _decision_brief(_growth_store().get_decision(decision_id))
+    try:
+        pending = onto.pending_jobs_for_conversation(conversation_id)
+    except Exception:  # noqa: BLE001 - 取不到本会话的就给全局数
+        pending = onto.pending_jobs()
+    counts = onto.conversation_outcome_counts([conversation_id]).get(conversation_id) or {}
+    return {
+        "conversationId": conversation_id,
+        "confirmedClaims": [_claim_brief(c) for c in confirmed],
+        "workingClaims": [_claim_brief(c) for c in working],
+        "decision": decision,
+        "commitments": commitments,
+        "pendingJobs": int(pending),
+        "retracted": int(counts.get("retracted") or 0),
+    }
+
+
 def list_conversations(limit: int = Query(50, ge=1, le=200)):
-    items = _store().list_conversations(limit=limit)
+    store = _store()
+    items = store.list_conversations(limit=limit)
+    counts: dict[str, dict] = {}
+    confirmed_map: dict[str, str] = {}
+    try:
+        counts = _ontology_store().conversation_outcome_counts([item["id"] for item in items])
+        confirmed_map = store.confirmed_decision_ids()
+    except Exception:  # noqa: BLE001 - 产出计数是附加信息，不阻塞列表
+        counts, confirmed_map = {}, {}
+    for item in items:
+        item.setdefault("mode", "chat")
+        count = counts.get(item["id"]) or {}
+        item["outcomes"] = {
+            "confirmed": int(count.get("confirmed") or 0),
+            "working": int(count.get("working") or 0),
+            "decision": bool(_outcome_decision_id(store, item, confirmed_map)),
+            "commitments": int(count.get("commitments") or 0),
+        }
     return {"items": items, "total": len(items)}
 
 
@@ -127,6 +214,8 @@ def _provenance_from_receipt(receipt: dict | None) -> dict | None:
         "charterVersion": None,
         "promptChars": int(receipt.get("promptChars") or 0),
         "channel": "external" if receipt.get("external") else "local",
+        "pastDecisions": [],
+        "anchorClaimIds": [],
         "fromReceipt": True,
     }
 
@@ -259,6 +348,7 @@ def _build_router(write_guard=None) -> APIRouter:
     built.add_api_route("", create_conversation, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("", list_conversations, methods=["GET"])
     built.add_api_route("/{conversation_id}", get_conversation, methods=["GET"])
+    built.add_api_route("/{conversation_id}/outcomes", get_outcomes, methods=["GET"])
     built.add_api_route("/{conversation_id}", delete_conversation, methods=["DELETE"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/messages", post_message, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/messages/{message_id}/receipt", get_receipt, methods=["GET"])

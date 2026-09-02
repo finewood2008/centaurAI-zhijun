@@ -287,6 +287,18 @@ class ConversationStore:
             ).fetchall()
             return [self._conversation(r) for r in rows]  # type: ignore[misc]
 
+    def find_conversation_by_decision(self, decision_id: str, *, mode: str = "review", status: str = "active") -> dict | None:
+        """同一判断已有的会话（最近一条）；回访会话按 decisionId 复用，不重复开。"""
+        if not decision_id:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM conversations WHERE decision_id = ? AND mode = ? AND status = ? "
+                "ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT 1",
+                (decision_id, mode, status),
+            ).fetchone()
+        return self._conversation(row)
+
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._lock, self._connect() as conn:
             cur = conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
@@ -593,6 +605,25 @@ class ConversationStore:
     def get_draft_by_id(self, draft_id: str) -> dict | None:
         with self._connect() as conn:
             return self._draft(conn.execute("SELECT * FROM decision_drafts WHERE id = ?", (draft_id,)).fetchone())
+
+    def confirmed_decision_id(self, conversation_id: str) -> str | None:
+        """本会话里确认入簿的判断：最近一条已确认草稿绑定的 decision_id。"""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT decision_id FROM decision_drafts WHERE conversation_id = ? AND status = 'confirmed' AND decision_id IS NOT NULL "
+                "ORDER BY updated_at DESC, revision DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return row["decision_id"] if row else None
+
+    def confirmed_decision_ids(self) -> dict[str, str]:
+        """所有会话 → 最近一条已确认草稿绑定的 decision_id（列表页一次拿全）。"""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT conversation_id, decision_id FROM decision_drafts WHERE status = 'confirmed' AND decision_id IS NOT NULL "
+                "ORDER BY updated_at ASC, revision ASC"
+            ).fetchall()
+        return {row["conversation_id"]: row["decision_id"] for row in rows}
 
     def upsert_draft(self, conversation_id: str, fields: dict, *, message_id: str | None = None) -> dict:
         """同一会话只维护一份进行中的草稿；已确认 / 已丢弃后再商量则另起一份。"""

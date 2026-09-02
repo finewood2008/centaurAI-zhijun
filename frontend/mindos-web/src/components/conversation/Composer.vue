@@ -13,6 +13,9 @@ const props = defineProps<{
   disabled?: boolean
   placeholder?: string
   allowDeliberate?: boolean
+  // 模型没配置 / 不可用时的提示；给了就禁用输入，并在输入区上方显示同一句话（带去偏好的链接）
+  notice?: string
+  noticeTo?: string
 }>()
 
 const emit = defineEmits<{
@@ -45,6 +48,7 @@ function markHintSeen() {
 }
 
 const showHint = computed(() => props.allowDeliberate !== false && !deliberate.value && intentHint(text.value))
+const blocked = computed(() => !!props.disabled || !!props.notice)
 
 const effectivePlaceholder = computed(() => {
   if (deliberate.value) return '说说你在纠结什么、有哪几个选项、你倾向哪个、把握有几成'
@@ -53,7 +57,7 @@ const effectivePlaceholder = computed(() => {
 
 function send() {
   const content = text.value.trim()
-  if (!content || props.streaming || props.disabled) return
+  if (!content || props.streaming || blocked.value) return
   if (content.length > MAX) return
   emit('send', content, deep.value ? 'deep' : 'brief', deliberate.value ? 'deliberate' : 'chat')
   text.value = ''
@@ -119,7 +123,7 @@ function startVoice() {
 }
 
 function toggleVoice() {
-  if (props.streaming || props.disabled) return
+  if (props.streaming || blocked.value) return
   if (listening.value) stopVoice()
   else startVoice()
 }
@@ -140,8 +144,12 @@ defineExpose({
 </script>
 
 <template>
-  <div class="zj-composer">
-    <p v-if="showHint" class="zj-composer__intent" role="status">
+  <div class="zj-composer" :class="{ 'is-blocked': !!notice }">
+    <p v-if="notice" class="zj-composer__notice" role="status">
+      <span>{{ notice }}</span>
+      <RouterLink v-if="noticeTo" :to="noticeTo" class="zj-composer__notice-link">去偏好</RouterLink>
+    </p>
+    <p v-else-if="showHint" class="zj-composer__intent" role="status">
       像是在拿主意？切到「我在考虑…」，知君会帮你整理成判断草稿。
       <button type="button" class="zj-composer__intent-btn" @click="deliberate = true">切换</button>
     </p>
@@ -154,7 +162,7 @@ defineExpose({
         :placeholder="effectivePlaceholder"
         rows="2"
         :maxlength="MAX"
-        :disabled="disabled"
+        :disabled="blocked"
         aria-label="输入消息"
         @keydown="onKeydown"
       />
@@ -165,7 +173,7 @@ defineExpose({
         :class="{ 'is-on': listening }"
         :aria-pressed="listening"
         :aria-label="listening ? '停止语音输入' : '用说的（不会自动发送）'"
-        :disabled="streaming || disabled"
+        :disabled="streaming || blocked"
         :title="listening ? '停止语音输入' : '用说的（不会自动发送）'"
         @click="toggleVoice"
       >
@@ -179,7 +187,7 @@ defineExpose({
         class="zj-composer__chip"
         :class="{ 'is-on': deliberate }"
         :aria-pressed="deliberate"
-        :disabled="streaming || disabled"
+        :disabled="streaming || blocked"
         title="把这件事整理成一条判断：选项、倾向、把握、预期"
         @click="deliberate = !deliberate"
       >
@@ -190,7 +198,7 @@ defineExpose({
         class="zj-composer__chip"
         :class="{ 'is-on': deep }"
         :aria-pressed="deep"
-        :disabled="streaming || disabled"
+        :disabled="streaming || blocked"
         title="让知君展开说：观察、依据、其他解释、想确认什么、可以试什么"
         @click="deep = !deep"
       >
@@ -201,7 +209,7 @@ defineExpose({
       <BaseButton v-if="streaming" variant="secondary" size="sm" class="zj-composer__send" @click="emit('stop')">
         <Square :size="14" aria-hidden="true" />停止
       </BaseButton>
-      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="disabled || !text.trim()" @click="send">
+      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || !text.trim()" @click="send">
         <Send :size="14" aria-hidden="true" />发送
       </BaseButton>
     </div>
@@ -227,6 +235,21 @@ defineExpose({
   margin: 0;
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-composer.is-blocked {
+  border-style: dashed;
+}
+.zj-composer__notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-composer__notice-link {
+  color: var(--ws-primary-color, #a6452e);
+  text-decoration: underline;
 }
 .zj-composer__intent-btn {
   margin-left: 6px;

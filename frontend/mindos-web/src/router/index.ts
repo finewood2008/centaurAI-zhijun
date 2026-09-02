@@ -11,7 +11,6 @@ const routes: RouteRecordRaw[] = [
   { path: '/growth', redirect: '/judgments' },
   { path: '/data', name: 'data', component: () => import('@/pages/DataHubPage.vue'), meta: { title: '资料与边界' } },
   // 隐藏路由（不进侧栏）
-  { path: '/today', name: 'home', component: () => import('@/pages/HomePage.vue'), meta: { title: '今日' } },
   { path: '/materials', name: 'materials', component: () => import('@/pages/RawMaterialsPage.vue'), meta: { title: '原材料' } },
   { path: '/materials/:materialId', name: 'material-detail', component: () => import('@/pages/MaterialDetailPage.vue'), meta: { title: '原材料详情' } },
   { path: '/knowledge', name: 'knowledge', component: () => import('@/pages/KnowledgePage.vue'), meta: { title: '知识档案' } },

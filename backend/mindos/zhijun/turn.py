@@ -120,7 +120,8 @@ def _run_locked(
     user_turns = conv_store.count_messages(conversation_id, role="user")
     decision = _decision_for(conversation)
     past_decisions: list[dict] = []
-    if mode == "deliberate" or conversation.get("mode") == "review":
+    # 商量 / 回访必带；普通聊天里只要这句话值得记（should_extract 通过）也带上——纯词面匹配，无模型开销。
+    if mode == "deliberate" or conversation.get("mode") == "review" or extract.should_extract(content)[0]:
         try:
             from .history import similar_decisions
 

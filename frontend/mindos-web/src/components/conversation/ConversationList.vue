@@ -1,8 +1,19 @@
 <script setup lang="ts">
 // 会话列表：新建 + 按最近活动排序的会话项；当前项高亮并标注 aria-current。
+// 每条带模式方印（建档 / 商量 / 回访 / 对话），下面一行灰字是这段对话留下了什么（全零不显示）。
 import { Plus, Trash2 } from 'lucide-vue-next'
 import type { Conversation } from '@/services/api'
 import { formatDate } from '@/shared/format'
+import { ONBOARDING_TOTAL_TURNS, conversationModeLabel, onboardingUserTurns, outcomesLine } from '@/shared/labels'
+
+function sealText(c: Conversation): string {
+  if (c.mode === 'onboarding') {
+    const turns = onboardingUserTurns(c.messageCount)
+    if (turns > 0 && turns < ONBOARDING_TOTAL_TURNS) return `建档 · 第 ${Math.min(turns, ONBOARDING_TOTAL_TURNS - 1)} 问`
+    return '建档'
+  }
+  return conversationModeLabel(c.mode, !!c.outcomes?.decision)
+}
 
 defineProps<{
   items: Conversation[]
@@ -33,7 +44,11 @@ const emit = defineEmits<{
             :aria-current="c.id === currentId ? 'true' : undefined"
             @click="emit('select', c.id)"
           >
-            <span class="zj-convs__title">{{ c.title || (c.mode === 'onboarding' ? '第一次对话' : '未命名对话') }}</span>
+            <span class="zj-convs__line">
+              <span class="zj-seal zj-seal--muted zj-convs__seal">{{ sealText(c) }}</span>
+              <span class="zj-convs__title">{{ c.title || (c.mode === 'onboarding' ? '第一次对话' : '未命名对话') }}</span>
+            </span>
+            <span v-if="outcomesLine(c.outcomes)" class="zj-convs__outcomes">{{ outcomesLine(c.outcomes) }}</span>
             <span class="zj-convs__time">{{ formatDate(c.lastMessageAt || c.updatedAt) }}</span>
           </button>
           <button type="button" class="zj-convs__remove" :aria-label="`删除会话 ${c.title || ''}`" title="删除会话" @click="emit('remove', c.id)">
@@ -108,9 +123,28 @@ const emit = defineEmits<{
 .zj-convs__item:hover {
   color: var(--ws-text-primary-color, #1d211f);
 }
+.zj-convs__line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.zj-convs__seal {
+  flex: none;
+  font-size: 11px;
+  line-height: 1.4;
+}
 .zj-convs__title {
+  min-width: 0;
   font-size: 13px;
   font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.zj-convs__outcomes {
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -193,6 +193,24 @@ def _parse_date(value) -> str | None:
     return day.replace(hour=23, minute=59, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+_SELF_NAME_RE = re.compile(r"(?:叫我|称呼我|喊我|我叫|我是)\s*([\u4e00-\u9fa5A-Za-z·]{1,8}?)(?:就行|就好|吧|即可|，|,|。|；|;|\s|$)")
+_GENERIC_GROUP_RE = re.compile(r"^\d*\s*(?:人|个)?\s*(?:小组|团队|客户|同事|朋友|家人|员工|用户|公司)$")
+
+
+def filter_entities(entities: list, *, user_text: str) -> list:
+    """硬规则：用户本人的称呼（「叫我阿远」）和泛指团体（「5人小组」）不成为实体，模型提示词说了也常不听。"""
+    self_names = {normalize_text(m.group(1)) for m in _SELF_NAME_RE.finditer(user_text or "") if m.group(1)}
+    kept = []
+    for ent in entities or []:
+        if not isinstance(ent, dict):
+            continue
+        name = str(ent.get("name") or "").strip()
+        if not name or normalize_text(name) in self_names or _GENERIC_GROUP_RE.match(name):
+            continue
+        kept.append(ent)
+    return kept
+
+
 def validate(raw: dict, *, user_text: str, prev_assistant: str | None, existing_ids: set[str] | None = None) -> list[ValidatedClaim]:
     items = raw.get("claims") if isinstance(raw, dict) else None
     if not isinstance(items, list):
@@ -394,7 +412,8 @@ def run_extraction(
     request = build_request(user_text, prev_assistant, known, existing_claims=existing, debug=debug)
     raw = provider.complete_json(request)  # ProviderError 由 worker 分类
     valid = validate(raw, user_text=user_text, prev_assistant=prev_assistant, existing_ids={c["id"] for c in existing})
-    summary = persist(valid, raw.get("entities") or [], store=store, conversation_id=conversation_id, message_id=message_id)
+    entities = filter_entities(raw.get("entities") or [], user_text=user_text)
+    summary = persist(valid, entities, store=store, conversation_id=conversation_id, message_id=message_id)
     summary.update({"state": "done", "reason": "ok", "candidates": len(valid), "provider": provider.name})
     return summary
 

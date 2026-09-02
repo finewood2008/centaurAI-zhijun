@@ -150,7 +150,7 @@ function itemAria(item: ProvItem, groupLabel: string): string {
 }
 .zj-pg__note,
 .zj-pg__inline {
-  font-size: 11px;
+  font-size: 12px;
   fill: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-pg__item {

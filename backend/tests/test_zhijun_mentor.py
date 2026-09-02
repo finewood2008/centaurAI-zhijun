@@ -145,6 +145,13 @@ class MentorCoreTests(unittest.TestCase):
         valid = extract.validate(raw, user_text=text, prev_assistant=None)
         self.assertEqual(valid[0].layer, "aspirational")
 
+    def test_entity_filter_drops_self_name_and_generic_groups(self) -> None:
+        ents = [{"name": "阿远", "type": "person"}, {"name": "5人小组", "type": "person"}, {"name": "老周", "type": "person"}, {"name": "远川项目", "type": "project"}, {"name": "团队", "type": "organization"}]
+        kept = extract.filter_entities(ents, user_text="叫我阿远就行。我在带一个 5 人的小组做远川项目，老周负责销售。")
+        self.assertEqual([e["name"] for e in kept], ["老周", "远川项目"])
+        kept = extract.filter_entities([{"name": "阿远", "type": "person"}], user_text="我和阿远一起吃饭")
+        self.assertEqual(len(kept), 1)
+
     # ---- 建档收尾：第一次观察
     def test_onboarding_wrap_up_queues_first_observation(self) -> None:
         conv = self.client.post("/api/mindos/conversations", json={"mode": "onboarding"}).json()
@@ -200,6 +207,38 @@ class MentorCoreTests(unittest.TestCase):
         forced = OpenAICompatibleProvider("https://example.com/v1", "m", "k", timeout=5, thinking="deepseek")
         forced._apply_thinking(body, ChatRequest(system="", messages=[], effort="low"))
         self.assertEqual(body["thinking"], {"type": "disabled"})
+
+    # ---- 出处显式化：provenance 带 pastDecisions 与 anchorClaimIds
+    @staticmethod
+    def _provenance(sse_text: str) -> dict:
+        for frame in sse_text.split("\n\n"):
+            lines = frame.strip().split("\n")
+            if lines and lines[0] == "event: provenance":
+                return json.loads("\n".join(l[5:].strip() for l in lines[1:] if l.startswith("data:")))
+        raise AssertionError("没有 provenance 事件")
+
+    def test_provenance_carries_past_decisions_and_anchors(self) -> None:
+        reviewed = self.growth.create_decision(_decision("远川项目测试要不要外包"))
+        self.growth.record_outcome(reviewed["id"], {"result": "自己做，慢了两周但质量稳", "notes": "", "evidenceRefs": []})
+        principle = self.onto.create_claim({"content": "我坚持先看数据再拍板", "section": "principles", "layer": "self_declared"}, [], trust_state="confirmed", trust_origin="utterance")
+        conv = self.client.post("/api/mindos/conversations", json={}).json()
+        # 商量：过去判断与原则锚点都在出处里，且锚点 id 也出现在 confirmedClaims 中
+        res = self.client.post(f"/api/mindos/conversations/{conv['id']}/messages", json={"content": "远川项目的测试是外包还是自己做", "mode": "deliberate"})
+        self.assertEqual(res.status_code, 200, res.text)
+        prov = self._provenance(res.text)
+        self.assertEqual(prov["pastDecisions"][0]["id"], reviewed["id"])
+        self.assertEqual(set(prov["pastDecisions"][0]), {"id", "title", "choice", "status", "createdAt"})
+        self.assertEqual(prov["pastDecisions"][0]["status"], "outcome_recorded")
+        self.assertIn(principle["id"], prov["anchorClaimIds"])
+        self.assertIn(principle["id"], [c["id"] for c in prov["confirmedClaims"]])
+        # 普通聊天：一句值得记的话也带上相似判断；锚点只在商量 / 回访 / 深入时带
+        res = self.client.post(f"/api/mindos/conversations/{conv['id']}/messages", json={"content": "我在想远川项目的测试是外包还是自己做，最近压力挺大。"})
+        prov = self._provenance(res.text)
+        self.assertEqual([d["id"] for d in prov["pastDecisions"]], [reviewed["id"]])
+        self.assertEqual(prov["anchorClaimIds"], [])
+        # 纯提问（没有第一人称、问号结尾）不过抽取门，也不查历史
+        res = self.client.post(f"/api/mindos/conversations/{conv['id']}/messages", json={"content": "远川项目测试外包好吗？"})
+        self.assertEqual(self._provenance(res.text)["pastDecisions"], [])
 
     # ---- 手写补一条可省略分区
     def test_create_claim_without_section_classifies(self) -> None:

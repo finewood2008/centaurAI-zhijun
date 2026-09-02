@@ -1418,6 +1418,14 @@ export async function provisionMindosSession(): Promise<{ deviceId: string } | n
 export type ConversationMode = 'chat' | 'onboarding' | 'review'
 export type TurnMode = 'chat' | 'deliberate'
 
+// 会话列表每项的产出摘要（后端按 claim_evidence.conversation_id 归属；旧后端没有这个字段）
+export interface ConversationOutcomesBrief {
+  confirmed: number
+  working: number
+  decision: boolean
+  commitments: number
+}
+
 export interface Conversation {
   id: string
   title: string
@@ -1428,6 +1436,20 @@ export interface Conversation {
   createdAt: string
   updatedAt: string
   lastMessageAt: string | null
+  outcomes?: ConversationOutcomesBrief | null
+  // POST /conversations {mode:'review'}：已存在同一判断的回访会话时返回它并标 reused
+  reused?: boolean
+}
+
+// GET /conversations/{id}/outcomes：这段对话留下了什么
+export interface ConversationOutcomes {
+  conversationId: string
+  confirmedClaims: ClaimBrief[]
+  workingClaims: ClaimBrief[]
+  decision: { id: string; title: string; choice: string; reviewAt: string | null; status: string } | null
+  commitments: { claimId: string; content: string; validTo: string | null }[]
+  pendingJobs: number
+  retracted: number
 }
 
 export type MessageRole = 'user' | 'assistant' | 'system'
@@ -1595,6 +1617,9 @@ export interface Claim {
   challengeNote?: string | null
   promotionReady?: boolean
   deferredUntil: string | null
+  // 有效期（承诺类理解 predicate=committed_to 带 validTo，到期知君会来回访）
+  validFrom?: string | null
+  validTo?: string | null
   evidence: ClaimEvidence[]
 }
 
@@ -1704,6 +1729,9 @@ export interface ZhijunStatus {
   workerRunning: boolean
   // 后台还没跑完的整理任务数（抽取 / 草稿 / 摘要 / 第一次观察）
   pendingJobs?: number
+  // 模型是否配置好了；error 非空表示当前不可用（页头与输入区据此降级）
+  configured?: boolean
+  error?: string | null
 }
 
 // SSE 事件载荷（POST /mindos/conversations/{id}/messages）
@@ -1729,6 +1757,15 @@ export interface ProvenanceMaterial {
   locator?: Record<string, unknown>
 }
 
+export interface ProvenancePastDecision {
+  id: string
+  title: string
+  choice: string
+  status: string
+  // 记下的日期（后端目前不带；带上时出处摘要会写成「你 8月2日 记下的」）
+  createdAt?: string | null
+}
+
 export interface ProvenanceEvent {
   confirmedClaims: ClaimBrief[]
   workingClaims: ClaimBrief[]
@@ -1736,11 +1773,18 @@ export interface ProvenanceEvent {
   retractedNotices: number
   charterVersion: number | null
   promptChars: number
+  // 以前记过的相似判断（词面相似，无模型开销）
+  pastDecisions?: ProvenancePastDecision[]
+  // 商量 / 回访 / 深入时无论词面是否命中都带上的原则与做法分区已确认理解
+  anchorClaimIds?: string[]
 }
+
+export type ExtractionSkipReason = 'too_short' | 'pure_question' | 'disabled' | (string & {})
 
 export interface ExtractionEvent {
   state: 'queued' | 'skipped'
   jobId?: string
+  reason?: ExtractionSkipReason | null
 }
 
 export interface MessageDoneEvent {
@@ -1812,6 +1856,10 @@ export function listConversations(limit = 50) {
 
 export function getConversation(conversationId: string) {
   return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`)
+}
+
+export function getConversationOutcomes(conversationId: string) {
+  return request<ConversationOutcomes>(`/mindos/conversations/${encodeURIComponent(conversationId)}/outcomes`)
 }
 
 export function deleteConversation(conversationId: string) {

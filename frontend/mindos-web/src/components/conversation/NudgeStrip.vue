@@ -1,15 +1,18 @@
 <script setup lang="ts">
 // 今日提醒条：安静。默认只露一条，其余折在「还有 N 条」里；每条都说明「为何现在」。
-// 动作：去回访 / 去看看 / 一起看看 · 稍后 · 不再提醒。没有「检查」按钮——扫描由后台每小时做。
+// 动作回到对话：原则张力 / 承诺到期的主动作把问句放进输入框（emit say），另留「看理解」跳到原位；
+// 判断回访仍开回访会话；每周回顾也是放进输入框。没有「检查」按钮，扫描由后台每小时做。
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { createConversation, dismissNudge, getNudgesToday, scanNudges, silenceNudge, type Nudge } from '@/services/api'
-import { nudgeKindLabel } from '@/shared/labels'
+import { nudgeKindLabel, quotedParts } from '@/shared/labels'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
 const router = useRouter()
+const route = useRoute()
 const toast = useToast()
+const emit = defineEmits<{ (e: 'say', text: string): void }>()
 
 const items = ref<Nudge[]>([])
 const busy = ref<Record<string, boolean>>({})
@@ -44,7 +47,45 @@ function remove(id: string) {
 function primaryLabel(n: Nudge): string {
   if (n.kind === 'review_due') return '去回访'
   if (n.kind === 'weekly_review') return '一起看看'
+  if (n.kind === 'principle_tension' || n.kind === 'commitment_due') return '聊聊'
   return '去看看'
+}
+
+/** 把提醒变成一句放进输入框的话头（不自动发送）。 */
+function sayText(n: Nudge): string {
+  const quoted = quotedParts(n.message)
+  if (n.kind === 'principle_tension') {
+    const [principle, action] = quoted
+    if (principle && action) return `关于「${principle}」和最近的「${action}」，我想想……`
+    return `关于这条原则和最近的做法，我想想……${n.message}`
+  }
+  if (n.kind === 'commitment_due') {
+    const [thing] = quoted
+    if (thing) return `关于「${thing}」，说说进展：`
+    return `说说这件事的进展：${n.message}`
+  }
+  if (n.kind === 'weekly_review') return `我们一起回顾一下这周吧。${n.triggerRef?.summary || ''}`
+  return n.message
+}
+
+/** 「看理解」：跳到原来的位置（本体里的那条原则 / 那件事）。 */
+function lookTarget(n: Nudge): RouteLocationRaw | null {
+  if (n.kind === 'principle_tension') {
+    const claimId = n.triggerRef?.principleId
+    return { path: '/me', query: { section: 'principles', ...(claimId ? { claim: claimId } : {}) } }
+  }
+  if (n.kind === 'commitment_due') {
+    const claimId = n.triggerRef?.claimId
+    return { path: '/me', query: { section: n.triggerRef?.section || 'matters', ...(claimId ? { claim: claimId } : {}) } }
+  }
+  return null
+}
+
+function say(n: Nudge) {
+  const text = sayText(n)
+  // 在对话页：由父组件把话头放进输入框；不在对话页时带着话头回到对话页
+  if (route.name === 'conversation' || route.name === 'conversation-detail') emit('say', text)
+  else router.push({ path: '/', query: { say: text } })
 }
 
 async function primary(n: Nudge) {
@@ -58,21 +99,14 @@ async function primary(n: Nudge) {
       router.push(`/c/${encodeURIComponent(conv.id)}`)
       return
     }
-    // 其余三种：标记已处理后跳到对应的地方；标记失败不阻塞跳转
+    // 其余：标记已处理，然后把问句放进输入框（不跳走，也不自动发送）；标记失败不阻塞
     try {
       await dismissNudge(n.id)
     } catch {
       /* 忽略 */
     }
     remove(n.id)
-    if (n.kind === 'principle_tension') {
-      router.push({ path: '/me', query: { section: 'principles' } })
-    } else if (n.kind === 'commitment_due') {
-      const claimId = n.triggerRef?.claimId
-      router.push({ path: '/me', query: { section: n.triggerRef?.section || 'matters', ...(claimId ? { claim: claimId } : {}) } })
-    } else if (n.kind === 'weekly_review') {
-      router.push({ path: '/', query: { say: `我们一起回顾一下这周吧。${n.triggerRef?.summary || ''}` } })
-    }
+    say(n)
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '无法打开' })
   } finally {
@@ -134,6 +168,7 @@ defineExpose({ reload: load, scan })
       </div>
       <div class="zj-nudge__actions">
         <button type="button" class="zj-nudge__btn is-primary" :disabled="busy[n.id]" @click="primary(n)">{{ primaryLabel(n) }}</button>
+        <RouterLink v-if="lookTarget(n)" :to="lookTarget(n)!" class="zj-nudge__link">看理解</RouterLink>
         <button type="button" class="zj-nudge__btn" :disabled="busy[n.id]" @click="later(n)">稍后</button>
         <button type="button" class="zj-nudge__btn is-quiet" :disabled="busy[n.id]" @click="silenceTarget = n">不再提醒</button>
       </div>
@@ -208,6 +243,16 @@ defineExpose({ reload: load, scan })
 }
 .zj-nudge__btn.is-primary {
   border-color: var(--ws-primary-color, #a6452e);
+  color: var(--ws-primary-color, #a6452e);
+}
+.zj-nudge__link {
+  align-self: center;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+  text-decoration: underline;
+}
+.zj-nudge__link:hover {
   color: var(--ws-primary-color, #a6452e);
 }
 .zj-nudge__btn.is-quiet {

@@ -1,16 +1,20 @@
 <script setup lang="ts">
 // 对话页：一段持续关系。左栏会话列表，主区消息流 + 输入区。
 // 流式回复（SSE）→ 出处条 → 抽取候选（轮询 inbox）→ 一键确认写回本体。
+// 切页不截断：卸载时不中断正在进行的流（服务端把这轮生成完并落库），只有用户点「停止」才中断；
+// 卸载后的回调用 alive 守卫，不再碰已销毁的状态。
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronUp, Sparkles } from 'lucide-vue-next'
 import {
+  api,
   ApiError,
   confirmDecisionDraft,
   createConversation,
   deleteConversation,
   discardDecisionDraft,
   getConversation,
+  getConversationOutcomes,
   getDecisionDraft,
   getInbox,
   getOntologyStats,
@@ -21,11 +25,13 @@ import {
   reviewClaim,
   type Claim,
   type Conversation,
+  type ConversationOutcomes,
   type DecisionDraft,
   type DecisionDraftConfirmPayload,
   type DecisionDraftEvent,
   type ExtractionEvent,
   type GrowthDecision,
+  type GrowthToday,
   type Message,
   type MessageDoneEvent,
   type OntologyStats,
@@ -41,7 +47,17 @@ import { streamPost } from '@/services/sse'
 import { useToast } from '@/composables/useToast'
 import { createSessionGate } from '@/composables/sessionGate'
 import { reviewNote } from '@/shared/ontology'
-import { channelShort } from '@/shared/model'
+import { MODEL_UNAVAILABLE_TEXT, channelShort, modelUnavailable } from '@/shared/model'
+import {
+  EXTRACTION_STILL_WORKING,
+  ONBOARDING_TOTAL_TURNS,
+  buildNextSteps,
+  extractionSkipNote,
+  hasConversationOutcomes,
+  headerAggregateItems,
+  isDueByToday,
+  onboardingUserTurns,
+} from '@/shared/labels'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
 import ClaimCandidateChip from '@/components/conversation/ClaimCandidateChip.vue'
 import ProvenanceStrip from '@/components/conversation/ProvenanceStrip.vue'
@@ -49,6 +65,8 @@ import Composer from '@/components/conversation/Composer.vue'
 import ConversationList from '@/components/conversation/ConversationList.vue'
 import LiveObjectPanel from '@/components/conversation/LiveObjectPanel.vue'
 import NudgeStrip from '@/components/conversation/NudgeStrip.vue'
+import OutcomesCard from '@/components/conversation/OutcomesCard.vue'
+import NextStepsPanel from '@/components/conversation/NextStepsPanel.vue'
 import ReviewOutcomePanel from '@/components/conversation/ReviewOutcomePanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
@@ -61,6 +79,8 @@ interface UiMessage extends Message {
   turnMeta?: TurnMetaEvent | null
   candidates?: Claim[]
   streaming?: boolean
+  // 抽取被跳过 / 还在整理时，这条回复下方的一行灰字
+  extractionNote?: string
 }
 
 const route = useRoute()
@@ -69,6 +89,11 @@ const toast = useToast()
 
 const status = ref<ZhijunStatus | null>(null)
 const stats = ref<OntologyStats | null>(null)
+// stats 请求结束了没有（成功或失败）；失败时 stats 保持 null，绝不把 hasOntology 当真
+const statsLoaded = ref(false)
+// 组件还活着：卸载后流的回调不再写状态
+let alive = true
+let mounted = false
 const conversations = ref<Conversation[]>([])
 const conversationsLoading = ref(true)
 const current = ref<Conversation | null>(null)
@@ -96,6 +121,14 @@ const draftPollGate = createSessionGate()
 const decision = ref<GrowthDecision | null>(null)
 const outcomeBusy = ref(false)
 const outcomeError = ref('')
+const reviewSaving = ref(false)
+const reviewSaveError = ref('')
+
+// 页头聚合行与空白态「下一步」的数据：判断页的今日概况 + 到期的承诺（取不到就当没有）
+const growthToday = ref<GrowthToday | null>(null)
+const dueCommitments = ref<Claim[]>([])
+// 「这段对话留下的」：本会话这次聊完（message_done 之后）拉到的产出；切会话清空
+const turnOutcomes = ref<ConversationOutcomes | null>(null)
 
 const isReview = computed(() => current.value?.mode === 'review')
 const isOnboarding = computed(() => current.value?.mode === 'onboarding')
@@ -123,7 +156,9 @@ const highlightSection = computed<Section | null>(() => {
   if (!step || step < 1 || step > ONBOARDING_STEPS.length) return null
   return ONBOARDING_STEPS[step - 1].section
 })
-const onboardingDone = computed(() => (onboardingStep.value ?? 0) >= ONBOARDING_STEPS.length + 1)
+// 收尾那一轮还在生成时不算「聊完」：面板要等 message_done 之后才出现
+const closingStreaming = ref(false)
+const onboardingDone = computed(() => (onboardingStep.value ?? 0) >= ONBOARDING_STEPS.length + 1 && !closingStreaming.value)
 const onboardingCounts = computed(() => ({
   confirmed: stats.value?.claims?.confirmed ?? mapClaims.value.filter((c) => c.trustState === 'confirmed').length,
   working: stats.value?.inbox ?? mapClaims.value.filter((c) => c.trustState === 'working').length,
@@ -202,6 +237,8 @@ async function onConfirmDraft(payload: DecisionDraftConfirmPayload) {
       decisionId: result.decision.id,
     })
     toast({ type: 'success', message: '已记进判断簿，到期知君会来回访' })
+    void refreshOutcomes(current.value.id, true)
+    void loadGrowthToday()
     await scrollToBottom()
   } catch (err) {
     if (err instanceof ApiError && err.status === 400) draftError.value = err.message
@@ -267,8 +304,10 @@ async function onRecordOutcome(payload: { result: string; notes: string }) {
     const res = await recordConversationOutcome(current.value.id, payload)
     decision.value = res.decision
     pushNote(`你记下了结果：${payload.result.slice(0, 200)}`, { kind: 'outcome_recorded', decisionId: res.decision.id })
-    toast({ type: 'success', message: '结果已记下，知君会引导你复盘' })
+    toast({ type: 'success', message: '结果已记下，接着在右边复盘' })
     nudgeRef.value?.reload()
+    void refreshOutcomes(current.value.id, true)
+    void loadGrowthToday()
     await scrollToBottom()
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) outcomeError.value = '这个判断已经记过结果'
@@ -277,6 +316,95 @@ async function onRecordOutcome(payload: { result: string; notes: string }) {
     outcomeBusy.value = false
   }
 }
+
+async function onSubmitReview(payload: { reflection: string; lessons: string[]; nextAction: string }) {
+  const d = decision.value
+  if (!current.value || !d || reviewSaving.value) return
+  reviewSaving.value = true
+  reviewSaveError.value = ''
+  try {
+    const result = await api.createGrowthReview({ decisionId: d.id, ...payload })
+    if (!alive) return
+    decision.value = result.decision
+    pushNote('复盘已记下，经验会变成你原则的候选', { kind: 'review_recorded', decisionId: d.id, reviewId: result.review.id })
+    nudgeRef.value?.reload()
+    void refreshOutcomes(current.value.id, true)
+    void loadGrowthToday()
+    await scrollToBottom()
+  } catch (err) {
+    if (!alive) return
+    if (err instanceof ApiError && err.status === 409) reviewSaveError.value = '这个判断已经复盘过了'
+    else reviewSaveError.value = friendlyError(err, '记录失败')
+  } finally {
+    reviewSaving.value = false
+  }
+}
+
+// 这段对话留下了什么：刷新会话列表里该项的产出摘要（接口不存在时静默）；
+// showCard 为真且还停在这个会话时，同时更新消息流底部那张「这段对话留下的」小卡
+async function refreshOutcomes(conversationId: string, showCard = false) {
+  try {
+    const o = await getConversationOutcomes(conversationId)
+    if (!alive || !o) return
+    if (showCard && current.value?.id === conversationId) turnOutcomes.value = o
+    const brief = {
+      confirmed: o.confirmedClaims?.length ?? 0,
+      working: o.workingClaims?.length ?? 0,
+      decision: !!o.decision,
+      commitments: o.commitments?.length ?? 0,
+    }
+    conversations.value = conversations.value.map((c) => (c.id === conversationId ? { ...c, outcomes: brief } : c))
+  } catch {
+    // 旧后端没有这个接口
+  }
+}
+
+const showOutcomesCard = computed(() => !streaming.value && !!current.value && hasConversationOutcomes(turnOutcomes.value))
+
+async function loadGrowthToday() {
+  try {
+    const next = await api.getGrowthToday()
+    if (!alive) return
+    growthToday.value = next
+  } catch {
+    if (!alive) return
+    growthToday.value = null
+  }
+}
+
+async function loadDueCommitments() {
+  try {
+    const res = await listClaims({ trust: ['confirmed', 'working'], limit: 500 })
+    if (!alive) return
+    dueCommitments.value = res.items.filter((c) => c.predicate === 'committed_to' && isDueByToday(c.validTo))
+  } catch {
+    if (!alive) return
+    dueCommitments.value = []
+  }
+}
+
+// 页头标题下那行灰字：待确认 / 待回访（逾期）/ 待复盘 / 还在整理；只列非零项，无红点无徽章
+const headerItems = computed(() => {
+  const g = growthToday.value?.stats
+  return headerAggregateItems({
+    inbox: stats.value?.inbox,
+    dueReview: (g?.dueSoonDecisions ?? 0) + (g?.overdueDecisions ?? 0),
+    overdue: g?.overdueDecisions,
+    pendingReviews: g?.pendingReviews,
+    pendingJobs: status.value?.pendingJobs,
+  })
+})
+
+// 空白态「下一步」：最多三条
+const nextSteps = computed(() => {
+  const g = growthToday.value
+  return buildNextSteps({
+    overdue: (g?.dueDecisions ?? []).filter((d) => d.dueState === 'overdue').map((d) => ({ id: d.id, title: d.title })),
+    pendingReviews: (g?.pendingReviews ?? []).map((d) => ({ id: d.id, title: d.title })),
+    dueCommitments: dueCommitments.value.map((c) => ({ id: c.id, content: c.content })),
+    inbox: stats.value?.inbox,
+  })
+})
 
 const loadGate = createSessionGate()
 const pollGate = createSessionGate()
@@ -290,9 +418,22 @@ const currentId = computed(() => {
   return typeof id === 'string' && id ? id : null
 })
 
+// 建档入口：不存在 mode=onboarding 的会话，且（stats 未知 或 hasOntology 为假）→ 先认识你
+const onboardingConversation = computed(() => conversations.value.find((c) => c.mode === 'onboarding') ?? null)
+const landingReady = computed(() => !conversationsLoading.value && statsLoaded.value)
 const showIntro = computed(
-  () => !currentId.value && !conversationsLoading.value && conversations.value.length === 0 && stats.value !== null && !stats.value.hasOntology,
+  () => !currentId.value && landingReady.value && !onboardingConversation.value && (stats.value === null || !stats.value.hasOntology),
 )
+const showBlank = computed(() => !currentId.value && !messages.value.length && landingReady.value && !showIntro.value)
+// 没聊完的建档会话（用户轮数 < 8）：空白态给一张「继续建档」卡
+const pendingOnboarding = computed(() => {
+  const conv = onboardingConversation.value
+  if (!conv) return null
+  const turns = onboardingUserTurns(conv.messageCount)
+  if (turns >= ONBOARDING_TOTAL_TURNS) return null
+  const remaining = ONBOARDING_STEPS.length - Math.max(0, turns - 1)
+  return { id: conv.id, remaining }
+})
 
 const headerTitle = computed(() => {
   if (current.value) return current.value.title || (current.value.mode === 'onboarding' ? '第一次对话' : '对话')
@@ -300,13 +441,15 @@ const headerTitle = computed(() => {
 })
 
 const statusLine = computed(() => channelShort(status.value))
+// 模型没配置 / 不可用：页头改成「还没配置模型 · 去偏好」，输入区禁用并显示同一句
+const modelBlocked = computed(() => modelUnavailable(status.value))
 // 后台还没整理完的事（抽取 / 草稿 / 摘要），页头只用一句淡字提示
 const pendingJobs = computed(() => status.value?.pendingJobs ?? 0)
 
 // ---- 空白态的三张起手卡：点一下把话头放进输入框，不自动发送
 interface Starter { title: string; desc: string; text: string; deliberate?: boolean }
 const STARTERS: Starter[] = [
-  { title: '我在考虑一件事', desc: '把选项、倾向和把握说清楚，知君帮你整理成一条判断', text: '我在考虑一件事：', deliberate: true },
+  { title: '我在考虑一件事', desc: '把选项、倾向和把握说清楚，聊完会落成判断簿里一条可回访的记录', text: '我在考虑一件事：', deliberate: true },
   { title: '最近发生了……', desc: '说说这周让你在意的事，知君会把它和你以前说过的连起来', text: '最近发生了一件事，' },
   { title: '你怎么看我？', desc: '让知君用它目前对你的认识说说看，不对的地方你直接改', text: '基于你目前对我的认识，说说你眼中的我，哪些地方你其实不确定？' },
 ]
@@ -332,7 +475,7 @@ function friendlyError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
     if (err.status === 409) return '这段对话还在生成中，请稍等再发。'
     if (err.status === 429) return '模型正忙，请稍后再试。'
-    if (err.status === 503) return '模型服务不可用，请到「资料与边界 → 设置」检查模型配置。'
+    if (err.status === 503) return '模型服务不可用，请到「偏好」检查模型配置。'
     return err.message || fallback
   }
   return err instanceof Error && err.message ? err.message : fallback
@@ -340,11 +483,14 @@ function friendlyError(err: unknown, fallback: string): string {
 
 let statusTimer: number | null = null
 async function loadStatus() {
+  let next: ZhijunStatus | null = null
   try {
-    status.value = await getZhijunStatus()
+    next = await getZhijunStatus()
   } catch {
-    status.value = null
+    next = null
   }
+  if (!alive) return
+  status.value = next
   // 后台还在整理时每 8 秒看一眼，整理完就停
   if (statusTimer) window.clearTimeout(statusTimer)
   statusTimer = (status.value?.pendingJobs ?? 0) > 0 ? window.setTimeout(() => void loadStatus(), 8000) : null
@@ -352,9 +498,15 @@ async function loadStatus() {
 
 async function loadStats() {
   try {
-    stats.value = await getOntologyStats()
+    const next = await getOntologyStats()
+    if (!alive) return
+    stats.value = next
   } catch {
-    stats.value = { hasOntology: true, entities: 0, claims: { working: 0, confirmed: 0, retracted: 0, superseded: 0 }, bySection: { who: { confirmed: 0, working: 0 }, people: { confirmed: 0, working: 0 }, matters: { confirmed: 0, working: 0 }, principles: { confirmed: 0, working: 0 }, ways: { confirmed: 0, working: 0 }, direction: { confirmed: 0, working: 0 } }, inbox: 0 }
+    // 取不到就当「未知」：不能把 hasOntology 当真
+    if (!alive) return
+    stats.value = null
+  } finally {
+    statsLoaded.value = true
   }
 }
 
@@ -370,8 +522,10 @@ async function seedSeenClaims() {
 async function loadConversations() {
   try {
     const res = await listConversations(50)
+    if (!alive) return
     conversations.value = res.items
   } catch (err) {
+    if (!alive) return
     toast({ type: 'error', message: friendlyError(err, '会话列表加载失败') })
   } finally {
     conversationsLoading.value = false
@@ -401,6 +555,9 @@ async function loadConversation(id: string) {
     draftPollGate.invalidate()
     decision.value = detail.decision ?? null
     outcomeError.value = ''
+    reviewSaveError.value = ''
+    closingStreaming.value = false
+    turnOutcomes.value = null
     if (detail.conversation.mode === 'onboarding') {
       onboardingStep.value = stepFromMessages()
       void loadMapClaims()
@@ -436,8 +593,17 @@ function resetToLanding() {
   draftPollGate.invalidate()
   decision.value = null
   outcomeError.value = ''
+  reviewSaveError.value = ''
+  closingStreaming.value = false
+  turnOutcomes.value = null
   onboardingStep.value = null
   mapClaims.value = []
+  // 从会话回到空白态：页头聚合行与「下一步」用最新的数据（首次进页由 onMounted 负责，不重复拉）
+  if (mounted) {
+    void loadGrowthToday()
+    void loadDueCommitments()
+    void loadStats()
+  }
   newClaimIds.value = new Set()
   mapPollGate.invalidate()
 }
@@ -506,20 +672,32 @@ async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversa
 
 async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat') {
   if (streaming.value) return
+  if (modelBlocked.value) {
+    composerRef.value?.setText(content)
+    toast({ type: 'error', message: `${MODEL_UNAVAILABLE_TEXT}，先到「偏好」里配置` })
+    return
+  }
+  // 「先认识你」态下直接打字：进的是建档会话，不是普通对话
+  const wantOnboarding = showIntro.value
   streaming.value = true
   let conv: Conversation
   try {
-    conv = await ensureConversation('chat')
+    conv = await ensureConversation(wantOnboarding ? 'onboarding' : 'chat')
   } catch (err) {
     streaming.value = false
+    composerRef.value?.setText(content)
     toast({ type: 'error', message: friendlyError(err, '无法创建会话') })
     return
   }
-  await streamTurn(conv, content, depth, mode)
+  await streamTurn(conv, content, depth, wantOnboarding ? 'chat' : mode)
 }
 
 async function startOnboarding() {
   if (streaming.value) return
+  if (modelBlocked.value) {
+    toast({ type: 'error', message: `${MODEL_UNAVAILABLE_TEXT}，先到「偏好」里配置` })
+    return
+  }
   streaming.value = true
   let conv: Conversation
   try {
@@ -559,6 +737,14 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
   })
   messages.value.push(userMsg, assistant)
   await scrollToBottom()
+
+  // 首个 token 之前失败：把原文放回输入框，并撤掉刚插入的两个气泡
+  let gotToken = false
+  const rollback = () => {
+    if (!alive) return
+    messages.value = messages.value.filter((m) => m !== userMsg && m !== assistant)
+    composerRef.value?.setText(content)
+  }
 
   abortController = new AbortController()
   const signal = abortController.signal
@@ -600,8 +786,10 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           assistant.provider = m.provider
           assistant.model = m.model
           assistant.external = m.external
+          if (!alive) return
           if (m.mode === 'onboarding') {
             onboardingStep.value = m.onboardingStep ?? stepFromMessages()
+            closingStreaming.value = (onboardingStep.value ?? 0) >= ONBOARDING_STEPS.length + 1
             if (!mapClaims.value.length) void loadMapClaims()
           }
         },
@@ -609,25 +797,33 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           assistant.provenance = d as ProvenanceEvent
         },
         token: (d) => {
+          gotToken = true
           assistant.content += (d as { t: string }).t ?? ''
-          void scrollToBottom()
+          if (alive) void scrollToBottom()
         },
         extraction: (d) => {
           const e = d as ExtractionEvent
+          if (!alive) return
           if (e.state === 'queued') {
             void pollInbox(assistant)
             if (conv.mode === 'onboarding') void pollMap()
+          } else if (e.state === 'skipped') {
+            assistant.extractionNote = extractionSkipNote(e.reason)
           }
         },
         message_done: (d) => {
           const e = d as MessageDoneEvent
           assistant.status = e.status
           if (e.messageId) assistant.id = e.messageId
+          if (!alive) return
+          closingStreaming.value = false
           void loadStatus()
         },
         error: (d) => {
           const e = d as StreamErrorEvent
           assistant.status = 'error'
+          if (!alive) return
+          if (!gotToken) rollback()
           toast({ type: 'error', message: e.message || '生成失败' })
         },
       },
@@ -638,30 +834,40 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
       assistant.status = 'aborted'
     } else {
       assistant.status = 'error'
-      toast({ type: 'error', message: friendlyError(err, '生成失败') })
+      if (alive) {
+        if (!gotToken) rollback()
+        toast({ type: 'error', message: friendlyError(err, '生成失败') })
+      }
     }
   } finally {
     assistant.streaming = false
     streaming.value = false
+    closingStreaming.value = false
     abortController = null
-    void loadConversations()
-    await scrollToBottom()
+    if (alive) {
+      void loadConversations()
+      void refreshOutcomes(conv.id, true)
+      await scrollToBottom()
+    }
   }
 }
 
+// 只有用户显式点「停止」才中断；切页不中断，让服务端把这轮生成完并落库
 function stop() {
   abortController?.abort()
 }
 
+// 候选轮询：每 3 秒一次，最多 120 秒；超时还没出来就留一行灰字，等页头 pendingJobs 归零再补拉
 async function pollInbox(assistant: UiMessage) {
   const session = pollGate.next()
   let found = false
-  for (let i = 0; i < 10; i += 1) {
+  assistant.extractionNote = ''
+  for (let i = 0; i < 40; i += 1) {
     await new Promise((resolve) => window.setTimeout(resolve, 3000))
-    if (!pollGate.isCurrent(session)) return
+    if (!pollGate.isCurrent(session) || !alive) return
     try {
       const inbox = await getInbox(20)
-      if (!pollGate.isCurrent(session)) return
+      if (!pollGate.isCurrent(session) || !alive) return
       const fresh = inbox.items.filter((c) => !seenClaimIds.has(c.id))
       if (fresh.length) {
         for (const c of fresh) seenClaimIds.add(c.id)
@@ -677,7 +883,41 @@ async function pollInbox(assistant: UiMessage) {
       // 轮询失败不打扰用户
     }
   }
+  if (!found && pollGate.isCurrent(session) && alive) assistant.extractionNote = EXTRACTION_STILL_WORKING
 }
+
+// 页头「还在整理」从 >0 变成 0：对最近 3 条知君回复各再拉一次候选挂上去（按证据里的 messageId 归位，对不上的挂最近一条）
+async function attachLateCandidates() {
+  const recent = messages.value.filter((m) => m.role === 'assistant' && !m.streaming).slice(-3)
+  if (!recent.length) return
+  try {
+    const inbox = await getInbox(50)
+    if (!alive) return
+    const fresh = inbox.items.filter((c) => !seenClaimIds.has(c.id))
+    if (!fresh.length) return
+    const byId = new Map(recent.map((m) => [m.id, m] as const))
+    const fallback = recent[recent.length - 1]
+    for (const c of fresh) {
+      seenClaimIds.add(c.id)
+      const hit = (c.evidence ?? []).map((ev) => ev.messageId).find((id): id is string => !!id && byId.has(id))
+      const target = hit ? byId.get(hit)! : fallback
+      target.candidates = [...(target.candidates ?? []), c]
+    }
+    for (const m of recent) if (m.candidates?.length) m.extractionNote = ''
+    void loadStats()
+    await scrollToBottom()
+  } catch {
+    // 补拉失败不打扰
+  }
+}
+
+watch(pendingJobs, (n, old) => {
+  if ((old ?? 0) > 0 && n === 0 && current.value) {
+    void attachLateCandidates()
+    // 「这段对话留下的」再刷一次：整理完的理解会补进来
+    if (turnOutcomes.value) void refreshOutcomes(current.value.id, true)
+  }
+})
 
 async function onReview(assistant: UiMessage, claim: Claim, action: ReviewAction, editedContent?: string) {
   if (!current.value) return
@@ -705,6 +945,7 @@ async function onReview(assistant: UiMessage, claim: Claim, action: ReviewAction
       }),
     )
     void loadStats()
+    if (turnOutcomes.value) void refreshOutcomes(current.value.id, true)
     await scrollToBottom()
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '操作失败') })
@@ -719,18 +960,24 @@ function onCite(assistant: UiMessage, index: number) {
 }
 
 onMounted(() => {
+  mounted = true
   void loadStatus()
   void loadStats()
   void seedSeenClaims()
   void loadConversations()
+  void loadGrowthToday()
+  void loadDueCommitments()
 })
 
 onBeforeUnmount(() => {
+  // 不 abort 正在进行的流：服务端会把这轮生成完并落库，回来时从服务端重载
+  alive = false
   loadGate.invalidate()
   pollGate.invalidate()
   draftPollGate.invalidate()
+  mapPollGate.invalidate()
   if (statusTimer) window.clearTimeout(statusTimer)
-  abortController?.abort()
+  if (glowTimer) window.clearTimeout(glowTimer)
 })
 </script>
 
@@ -758,15 +1005,20 @@ onBeforeUnmount(() => {
         <div>
           <h1 class="zj-page__title">{{ headerTitle }}</h1>
           <p class="zj-page__status">
-            <span v-if="statusLine">{{ statusLine }}</span>
-            <span v-if="pendingJobs > 0" class="zj-page__pending">· 还在整理 {{ pendingJobs }} 件事</span>
+            <RouterLink v-if="modelBlocked" to="/settings" class="zj-page__model-link">{{ MODEL_UNAVAILABLE_TEXT }} · 去偏好</RouterLink>
+            <span v-else-if="statusLine">{{ statusLine }}</span>
+            <template v-for="(it, i) in headerItems" :key="it.key">
+              <span v-if="i > 0 || modelBlocked || statusLine" class="zj-page__dot" aria-hidden="true">·</span>
+              <RouterLink v-if="it.to" :to="it.to" class="zj-page__agg" :data-testid="`head-${it.key}`">{{ it.text }}</RouterLink>
+              <span v-else class="zj-page__pending" :data-testid="`head-${it.key}`">{{ it.text }}</span>
+            </template>
             <span v-if="isReview" class="zj-seal zj-seal--accent">回访</span>
             <span v-if="status && !status.workerRunning" class="zj-seal zj-seal--warning" title="知君暂时不会从对话里提出新的理解">整理暂停</span>
           </p>
         </div>
       </header>
 
-      <NudgeStrip ref="nudgeRef" class="zj-page__nudges" />
+      <NudgeStrip ref="nudgeRef" class="zj-page__nudges" @say="(t) => composerRef?.setText(t)" />
 
       <div class="zj-page__body">
       <div class="zj-page__stream">
@@ -778,10 +1030,17 @@ onBeforeUnmount(() => {
           <OntologyExplainer class="zj-intro__explainer" compact />
           <p class="zj-intro__trust">原件留在设备内 · 只有经过你确认的理解才会留下</p>
           <BaseButton variant="primary" :loading="streaming" @click="startOnboarding">开始第一次对话</BaseButton>
+          <p class="zj-intro__hint">也可以直接在下面打字，知君会从认识你开始。</p>
         </div>
 
-        <div v-else-if="!currentId && !messages.length" class="zj-blank">
-          <p class="zj-blank__lead">想聊什么，或者正在考虑什么决定？</p>
+        <div v-else-if="showBlank" class="zj-blank">
+          <p class="zj-blank__lead">带一件正在拿主意的事来。聊完，它会变成一条你确认过、到期知君会来回访的判断。</p>
+          <button v-if="pendingOnboarding" type="button" class="zj-blank__resume" data-testid="resume-onboarding" @click="selectConversation(pendingOnboarding.id)">
+            <span class="zj-seal zj-seal--accent">建档</span>
+            <span class="zj-blank__resume-title">继续建档 · 还差 {{ pendingOnboarding.remaining }} 问</span>
+            <span class="zj-blank__resume-desc">上次认识你的对话还没聊完，接着聊，本体图会继续亮起来。</span>
+          </button>
+          <NextStepsPanel :items="nextSteps" @say="(t) => composerRef?.setText(t)" />
           <div class="zj-blank__cards" role="group" aria-label="起个头">
             <button v-for="s in STARTERS" :key="s.title" type="button" class="zj-blank__card" @click="useStarter(s)">
               <span class="zj-blank__card-title">{{ s.title }}</span>
@@ -797,13 +1056,14 @@ onBeforeUnmount(() => {
         <template v-for="m in messages" :key="m.id">
           <div class="zj-turn" :class="`zj-turn--${m.role}`">
             <MessageBubble
-              :role="m.role"
+              :role="m.role === 'system' && m.meta?.kind === 'review_open' ? 'assistant' : m.role"
               :content="m.content"
               :status="m.status"
               :streaming="m.streaming"
               @cite="(n) => onCite(m, n)"
             />
             <ProvenanceStrip v-if="m.role === 'assistant' && m.provenance" :provenance="m.provenance" :meta="m.turnMeta" />
+            <p v-if="m.role === 'assistant' && m.extractionNote" class="zj-turn__note" data-testid="extraction-note">{{ m.extractionNote }}</p>
             <template v-if="m.role === 'assistant' && m.candidates && m.candidates.length">
               <ClaimCandidateChip
                 v-for="c in m.candidates"
@@ -815,6 +1075,7 @@ onBeforeUnmount(() => {
             </template>
           </div>
         </template>
+        <OutcomesCard v-if="showOutcomesCard && turnOutcomes" :outcomes="turnOutcomes" />
       </div>
 
       <div class="zj-page__composer">
@@ -822,8 +1083,10 @@ onBeforeUnmount(() => {
           ref="composerRef"
           :streaming="streaming"
           :disabled="messagesLoading"
-          :allow-deliberate="!isReview && current?.mode !== 'onboarding'"
-          :placeholder="current?.mode === 'onboarding' ? '回答知君的问题，或者说说你想先聊什么…' : isReview ? '说说实际发生了什么，和预期比差在哪…' : undefined"
+          :allow-deliberate="!isReview && current?.mode !== 'onboarding' && !showIntro"
+          :notice="modelBlocked ? MODEL_UNAVAILABLE_TEXT : undefined"
+          notice-to="/settings"
+          :placeholder="current?.mode === 'onboarding' || showIntro ? '回答知君的问题，或者说说你想先聊什么…' : isReview ? '说说实际发生了什么，和预期比差在哪…' : undefined"
           @send="send"
           @stop="stop"
         />
@@ -857,8 +1120,8 @@ onBeforeUnmount(() => {
           <p class="zj-onb__hint">认识你的七个问题 · 每答一个，对应的那一片就会亮起来。</p>
           <div v-if="onboardingDone" class="zj-onb__done">
             <h3>这是我目前对你的认识</h3>
-            <p>七个问题都聊过了。去「我的本体」核对一遍：对的点个头，不对的直接改。</p>
-            <BaseButton variant="primary" @click="router.push('/me')">去核对</BaseButton>
+            <p>七个问题都聊过了。去核对一遍：对的点个头，不对的直接改。</p>
+            <BaseButton variant="primary" @click="router.push('/me/inbox')">去核对</BaseButton>
           </div>
         </section>
         <ReviewOutcomePanel
@@ -866,7 +1129,10 @@ onBeforeUnmount(() => {
           :decision="decision"
           :busy="outcomeBusy"
           :error="outcomeError"
+          :review-busy="reviewSaving"
+          :review-error="reviewSaveError"
           @record="onRecordOutcome"
+          @review="onSubmitReview"
         />
         <LiveObjectPanel
           v-if="showDraftPanel"
@@ -947,6 +1213,28 @@ onBeforeUnmount(() => {
 }
 .zj-page__pending {
   color: var(--ws-muted-color, #8a8d88);
+}
+.zj-page__dot {
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-page__agg {
+  color: var(--ws-text-secondary-color, #686b66);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--ws-border-color, #d8d3c8);
+}
+.zj-page__agg:hover {
+  color: var(--ws-primary-color, #a6452e);
+  border-bottom-color: currentColor;
+}
+.zj-page__model-link {
+  color: var(--ws-primary-color, #a6452e);
+  text-decoration: underline;
+}
+.zj-turn__note {
+  max-width: 760px;
+  margin: 4px 0 0 4px;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-page__status {
   display: flex;
@@ -1109,8 +1397,41 @@ onBeforeUnmount(() => {
 .zj-intro__explainer {
   margin: 8px auto 4px;
 }
-.zj-intro__trust {
+.zj-intro__trust,
+.zj-intro__hint {
   font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-intro__hint {
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-blank__resume {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  margin: 18px 0 0;
+  padding: 14px;
+  border: 1px dashed var(--ws-primary-color, #a6452e);
+  border-radius: var(--ws-radius-lg, 8px);
+  background: var(--ws-card-bg, #fff);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.zj-blank__resume:hover {
+  border-style: solid;
+}
+.zj-blank__resume-title {
+  font-family: var(--ws-font-display, serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-blank__resume-desc {
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-blank {
@@ -1121,7 +1442,8 @@ onBeforeUnmount(() => {
 .zj-blank__lead {
   margin: 0 0 8px;
   font-family: var(--ws-font-display, serif);
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.7;
   color: var(--ws-text-primary-color, #1d211f);
 }
 .zj-blank__hint {

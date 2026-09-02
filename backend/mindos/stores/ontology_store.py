@@ -602,6 +602,78 @@ class OntologyStore:
             ).fetchall()
         return [r["name"] for r in rows]
 
+    def conversation_outcome_counts(self, conversation_ids: list[str] | tuple[str, ...] | None = None) -> dict[str, dict]:
+        """按 ``claim_evidence.conversation_id`` 归属，一次 SQL 拿到各会话的产出计数。
+
+        返回 ``{conversation_id: {confirmed, working, retracted, commitments}}``；
+        ``commitments`` 为 confirmed / working 中 predicate=committed_to 且带 valid_to 的理解数。
+        """
+        query = """
+            SELECT ce.conversation_id AS conversation_id,
+                   c.trust_state AS trust_state,
+                   CASE WHEN c.predicate = 'committed_to' AND c.valid_to IS NOT NULL AND c.valid_to != '' THEN 1 ELSE 0 END AS committed,
+                   COUNT(DISTINCT c.id) AS n
+            FROM claim_evidence AS ce
+            JOIN claims AS c ON c.id = ce.claim_id
+            WHERE ce.conversation_id IS NOT NULL AND ce.conversation_id != ''
+        """
+        params: list = []
+        if conversation_ids is not None:
+            ids = [str(i) for i in conversation_ids if i]
+            if not ids:
+                return {}
+            query += " AND ce.conversation_id IN (%s)" % ",".join("?" for _ in ids)
+            params.extend(ids)
+        query += " GROUP BY ce.conversation_id, c.trust_state, committed"
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        counts: dict[str, dict] = {}
+        for row in rows:
+            item = counts.setdefault(row["conversation_id"], {"confirmed": 0, "working": 0, "retracted": 0, "commitments": 0})
+            state = row["trust_state"]
+            n = int(row["n"])
+            if state in ("confirmed", "working"):
+                item[state] += n
+                if int(row["committed"] or 0):
+                    item["commitments"] += n
+            elif state in ("retracted", "superseded"):
+                item["retracted"] += n
+        return counts
+
+    def claims_for_conversation(
+        self,
+        conversation_id: str,
+        *,
+        trust_states: tuple[str, ...] | list[str] = ("confirmed", "working"),
+        limit: int = 200,
+    ) -> list[dict]:
+        """有证据指回本会话的理解（去重，按最近重申排序）。"""
+        states = [s for s in trust_states if s in TRUST_STATES]
+        if not states or not conversation_id:
+            return []
+        query = (
+            _CLAIM_SELECT
+            + " WHERE c.id IN (SELECT claim_id FROM claim_evidence WHERE conversation_id = ?)"
+            + " AND c.trust_state IN (%s)" % ",".join("?" for _ in states)
+            + " ORDER BY c.last_reaffirmed DESC, c.created_at DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(query, [conversation_id, *states, int(limit)]).fetchall()
+            return [self._claim(r, self._evidence_for(conn, r["id"])) for r in rows]  # type: ignore[misc]
+
+    def pending_jobs_for_conversation(self, conversation_id: str) -> int:
+        """与本会话相关的待处理任务数（owner 是本会话，或 payload 里带本会话 id）。"""
+        if not conversation_id:
+            return 0
+        needle = '"conversationId":"%s"' % conversation_id
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM ontology_jobs WHERE state IN ('queued','running') "
+                "AND (owner_id = ? OR instr(payload_json, ?) > 0)",
+                (conversation_id, needle),
+            ).fetchone()
+        return int(row["n"]) if row else 0
+
     # ------------------------------------------------------------------ 理解
     @staticmethod
     def _evidence(row: sqlite3.Row) -> dict:

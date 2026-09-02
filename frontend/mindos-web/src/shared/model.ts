@@ -34,3 +34,11 @@ export function channelLine(meta: ChannelMeta | null | undefined): string {
   if (meta.external) return `这轮用的是外部模型 ${providerName(meta.provider, meta.model)}：你的问题和上面列出的片段发到了它的服务器。`
   return `这轮用的是本机模型：数据没有离开这台设备。`
 }
+
+/** 模型没配置或当前不可用：页头与输入区都要降级成「还没配置模型 · 去偏好」。 */
+export function modelUnavailable(status: { configured?: boolean; error?: string | null } | null | undefined): boolean {
+  if (!status) return false
+  return status.configured === false || !!status.error
+}
+
+export const MODEL_UNAVAILABLE_TEXT = '还没配置模型'

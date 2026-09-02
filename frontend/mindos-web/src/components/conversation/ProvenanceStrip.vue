@@ -4,7 +4,8 @@
 import { computed, ref } from 'vue'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { ProvenanceEvent, TurnMetaEvent } from '@/services/api'
-import { sectionLabel } from '@/shared/ontology'
+import { formatDay, sectionLabel } from '@/shared/ontology'
+import { anchorLine, pastDecisionSummary } from '@/shared/labels'
 import { confirmedFraction } from '@/shared/selfmap'
 import { channelLine, channelShort } from '@/shared/model'
 import RingGlyph from '@/components/ui/RingGlyph.vue'
@@ -16,6 +17,8 @@ const props = defineProps<{
 }>()
 
 const open = ref(false)
+// 以前记过的相似判断（旧后端没有这个字段）
+const pastDecisions = computed(() => props.provenance.pastDecisions ?? [])
 const fraction = computed(() => confirmedFraction(props.provenance.confirmedClaims.length, props.provenance.workingClaims.length))
 
 const summary = computed(() => {
@@ -25,11 +28,28 @@ const summary = computed(() => {
   if (p.workingClaims.length) parts.push(`${p.workingClaims.length} 条还没点头的`)
   if (p.materials.length) parts.push(`${p.materials.length} 段资料`)
   if (p.retractedNotices > 0) parts.push(`避开了 ${p.retractedNotices} 条你纠正过的`)
-  return parts.length ? `参考了 ${parts.join('、')}` : '这轮没有用到本体里的理解'
+  const base = parts.length ? `参考了 ${parts.join('、')}` : ''
+  // 以前记过的相似判断：点名第一条（有日期就写日期），其余只写数量
+  const past = pastDecisions.value
+  if (past.length) {
+    const first = past[0]
+    const sentence = pastDecisionSummary(first, formatDay(first.createdAt), past.length - 1)
+    return base ? `${base}；${sentence}` : sentence
+  }
+  return base || '这轮没有用到本体里的理解'
 })
 
 const channel = computed(() => channelLine(props.meta))
 const channelTag = computed(() => channelShort(props.meta))
+// 打底带上的原则与做法（旧后端没有这个字段）：内容从 confirmedClaims 里按 id 找，找不到就只写数量
+const anchorIds = computed(() => new Set(props.provenance.anchorClaimIds ?? []))
+const anchorText = computed(() => {
+  const ids = anchorIds.value
+  if (!ids.size) return ''
+  const hits = props.provenance.confirmedClaims.filter((c) => ids.has(c.id))
+  const ordered = [...hits.filter((c) => c.section === 'principles'), ...hits.filter((c) => c.section !== 'principles')]
+  return anchorLine(ordered.map((c) => c.content), ids.size)
+})
 </script>
 
 <template>
@@ -57,6 +77,19 @@ const channelTag = computed(() => channelShort(props.meta))
           <li v-for="c in provenance.confirmedClaims" :key="c.id">
             <RouterLink :to="{ path: '/me', query: { section: c.section, claim: c.id } }">{{ c.content }}</RouterLink>
             <span class="zj-prov__tag">{{ sectionLabel(c.section) }}</span>
+            <span v-if="anchorIds.has(c.id)" class="zj-seal zj-seal--muted zj-prov__anchor" title="商量、回访或深入时，这条原则或做法会一直带在身边">打底</span>
+          </li>
+        </ul>
+      </section>
+      <p v-if="anchorText" class="zj-prov__line" data-testid="provenance-anchor">
+        <RouterLink :to="{ path: '/me', query: { section: 'principles' } }">{{ anchorText }}</RouterLink>
+      </p>
+      <section v-if="pastDecisions.length" class="zj-prov__group" data-testid="provenance-past">
+        <h4>你以前记过的相似判断</h4>
+        <ul>
+          <li v-for="d in pastDecisions" :key="d.id">
+            <RouterLink :to="{ path: '/judgments', query: { decisionId: d.id } }">{{ d.title }}</RouterLink>
+            <span class="zj-prov__tag">当时选了「{{ d.choice }}」<template v-if="formatDay(d.createdAt)"> · {{ formatDay(d.createdAt) }}</template></span>
           </li>
         </ul>
       </section>
@@ -152,6 +185,11 @@ const channelTag = computed(() => channelShort(props.meta))
 .zj-prov__tag {
   margin-left: 6px;
   color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-prov__anchor {
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 1.4;
 }
 .zj-prov__cite {
   display: inline-block;

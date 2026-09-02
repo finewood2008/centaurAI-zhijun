@@ -6,6 +6,7 @@ P2 只做 ``review_due``：判断簿里到期 / 逾期且还没记结果的判�
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 
 from ..stores.conversation_store import ConversationStore
@@ -34,10 +35,59 @@ def _parse(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _quiet_words(charter: dict | None) -> list[str]:
-    if not charter:
+# 「不希望 / 不要 / 不用 / 别 … 提 / 聊 / 谈 / 碰 / 问」：用户在建档或对话里说过的静默边界。
+_QUIET_PATTERN_RE = re.compile(r"(不希望|不要|不用|别)[^。；;]*?(提|聊|谈|碰|问)")
+# 去掉句式后剩下的就是话题词；顺序有讲究：长模式先于短模式。
+_QUIET_STRIP = (
+    "我不希望", "不希望", "AI", "ai", "知君", "主动提起", "主动提", "主动", "这些话题", "这类话题", "的话题", "话题",
+    "不用", "不要", "别", "提起", "提", "聊", "谈", "碰", "问", "。", "！", "!", "，", "；", ";", " ",
+)
+_QUIET_SPLIT_RE = re.compile(r"[和、或与，,]|以及")
+_QUIET_FILL_RE = re.compile(r"^(了|的|这些|那些|这类|那类|一些|等|吧|呢|啊)+|(了|的|这些|那些|这类|那类|一些|等|吧|呢|啊)+$")
+
+
+def quiet_words_from_text(content: str) -> list[str]:
+    """从一句静默边界里抽话题词（2 到 8 字）：「我不希望AI主动提起健康和家里的矛盾这些话题」→ 健康 / 家里的矛盾。"""
+    text = str(content or "").strip()
+    if not text:
         return []
-    return [str(w).strip() for w in (charter.get("quietDomains") or []) if str(w).strip()]
+    # 先按分隔符切，再逐段剥句式；「家里的矛盾」里的「的」要保住，所以只剥首尾虚词。
+    words: list[str] = []
+    for piece in _QUIET_SPLIT_RE.split(text):
+        piece = piece.strip()
+        for pattern in _QUIET_STRIP:
+            piece = piece.replace(pattern, "")
+        piece = _QUIET_FILL_RE.sub("", piece).strip()
+        if 2 <= len(piece) <= 8 and piece not in words:
+            words.append(piece)
+    return words
+
+
+def _is_quiet_boundary(claim: dict) -> bool:
+    if str(claim.get("predicate") or "") == "boundary":
+        return True
+    return bool(_QUIET_PATTERN_RE.search(str(claim.get("content") or "")))
+
+
+def _quiet_words(charter: dict | None, onto=None) -> list[str]:
+    """静默领域：章程 quietDomains，加上本体 principles 分区里用户说过的「不要主动提」边界。"""
+    words: list[str] = []
+    if charter:
+        words.extend(str(w).strip() for w in (charter.get("quietDomains") or []) if str(w).strip())
+    try:
+        if onto is None:
+            from ..stores.ontology_store import OntologyStore
+
+            onto = OntologyStore.instance()
+        for claim in onto.list_claims(section="principles", trust_states=("confirmed", "working"), limit=200, include_hidden=False):
+            if not _is_quiet_boundary(claim):
+                continue
+            for word in quiet_words_from_text(claim.get("content") or ""):
+                if word not in words:
+                    words.append(word)
+    except Exception as exc:  # noqa: BLE001 - 本体不可用时只用章程
+        logger.debug("从本体抽静默领域失败：%s", type(exc).__name__)
+    return [w for w in words if w]
 
 
 def trigger_key_for(decision_id: str) -> str:

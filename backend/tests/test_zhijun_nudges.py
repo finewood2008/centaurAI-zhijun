@@ -118,6 +118,26 @@ class NudgeTests(unittest.TestCase):
         self.assertEqual(nudge_service.scan(conv_store=self.convs, growth=self.growth, now=later + timedelta(days=10))["created"], 0)
         self.assertEqual(self.client.post("/api/mindos/nudges/ndg_missing/dismiss").status_code, 404)
 
+    def test_quiet_domain_from_onboarding_claims(self) -> None:
+        """建档里说过「不希望主动提」的话题，也算静默领域：逾期判断标题命中就不提醒。"""
+        onto = ontology_store_module.OntologyStore.instance()
+        onto.create_claim(
+            {"content": "我不希望AI主动提起健康和家里的矛盾这些话题", "section": "principles", "layer": "self_declared"},
+            [{"kind": "conversation_turn", "conversation_id": "c1", "message_id": "m1", "quote": "健康和家里的矛盾这些话题不用主动提"}],
+            trust_state="confirmed",
+            trust_origin="utterance",
+        )
+        self.assertEqual(nudge_service.quiet_words_from_text("我不希望AI主动提起健康和家里的矛盾这些话题"), ["健康", "家里的矛盾"])
+        self.assertEqual(nudge_service.quiet_words_from_text("健康话题不用主动提"), ["健康"])
+        self.assertEqual(nudge_service._quiet_words(None, onto), ["健康", "家里的矛盾"])
+        quiet = self.growth.create_decision(_decision("家里的矛盾要不要摊开说", self.now - timedelta(days=2)))
+        loud = self.growth.create_decision(_decision("要不要涨价", self.now - timedelta(days=2)))
+        result = nudge_service.scan(conv_store=self.convs, growth=self.growth, now=self.now)
+        self.assertEqual(result["created"], 1)
+        items = self.convs.list_nudges()
+        self.assertEqual([n["triggerRef"]["decisionId"] for n in items], [loud["id"]])
+        self.assertNotIn(quiet["id"], [n["triggerRef"].get("decisionId") for n in items])
+
     def test_commitment_due_and_weekly_review(self) -> None:
         onto = ontology_store_module.OntologyStore.instance()
         due = _iso(self.now - timedelta(hours=2))

@@ -355,6 +355,30 @@ const latestReviewed = computed(() => {
   return reviewed.sort((a, b) => String(b.review?.createdAt ?? '').localeCompare(String(a.review?.createdAt ?? '')))[0]
 })
 
+// 趋势（判断时间线）折叠：判断少于 5 个时默认收起；用户手动展开或收起后记住
+const TREND_KEY = 'zhijun.judgments.trend'
+function readTrend(): boolean | null {
+  try {
+    const v = localStorage.getItem(TREND_KEY)
+    return v === 'open' ? true : v === 'closed' ? false : null
+  } catch {
+    return null
+  }
+}
+const trendPref = ref<boolean | null>(readTrend())
+const trendOpen = computed(() => trendPref.value ?? decisions.value.length >= 5)
+function onTrendToggle(event: Event) {
+  const open = (event.target as HTMLDetailsElement).open
+  // 由绑定同步引起的 toggle 与当前状态一致，不算用户操作
+  if (open === trendOpen.value) return
+  trendPref.value = open
+  try {
+    localStorage.setItem(TREND_KEY, open ? 'open' : 'closed')
+  } catch {
+    // 无法持久化时忽略
+  }
+}
+
 // 时间线点了某个判断：滚到卡片并高亮 1.5 秒
 const highlightedId = ref('')
 let highlightTimer: ReturnType<typeof setTimeout> | null = null
@@ -423,8 +447,6 @@ onMounted(async () => {
       </template>
     </form>
 
-    <JudgmentTimeline v-if="decisions.length" :decisions="decisions" :selected-id="highlightedId || null" @select="focusDecision" />
-
     <section class="board-section" aria-labelledby="decisions-heading">
       <div class="section-head">
         <div class="growth-panel__title"><span class="panel-icon"><Target :size="19" aria-hidden="true" /></span><div><h2 id="decisions-heading">判断簿</h2><p>把事后的解释，变成当时就写下、事后可核对的记录。</p></div></div>
@@ -468,6 +490,11 @@ onMounted(async () => {
         </section>
       </div>
     </section>
+
+    <details v-if="decisions.length" class="growth-trend" :open="trendOpen" data-testid="judgment-trend" @toggle="onTrendToggle">
+      <summary>查看趋势</summary>
+      <JudgmentTimeline :decisions="decisions" :selected-id="highlightedId || null" @select="focusDecision" />
+    </details>
 
     <section class="growth-panel charter-panel" aria-labelledby="charter-heading">
       <div class="growth-panel__head">
@@ -522,6 +549,7 @@ onMounted(async () => {
 .growth-panel__head{gap:12px;padding:15px 17px;border-bottom:1px solid var(--ws-border-color-3)}.growth-panel__title{gap:11px}.growth-panel__title h2{margin:0;font-size:17px}.growth-panel__title p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:12px}
 .panel-icon{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:var(--ws-edit-color);color:var(--ws-primary-color)}
 .version-badge,.decision-counts span{padding:2px 8px;border-radius:3px;border:1px solid var(--ws-border-color);background:transparent;color:var(--ws-text-secondary-color);font-size: 12px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.charter-panel__meta{gap:10px}
+.growth-trend{margin:0 0 18px}.growth-trend>summary{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--ws-text-secondary-color);font-size:12px;cursor:pointer;list-style:none}.growth-trend>summary::-webkit-details-marker{display:none}.growth-trend>summary::before{content:'';width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s}.growth-trend[open]>summary::before{transform:rotate(90deg)}.growth-trend>summary:hover{color:var(--ws-primary-color)}
 .board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
 .board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-surface-2)}
 .board__column-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 4px 4px}.board__column-head h3{margin:0;font-size:15px}.board__column-head small{color:var(--ws-text-secondary-color);font-size: 12px}

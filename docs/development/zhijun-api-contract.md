@@ -285,3 +285,57 @@ interface Conflict { id: string; kind: 'contradiction'|'tension'; claimA: Claim;
 - `GET /api/mindos/zhijun/status` 新增 `pendingJobs`（后台任务数），前端可据此显示「知君还在整理 N 件事」。
 - 外部模型：`ZHIJUN_OPENAI_TASK_MODEL` 指定后台 JSON 任务模型（默认同主模型）；JSON 任务预算至少 6000 token（推理型模型会先写推理）。
 - 思考开关：`ZHIJUN_OPENAI_THINKING=deepseek`（base_url 含 deepseek 时自动）会按强度发送 `thinking`：effort=low（简短回复、抽取、摘要、草稿）关闭思考，effort=medium/high（深聊、商量、第一次观察）开启并把预算放宽到 ≥6000；其它 OpenAI 兼容服务不发送该参数（`ZHIJUN_OPENAI_THINKING=off` 可强制关闭）。
+
+---
+
+## 对话产出与出处显式化增补 · 版本 outcomes-2026-09-03
+
+### 13. 对话产出 `GET /api/mindos/conversations/{id}/outcomes`
+
+这段对话留下了什么。归属规则：理解按 `claim_evidence.conversation_id` 归到本会话（一条理解可同时归属多段对话）。
+
+```ts
+interface ConversationOutcomes {
+  conversationId: string
+  confirmedClaims: ClaimBrief[]        // 本会话归属、trustState=confirmed
+  workingClaims: ClaimBrief[]          // 本会话归属、trustState=working
+  decision: { id: string; title: string; choice: string; reviewAt: string | null; status: string } | null
+  commitments: { claimId: string; content: string; validTo: string }[]   // predicate=committed_to 且 validTo 非空
+  pendingJobs: number                  // 与本会话相关的后台待处理任务数（owner 是本会话或 payload 带本会话 id）；取不到时给全局数
+  retracted: number                    // 本会话归属、已撤回 / 已替代的理解数
+}
+```
+
+- `decision`：本会话确认入簿的判断。取 `conversation.decisionId`（回访会话），否则取本会话 `decision_drafts` 里最近一条 `status=confirmed` 的草稿绑定的判断；都没有为 `null`。
+- 会话不存在 → `404 {code:"CONVERSATION_NOT_FOUND"}`。
+
+### 14. 会话列表项 `GET /api/mindos/conversations`
+
+每项保证带 `mode`，并新增：
+
+```ts
+outcomes: { confirmed: number; working: number; decision: boolean; commitments: number }
+```
+
+计数与 §13 同源（服务端一次 SQL 按 `conversation_id` 聚合 `claim_evidence`），`decision` 的判定规则同 §13。
+
+### 15. `provenance` 事件新增字段
+
+```
+provenance    {..., pastDecisions: {id, title, choice, status}[], anchorClaimIds: string[]}
+```
+
+- `pastDecisions`：本轮带进上下文的「你过去类似的判断」（`history.similar_decisions`，纯词面匹配、无模型开销，最多 3 条）。商量与回访必带；普通 `chat` 模式在这句话过了抽取门（`should_extract` 通过：≥ 6 字且不是无第一人称的纯提问）时也带。
+- `anchorClaimIds`：商量 / 回访 / 深入时无论词面是否命中都带上的、原则与做法分区的已确认理解 id（最多 6 条）；这些 id 同时出现在 `confirmedClaims` 里，前端可据此把它们标成「原则锚点」。普通聊天为空数组。
+- 由回执还原的历史出处（`fromReceipt: true`）这两项为空数组：回执表未存过去判断与锚点。
+
+### 16. 回访会话：复用与模板开场
+
+- `POST /api/mindos/conversations` body `{mode:"review", decisionId}`：同一 `decisionId` 已有活跃的回访会话时直接返回它，响应多一项 `reused: true`；否则新建并返回 `reused: false`。
+- 新建的回访会话第一条消息是知君的开场（`role=assistant`，`meta.kind=review_open`，`provider=model="template"`，模板生成、不调模型），文案：
+  「「{title}」到了回访的时候。当时你选了「{choice}」，预期是「{expectedOutcome}」。先别急着说结果，这段时间你感觉怎么样？」
+  取代原来的 `role=system` 备注；§8 中「自动追加一条 role=system 的开场备注」以本节为准。
+
+### 17. 静默领域来自建档
+
+提醒扫描（`nudges.scan`）的静默词除章程 `quietDomains` 外，还从本体 `principles` 分区的已确认 / 待确认理解里抽：`predicate=boundary`，或内容含「不希望 / 不要 / 不用 / 别 … 提 / 聊 / 谈 / 碰 / 问」句式。去掉句式词（我不希望、AI、知君、主动提起、这些话题、的话题 等）后按「和、或、以及、与、，」切分，保留 2 到 8 字的话题词。例：「我不希望AI主动提起健康和家里的矛盾这些话题」→ `健康`、`家里的矛盾`；标题或内容命中的到期判断与承诺不生成提醒。

@@ -150,7 +150,7 @@ async function toggleProjection() {
     </section>
 
     <details class="zj-hub__adv">
-      <summary>高级</summary>
+      <summary>高级 · 知识档案、回收站、搜索、导出、删除全部记忆</summary>
 
       <div class="zj-hub__grid zj-hub__grid--sub">
         <RouterLink v-for="c in moreCards" :key="c.to" :to="c.to" class="zj-hub__card">
@@ -243,9 +243,7 @@ async function toggleProjection() {
   margin-top: 20px;
 }
 .zj-hub__adv > summary {
-  font-family: var(--ws-font-display, serif);
-  font-size: var(--ws-display-3, 16px);
-  font-weight: 600;
+  font-size: 13px;
   color: var(--ws-text-secondary-color, #686b66);
   cursor: pointer;
 }
