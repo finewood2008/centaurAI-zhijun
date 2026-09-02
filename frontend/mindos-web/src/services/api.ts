@@ -46,44 +46,59 @@ export interface MindosAccessContext {
   deviceId?: string
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  // system-models 的读取与写入接口均要求此头：它让跨站请求触发 CORS 预检，
-  // 而后端只接受 loopback 请求。统一在 API 边界注入，避免 GET 漏带而无法打开设置页。
+/** API 根路径；SSE 流式客户端（services/sse.ts）与 request 共用。 */
+export const API_BASE = BASE
+
+/**
+ * 统一请求头：system-models 的读取与写入接口均要求 X-Requested-By——它让跨站请求
+ * 触发 CORS 预检，而后端只接受 loopback 请求。统一在 API 边界注入，避免 GET 漏带；
+ * 票据模式再附上会话凭证。SSE 客户端复用同一函数，保证三层 gate 行为一致。
+ */
+export function buildHeaders(init?: RequestInit): Headers {
   const headers = new Headers(init?.headers)
   headers.set('X-Requested-By', 'centaur-vdb')
   const token = getMindosSessionToken()
   if (token) headers.set(SESSION_HEADER, token)
-  const res = await fetch(`${BASE}${path}`, { ...init, headers })
-  if (!res.ok) {
-    let message = `请求失败（${res.status}）`
-    let code: string | undefined
-    let details: string[] | undefined
-    try {
-      const body = await res.json()
-      if (body && typeof body.detail === 'string') message = body.detail
-      else if (body && body.detail && typeof body.detail === 'object') {
-        if (typeof body.detail.detail === 'string') message = body.detail.detail
-        code = typeof body.detail.code === 'string' ? body.detail.code : undefined
-        const parsedDetails = Array.isArray(body.detail.details)
-          ? body.detail.details.filter((item: unknown): item is string => typeof item === 'string')
-          : []
-        details = parsedDetails.length ? parsedDetails : undefined
-      }
-      else if (body && typeof body.message === 'string') {
-        // P1：system-models 统一错误体 {code, message, details?}——附加 details 便于定位
-        code = typeof body.code === 'string' ? body.code : undefined
-        const parsedDetails = Array.isArray(body.details)
-          ? body.details.filter((item: unknown): item is string => typeof item === 'string')
-          : []
-        details = parsedDetails.length ? parsedDetails : undefined
-        message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
-      }
-      if (!code && body && typeof body.code === 'string') code = body.code
-    } catch {
-      // 忽略非 JSON 响应体
+  return headers
+}
+
+/** 把非 2xx 响应解析成 ApiError 并抛出（支持三种后端错误体形状）。 */
+export async function throwApiError(res: Response): Promise<never> {
+  let message = `请求失败（${res.status}）`
+  let code: string | undefined
+  let details: string[] | undefined
+  try {
+    const body = await res.json()
+    if (body && typeof body.detail === 'string') message = body.detail
+    else if (body && body.detail && typeof body.detail === 'object') {
+      if (typeof body.detail.detail === 'string') message = body.detail.detail
+      else if (typeof body.detail.message === 'string') message = body.detail.message
+      code = typeof body.detail.code === 'string' ? body.detail.code : undefined
+      const parsedDetails = Array.isArray(body.detail.details)
+        ? body.detail.details.filter((item: unknown): item is string => typeof item === 'string')
+        : []
+      details = parsedDetails.length ? parsedDetails : undefined
     }
-    throw new ApiError(message, res.status, code, details)
+    else if (body && typeof body.message === 'string') {
+      // P1：system-models 统一错误体 {code, message, details?}——附加 details 便于定位
+      code = typeof body.code === 'string' ? body.code : undefined
+      const parsedDetails = Array.isArray(body.details)
+        ? body.details.filter((item: unknown): item is string => typeof item === 'string')
+        : []
+      details = parsedDetails.length ? parsedDetails : undefined
+      message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
+    }
+    if (!code && body && typeof body.code === 'string') code = body.code
+  } catch {
+    // 忽略非 JSON 响应体
   }
+  throw new ApiError(message, res.status, code, details)
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = buildHeaders(init)
+  const res = await fetch(`${BASE}${path}`, { ...init, headers })
+  if (!res.ok) await throwApiError(res)
   return res.json() as Promise<T>
 }
 
@@ -1394,4 +1409,279 @@ export async function provisionMindosSession(): Promise<{ deviceId: string } | n
   const exchanged = await exchangeTicketForSession(ticket)
   setMindosSessionToken(exchanged.sessionToken)
   return { deviceId: exchanged.deviceId }
+}
+
+// =====================================================================
+// 知君 P1：对话 · 本体 · 确认（契约见 docs/development/zhijun-api-contract.md）
+// =====================================================================
+
+export type ConversationMode = 'chat' | 'onboarding'
+
+export interface Conversation {
+  id: string
+  title: string
+  mode: ConversationMode
+  status: 'active' | 'archived'
+  messageCount: number
+  createdAt: string
+  updatedAt: string
+  lastMessageAt: string | null
+}
+
+export type MessageRole = 'user' | 'assistant' | 'system'
+export type MessageStatus = 'complete' | 'aborted' | 'error'
+
+export interface Message {
+  id: string
+  conversationId: string
+  seq: number
+  role: MessageRole
+  content: string
+  status: MessageStatus
+  provider?: string | null
+  model?: string | null
+  external?: boolean
+  meta?: Record<string, unknown>
+  createdAt: string
+}
+
+export interface ConversationDetail {
+  conversation: Conversation
+  messages: Message[]
+}
+
+export interface TurnReceipt {
+  messageId: string
+  conversationId: string
+  provider: string
+  model: string
+  external: boolean
+  confirmedClaimIds: string[]
+  workingClaimIds: string[]
+  materialChunkKeys: string[]
+  retractedNoticeCount: number
+  promptChars: number
+  extractionProvider: string | null
+  createdAt: string
+}
+
+export type Section = 'who' | 'people' | 'matters' | 'principles' | 'ways' | 'direction'
+export type Layer = 'observed' | 'self_declared' | 'aspirational' | 'hypothesis'
+export type TrustState = 'working' | 'confirmed' | 'retracted' | 'superseded'
+export type TrustOrigin = 'utterance' | 'user_confirm' | 'user_edit' | 'user_created' | 'material' | 'model'
+export type ReviewAction = 'confirm' | 'partial' | 'context_only' | 'reject' | 'defer' | 'retract' | 'reaffirm'
+export type ReviewSurface = 'conversation' | 'ontology_page' | 'onboarding'
+
+export interface ClaimBrief {
+  id: string
+  content: string
+  section: Section
+  layer: Layer
+}
+
+export interface ClaimEvidence {
+  id: string
+  kind: 'conversation_turn' | 'material_span' | 'user_edit' | 'decision' | 'review'
+  stance: 'supports' | 'contradicts' | 'background'
+  conversationId: string | null
+  messageId: string | null
+  materialId: string | null
+  chunkKey: string | null
+  quote: string
+  createdAt: string
+}
+
+export interface Claim {
+  id: string
+  subjectEntityId: string
+  subjectName: string
+  predicate: string
+  objectEntityId: string | null
+  objectName: string | null
+  content: string
+  section: Section
+  layer: Layer
+  trustState: TrustState
+  trustOrigin: TrustOrigin
+  confidence: number
+  scope: 'long_term' | 'context_only'
+  contextRef: string | null
+  privacyLevel: 'public' | 'private' | 'sensitive' | 'restricted'
+  exportAllowed: boolean
+  firstSeen: string
+  lastReaffirmed: string
+  supersedesId: string | null
+  supersededById: string | null
+  retractedAt: string | null
+  retractionReason: string | null
+  challenged: boolean
+  deferredUntil: string | null
+  evidence: ClaimEvidence[]
+}
+
+export interface ReviewRequest {
+  action: ReviewAction
+  editedContent?: string
+  contextRef?: string
+  note?: string
+  surface: ReviewSurface
+  conversationId?: string
+  messageId?: string
+}
+
+export interface ReviewResult {
+  claim: Claim
+  replacedBy?: Claim
+}
+
+export interface ClaimCreatePayload {
+  content: string
+  section: Section
+  layer?: 'self_declared' | 'aspirational'
+  predicate?: string
+}
+
+export interface OntologyEntity {
+  id: string
+  type: 'me' | 'person' | 'organization' | 'project' | 'place' | 'topic' | 'event' | 'term'
+  canonicalName: string
+  aliases: string[]
+  description: string
+  status: 'active' | 'merged' | 'retracted'
+  claimCount: number
+}
+
+export interface OntologyStats {
+  hasOntology: boolean
+  entities: number
+  claims: { working: number; confirmed: number; retracted: number; superseded: number }
+  bySection: Record<Section, { confirmed: number; working: number }>
+  inbox: number
+}
+
+export interface OntologyProjection {
+  markdown: string
+  exportableMarkdown: string
+  generatedAt: string
+}
+
+export interface ZhijunStatus {
+  provider: 'fake' | 'ollama' | 'openai' | 'anthropic'
+  model: string
+  external: boolean
+  extraction: 'enabled' | 'beta' | 'disabled'
+  workerRunning: boolean
+}
+
+// SSE 事件载荷（POST /mindos/conversations/{id}/messages）
+export interface TurnMetaEvent {
+  messageId: string
+  userMessageId: string
+  conversationId: string
+  provider: string
+  model: string
+  external: boolean
+  mode: ConversationMode
+  depth: 'brief' | 'deep'
+}
+
+export interface ProvenanceMaterial {
+  materialId: string
+  title: string
+  chunkKey?: string
+  locator?: Record<string, unknown>
+}
+
+export interface ProvenanceEvent {
+  confirmedClaims: ClaimBrief[]
+  workingClaims: ClaimBrief[]
+  materials: ProvenanceMaterial[]
+  retractedNotices: number
+  charterVersion: number | null
+  promptChars: number
+}
+
+export interface ExtractionEvent {
+  state: 'queued' | 'skipped'
+  jobId?: string
+}
+
+export interface MessageDoneEvent {
+  messageId: string
+  status: MessageStatus
+  usage?: Record<string, unknown>
+  receiptId: string
+}
+
+export interface StreamErrorEvent {
+  code: string
+  message: string
+  retryable: boolean
+}
+
+export function createConversation(payload: { mode?: ConversationMode; title?: string } = {}) {
+  return postJson<Conversation>('/mindos/conversations', payload)
+}
+
+export function listConversations(limit = 50) {
+  return request<{ items: Conversation[] }>(`/mindos/conversations?limit=${limit}`)
+}
+
+export function getConversation(conversationId: string) {
+  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`)
+}
+
+export function deleteConversation(conversationId: string) {
+  return request<{ id: string; deleted: boolean }>(`/mindos/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'DELETE',
+    headers: CSRF_HEADERS,
+  })
+}
+
+export function getTurnReceipt(conversationId: string, messageId: string) {
+  return request<TurnReceipt>(
+    `/mindos/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/receipt`,
+  )
+}
+
+export function getOntologyStats() {
+  return request<OntologyStats>('/mindos/ontology/stats')
+}
+
+export function listClaims(params: { section?: Section; trust?: TrustState[]; limit?: number } = {}) {
+  const query = new URLSearchParams()
+  if (params.section) query.set('section', params.section)
+  if (params.trust && params.trust.length) query.set('trust', params.trust.join(','))
+  if (params.limit) query.set('limit', String(params.limit))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request<{ items: Claim[] }>(`/mindos/ontology/claims${suffix}`)
+}
+
+export function getClaim(claimId: string) {
+  return request<Claim>(`/mindos/ontology/claims/${encodeURIComponent(claimId)}`)
+}
+
+export function createClaim(payload: ClaimCreatePayload) {
+  return postJson<Claim>('/mindos/ontology/claims', payload)
+}
+
+export function reviewClaim(claimId: string, payload: ReviewRequest) {
+  return postJson<ReviewResult>(`/mindos/ontology/claims/${encodeURIComponent(claimId)}/review`, payload)
+}
+
+export function getInbox(limit = 20) {
+  return request<{ items: Claim[] }>(`/mindos/ontology/inbox?limit=${limit}`)
+}
+
+export function listEntities(type?: OntologyEntity['type']) {
+  const suffix = type ? `?type=${encodeURIComponent(type)}` : ''
+  return request<{ items: OntologyEntity[] }>(`/mindos/ontology/entities${suffix}`)
+}
+
+export function getProjection() {
+  return request<OntologyProjection>('/mindos/ontology/projection')
+}
+
+export function getZhijunStatus() {
+  return request<ZhijunStatus>('/mindos/zhijun/status')
 }

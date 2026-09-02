@@ -57,9 +57,9 @@ const QUICK_LINKS: QuickLink[] = [
   { path: '/materials', icon: FolderOpen, title: '原材料', desc: '导入与查看人生资料' },
   { path: '/knowledge', icon: FileText, title: '知识档案', desc: '整理已确认的知识' },
   { path: '/search', icon: Search, title: '搜索记忆', desc: '在本地资料中找回细节' },
-  { path: '/qa', icon: MessageCircle, title: '问知君', desc: '基于你的资料提问' },
+  { path: '/', icon: MessageCircle, title: '对话', desc: '跟知君聊聊，或商量一个决定' },
   { path: '/graph', icon: Network, title: '关系图谱', desc: '查看人物与事件关联' },
-  { path: '/governance', icon: Scale, title: '本体治理', desc: '确认或纠正知君的理解' },
+  { path: '/me', icon: Scale, title: '我的本体', desc: '核对、修正或撤回知君对你的理解' },
 ]
 
 // 今日严格只展示 3 个主要事项：逾期 → 待复盘 → 即将到期。
@@ -237,7 +237,7 @@ onMounted(() => {
           <button type="button" @click="router.push('/materials')"><strong>{{ overview.recentMaterials.length }}</strong><span>最近导入</span></button>
           <button type="button" @click="router.push('/knowledge')"><strong>{{ overview.recentKnowledge.length }}</strong><span>最近编辑</span></button>
           <button type="button" :class="{ 'is-warn': overview.failedCount > 0 }" @click="router.push({ path: '/materials', query: { status: 'failed' } })"><strong>{{ overview.failedCount }}</strong><span>处理失败</span></button>
-          <button type="button" :class="{ 'is-warn': overview.pendingGovernance > 0 }" @click="router.push('/governance')"><strong>{{ overview.pendingGovernance }}</strong><span>本体待治理</span></button>
+          <button type="button" :class="{ 'is-warn': overview.pendingGovernance > 0 }" @click="router.push('/knowledge')"><strong>{{ overview.pendingGovernance }}</strong><span>知识卡待整理</span></button>
         </div>
 
         <div class="memory-grid">

@@ -49,6 +49,10 @@ JOB_STORE_DB_PATH = DB_ROOT / "job_store.db"
 RUNTIME_SETTINGS_DB_PATH = DB_ROOT / "runtime_settings.db"
 # 知君成长闭环：人生章程、判断、结果与复盘的独立本地事务域。
 GROWTH_DB_PATH = DB_ROOT / "growth.db"
+# 知君个人本体：实体、理解（Claim）、证据、复核事件与本体后台任务，独立事务域。
+ONTOLOGY_DB_PATH = DB_ROOT / "ontology.db"
+# 知君对话：会话、消息、摘要与出设备回执，独立事务域。
+CONVERSATIONS_DB_PATH = DB_ROOT / "conversations.db"
 # 加密 secret store 默认位于数据根之外（不随业务备份复制），可用 CENTAUR_SECRET_STORE_DIR 覆盖。
 SECRET_STORE_DIR = _env_path("CENTAUR_SECRET_STORE_DIR", PROJECT_ROOT / "secrets")
 GENERATION_REGISTRY_DB_PATH = DB_ROOT / "generation_registry.db"

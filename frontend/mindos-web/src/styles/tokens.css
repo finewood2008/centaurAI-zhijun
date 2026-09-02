@@ -1,77 +1,78 @@
 /* ============================================================
-   MindOS UI Token（来自仓库根目录 ui-spec.css 的 :root 规范）
-   蓝色企业主题：主色 #0077ff / 辅助 #1b99ff，白/浅灰表面
+   知君 UI Token（变量名沿用 --ws-*，30+ 组件在用；只换值不改名）
+   私人书房主题：米纸底 / 墨字 / 朱砂唯一强调色 / 宋体标题
    ============================================================ */
 :root {
-  /* 主色调 */
-  --ws-primary-color: #0077ff;
-  --ws-primary-color-hover: #298dff;
-  --ws-primary-color-active: #006ae5;
-  --ws-primary-color-disabled: rgba(0, 107, 255, 0.5);
+  /* 主色调：朱砂 */
+  --ws-primary-color: #a6452e;
+  --ws-primary-color-hover: #b8543c;
+  --ws-primary-color-active: #8f3a26;
+  --ws-primary-color-disabled: rgba(166, 69, 46, 0.5);
 
   /* 操作栏/超链接/快捷创建入口 */
-  --ws-main-color: #1b99ff;
-  --ws-main-color-hover: #298cff;
-  --ws-main-color-active: #006ae5;
-  --ws-main-color-disabled: rgba(27, 153, 255, 0.5);
+  --ws-main-color: #a6452e;
+  --ws-main-color-hover: #b8543c;
+  --ws-main-color-active: #8f3a26;
+  --ws-main-color-disabled: rgba(166, 69, 46, 0.5);
 
-  /* 功能色 */
-  --ws-success-color: #12cd3d;
-  --ws-success-color-hover: #15d547;
-  --ws-success-color-active: #10c837;
-  --ws-success-color-disabled: rgba(18, 205, 61, 0.5);
-  --ws-success-color-bd: rgba(18, 205, 61, 0.06);
+  /* 功能色（降饱和以贴纸底） */
+  --ws-success-color: #4a7c59;
+  --ws-success-color-hover: #558a66;
+  --ws-success-color-active: #3f6b4c;
+  --ws-success-color-disabled: rgba(74, 124, 89, 0.5);
+  --ws-success-color-bd: rgba(74, 124, 89, 0.08);
 
-  --ws-warning-color: #ffbc3d;
-  --ws-warning-color-hover: #ffc747;
-  --ws-warning-color-active: #ffb537;
-  --ws-warning-color-disabled: rgba(255, 181, 55, 0.5);
-  --ws-warning-color-bd: rgba(255, 188, 61, 0.06);
+  --ws-warning-color: #b8862b;
+  --ws-warning-color-hover: #c79437;
+  --ws-warning-color-active: #a07523;
+  --ws-warning-color-disabled: rgba(184, 134, 43, 0.5);
+  --ws-warning-color-bd: rgba(184, 134, 43, 0.08);
 
-  --ws-danger-color: #ff4918;
-  --ws-danger-color-hover: #ff551c;
-  --ws-danger-color-active: #ff4216;
-  --ws-danger-color-disabled: rgba(255, 66, 22, 0.5);
-  --ws-danger-color-bd: rgba(255, 73, 24, 0.06);
+  --ws-danger-color: #a6452e;
+  --ws-danger-color-hover: #b8543c;
+  --ws-danger-color-active: #8f3a26;
+  --ws-danger-color-disabled: rgba(166, 69, 46, 0.5);
+  --ws-danger-color-bd: rgba(166, 69, 46, 0.06);
 
-  --ws-info-color-bd: rgba(192, 196, 204, 0.06);
+  --ws-info-color-bd: rgba(216, 211, 200, 0.12);
 
-  /* 编辑态颜色 */
-  --ws-edit-color: rgba(0, 119, 255, 0.06);
-  --ws-edit-color-hover: rgba(0, 119, 255, 0.02);
-  --ws-edit-color-active: rgba(0, 119, 255, 0.08);
-  --ws-edit-color-disabled: rgba(0, 119, 255, 0.08);
+  /* 编辑态颜色：朱砂淡染 */
+  --ws-edit-color: rgba(166, 69, 46, 0.06);
+  --ws-edit-color-hover: rgba(166, 69, 46, 0.03);
+  --ws-edit-color-active: rgba(166, 69, 46, 0.09);
+  --ws-edit-color-disabled: rgba(166, 69, 46, 0.08);
 
   /* 白色 */
   --ws-white: white;
   --ws-white-hover: rgba(255, 255, 255, 0.84);
   --ws-white-active: rgba(255, 255, 255, 0.84);
 
-  /* 背景色 */
-  --ws-bg: rgba(27, 153, 255, 0.05);
-  --ws-card-bg: #f5f7fa;
-  --ws-body-bg: #ffffff;
-  --ws-card-bg-1: linear-gradient(97deg, #f0f7fd 0%, #e3ebff 100%);
-  --ws-card-bg-2: linear-gradient(97deg, #515d7b 0%, #3b4865 97%);
+  /* 背景色：米纸 */
+  --ws-bg: rgba(166, 69, 46, 0.05);
+  --ws-card-bg: #f3efe6;
+  --ws-body-bg: #fffcf6;
+  --ws-card-bg-1: linear-gradient(97deg, #fbf7ee 0%, #f1ebdf 100%);
+  --ws-card-bg-2: linear-gradient(97deg, #3c403d 0%, #1d211f 97%);
 
   /* 边框色 */
-  --ws-border-color: #dcdfe6;
-  --ws-border-color-disabled: rgba(220, 223, 230, 0.5);
-  --ws-border-color-2: #e4e7ed;
-  --ws-border-color-3: #ebeef5;
-  --ws-border-color-4: #f2f6fc;
-  --ws-border-color-5: #f5f7fa;
+  --ws-border-color: #d8d3c8;
+  --ws-border-color-disabled: rgba(216, 211, 200, 0.5);
+  --ws-border-color-2: #e2ded4;
+  --ws-border-color-3: #ebe7de;
+  --ws-border-color-4: #f1eee6;
+  --ws-border-color-5: #f5f2ea;
 
-  /* 文字色 */
-  --ws-text-primary-color: #303133;
-  --ws-text-color: #606266;
-  --ws-text-secondary-color: #909399;
-  --ws-text-placeholder-color: #c0c4cc;
-  --ws-text-label-bg: #f5f7fa;
+  /* 文字色：墨 */
+  --ws-text-primary-color: #1d211f;
+  --ws-text-color: #3c403d;
+  --ws-text-secondary-color: #686b66;
+  --ws-text-placeholder-color: #a3a69f;
+  --ws-text-label-bg: #f3efe6;
 
-  /* 字体大小 */
-  --ws-font-size: 12px;
-  --ws-font-size-title: 14px;
+  /* 字体 */
+  --ws-font-size: 14px;
+  --ws-font-size-title: 16px;
+  --ws-font-display: "Songti SC", "Noto Serif SC", "Source Han Serif SC", STSong, serif;
 
   /* 按钮 - Primary */
   --ws-button-primary-background: var(--ws-primary-color);
@@ -95,20 +96,20 @@
   --ws-button-active-success-background: var(--ws-success-color-active);
 
   /* 按钮 - Edit */
-  --ws-button-edit-background: rgba(0, 119, 255, 0.06);
-  --ws-button-hover-edit-background: rgba(0, 119, 255, 0.03);
-  --ws-button-active-edit-background: rgba(0, 119, 255, 0.08);
-  --ws-button-disabled-edit-background: rgba(0, 119, 255, 0.08);
+  --ws-button-edit-background: rgba(166, 69, 46, 0.06);
+  --ws-button-hover-edit-background: rgba(166, 69, 46, 0.03);
+  --ws-button-active-edit-background: rgba(166, 69, 46, 0.09);
+  --ws-button-disabled-edit-background: rgba(166, 69, 46, 0.08);
 
   /* 按钮 - Delete */
-  --ws-button-delete-background: #fff1f0;
-  --ws-button-hover-delete-background: rgba(255, 241, 240, 0.8);
-  --ws-button-active-delete-background: #fff1f0;
-  --ws-button-disabled-delete-background: rgba(255, 241, 240, 0.5);
+  --ws-button-delete-background: #f8ece8;
+  --ws-button-hover-delete-background: rgba(248, 236, 232, 0.8);
+  --ws-button-active-delete-background: #f8ece8;
+  --ws-button-disabled-delete-background: rgba(248, 236, 232, 0.5);
 
   /* 按钮 - Plain */
   --ws-button-plain-color: var(--ws-text-color);
-  --ws-button-plain-disabled-color: rgba(48, 49, 51, 0.5);
+  --ws-button-plain-disabled-color: rgba(29, 33, 31, 0.5);
   --ws-button-plain-border-color: var(--ws-border-color);
   --ws-button-plain-hover-border-color: var(--ws-primary-color-hover);
   --ws-button-plain-active-border-color: var(--ws-primary-color-active);
@@ -116,9 +117,9 @@
 
   /* 按钮 - Text */
   --ws-button-text-color: var(--ws-main-color);
-  --ws-button-text-hover-color: #298cff;
-  --ws-button-text-active-color: #298cff;
-  --ws-button-text-disabled-color: rgba(0, 119, 255, 0.5);
+  --ws-button-text-hover-color: #b8543c;
+  --ws-button-text-active-color: #8f3a26;
+  --ws-button-text-disabled-color: rgba(166, 69, 46, 0.5);
 
   /* 输入框 */
   --ws-input-focus-border-color: var(--ws-main-color);
@@ -126,7 +127,7 @@
 
   /* 表格 */
   --ws-table-th-bg: var(--ws-text-label-bg);
-  --ws-table-hover-bg: rgba(0, 119, 255, 0.02);
+  --ws-table-hover-bg: rgba(166, 69, 46, 0.03);
 
   /* 开关 */
   --ws-switch-bg: var(--ws-border-color);
@@ -152,7 +153,7 @@
   --ws-radius-sm: 4px;
   --ws-radius: 6px;
   --ws-radius-lg: 8px;
-  --ws-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
-  --ws-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.1);
-  --ws-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.18);
+  --ws-shadow-sm: 0 1px 2px rgba(29, 33, 31, 0.06);
+  --ws-shadow-md: 0 6px 20px rgba(29, 33, 31, 0.1);
+  --ws-shadow-lg: 0 16px 48px rgba(29, 33, 31, 0.18);
 }

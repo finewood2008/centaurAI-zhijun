@@ -22,11 +22,13 @@ assert.match(api, /charterVersion: number \| null/)
 assert.match(api, /review: GrowthReview \| null/)
 assert.match(api, /todayItems: GrowthTodayItem\[\]/)
 
+// P1 IA：/growth 重定向到 /judgments，今日页保留在 /today；侧栏四入口以「判断」承接成长闭环
 assert.match(router, /path: '\/growth'/)
+assert.match(router, /path: '\/judgments'/)
 assert.match(router, /title: '今日'/)
-assert.match(sidebar, /label: '今日'/)
-assert.match(sidebar, /label: '成长'/)
-assert.match(sidebar, /问知君/)
+assert.match(sidebar, /label: '对话'/)
+assert.match(sidebar, /label: '判断'/)
+assert.match(sidebar, /label: '我的本体'/)
 
 assert.match(home, /api\.getGrowthToday\(\)/)
 assert.match(home, /api\.getHome\(\)/)

@@ -1,22 +1,14 @@
 <script setup lang="ts">
-// 侧栏分组导航：工作台 / 知识库 / 智能与治理；底部设置（P1 开放「模型与运行时」）。
+// 侧栏导航：四个一级入口 对话 / 我的本体 / 判断 / 资料与边界；底部设置。
 // 桌面 ≥768px 常驻（768-1199 折叠为图标栏），<768px 转为抽屉（由 open 控制）。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-// 系统品牌 logo（CentaurAI）：与前端根目录下的 logo.jpg 对应，由 Vite 打包
-import logoUrl from '../../logo.jpg'
 import {
-  BrainCircuit,
-  FileText,
-  Home,
-  Layers,
+  Database,
   MessageCircle,
-  Network,
   Scale,
-  Search,
   Settings,
-  Sprout,
-  Trash2,
+  UserRound,
   X,
   type LucideIcon,
 } from 'lucide-vue-next'
@@ -35,27 +27,12 @@ interface NavGroup {
 
 const groups: NavGroup[] = [
   {
-    title: '今日与成长',
+    title: '知君',
     items: [
-      { to: '/', label: '今日', icon: Home, exact: true },
-      { to: '/growth', label: '成长', icon: Sprout },
-    ],
-  },
-  {
-    title: '我的资料',
-    items: [
-      { to: '/materials', label: '原材料', icon: FileText },
-      { to: '/knowledge', label: '知识档案', icon: Layers },
-      { to: '/recycle-bin', label: '回收站', icon: Trash2 },
-    ],
-  },
-  {
-    title: '理解与探索',
-    items: [
-      { to: '/search', label: '搜索记忆', icon: Search },
-      { to: '/qa', label: '问知君', icon: MessageCircle },
-      { to: '/graph', label: '关系图谱', icon: Network },
-      { to: '/governance', label: '本体治理', icon: Scale },
+      { to: '/', label: '对话', icon: MessageCircle, exact: true },
+      { to: '/me', label: '我的本体', icon: UserRound },
+      { to: '/judgments', label: '判断', icon: Scale },
+      { to: '/data', label: '资料与边界', icon: Database },
     ],
   },
 ]
@@ -139,7 +116,8 @@ watch(
 onBeforeUnmount(() => window.removeEventListener('keydown', onDrawerKeydown))
 
 function isActive(item: NavItem): boolean {
-  if (item.exact) return currentPath.value === item.to
+  // 「对话」既是 / 也是 /c/:id
+  if (item.exact) return currentPath.value === item.to || currentPath.value.startsWith('/c/')
   return currentPath.value === item.to || currentPath.value.startsWith(`${item.to}/`)
 }
 </script>
@@ -156,8 +134,8 @@ function isActive(item: NavItem): boolean {
     :aria-label="drawerActive ? '导航菜单' : undefined"
   >
     <div class="ws-sidebar__brand">
-      <img class="ws-sidebar__logo" :src="logoUrl" alt="" aria-hidden="true" />
-      <span class="ws-sidebar__brand-text"><BrainCircuit :size="16" aria-hidden="true" />知君</span>
+      <span class="ws-sidebar__seal" aria-hidden="true">知</span>
+      <span class="ws-sidebar__brand-text">知君</span>
       <button
         ref="closeBtn"
         class="ws-sidebar__close"
@@ -237,24 +215,32 @@ function isActive(item: NavItem): boolean {
   flex-shrink: 0;
 }
 
-.ws-sidebar__logo {
+/* 朱砂印：衬线「知」字，替代原企业 logo */
+.ws-sidebar__seal {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  object-fit: contain;
-  background: transparent;
+  width: 28px;
+  height: 28px;
+  border: 1.5px solid var(--ws-primary-color, #a6452e);
+  border-radius: 4px;
+  color: var(--ws-primary-color, #a6452e);
+  font-family: var(--ws-font-display, serif);
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .ws-sidebar__brand-text {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 16px;
-  font-weight: 800;
-  color: var(--ws-text-primary-color, #303133);
+  font-family: var(--ws-font-display, serif);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ws-text-primary-color, #1d211f);
   white-space: nowrap;
 }
 

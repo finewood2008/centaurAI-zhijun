@@ -16,16 +16,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const OUT_DIR = resolve(__dirname, 'shots')
 mkdirSync(OUT_DIR, { recursive: true })
 
-// 核心页面路由（与 src/router/index.ts 一致）
+// 核心页面路由（与 src/router/index.ts 一致）：四个一级入口 + 两个隐藏路由
 const ROUTES = [
-  { name: 'home', path: '/', title: '今日' },
-  { name: 'growth', path: '/growth', title: '成长' },
+  { name: 'conversation', path: '/', title: '对话' },
+  { name: 'ontology', path: '/me', title: '我的本体' },
+  { name: 'judgments', path: '/judgments', title: '判断' },
+  { name: 'data', path: '/data', title: '资料与边界' },
   { name: 'materials', path: '/materials', title: '原材料' },
-  { name: 'knowledge', path: '/knowledge', title: '知识档案' },
-  { name: 'search', path: '/search?query=mindos', title: '搜索记忆' },
-  { name: 'qa', path: '/qa', title: '问知君' },
-  { name: 'graph', path: '/graph', title: '关系图谱' },
-  { name: 'governance', path: '/governance', title: '本体治理' },
+  { name: 'settings', path: '/settings', title: '设置' },
 ]
 
 // 任务卡要求 390 / 768 / 1024 / 1440 四档视口
@@ -44,7 +42,8 @@ const TITLE_TIMEOUT = 6000
 // 浏览器为 HTTP 500 / 连接失败自动打印的“资源加载”错误，属环境（后端未启动）噪声而非应用错误
 const NETWORK_NOISE = /^Failed to load resource/i
 
-const browser = await chromium.launch()
+// 自带 Chromium 不支持的系统（如 macOS 13）可设 PLAYWRIGHT_CHANNEL=chrome 使用已安装的 Google Chrome
+const browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {})
 const failures = []
 
 for (const { label, width, height } of VIEWPORTS) {
@@ -116,7 +115,15 @@ for (const { label, width, height } of VIEWPORTS) {
       for (const e of pageErrors) failures.push(`${tag}: ${e}`)
     }
 
-    const ok = !navError && render.appLen > 0 && titleOk && noOverflow && pageErrors.length === 0
+    // 5) 认识论徽章必须带文字（PRD 11.1：不能仅靠颜色区分）
+    const emptyBadges = await page.evaluate(
+      () => Array.from(document.querySelectorAll('.layer-badge')).filter((el) => !(el instanceof HTMLElement) || !el.innerText.trim()).length,
+    )
+    if (emptyBadges > 0) {
+      failures.push(`${tag}: ${emptyBadges} 个 .layer-badge 没有文字`)
+    }
+
+    const ok = !navError && render.appLen > 0 && titleOk && noOverflow && pageErrors.length === 0 && emptyBadges === 0
     const file = resolve(OUT_DIR, `${route.name}-${label}.png`)
     await page.screenshot({ path: file, fullPage: false })
     console.log(`${ok ? 'PASS' : 'FAIL'} ${tag} -> ${file}`)

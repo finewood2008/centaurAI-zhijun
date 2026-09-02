@@ -754,6 +754,14 @@ def _start_background_services() -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"模型任务 worker 启动失败（任务将排队待恢复）: {e}")
 
+    # 知君 P1：本体后台 worker（对话抽取 / 摘要 / 投影），单线程租约领取。
+    try:
+        from mindos.zhijun.jobs import start_worker as start_ontology_worker
+
+        start_ontology_worker()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"知君本体 worker 启动失败: {e}")
+
     # 阶段 2：连接票据 nonce 墓碑与活动会话周期清理。撤销后 5 秒内断开依赖
     # 每轮扫描把过期/epoch 失效会话置为关闭；新请求的撤销/重放校验在验签期即时生效。
     threading.Thread(
@@ -822,6 +830,13 @@ def _stop_background_services() -> None:
         from mindos.model_job_worker import stop_worker
 
         stop_worker()
+    except Exception:  # noqa: BLE001
+        pass
+    # 知君 P1：停止本体 worker（先停止领取；进行中的任务由租约兜底）。
+    try:
+        from mindos.zhijun.jobs import stop_worker as stop_ontology_worker
+
+        stop_ontology_worker()
     except Exception:  # noqa: BLE001
         pass
     # 所有写入生产者停止后，等最后一段 Chroma 读写离开句柄再关闭 PersistentClient。
@@ -1247,6 +1262,15 @@ app.include_router(mindos_home.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import growth as mindos_growth
 mindos_growth.configure_write_guard(require_local)
 app.include_router(mindos_growth.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+# 知君 P1：对话（SSE）、本体（理解 / 复核 / 投影）、运行状态。契约见 docs/development/zhijun-api-contract.md。
+from mindos import conversations as mindos_conversations
+mindos_conversations.configure_write_guard(require_local)
+app.include_router(mindos_conversations.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos import ontology as mindos_ontology
+mindos_ontology.configure_write_guard(require_local)
+app.include_router(mindos_ontology.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos import zhijun_status as mindos_zhijun_status
+app.include_router(mindos_zhijun_status.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 
 # P1 模型运行时设置管理路由：全部 require_local（loopback + CSRF，GET 不放松，§6）。
 # 统一错误响应 {code, message, details?}（§6.2.1）由 install_error_handlers 注册。

@@ -1,0 +1,170 @@
+# 知君 P1 接口契约（对话 · 本体 · 确认）
+
+> 版本 p1-2026-09-02。前后端共同遵守；改动先改本文。所有路径挂在现有网关之下：
+> 请求必须带 `X-Requested-By: centaur-vdb`（写路由还要求 loopback），票据模式再带 `X-MindOS-Session`。
+> 错误体沿用现状：`{"detail": "文案"}` 或 `{"detail": {"code": "...", "detail": "文案"}}`。
+
+## 1. 标签契约（模型输出 → 前端徽章）
+
+助手正文用四种行内标记标注认识论来源，前端把它们渲染成文字徽章（不能只靠颜色）：
+
+| 标记 | 含义 | 来源 |
+|---|---|---|
+| `【你告诉我的】` | self_declared，用户亲口说过 | 已确认本体 |
+| `【资料里看到的】` | observed，来自导入资料 | 工作理解或已确认 |
+| `【我推测的】` | hypothesis / 未确认的工作理解，必须带保留语气 | 工作理解 |
+| `【知君的看法】` | 知君自己的意见，不是事实也不是决定 | 模型 |
+
+资料引用用 `[m1]`、`[m2]` 行内标记，与 `provenance.materials[i]` 一一对应（i 从 1 起）。
+
+## 2. 对话 `/api/mindos/conversations`
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/` | body `{mode?: "chat"\|"onboarding", title?: string}` → `Conversation` |
+| GET | `/?limit=50` | `{items: Conversation[]}`，按 lastMessageAt 倒序 |
+| GET | `/{id}` | `{conversation: Conversation, messages: Message[]}` |
+| DELETE | `/{id}` | 删除会话及消息、回执（不删已抽取的 claim，其证据保留 quote） |
+| POST | `/{id}/messages` | body `{content: string, depth?: "brief"\|"deep"}` → **SSE** |
+| GET | `/{id}/messages/{messageId}/receipt` | `TurnReceipt` |
+
+```ts
+interface Conversation {
+  id: string; title: string; mode: 'chat' | 'onboarding'; status: 'active' | 'archived'
+  messageCount: number; createdAt: string; updatedAt: string; lastMessageAt: string | null
+}
+interface Message {
+  id: string; conversationId: string; seq: number
+  role: 'user' | 'assistant' | 'system'      // system = 系统备注（如「你确认了：…」），content 是人话
+  content: string
+  status: 'complete' | 'aborted' | 'error'
+  provider?: string | null; model?: string | null; external?: boolean
+  meta?: Record<string, unknown>            // system 备注：{kind:'review', claimId, action}
+  createdAt: string
+}
+interface TurnReceipt {
+  messageId: string; conversationId: string; provider: string; model: string; external: boolean
+  confirmedClaimIds: string[]; workingClaimIds: string[]; materialChunkKeys: string[]
+  retractedNoticeCount: number; promptChars: number; extractionProvider: string | null; createdAt: string
+}
+```
+
+### 2.1 SSE 事件（`POST /{id}/messages`，`Content-Type: text/event-stream`）
+
+前端用 `fetch` + `ReadableStream` 自解析（`EventSource` 带不了自定义头）。每帧 `event: <name>\ndata: <json>\n\n`。顺序固定：
+
+```
+meta          {messageId, userMessageId, conversationId, provider, model, external, mode, depth}
+provenance    {confirmedClaims: ClaimBrief[], workingClaims: ClaimBrief[],
+               materials: {materialId, title, chunkKey?, locator?}[],
+               retractedNotices: number, charterVersion: number|null, promptChars: number}
+token         {t: string}                      // 0..n 次
+extraction    {state: 'queued'|'skipped', jobId?: string}
+message_done  {messageId, status: 'complete'|'aborted'|'error', usage?: object, receiptId: string}
+error         {code: string, message: string, retryable: boolean}   // 出错时替代 message_done
+```
+`ClaimBrief = {id, content, section, layer}`。
+
+流开始前的失败用普通 HTTP 状态：`409 {code:"TURN_IN_FLIGHT"}` 同一会话已有生成中的轮次；
+`429 {code:"PROVIDER_BUSY"}`；`503 {code:"PROVIDER_UNAVAILABLE"}`；`400` 内容为空或超 4000 字。
+客户端中断（AbortController）→ 服务端把已生成文本以 `status=aborted` 落库。
+
+抽取是异步的：`extraction.state=queued` 后，前端每 3 秒轮询 `GET /api/mindos/ontology/inbox` 最多 30 秒，
+把新出现的候选以 chip 形式显示在该轮回复下方。
+
+## 3. 本体 `/api/mindos/ontology`
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/stats` | `OntologyStats` |
+| GET | `/claims?section=&trust=&limit=200` | `{items: Claim[]}`；`trust` 可为 `working,confirmed` 逗号列表，默认 `confirmed` |
+| GET | `/claims/{id}` | `Claim` |
+| POST | `/claims` | body `{content, section, layer?: "self_declared"\|"aspirational", predicate?}` → `Claim`（用户手写，直接 confirmed，trust_origin=user_created） |
+| POST | `/claims/{id}/review` | body `ReviewRequest` → `{claim: Claim, replacedBy?: Claim}`；非法状态转移 409 |
+| GET | `/inbox?limit=20` | `{items: Claim[]}`：working 且未 deferred 未 challenged，最新在前 |
+| GET | `/entities?type=` | `{items: Entity[]}` |
+| GET | `/projection` | `{markdown: string, exportableMarkdown: string, generatedAt: string}` |
+
+```ts
+type Section = 'who' | 'people' | 'matters' | 'principles' | 'ways' | 'direction'
+type Layer = 'observed' | 'self_declared' | 'aspirational' | 'hypothesis'
+type TrustState = 'working' | 'confirmed' | 'retracted' | 'superseded'
+type TrustOrigin = 'utterance' | 'user_confirm' | 'user_edit' | 'user_created' | 'material' | 'model'
+type ReviewAction = 'confirm' | 'partial' | 'context_only' | 'reject' | 'defer' | 'retract' | 'reaffirm'
+
+interface Claim {
+  id: string; subjectEntityId: string; subjectName: string; predicate: string
+  objectEntityId: string | null; objectName: string | null
+  content: string; section: Section; layer: Layer
+  trustState: TrustState; trustOrigin: TrustOrigin; confidence: number
+  scope: 'long_term' | 'context_only'; contextRef: string | null
+  privacyLevel: 'public' | 'private' | 'sensitive' | 'restricted'; exportAllowed: boolean
+  firstSeen: string; lastReaffirmed: string
+  supersedesId: string | null; supersededById: string | null
+  retractedAt: string | null; retractionReason: string | null
+  challenged: boolean; deferredUntil: string | null
+  evidence: Evidence[]
+}
+interface Evidence {
+  id: string; kind: 'conversation_turn' | 'material_span' | 'user_edit' | 'decision' | 'review'
+  stance: 'supports' | 'contradicts' | 'background'
+  conversationId: string | null; messageId: string | null
+  materialId: string | null; chunkKey: string | null
+  quote: string; createdAt: string
+}
+interface ReviewRequest {
+  action: ReviewAction
+  editedContent?: string          // partial 必填
+  contextRef?: string             // context_only 可选，默认当前 conversationId
+  note?: string
+  surface: 'conversation' | 'ontology_page' | 'onboarding'
+  conversationId?: string; messageId?: string
+}
+interface Entity {
+  id: string; type: 'me' | 'person' | 'organization' | 'project' | 'place' | 'topic' | 'event' | 'term'
+  canonicalName: string; aliases: string[]; description: string; status: 'active' | 'merged' | 'retracted'
+  claimCount: number
+}
+interface OntologyStats {
+  hasOntology: boolean; entities: number
+  claims: { working: number; confirmed: number; retracted: number; superseded: number }
+  bySection: Record<Section, { confirmed: number; working: number }>
+  inbox: number
+}
+```
+
+### 3.1 状态机（服务端唯一入口 `OntologyStore.transition`）
+
+```
+working   -confirm->      confirmed
+working   -partial->      新 claim(confirmed, supersedes=旧)；旧 -> superseded
+working   -context_only-> confirmed(scope=context_only)
+working   -reject->       retracted
+working   -defer->        working(deferredUntil=+14d)
+confirmed -retract->      retracted
+confirmed -partial->      同 working 的 partial
+confirmed -reaffirm->     lastReaffirmed=now
+```
+其它组合 → 409。每次 transition 同事务写 `review_events`；若带 `conversationId`，再追加一条 `role=system`
+的备注消息（如「你确认了：我在做远川项目」），让下一轮模型可见。
+
+## 4. 运行状态 `/api/mindos/zhijun`
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/status` | `{provider: 'fake'\|'ollama'\|'openai'\|'anthropic', model: string, external: boolean, extraction: 'enabled'\|'beta'\|'disabled', workerRunning: boolean}` |
+
+provider 由环境变量 `ZHIJUN_PROVIDER` 覆盖（`fake` 仅开发环境），否则沿用设置页的对话通道
+（外部开启且 provider=openai → openai；否则 ollama）。`ZHIJUN_PROVIDER=anthropic` 需 `ANTHROPIC_API_KEY`
+或 secret store 中的密钥；**本机禁止访问 anthropic.com，本地联调只用 fake / ollama / openai-compatible**。
+
+## 5. 前端路由与入口（P1）
+
+| 路由 | 页面 | 侧栏 |
+|---|---|---|
+| `/`、`/c/:conversationId` | 对话（默认） | 对话 |
+| `/me`（`?section=`）、`/me/inbox` | 我的本体 | 我的本体 |
+| `/judgments` | 判断（现 GrowthPage 换皮） | 判断 |
+| `/data` | 资料与边界（导航枢纽：原材料 / 设置 / 回收站 / 知识档案 / 搜索） | 资料与边界 |
+| 旧路由保留但不进侧栏：`/materials*`、`/knowledge*`、`/search`、`/graph`、`/recycle-bin`、`/settings`、`/growth`（重定向到 `/judgments`） | | |
+| 删除：`/qa`、`/generate`、`/governance`、`/corrections` | | |
