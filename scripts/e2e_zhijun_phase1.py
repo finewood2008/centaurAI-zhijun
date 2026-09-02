@@ -97,6 +97,7 @@ def main() -> int:
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
         "MEMORY_IMPORT_AUTO_SYNC": "false",
+        "MINDOS_AGENT_GATEWAY_ENABLED": "true",
     }
     python = BACKEND / ".venv" / "bin" / "python"
     log_path = data_root / "server.log"
@@ -215,6 +216,21 @@ def main() -> int:
             export = client.get(f"{base}/api/mindos/ontology/export", headers=HEADERS).json()
             assert export["claims"] and all(c["trustState"] == "confirmed" for c in export["claims"]), len(export["claims"])
             steps.append(("整合 → 裁决 → 张力提醒 → 导出", f"矛盾对 {report['conflicts']} 已裁决 1，张力提醒 1 条（问句），导出 {len(export['claims'])} 条已确认理解"))
+
+            # ---------------- P4：可带走开关 → 其他 Agent 取上下文包（用途绑定、回执）
+            toggled = client.post(f"{base}/api/mindos/ontology/claims/{working['id']}/export", json={"allowed": True}, headers=HEADERS)
+            assert toggled.status_code == 200 and toggled.json()["exportAllowed"], toggled.text
+            created = client.post(f"{base}/api/agent/clients", json={"name": "wanx-e2e", "scopes": ["zhijun.profile"]}, headers=HEADERS)
+            assert created.status_code == 200, created.text
+            token = created.json().get("token") or created.json().get("data", {}).get("token")
+            pack = client.post(f"{base}/v1/agent/context-pack", json={"purpose": "帮用户整理本周计划"}, headers={"Authorization": f"Bearer {token}"})
+            assert pack.status_code == 200, pack.text
+            data = pack.json()["data"]
+            ids = [c["id"] for c in data["claims"]]
+            assert working["id"] in ids and told["id"] not in ids, (ids, working["id"])
+            status = client.get(f"{base}/api/mindos/ontology/context-pack", headers=HEADERS).json()
+            assert status["receipts"]["count"] >= 1 and status["receipts"]["last"]["consumer"], status
+            steps.append(("Context Pack", f"其他 Agent 取到 {data['counts']['included']} 条允许带走的理解（未开开关的 {data['counts']['excludedNotExportable']} 条未出），回执已记录"))
 
             page = client.get(f"{base}/mindos/", headers=HEADERS)
             served = page.status_code == 200 and "<div id=\"app\"" in page.text

@@ -1,0 +1,14 @@
+{
+  "name": "zhijun-shell",
+  "version": "0.1.0",
+  "private": true,
+  "description": "知君桌面薄壳：只加载本机后端提供的 /mindos/ 页面，不含任何业务逻辑",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "smoke": "ZHIJUN_SHELL_SMOKE=1 electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

@@ -32,6 +32,8 @@ SCOPES = frozenset(
         "mindos.knowledge.draft",
         "mindos.knowledge.commit",
         "mindos.correction.draft",
+        # 知君 P4：只读个人上下文包（已确认 ∧ 允许导出 ∧ 非敏感），用途绑定、留回执。
+        "zhijun.profile",
     }
 )
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // 输入区：Enter 发送、Shift+Enter 换行；「深入」切换 depth=deep；
 // 「我在考虑…」切换 mode=deliberate（只提示、不自动切换）；生成中显示停止按钮。
-import { computed, ref } from 'vue'
-import { Send, Square } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { Mic, MicOff, Send, Square } from 'lucide-vue-next'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import { useToast } from '@/composables/useToast'
 import { intentHint } from '@/shared/decisionDraft'
+import { createRecognizer, mergeTranscript, speechSupported, splitResults } from '@/shared/speech'
 
 const props = defineProps<{
   streaming: boolean
@@ -44,6 +46,65 @@ function onKeydown(e: KeyboardEvent) {
     send()
   }
 }
+
+// ---- 语音输入（浏览器 Web Speech；只填入输入框，永远不自动发送）
+const toast = useToast()
+const voiceAvailable = speechSupported()
+const listening = ref(false)
+let recognizer: any = null
+let baseText = ''
+let finalText = ''
+
+function stopVoice() {
+  if (recognizer) {
+    try {
+      recognizer.stop()
+    } catch {
+      /* 已停止 */
+    }
+  }
+  listening.value = false
+}
+
+function startVoice() {
+  recognizer = createRecognizer()
+  if (!recognizer) {
+    toast({ type: 'error', message: '这个浏览器不支持语音输入' })
+    return
+  }
+  baseText = text.value
+  finalText = ''
+  recognizer.onresult = (event: any) => {
+    const { finalText: fin, interimText } = splitResults(event.results)
+    finalText = fin
+    text.value = mergeTranscript(baseText, finalText, interimText)
+  }
+  recognizer.onerror = (event: any) => {
+    listening.value = false
+    const code = event?.error || 'unknown'
+    if (code === 'no-speech') return
+    toast({ type: 'error', message: code === 'not-allowed' ? '麦克风权限被拒绝' : `语音识别出错：${code}` })
+  }
+  recognizer.onend = () => {
+    listening.value = false
+    text.value = mergeTranscript(baseText, finalText, '')
+  }
+  try {
+    recognizer.start()
+    listening.value = true
+  } catch (err) {
+    listening.value = false
+    toast({ type: 'error', message: err instanceof Error ? err.message : '无法开始语音输入' })
+  }
+}
+
+function toggleVoice() {
+  if (props.streaming || props.disabled) return
+  if (listening.value) stopVoice()
+  else startVoice()
+}
+
+onBeforeUnmount(stopVoice)
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
@@ -88,6 +149,19 @@ defineExpose({
         <span>深入</span>
         <span class="zj-composer__hint">观察 · 依据 · 其他解释 · 想确认什么 · 可尝试什么</span>
       </label>
+      <button
+        v-if="voiceAvailable"
+        type="button"
+        class="zj-composer__voice"
+        :class="{ 'is-on': listening }"
+        :aria-pressed="listening"
+        :disabled="streaming || disabled"
+        :title="listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        @click="toggleVoice"
+      >
+        <component :is="listening ? MicOff : Mic" :size="14" aria-hidden="true" />
+        <span>{{ listening ? '停止' : '说话' }}</span>
+      </button>
       <span class="zj-composer__count" aria-live="polite">{{ text.length }}/{{ MAX }}</span>
       <BaseButton v-if="streaming" variant="secondary" size="sm" @click="emit('stop')">
         <Square :size="14" aria-hidden="true" />停止
@@ -182,6 +256,28 @@ defineExpose({
 .zj-composer__hint {
   font-size: 11px;
   color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-composer__voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--ws-border-color, #d8d3c8);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ws-text-color, #3c403d);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.zj-composer__voice.is-on {
+  border-color: var(--ws-danger-color, #a6452e);
+  color: var(--ws-danger-color, #a6452e);
+  font-weight: 600;
+}
+.zj-composer__voice:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .zj-composer__count {
   margin-left: auto;

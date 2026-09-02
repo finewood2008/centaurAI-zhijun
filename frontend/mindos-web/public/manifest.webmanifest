@@ -1,0 +1,14 @@
+{
+  "name": "知君",
+  "short_name": "知君",
+  "description": "通过对话认识你的良师益友",
+  "start_url": "/mindos/",
+  "scope": "/mindos/",
+  "display": "standalone",
+  "background_color": "#FFFCF6",
+  "theme_color": "#A6452E",
+  "lang": "zh-CN",
+  "icons": [
+    { "src": "/mindos/icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

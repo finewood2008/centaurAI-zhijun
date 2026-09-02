@@ -23,7 +23,20 @@ _TOOL_REGISTRY = [
     {"name": "getMaterial", "scope": "mindos.read", "enabled": True},       # AG-02-04
     {"name": "getKnowledge", "scope": "mindos.read", "enabled": True},      # AG-02-04
     {"name": "answer", "scope": "mindos.answer", "enabled": True},          # AG-03
+    {"name": "context_pack", "scope": "zhijun.profile", "enabled": True},   # 知君 P4：只读个人上下文包
 ]
+
+
+def context_pack(principal, purpose: str, sections: list[str] | None, max_claims: int) -> dict:
+    """知君 P4：只读个人上下文包（confirmed ∧ export_allowed ∧ 非敏感），用途绑定。"""
+    from ..stores.ontology_store import OntologyError
+    from ..zhijun import context_pack as pack_module
+    from .errors import AgentError
+
+    try:
+        return pack_module.build_pack(purpose=purpose, sections=sections, max_claims=max_claims, consumer=principal.client_id)
+    except OntologyError as exc:
+        raise AgentError(400, "VALIDATION_ERROR", str(exc)) from None
 
 
 def enabled_tools(scopes: frozenset) -> list[str]:

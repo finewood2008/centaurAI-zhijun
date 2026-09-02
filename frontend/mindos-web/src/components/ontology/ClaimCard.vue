@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // 本体页的理解卡：层标签 + 信任状态 + 内容 + 来源深链 + 动作。
 // working：对 / 部分对 / 只适用于这件事 / 不对 / 先别存；confirmed：重申 / 撤回（撤回需确认弹窗）。
-import { ref } from 'vue'
-import type { Claim, ReviewAction } from '@/services/api'
+import { ref, watch } from 'vue'
+import { setClaimExport, type Claim, type ReviewAction } from '@/services/api'
+import { useToast } from '@/composables/useToast'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -45,6 +46,29 @@ function submitPartial() {
 function confirmRetract() {
   retractOpen.value = false
   emit('review', 'retract')
+}
+
+// ---- 可带走（导出开关）：只对已确认理解；敏感 / 受限即使打开也不会出包，所以直接禁用。
+const toast = useToast()
+const exportOn = ref(Boolean(props.claim.exportAllowed))
+const exportBusy = ref(false)
+watch(() => props.claim.exportAllowed, (v) => { exportOn.value = Boolean(v) })
+const exportLocked = () => props.claim.privacyLevel === 'sensitive' || props.claim.privacyLevel === 'restricted'
+
+async function toggleExport() {
+  if (exportBusy.value || exportLocked()) return
+  const next = !exportOn.value
+  exportOn.value = next
+  exportBusy.value = true
+  try {
+    const updated = await setClaimExport(props.claim.id, next)
+    exportOn.value = Boolean(updated.exportAllowed)
+  } catch (err) {
+    exportOn.value = !next
+    toast({ type: 'error', message: err instanceof Error ? err.message : '导出开关保存失败' })
+  } finally {
+    exportBusy.value = false
+  }
 }
 
 function evidenceLink(e: Claim['evidence'][number]): string | null {
@@ -106,6 +130,22 @@ function evidenceKindLabel(kind: string): string {
         <RouterLink v-if="evidenceLink(e)" :to="evidenceLink(e)!" class="zj-claim__ev-link">查看来源</RouterLink>
       </li>
     </ul>
+
+    <div v-if="claim.trustState === 'confirmed'" class="zj-claim__export">
+      <button
+        type="button"
+        role="switch"
+        class="zj-claim__switch"
+        :class="{ 'is-on': exportOn && !exportLocked() }"
+        :aria-checked="exportOn && !exportLocked()"
+        :disabled="busy || exportBusy || exportLocked()"
+        :title="exportLocked() ? '敏感或受限的理解永远不会出设备' : '打开后，其他 Agent 取上下文包时可以拿到这一条'"
+        @click="toggleExport"
+      >
+        <span class="zj-claim__switch-knob" aria-hidden="true" />
+        <span class="zj-claim__switch-label">{{ exportLocked() ? '敏感内容不会带走' : exportOn ? '可带走' : '不带走' }}</span>
+      </button>
+    </div>
 
     <footer class="zj-claim__foot">
       <span class="zj-claim__time">首次 {{ formatDate(claim.firstSeen) }} · 最近重申 {{ formatDate(claim.lastReaffirmed) }}</span>
@@ -231,6 +271,54 @@ function evidenceKindLabel(kind: string): string {
 }
 .zj-claim__quote {
   color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-claim__export {
+  margin: 2px 0 8px;
+}
+.zj-claim__switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zj-claim__switch-knob {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--ws-switch-bg, #d8d3c8);
+  transition: background 0.15s;
+}
+.zj-claim__switch-knob::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+.zj-claim__switch.is-on .zj-claim__switch-knob {
+  background: var(--ws-success-color, #4a7c59);
+}
+.zj-claim__switch.is-on .zj-claim__switch-knob::after {
+  transform: translateX(14px);
+}
+.zj-claim__switch.is-on .zj-claim__switch-label {
+  color: var(--ws-success-color, #4a7c59);
+  font-weight: 600;
+}
+.zj-claim__switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
 }
 .zj-claim__foot {
   display: flex;

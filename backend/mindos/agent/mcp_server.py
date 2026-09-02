@@ -52,6 +52,7 @@ _ACTION_EVIDENCE = "mcp_get_evidence"
 _ACTION_MATERIAL = "mcp_get_material"
 _ACTION_KNOWLEDGE = "mcp_get_knowledge"
 _ACTION_ANSWER = "mcp_answer"
+_ACTION_CONTEXT_PACK = "mcp_context_pack"
 
 
 def _resolve_principal() -> AgentPrincipal | None:
@@ -267,6 +268,24 @@ def _gateway() -> _Gateway:
     return _GATEWAY
 
 
+    def mindos_context_pack(self, purpose: Any, sections: Any = None, max_claims: Any = 50) -> dict[str, Any]:
+        """知君 P4：只读个人上下文包（用户已确认且允许导出的理解），用途绑定、写回执。"""
+        def _call():
+            if not isinstance(purpose, str) or len(purpose.strip()) < 2:
+                raise AgentError(400, "VALIDATION_ERROR", "purpose 必须说明用途（≥ 2 字）")
+            if sections is not None and not isinstance(sections, list):
+                raise AgentError(400, "VALIDATION_ERROR", "sections 必须是列表")
+            try:
+                limit = int(max_claims)
+            except (TypeError, ValueError):
+                raise AgentError(400, "VALIDATION_ERROR", "max_claims 必须是整数") from None
+            if not 1 <= limit <= 200:
+                raise AgentError(400, "VALIDATION_ERROR", "max_claims 需在 1–200 之间")
+            return agent_service.context_pack(self._principal, purpose, sections, limit)
+
+        return self._run(_ACTION_CONTEXT_PACK, ("zhijun.profile",), _call, resource_type="context_pack")
+
+
 # ---- 模块级工具（FastMCP 注册用） -------------------------------------
 
 def _require_nonempty_str(value: Any, name: str) -> str:
@@ -330,7 +349,24 @@ def mindos_answer(
     return _gateway().mindos_answer(question, source_ids=source_ids)
 
 
+def mindos_context_pack(
+    purpose: Annotated[Any, WithJsonSchema({"type": "string", "minLength": 2, "maxLength": 200})],
+    sections: Annotated[Any, WithJsonSchema({
+        "type": "array",
+        "items": {"type": "string", "enum": ["who", "people", "matters", "principles", "ways", "direction"]},
+        "maxItems": 6,
+    })] = None,
+    max_claims: Annotated[Any, WithJsonSchema({"type": "integer", "minimum": 1, "maximum": 200})] = 50,
+) -> dict[str, Any]:
+    return _gateway().mindos_context_pack(purpose, sections=sections, max_claims=max_claims)
+
+
 AGENT_TOOLS = [
+    (
+        mindos_context_pack,
+        "知君个人上下文包（只读）：返回用户已确认、且允许带走的自我理解（我是谁 / 我的人 / 我的事 / "
+        "我的原则 / 我的做法 / 我的方向），必须说明用途；不含未确认印象、敏感内容与证据原文。每次调用留回执。",
+    ),
     (
         mindos_capabilities,
         "读取 MindOS Agent 服务能力声明（已启用工具、写入模式、内容上限）。只读，"

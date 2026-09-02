@@ -379,6 +379,43 @@ def agent_search(
     return ok_payload(trace_id, data)
 
 
+@router.post("/context-pack")
+def agent_context_pack(
+    body: dict,
+    request: Request,
+    principal: AgentPrincipal = Depends(require_scope("zhijun.profile")),
+):
+    """知君 P4：只读个人上下文包。只含用户已确认且允许导出的理解；用途绑定；写审计回执。"""
+    trace_id = getattr(request.state, "agent_trace_id", "") or audit.new_trace_id()
+    rate_limit.check_or_deny(principal.client_id, "context_pack")
+    started = time.monotonic()
+    purpose = str((body or {}).get("purpose") or "")
+    sections = (body or {}).get("sections") or None
+    if sections is not None and (not isinstance(sections, list) or len(sections) > 6):
+        raise AgentError(400, "VALIDATION_ERROR", "sections 必须是最多 6 项的列表")
+    try:
+        max_claims = int((body or {}).get("maxClaims") or 50)
+    except (TypeError, ValueError):
+        raise AgentError(400, "VALIDATION_ERROR", "maxClaims 必须是整数") from None
+    if not 1 <= max_claims <= 200:
+        raise AgentError(400, "VALIDATION_ERROR", "maxClaims 需在 1–200 之间")
+    data = service.context_pack(principal, purpose, sections, max_claims)
+    audit.record(
+        trace_id=trace_id,
+        client_id=principal.client_id,
+        action="context_pack",
+        scope="zhijun.profile",
+        resource_type="context_pack",
+        resource_id=data["receiptId"],
+        outcome="ok",
+        status_code=200,
+        request_digest=audit.stable_digest("context_pack", purpose, ",".join(sections or [])),
+        response_digest=audit.response_digest(data),
+        latency_ms=int((time.monotonic() - started) * 1000),
+    )
+    return ok_payload(trace_id, data)
+
+
 @router.post("/evidence:resolve")
 def agent_evidence_resolve(
     request: Request,

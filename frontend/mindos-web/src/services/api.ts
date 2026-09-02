@@ -1885,3 +1885,22 @@ export function exportOntology(params: { sections?: Section[]; includeWorking?: 
 export function purgeOntology(payload: { confirm: string; includeConversations: boolean }) {
   return postJson<PurgeResult>('/mindos/ontology/purge', payload)
 }
+
+// ---- 知君 P4：可带走的认识（Context Pack）与逐条导出开关 ----
+export interface ContextPackStatus {
+  exportable: number
+  receipts: { count: number; last: { generatedAt: string; consumer: string; purpose: string; included: number } | null }
+  items: Claim[]
+}
+
+export async function setClaimExport(claimId: string, allowed: boolean): Promise<Claim> {
+  return request<Claim>(`/mindos/ontology/claims/${encodeURIComponent(claimId)}/export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ allowed }),
+  })
+}
+
+export async function getContextPackStatus(): Promise<ContextPackStatus> {
+  return request<ContextPackStatus>('/mindos/ontology/context-pack')
+}

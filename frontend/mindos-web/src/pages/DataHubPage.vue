@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { FileText, FolderOpen, Search, Settings, Trash2, ShieldCheck, AlertTriangle } from 'lucide-vue-next'
-import { exportOntology, getProjection, purgeOntology, type OntologyProjection, type Section } from '@/services/api'
+import { FileText, FolderOpen, Search, Settings, Trash2, ShieldCheck, AlertTriangle, PackageOpen } from 'lucide-vue-next'
+import { exportOntology, getContextPackStatus, getProjection, purgeOntology, type ContextPackStatus, type OntologyProjection, type Section } from '@/services/api'
+import { sectionLabel } from '@/shared/ontology'
+import { formatDate } from '@/shared/format'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useToast } from '@/composables/useToast'
@@ -86,6 +88,19 @@ const cards = [
   { to: '/search', icon: Search, title: '搜索', desc: '在本地资料里找回细节' },
 ]
 
+// ---- 可以带走的认识（Context Pack 状态）
+const pack = ref<ContextPackStatus | null>(null)
+const packError = ref('')
+async function loadPack() {
+  try {
+    pack.value = await getContextPackStatus()
+    packError.value = ''
+  } catch (err) {
+    packError.value = err instanceof Error ? err.message : '加载失败'
+  }
+}
+onMounted(loadPack)
+
 const projection = ref<OntologyProjection | null>(null)
 const projectionLoading = ref(false)
 const projectionOpen = ref(false)
@@ -142,6 +157,29 @@ async function toggleProjection() {
         <p class="zj-hub__projection-meta">生成于 {{ projection.generatedAt }}</p>
         <pre>{{ projection.exportableMarkdown || '（还没有可导出的已确认理解）' }}</pre>
       </div>
+    </section>
+
+    <section class="zj-hub__pack">
+      <h2><PackageOpen :size="18" aria-hidden="true" />可以带走的认识</h2>
+      <p>其他 Agent 只能拿到你已确认、且打开了「可带走」的理解；敏感或受限内容永远不会出去。</p>
+      <p v-if="packError" class="zj-hub__pack-meta">{{ packError }}</p>
+      <template v-else-if="pack">
+        <p class="zj-hub__pack-meta">
+          <strong>{{ pack.exportable }}</strong> 条可带走。
+          <template v-if="pack.receipts.last">
+            最近一次：{{ formatDate(pack.receipts.last.generatedAt) }} 由 {{ pack.receipts.last.consumer || '未署名的 Agent' }} 以「{{ pack.receipts.last.purpose }}」取走 {{ pack.receipts.last.included }} 条（累计 {{ pack.receipts.count }} 次）。
+          </template>
+          <template v-else>还没有其他 Agent 取过。</template>
+        </p>
+        <ul v-if="pack.items.length" class="zj-hub__pack-list">
+          <li v-for="c in pack.items" :key="c.id">
+            <span class="zj-hub__pack-section">{{ sectionLabel(c.section) }}</span>
+            <span>{{ c.content }}</span>
+          </li>
+        </ul>
+        <p v-else class="zj-hub__pack-meta">还没有打开「可带走」的理解。</p>
+        <RouterLink to="/me" class="zj-hub__pack-link">去「我的本体」逐条决定哪些可带走</RouterLink>
+      </template>
     </section>
 
     <section class="zj-hub__danger">
@@ -254,6 +292,56 @@ async function toggleProjection() {
   font-size: 13px;
   color: var(--ws-text-color, #3c403d);
   cursor: pointer;
+}
+.zj-hub__pack {
+  max-width: 760px;
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
+  border-radius: var(--ws-radius-lg, 8px);
+  background: var(--ws-body-bg, #fffcf6);
+}
+.zj-hub__pack h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 18px;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-hub__pack p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ws-text-color, #3c403d);
+}
+.zj-hub__pack-meta {
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-hub__pack-list {
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.zj-hub__pack-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.zj-hub__pack-section {
+  flex: none;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--ws-card-bg, #f3efe6);
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-hub__pack-link {
+  font-size: 13px;
+  color: var(--ws-primary-color, #a6452e);
 }
 .zj-hub__danger {
   max-width: 760px;

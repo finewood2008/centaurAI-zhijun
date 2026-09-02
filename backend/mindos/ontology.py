@@ -172,6 +172,30 @@ class ConflictResolve(_StrictModel):
     keep: Literal["a", "b", "both"]
 
 
+class ExportToggle(_StrictModel):
+    allowed: bool
+
+
+def set_export(claim_id: str, req: ExportToggle):
+    try:
+        claim = _store().set_export_allowed(claim_id, req.allowed)
+    except OntologyError as exc:
+        raise _map(exc) from None
+    try:
+        enqueue_projection(store=_store())
+    except Exception:  # noqa: BLE001
+        pass
+    return claim
+
+
+def context_pack_status():
+    from .zhijun import context_pack
+
+    store = _store()
+    exportable = context_pack.exportable_claims(store, limit=context_pack.HARD_MAX_CLAIMS)
+    return {"exportable": len(exportable), "receipts": context_pack.receipt_summary(store), "items": exportable[:200]}
+
+
 class PurgeRequest(_StrictModel):
     confirm: str = Field(min_length=1, max_length=40)
     includeConversations: bool = True
@@ -255,6 +279,8 @@ def _build_router(write_guard=None) -> APIRouter:
     built.add_api_route("/proposals/conflicts/{conflict_id}/resolve", resolve_conflict, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/consolidate", consolidate_now, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/export", export_ontology, methods=["GET"])
+    built.add_api_route("/context-pack", context_pack_status, methods=["GET"])
+    built.add_api_route("/claims/{claim_id}/export", set_export, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/purge", purge_all, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/stats", get_stats, methods=["GET"])
     built.add_api_route("/claims", list_claims, methods=["GET"])

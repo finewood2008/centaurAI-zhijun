@@ -251,3 +251,24 @@ interface Conflict { id: string; kind: 'contradiction'|'tension'; claimA: Claim;
 ### 10. 资料 → 理解
 
 资料的实体 / 关系抽取完成后，后台把关系三元组写成 `observed` 工作理解（主语是资料实体，不是「我」；涉及人 → 我的人，否则 → 我的事），证据 `kind=material_span`。资料被永久删除时，只靠它支撑的工作理解自动撤回（`retractionReason=evidence_purged`）。前端不需要新页面：这些理解按分区出现在本体页与 inbox，ClaimCard 的证据链接指向 `/materials/:materialId`。
+
+---
+
+## P4 增补（Context Pack · 导出开关 · 语音 · 安装 · 薄壳）— 版本 p4-2026-09-02
+
+### 11. 给其他 Agent 的只读上下文包
+
+- 网关 scope 新增 `zhijun.profile`（本机管理接口 `POST /api/agent/clients` 签发令牌时勾选）。
+- `POST /v1/agent/context-pack`（Bearer 令牌）body `{purpose: string(2–200), sections?: Section[], maxClaims?: 1–200}` →
+  `{receiptId, purpose, consumer, generatedAt, sections, claims: [{id, section, sectionTitle, layer, layerTitle, content, about, lastReaffirmed}], counts: {included, excludedNotExportable}, notice}`。
+  只含 `confirmed ∧ exportAllowed ∧ privacy ∈ {public, private} ∧ scope ≠ context_only`；不带证据原文、会话 ID、资料路径；每次生成写网关审计与本体回执计数。
+- MCP 工具 `mindos_context_pack(purpose, sections?, max_claims?)` 同语义。
+- 本机端：`POST /api/mindos/ontology/claims/{id}/export` body `{allowed: boolean}` 逐条开关；`GET /api/mindos/ontology/context-pack` → `{exportable, receipts: {count, last: {generatedAt, consumer, purpose, included} | null}, items: Claim[]}` 给「资料与边界」页显示「哪些认识会被带走」。
+
+### 12. 前端
+
+- Composer 语音输入：浏览器 `SpeechRecognition`（zh-CN，连续、临时结果写进输入框，用户确认后才发送）；不支持的浏览器隐藏按钮。不做录音上传。
+- PWA：`manifest.webmanifest`（name 知君、`display: standalone`、`start_url: /mindos/`、主题色 `#A6452E`、SVG 图标），`index.html` 引用；不做 Service Worker / 离线。
+- ClaimCard：已确认理解显示「可带走」开关（`exportAllowed`）；敏感 / 受限的开关禁用并说明。
+- 资料与边界：「可以带走的认识」区块 = `GET /ontology/context-pack`（数量、最近一次被谁以什么用途取走、列表）。
+- 桌面薄壳：`frontend/shell/`（Electron，只加载 `/mindos/`，无 preload / IPC）。

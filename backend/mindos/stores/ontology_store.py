@@ -1439,6 +1439,26 @@ class OntologyStore:
             )
             return self._fetch_claim(conn, claim_id)
 
+    def set_export_allowed(self, claim_id: str, allowed: bool, *, surface: str = "ontology_page") -> dict | None:
+        """用户逐条决定哪些已确认理解可以带走给其他 Agent；敏感 / 受限的即使打开也不会出包。"""
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT export_allowed, content FROM claims WHERE id = ?", (claim_id,)).fetchone()
+                if row is None:
+                    raise OntologyNotFoundError("理解不存在")
+                conn.execute("UPDATE claims SET export_allowed = ?, updated_at = ? WHERE id = ?", (1 if allowed else 0, utc_now(), claim_id))
+                self._insert_review_event(
+                    conn, target_type="claim", target_id=claim_id, action="edit", surface=surface,
+                    before={"exportAllowed": bool(row["export_allowed"])}, after={"exportAllowed": bool(allowed)}, note="导出开关",
+                )
+                self._bump_revision(conn)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return self._fetch_claim(conn, claim_id)
+
     def set_promotion_ready(self, claim_id: str, ready: bool = True) -> None:
         with self._lock, self._connect() as conn:
             conn.execute("UPDATE claims SET promotion_ready = ?, updated_at = ? WHERE id = ?", (1 if ready else 0, utc_now(), claim_id))

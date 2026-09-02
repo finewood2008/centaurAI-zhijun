@@ -19,10 +19,11 @@
     "test:settings-runtime": "node tests/settings-runtime.test.mjs",
     "test:growth-frontend": "node tests/growth-frontend.test.mjs",
     "test:zhijun": "node --experimental-strip-types tests/sse-parser.test.mjs && node --experimental-strip-types tests/labels.test.mjs && node tests/zhijun-routes.test.mjs",
-    "test:p14-frontend": "node --experimental-strip-types tests/summary-polling.test.mjs && node --experimental-strip-types tests/detail-session.test.mjs && node --experimental-strip-types tests/analysis-polling.test.mjs && node --experimental-strip-types tests/entity-tag-add.test.mjs && node --experimental-strip-types tests/related-session.test.mjs && node --experimental-strip-types tests/corrections-routes.test.mjs && node --experimental-strip-types tests/source-management.test.mjs && node --experimental-strip-types tests/version-sources.test.mjs && node --experimental-strip-types tests/card-content.test.mjs && node --experimental-strip-types tests/card-update-poller.test.mjs && node tests/settings-runtime.test.mjs && node tests/growth-frontend.test.mjs && npm run test:zhijun && npm run test:zhijun-p2 && npm run test:zhijun-p3",
+    "test:p14-frontend": "node --experimental-strip-types tests/summary-polling.test.mjs && node --experimental-strip-types tests/detail-session.test.mjs && node --experimental-strip-types tests/analysis-polling.test.mjs && node --experimental-strip-types tests/entity-tag-add.test.mjs && node --experimental-strip-types tests/related-session.test.mjs && node --experimental-strip-types tests/corrections-routes.test.mjs && node --experimental-strip-types tests/source-management.test.mjs && node --experimental-strip-types tests/version-sources.test.mjs && node --experimental-strip-types tests/card-content.test.mjs && node --experimental-strip-types tests/card-update-poller.test.mjs && node tests/settings-runtime.test.mjs && node tests/growth-frontend.test.mjs && npm run test:zhijun && npm run test:zhijun-p2 && npm run test:zhijun-p3 && npm run test:zhijun-p4",
     "screenshots": "node tests/visual/screenshot.mjs",
     "test:zhijun-p2": "node --experimental-strip-types tests/decision-draft.test.mjs",
-    "test:zhijun-p3": "node --experimental-strip-types tests/proposals.test.mjs"
+    "test:zhijun-p3": "node --experimental-strip-types tests/proposals.test.mjs",
+    "test:zhijun-p4": "node --experimental-strip-types tests/speech.test.mjs"
   },
   "dependencies": {
     "@types/markdown-it": "^14.2.0",

@@ -81,7 +81,7 @@ PRD V1 第 28 行已经写了「先成为一面真正懂用户的镜子，再成
 
 旧路由 `/materials*`、`/knowledge*`、`/search`、`/graph`、`/recycle-bin`、`/settings`、`/today` 保留但不进侧栏；`/qa`、`/generate`、`/governance`、`/corrections` 删除。视觉换成原型的米纸 / 墨 / 朱砂 / 宋体（令牌名保留、只换值）。
 
-## 9. 技术方案（P1 – P3 已落地部分）
+## 9. 技术方案（P1 – P4 已落地部分）
 
 ```
 backend/mindos/stores/ontology_store.py      实体 / 理解 / 证据 / 复核事件 / 本体任务（SQLite, ontology.db）
@@ -96,6 +96,8 @@ backend/mindos/nudges.py                      /api/mindos/nudges
 backend/mindos/zhijun_status.py               /api/mindos/zhijun/status
 frontend/mindos-web/src/pages/{ConversationPage,OntologyPage,DataHubPage}.vue
 frontend/mindos-web/src/services/sse.ts       fetch + ReadableStream 的 SSE 客户端（带自定义头）
+backend/mindos/zhijun/context_pack.py         给其他 Agent 的只读上下文包（经 mindos/agent 网关 /v1/agent/context-pack 与 MCP 工具）
+frontend/shell/                               Electron 薄壳（只加载 /mindos/）；deploy/box.env.example 盒子部署 profile
 scripts/e2e_zhijun_phase1.py                  真实后端端到端（演示模型，不出网）
 ```
 
@@ -115,7 +117,7 @@ scripts/e2e_zhijun_phase1.py                  真实后端端到端（演示模�
 | P1 能聊、能记、能认 | 对话 SSE、两个存储、抽取 / 确认 / 投影、对话页 + 本体页 + 四入口 + 主题、建档对话、演示模型端到端 | **本轮完成（削减版）**；未做：主题线程、工具调用、就地编辑、Playwright 截图基线更新 |
 | P2 能商量、会回访 | 商量模式（`mode=deliberate`）+ 实时判断草稿 → 一键写入 `growth_decisions`（绑定章程版本）、到期提醒（`review_due`，每日 ≤ 3、静默领域、永久静默）、回访会话（开场备注 → 记下结果 → 五段复盘引导） | **本轮完成（削减版）**；未做：议题线程、承诺到期提醒、原则-行为张力提醒、复盘在对话内直接提交 |
 | P3 像良师 | 整合器（实体合并候选 / 矛盾裁决 / 等价并入 / 多来源晋升 / 挑战超期衰减 / 单证据推迟）、原则-做法张力提醒（问句）、资料 → observed 理解（含资料删除脱钩）、导出 / 全量删除、本体页「需要你裁决」 | **本轮完成（削减版）**；未做：`server.py` 拆分与旧面退役（gbrain / consumer_api / 旧壳）、复盘在对话内提交 |
-| P4 | 只读 Context Pack（confirmed ∧ export_allowed）、移动采集、盒子部署 profile、语音、Electron 薄壳 | 未开始 |
+| P4 | 只读 Context Pack（网关 scope `zhijun.profile` + MCP 工具，只含已确认 ∧ 可带走 ∧ 非敏感，用途绑定、回执）、逐条「可带走」开关、语音输入（浏览器 Web Speech）、可安装 PWA 清单、盒子部署 profile（`deploy/box.env.example`）、Electron 薄壳（`frontend/shell/`） | **本轮完成（削减版）**；未做：移动端离线采集 / 系统分享目标、录音上传转写、盒子真实硬件通讯 |
 
 ## 11. 能力真实性表（本轮）
 
@@ -130,7 +132,8 @@ scripts/e2e_zhijun_phase1.py                  真实后端端到端（演示模�
 | 商量 → 判断草稿 → 判断簿、到期提醒、回访 → 记结果 → 复盘引导 | 已实现（后端 67 个测试 + 端到端）；草稿的 选择/理由/把握/预期 只接受用户原话，演示模型用规则抽取，真实模型下的草稿质量**未评测** |
 | 整合器（去重候选 / 矛盾 / 等价 / 晋升 / 衰减）、张力提醒、资料 → 理解、导出 / 全量删除 | 已实现（后端 79 个测试 + 端到端）；矛盾判定在演示模型下用否定词启发式，真实模型下**未评测** |
 | 承诺到期提醒、议题线程、server.py 拆分与旧面退役 | 未实现 |
-| 硬件盒子、语音、移动端、Context Pack | 未实现（P4） |
+| Context Pack（网关 + MCP）、可带走开关、语音输入、PWA 清单、盒子 env profile、桌面薄壳 | 已实现（后端 109 个知君相关测试 + 端到端）；**薄壳只完成了 `npm install` 与代码审阅，在这台无桌面会话的远程 Mac 上启动冒烟没有输出、无法得出结论，需要在真机上验证**；语音只在 Chromium 系浏览器可用 |
+| 移动端离线采集与系统分享、录音转写、盒子硬件通讯 | 未实现 |
 
 ## 12. 指标
 

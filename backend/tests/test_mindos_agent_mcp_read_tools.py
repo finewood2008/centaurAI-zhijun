@@ -68,7 +68,9 @@ class AgentMCPReadToolsTestCase(unittest.TestCase):
         self.assertEqual(
             set(names),
             {"mindos_capabilities", "mindos_search", "mindos_get_evidence",
-             "mindos_get_material", "mindos_get_knowledge", "mindos_answer"},
+             "mindos_get_material", "mindos_get_knowledge", "mindos_answer",
+             # 知君 P4：只读个人上下文包
+             "mindos_context_pack"},
         )
         for tool in tools:
             self.assertTrue(tool.annotations.readOnlyHint)
