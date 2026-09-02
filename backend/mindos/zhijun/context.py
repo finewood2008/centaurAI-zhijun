@@ -108,14 +108,21 @@ def assemble(
     user_turns: int,
     summary: dict | None = None,
     charter: dict | None = None,
+    turn_mode: str = "chat",
+    decision: dict | None = None,
 ) -> Assembled:
     channel = "external" if provider.external else "local"
     budget = BUDGETS[channel]
     mode = conversation.get("mode") or "chat"
+    outcome_recorded = bool(decision and decision.get("status") in ("outcome_recorded", "reviewed"))
 
     parts: list[str] = [persona.PERSONA_CORE]
     if mode == "onboarding":
         parts.append(persona.onboarding_instruction(user_turns))
+    if mode == "review":
+        parts.append(persona.review_instruction(decision, outcome_recorded))
+    if turn_mode == "deliberate":
+        parts.append(persona.DELIBERATE_INSTRUCTION)
     if depth == "deep":
         parts.append(persona.DEEP_INSTRUCTION)
 
@@ -210,9 +217,13 @@ def assemble(
     }
     debug = {
         "mode": mode,
+        "turnMode": turn_mode,
         "depth": depth,
         "userText": user_text,
+        "userTexts": [m.get("content") or "" for m in recent_messages if m.get("role") == "user"],
         "userTurns": user_turns,
+        "decision": {k: decision.get(k) for k in ("id", "title", "choice", "confidence", "expectedOutcome", "status")} if decision else None,
+        "outcomeRecorded": outcome_recorded,
         "confirmedClaims": [c["content"] for c in confirmed],
         "workingClaims": [c["content"] for c in working],
         "retractedNotices": len(retracted),

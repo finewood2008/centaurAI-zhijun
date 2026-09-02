@@ -222,6 +222,61 @@ def fake_extract(user_text: str) -> dict:
     return {"claims": claims, "entities": []}
 
 
+_OPTION_SPLIT_RE = re.compile(r"还是|或者|或是")
+_DRAFT_CONF_RE = re.compile(r"(\d{1,3})\s*%|([一二三四五六七八九])成")
+_CN_TEN = {"一": 10, "二": 20, "三": 30, "四": 40, "五": 50, "六": 60, "七": 70, "八": 80, "九": 90}
+
+
+def fake_draft(user_texts: list[str], assistant_text: str = "") -> dict:
+    """无模型时的规则版判断草稿：只从用户原句里取字段，原句即 quote。"""
+    text = "\n".join(user_texts or [])
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(text) if s.strip()]
+    options: list[str] = []
+    leaning = choice = rationale = expected = None
+    confidence = None
+    quotes: list[str] = []
+    for sentence in sentences:
+        if not options and _OPTION_SPLIT_RE.search(sentence):
+            parts = [p.strip(" ，,、？?") for p in _OPTION_SPLIT_RE.split(sentence)]
+            parts = [re.sub(r"^(我|我们|现在|在纠结|纠结|到底|是|该|应该|要不要|要不|要|把|得|想)+", "", p).strip() for p in parts]
+            options = [p[:40] for p in parts if p][:6]
+            quotes.append(sentence)
+        if leaning is None and any(k in sentence for k in ("倾向", "想选", "偏向", "更想")):
+            leaning = sentence
+            quotes.append(sentence)
+        if choice is None and any(k in sentence for k in ("决定", "定了", "就选", "选择", "我选")):
+            choice = sentence
+            quotes.append(sentence)
+        if rationale is None and any(k in sentence for k in ("因为", "理由", "原因", "主要是")):
+            rationale = sentence
+            quotes.append(sentence)
+        if expected is None and any(k in sentence for k in ("预期", "希望", "期待", "应该能", "预计")):
+            expected = sentence
+            quotes.append(sentence)
+        if confidence is None:
+            m = _DRAFT_CONF_RE.search(sentence)
+            if m:
+                confidence = int(m.group(1)) if m.group(1) else _CN_TEN.get(m.group(2))
+                quotes.append(sentence)
+    view = None
+    if "【知君的看法】" in (assistant_text or ""):
+        view = assistant_text.split("【知君的看法】", 1)[1].strip().split("\n")[0][:300]
+    return {
+        "title": (user_texts[0].strip().replace("\n", " ")[:30] if user_texts else ""),
+        "context": text.replace("\n", "；")[:300],
+        "options": options,
+        "leaning": leaning,
+        "choice": choice,
+        "rationale": rationale,
+        "confidence": confidence,
+        "expectedOutcome": expected,
+        "reviewAt": None,
+        "keyQuestion": "如果选了另一个，最坏的情况你能接受吗？",
+        "zhijunView": view,
+        "userQuotes": list(dict.fromkeys(quotes)),
+    }
+
+
 class FakeProvider:
     name = "fake"
     external = False
@@ -238,6 +293,31 @@ class FakeProvider:
                 if message.get("role") == "user":
                     user_text = str(message.get("content") or "")
                     break
+        if debug.get("mode") == "review":
+            decision = debug.get("decision") or {}
+            title = decision.get("title") or "那件事"
+            if debug.get("outcomeRecorded"):
+                return (
+                    f"结果记下了。我们按五段来复盘「{title}」：\n\n1. 观察：结果和你当时的预期之间有一段差距。\n"
+                    f"2. 依据：【你告诉我的】当时你选了「{decision.get('choice', '')}」，把握 {decision.get('confidence', '?')}%。\n"
+                    "3. 其他解释：也可能是外部条件变了，而不是判断本身错了。\n4. 想确认：当时最关键的那个假设，现在看还成立吗？\n"
+                    "5. 可尝试：用一句话说出这次可复用的经验，我帮你记进判断簿的复盘里。"
+                )
+            return (
+                f"这是对「{title}」的回访。当时你选了「{decision.get('choice', '')}」，预期是「{str(decision.get('expectedOutcome', ''))[:60]}」。\n\n"
+                "实际发生了什么？和预期比差在哪？说完可以点「记下结果」。"
+            )
+        if debug.get("turnMode") == "deliberate":
+            draft = fake_draft(list(debug.get("userTexts") or [user_text]), "")
+            confirmed = [str(c) for c in (debug.get("confirmedClaims") or [])][:3]
+            recall = ("我先把记得的放在一起：" + "；".join(f"【你告诉我的】{c}" for c in confirmed) + "。") if confirmed else "这件事的背景我还了解得不多。"
+            options = draft["options"]
+            option_line = ("你面前的选项：" + " / ".join(options) + "。") if options else "你还没说清有哪几个选项，先说说是哪几个？"
+            return (
+                f"{recall}\n\n{option_line}\n\n一个关键问题：{draft['keyQuestion']}\n\n"
+                "【知君的看法】演示模型没有真正的看法；接入真实模型后这里会给出带依据的意见，但决定在你。\n\n"
+                "你说出选择、理由和把握有几成，我就把它记进判断簿，到期再来回访。"
+            )
         if debug.get("mode") == "onboarding":
             n = int(debug.get("userTurns") or 1)
             if n <= len(ONBOARDING_QUESTIONS):
@@ -265,7 +345,10 @@ class FakeProvider:
         yield Done("end_turn")
 
     def complete_json(self, req: ChatRequest) -> dict:
-        user_text = str((req.debug or {}).get("userText") or "")
+        debug = req.debug or {}
+        if debug.get("task") == "decision_draft":
+            return fake_draft(list(debug.get("userTexts") or []), str(debug.get("assistantText") or ""))
+        user_text = str(debug.get("userText") or "")
         if not user_text:
             for message in reversed(req.messages):
                 if message.get("role") == "user":

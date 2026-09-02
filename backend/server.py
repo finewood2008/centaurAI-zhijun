@@ -1271,6 +1271,9 @@ mindos_ontology.configure_write_guard(require_local)
 app.include_router(mindos_ontology.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import zhijun_status as mindos_zhijun_status
 app.include_router(mindos_zhijun_status.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos import nudges as mindos_nudges
+mindos_nudges.configure_write_guard(require_local)
+app.include_router(mindos_nudges.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 
 # P1 模型运行时设置管理路由：全部 require_local（loopback + CSRF，GET 不放松，§6）。
 # 统一错误响应 {code, message, details?}（§6.2.1）由 install_error_handlers 注册。

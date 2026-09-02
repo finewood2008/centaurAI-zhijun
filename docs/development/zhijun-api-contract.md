@@ -168,3 +168,58 @@ provider 由环境变量 `ZHIJUN_PROVIDER` 覆盖（`fake` 仅开发环境），
 | `/data` | 资料与边界（导航枢纽：原材料 / 设置 / 回收站 / 知识档案 / 搜索） | 资料与边界 |
 | 旧路由保留但不进侧栏：`/materials*`、`/knowledge*`、`/search`、`/graph`、`/recycle-bin`、`/settings`、`/growth`（重定向到 `/judgments`） | | |
 | 删除：`/qa`、`/generate`、`/governance`、`/corrections` | | |
+
+---
+
+## P2 增补（商量 · 提醒 · 回访）— 版本 p2-2026-09-02
+
+### 6. 商量模式与判断草稿
+
+- `POST /api/mindos/conversations/{id}/messages` 的 body 增加 `mode?: "chat" | "deliberate"`（默认 chat）。
+  `deliberate` 时知君按五步回复（还原上下文 → 摆选项 → 一个关键问题 → 【知君的看法】 → 更新草稿），并在 `extraction` 事件之前追加：
+  ```
+  decision_draft  {draftId, revision, status:'draft', fields: DecisionDraftFields, changedFields: string[]}
+  ```
+- 草稿按会话唯一（同一会话反复商量只更新同一份草稿，revision 递增）。
+- **硬规则**：`choice / rationale / confidence` 只能来自用户原话（草稿里附 `userQuotes`），模型的看法只进 `zhijunView`；确认时用户可在面板里改这三项。
+
+```ts
+interface DecisionDraftFields {
+  title: string; context: string; options: string[]
+  leaning: string | null            // 用户倾向（来自原话），可空
+  choice: string | null; rationale: string | null; confidence: number | null   // 0-100，仅来自用户
+  expectedOutcome: string | null; reviewAt: string | null                     // ISO，默认 +14 天
+  keyQuestion: string | null; zhijunView: string | null
+  relatedEntityIds: string[]; evidenceRefs: string[]; userQuotes: string[]
+}
+interface DecisionDraft { id: string; conversationId: string; messageId: string | null; revision: number
+  status: 'draft' | 'confirmed' | 'discarded'; decisionId: string | null; fields: DecisionDraftFields; createdAt: string; updatedAt: string }
+```
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/mindos/conversations/{id}/decision-draft` | 当前草稿或 404 |
+| POST | `/api/mindos/conversations/{id}/decision-draft/confirm` | body `{choice, rationale, confidence, expectedOutcome?, reviewAt?, title?, options?}` → `{draft, decision}`；写入 `growth_decisions`（绑定当前章程版本），草稿 → confirmed，追加系统备注「你记下了一个判断：…」 |
+| POST | `/api/mindos/conversations/{id}/decision-draft/discard` | 草稿 → discarded |
+
+### 7. 提醒 `/api/mindos/nudges`
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/today` | `{items: Nudge[], policy: NudgePolicy}`：今日最多 3 条 pending/shown |
+| POST | `/scan` | 立即扫描（否则后台每小时）；返回新增条数 |
+| POST | `/{id}/dismiss` | 状态 → dismissed |
+| POST | `/{id}/silence` | 该 triggerRef 永久静默 |
+| GET / PUT | `/policy` | `{enabled, maxPerDay, silencedRefs: string[]}` |
+
+```ts
+interface Nudge { id: string; kind: 'review_due' | 'commitment_due' | 'checkin'; triggerRef: {decisionId?: string}
+  whyNow: string; message: string; status: 'pending' | 'shown' | 'acted' | 'dismissed' | 'silenced'; scheduledFor: string; createdAt: string }
+```
+规则：`review_due` 来自 `growth_decisions` 到期 / 逾期且未记结果的判断（同一判断 3 天内不重复）；受章程 `quietDomains` 粗匹配（判断标题含静默词则不提醒）；`whyNow` 非空。
+
+### 8. 回访会话
+
+- `POST /api/mindos/conversations` body 增加 `decisionId?: string`；`mode: "review"` 时必填。创建后自动追加一条 `role=system` 的开场备注（「这是对「…」的回访：当时你选了…，预期…」），知君在此会话里只问结果与感受、不给新建议。
+- `POST /api/mindos/conversations/{id}/outcome` body `{result, notes?}` → 调 `growth_decisions/{decisionId}/outcome`（状态非 open 时 409），追加系统备注，提醒状态 → acted。
+- 结果记录后，知君下一轮按五段做复盘引导；复盘仍由现有 `POST /api/mindos/growth/reviews` 提交（判断页）。

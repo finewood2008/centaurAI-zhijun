@@ -61,6 +61,43 @@ CREATE TABLE IF NOT EXISTS conversation_summaries (
     PRIMARY KEY(conversation_id, revision)
 );
 
+CREATE TABLE IF NOT EXISTS decision_drafts (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','confirmed','discarded')),
+    decision_id TEXT,
+    fields_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_drafts_conversation ON decision_drafts(conversation_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS nudge_policies (
+    key TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    max_per_day INTEGER NOT NULL DEFAULT 3,
+    silenced_refs_json TEXT NOT NULL DEFAULT '[]',
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS nudge_events (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin')),
+    trigger_key TEXT NOT NULL,
+    trigger_ref_json TEXT NOT NULL,
+    why_now TEXT NOT NULL CHECK(length(why_now) > 0),
+    message TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','shown','acted','dismissed','silenced')),
+    scheduled_for TEXT NOT NULL,
+    shown_at TEXT,
+    acted_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_nudges_status ON nudge_events(status, scheduled_for);
+CREATE INDEX IF NOT EXISTS idx_nudges_trigger ON nudge_events(trigger_key, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS turn_receipts (
     message_id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -137,6 +174,10 @@ class ConversationStore:
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript(_SCHEMA)
+                # P2：回访会话绑定判断（旧库补列）。
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+                if "decision_id" not in columns:
+                    conn.execute("ALTER TABLE conversations ADD COLUMN decision_id TEXT")
                 conn.commit()
             finally:
                 conn.close()
@@ -156,11 +197,13 @@ class ConversationStore:
     def _conversation(row: sqlite3.Row | None) -> dict | None:
         if row is None:
             return None
+        keys = set(row.keys())
         return {
             "id": row["id"],
             "title": row["title"] or "",
             "mode": row["mode"],
             "status": row["status"],
+            "decisionId": row["decision_id"] if "decision_id" in keys else None,
             "messageCount": int(row["message_count"]),
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
@@ -187,7 +230,9 @@ class ConversationStore:
         }
 
     # ------------------------------------------------------------------ 会话
-    def create_conversation(self, *, mode: str = "chat", title: str = "", device_scope: str = "global") -> dict:
+    def create_conversation(
+        self, *, mode: str = "chat", title: str = "", device_scope: str = "global", decision_id: str | None = None
+    ) -> dict:
         if mode not in MODES:
             raise ConversationError(f"mode 不合法：{mode}")
         title = (title or "").strip()[:80]
@@ -195,9 +240,9 @@ class ConversationStore:
         now = utc_now()
         with self._lock, self._connect() as conn:
             conn.execute(
-                "INSERT INTO conversations (id, title, mode, status, device_scope, message_count, created_at, updated_at) "
-                "VALUES (?, ?, ?, 'active', ?, 0, ?, ?)",
-                (conversation_id, title, mode, device_scope, now, now),
+                "INSERT INTO conversations (id, title, mode, status, device_scope, message_count, created_at, updated_at, decision_id) "
+                "VALUES (?, ?, ?, 'active', ?, 0, ?, ?, ?)",
+                (conversation_id, title, mode, device_scope, now, now, decision_id),
             )
             row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             return self._conversation(row)  # type: ignore[return-value]
@@ -493,6 +538,228 @@ class ConversationStore:
             "extractionProvider": row["extraction_provider"],
             "createdAt": row["created_at"],
         }
+
+
+    # ------------------------------------------------------------------ 判断草稿（P2）
+    @staticmethod
+    def _draft(row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "conversationId": row["conversation_id"],
+            "messageId": row["message_id"],
+            "revision": int(row["revision"]),
+            "status": row["status"],
+            "decisionId": row["decision_id"],
+            "fields": _load(row["fields_json"], {}),
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def get_draft(self, conversation_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM decision_drafts WHERE conversation_id = ? ORDER BY updated_at DESC, revision DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._draft(row)
+
+    def get_draft_by_id(self, draft_id: str) -> dict | None:
+        with self._connect() as conn:
+            return self._draft(conn.execute("SELECT * FROM decision_drafts WHERE id = ?", (draft_id,)).fetchone())
+
+    def upsert_draft(self, conversation_id: str, fields: dict, *, message_id: str | None = None) -> dict:
+        """同一会话只维护一份进行中的草稿；已确认 / 已丢弃后再商量则另起一份。"""
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                if conn.execute("SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)).fetchone() is None:
+                    raise ConversationNotFoundError("会话不存在")
+                row = conn.execute(
+                    "SELECT * FROM decision_drafts WHERE conversation_id = ? ORDER BY updated_at DESC, revision DESC LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if row is not None and row["status"] == "draft":
+                    draft_id = row["id"]
+                    conn.execute(
+                        "UPDATE decision_drafts SET fields_json = ?, revision = revision + 1, message_id = COALESCE(?, message_id), updated_at = ? WHERE id = ?",
+                        (_json(fields), message_id, now, draft_id),
+                    )
+                else:
+                    draft_id = f"draft_{uuid.uuid4().hex[:12]}"
+                    conn.execute(
+                        "INSERT INTO decision_drafts (id, conversation_id, message_id, revision, status, fields_json, created_at, updated_at) "
+                        "VALUES (?, ?, ?, 1, 'draft', ?, ?, ?)",
+                        (draft_id, conversation_id, message_id, _json(fields), now, now),
+                    )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return self._draft(conn.execute("SELECT * FROM decision_drafts WHERE id = ?", (draft_id,)).fetchone())  # type: ignore[return-value]
+
+    def set_draft_status(self, draft_id: str, status: str, *, decision_id: str | None = None, fields: dict | None = None) -> dict | None:
+        if status not in ("draft", "confirmed", "discarded"):
+            raise ConversationError(f"草稿状态不合法：{status}")
+        with self._lock, self._connect() as conn:
+            if fields is not None:
+                conn.execute(
+                    "UPDATE decision_drafts SET status = ?, decision_id = COALESCE(?, decision_id), fields_json = ?, updated_at = ? WHERE id = ?",
+                    (status, decision_id, _json(fields), utc_now(), draft_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE decision_drafts SET status = ?, decision_id = COALESCE(?, decision_id), updated_at = ? WHERE id = ?",
+                    (status, decision_id, utc_now(), draft_id),
+                )
+            return self._draft(conn.execute("SELECT * FROM decision_drafts WHERE id = ?", (draft_id,)).fetchone())
+
+    # ------------------------------------------------------------------ 提醒（P2）
+    @staticmethod
+    def _nudge(row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "kind": row["kind"],
+            "triggerKey": row["trigger_key"],
+            "triggerRef": _load(row["trigger_ref_json"], {}),
+            "whyNow": row["why_now"],
+            "message": row["message"],
+            "status": row["status"],
+            "scheduledFor": row["scheduled_for"],
+            "shownAt": row["shown_at"],
+            "actedAt": row["acted_at"],
+            "createdAt": row["created_at"],
+        }
+
+    def nudge_policy(self) -> dict:
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM nudge_policies WHERE key = 'default'").fetchone()
+        if row is None:
+            return {"enabled": True, "maxPerDay": 3, "silencedRefs": []}
+        return {
+            "enabled": bool(row["enabled"]),
+            "maxPerDay": int(row["max_per_day"]),
+            "silencedRefs": _load(row["silenced_refs_json"], []),
+        }
+
+    def save_nudge_policy(self, *, enabled: bool | None = None, max_per_day: int | None = None, silenced_refs: list[str] | None = None) -> dict:
+        current = self.nudge_policy()
+        enabled = current["enabled"] if enabled is None else bool(enabled)
+        max_per_day = current["maxPerDay"] if max_per_day is None else max(1, min(10, int(max_per_day)))
+        silenced = current["silencedRefs"] if silenced_refs is None else sorted({str(s) for s in silenced_refs if str(s).strip()})
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT INTO nudge_policies (key, enabled, max_per_day, silenced_refs_json, updated_at) VALUES ('default', ?, ?, ?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled, max_per_day = excluded.max_per_day, "
+                "silenced_refs_json = excluded.silenced_refs_json, updated_at = excluded.updated_at",
+                (1 if enabled else 0, max_per_day, _json(silenced), utc_now()),
+            )
+        return self.nudge_policy()
+
+    def create_nudge(
+        self,
+        *,
+        kind: str,
+        trigger_key: str,
+        trigger_ref: dict,
+        why_now: str,
+        message: str,
+        scheduled_for: str,
+        dedupe_days: int = 3,
+        now: str | None = None,
+    ) -> dict | None:
+        """写入一条提醒；同一 trigger_key 在去重窗口内已有记录、或已被静默 → 返回 None。
+
+        ``now`` 允许调用方传入扫描时刻（测试与补扫用），去重窗口与创建时间都以它为准。
+        """
+        if kind not in ("review_due", "commitment_due", "checkin"):
+            raise ConversationError(f"提醒类型不合法：{kind}")
+        if not (why_now or "").strip():
+            raise ConversationError("why_now 不能为空")
+        if trigger_key in self.nudge_policy()["silencedRefs"]:
+            return None
+        now = now or utc_now()
+        with self._lock, self._connect() as conn:
+            recent = conn.execute(
+                "SELECT 1 FROM nudge_events WHERE trigger_key = ? AND julianday(created_at) > julianday(?) - ? LIMIT 1",
+                (trigger_key, now, int(dedupe_days)),
+            ).fetchone()
+            if recent is not None:
+                return None
+            nudge_id = f"ndg_{uuid.uuid4().hex[:12]}"
+            conn.execute(
+                "INSERT INTO nudge_events (id, kind, trigger_key, trigger_ref_json, why_now, message, status, scheduled_for, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+                (nudge_id, kind, trigger_key, _json(trigger_ref), why_now.strip(), message.strip(), scheduled_for, now),
+            )
+            return self._nudge(conn.execute("SELECT * FROM nudge_events WHERE id = ?", (nudge_id,)).fetchone())
+
+    def today_nudges(self, *, now: str | None = None, max_per_day: int | None = None) -> list[dict]:
+        """今日可展示的提醒（pending/shown，按计划时间），最多 max_per_day 条；返回时把 pending 标为 shown。"""
+        policy = self.nudge_policy()
+        if not policy["enabled"]:
+            return []
+        limit = max_per_day or policy["maxPerDay"]
+        current = now or utc_now()
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM nudge_events WHERE status IN ('pending','shown') AND scheduled_for <= ? "
+                "ORDER BY scheduled_for ASC, created_at ASC LIMIT ?",
+                (current, int(limit)),
+            ).fetchall()
+            items = [self._nudge(r) for r in rows]
+            for item in items:
+                if item and item["status"] == "pending":
+                    conn.execute("UPDATE nudge_events SET status = 'shown', shown_at = ? WHERE id = ?", (current, item["id"]))
+                    item["status"] = "shown"
+                    item["shownAt"] = current
+        return [i for i in items if i]
+
+    def get_nudge(self, nudge_id: str) -> dict | None:
+        with self._connect() as conn:
+            return self._nudge(conn.execute("SELECT * FROM nudge_events WHERE id = ?", (nudge_id,)).fetchone())
+
+    def set_nudge_status(self, nudge_id: str, status: str) -> dict | None:
+        if status not in ("pending", "shown", "acted", "dismissed", "silenced"):
+            raise ConversationError(f"提醒状态不合法：{status}")
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE nudge_events SET status = ?, acted_at = CASE WHEN ? = 'acted' THEN ? ELSE acted_at END WHERE id = ?",
+                (status, status, now, nudge_id),
+            )
+            return self._nudge(conn.execute("SELECT * FROM nudge_events WHERE id = ?", (nudge_id,)).fetchone())
+
+    def act_nudges(self, trigger_key: str) -> int:
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE nudge_events SET status = 'acted', acted_at = ? WHERE trigger_key = ? AND status IN ('pending','shown')",
+                (now, trigger_key),
+            )
+            return int(cur.rowcount)
+
+    def silence_trigger(self, trigger_key: str) -> dict:
+        policy = self.nudge_policy()
+        refs = sorted(set(policy["silencedRefs"]) | {trigger_key})
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE nudge_events SET status = 'silenced' WHERE trigger_key = ? AND status IN ('pending','shown')",
+                (trigger_key,),
+            )
+        return self.save_nudge_policy(silenced_refs=refs)
+
+    def list_nudges(self, *, statuses: tuple[str, ...] = ("pending", "shown", "acted", "dismissed", "silenced"), limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM nudge_events WHERE status IN (%s) ORDER BY created_at DESC LIMIT ?" % ",".join("?" for _ in statuses),
+                (*statuses, int(limit)),
+            ).fetchall()
+        return [self._nudge(r) for r in rows]  # type: ignore[misc]
 
 
 def reset_for_tests(db_path: str | Path | None = None) -> ConversationStore:

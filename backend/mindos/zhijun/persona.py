@@ -39,6 +39,35 @@ DEEP_INSTRUCTION = """本轮用户要求深入。按五段结构回答，每段�
 1. 我观察到什么；2. 依据是什么（带来源标签）；3. 还有哪些可能的解释；4. 我想向你确认什么；5. 如果你愿意，可以尝试什么（小规模、可逆、可验证）。"""
 
 
+DELIBERATE_INSTRUCTION = f"""本轮用户在「商量一个判断」。按五步回复，总长 250 字以内：
+1. 还原：用一两句把和这件事相关的人、事、原则、过去的判断放在一起（带来源标签；没有就说还不了解）。
+2. 摆选项：把用户提到的选项列出来；用户没说清就问清有哪几个选项，不要替他补。
+3. 只问一个关键问题（最能改变选择的那个）。
+4. {LABEL_VIEW}给出你的看法和理由，并说明这只是看法，决定在他。
+5. 提示他：选择、理由、把握有几成，说出来知君就帮他记进判断簿，到期再来回访。
+不要替用户填选择、理由或把握；不要催促。"""
+
+
+def review_instruction(decision: dict | None, outcome_recorded: bool) -> str:
+    if not decision:
+        return "这是一次回访，但没有找到对应的判断记录：请如实说明，只问用户最近那件事的结果与感受。"
+    head = (
+        f"这是对判断「{decision.get('title', '')}」的回访。当时的情况：{str(decision.get('context', ''))[:300]}；"
+        f"用户选了：{decision.get('choice', '')}；理由：{str(decision.get('rationale', ''))[:200]}；"
+        f"当时的把握：{decision.get('confidence', '?')}%；预期：{str(decision.get('expectedOutcome', ''))[:200]}。"
+    )
+    if not outcome_recorded:
+        return head + (
+            "\n你的任务：先问结果——实际发生了什么，和预期比差在哪；再问感受。用户说出结果后，提示他点「记下结果」。"
+            "结果记下之前不要给新建议，也不要评价对错。"
+        )
+    outcome = decision.get("outcome") or {}
+    return head + (
+        f"\n结果已经记下：{str(outcome.get('result', ''))[:300]}。现在按五段引导复盘：观察 → 依据 → 其他解释 → 想确认什么 → 可尝试什么；"
+        "最后请用户用一句话说出可复用的经验，提醒他可以在「判断」页完成复盘。"
+    )
+
+
 def onboarding_instruction(user_turns: int) -> str:
     """建档模式：一次只问一个问题；user_turns 为用户已发出的消息数（含本轮）。"""
     total = len(ONBOARDING_QUESTIONS)

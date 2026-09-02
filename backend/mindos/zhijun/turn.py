@@ -13,7 +13,7 @@ from typing import Iterator
 from ..stores.conversation_store import ConversationStore
 from ..stores.ontology_store import OntologyStore
 from . import context as context_module
-from . import extract, jobs
+from . import deliberate, extract, jobs
 from .gate import conversation_locks, provider_gate
 from .provider import ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
 
@@ -42,11 +42,24 @@ def _charter() -> dict | None:
         return None
 
 
+def _decision_for(conversation: dict) -> dict | None:
+    decision_id = conversation.get("decisionId")
+    if not decision_id:
+        return None
+    try:
+        from ..stores.growth_store import GrowthStore
+
+        return GrowthStore.instance().get_decision(decision_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def run_turn(
     conversation_id: str,
     content: str,
     *,
     depth: str = "brief",
+    mode: str = "chat",
     provider: ChatProvider | None = None,
     conv_store: ConversationStore | None = None,
     ontology: OntologyStore | None = None,
@@ -55,6 +68,8 @@ def run_turn(
     ontology = ontology or OntologyStore.instance()
     content = (content or "").strip()
     depth = "deep" if depth == "deep" else "brief"
+    if mode not in ("chat", "deliberate"):
+        raise TurnError(400, "BAD_MODE", "mode 只能是 chat 或 deliberate")
     if not content:
         raise TurnError(400, "EMPTY_CONTENT", "内容不能为空")
     if len(content) > MAX_CONTENT_CHARS:
@@ -77,6 +92,7 @@ def run_turn(
                 conversation=conversation,
                 content=content,
                 depth=depth,
+                mode=mode,
                 provider=provider,
                 channel=channel,
                 conv_store=conv_store,
@@ -93,6 +109,7 @@ def _run_locked(
     conversation: dict,
     content: str,
     depth: str,
+    mode: str,
     provider: ChatProvider,
     channel: str,
     conv_store: ConversationStore,
@@ -101,6 +118,7 @@ def _run_locked(
     conversation_id = conversation["id"]
     user_message = conv_store.append_message(conversation_id, "user", content)
     user_turns = conv_store.count_messages(conversation_id, role="user")
+    decision = _decision_for(conversation)
     assembled = context_module.assemble(
         conversation=conversation,
         user_text=content,
@@ -111,6 +129,8 @@ def _run_locked(
         user_turns=user_turns,
         summary=conv_store.latest_summary(conversation_id),
         charter=_charter(),
+        turn_mode=mode,
+        decision=decision,
     )
     assistant_id = f"msg_{uuid.uuid4().hex[:12]}"
     yield (
@@ -123,7 +143,9 @@ def _run_locked(
             "model": provider.model,
             "external": bool(provider.external),
             "mode": conversation.get("mode") or "chat",
+            "turnMode": mode,
             "depth": depth,
+            "decisionId": conversation.get("decisionId"),
         },
     )
     yield ("provenance", assembled.provenance)
@@ -206,6 +228,17 @@ def _run_locked(
     if status != "complete":
         yield ("error", {**(error_payload or {"code": "UNKNOWN", "message": "生成失败", "retryable": True}), "messageId": assistant_id})
         return
+
+    if mode == "deliberate":
+        # 商量模式：同步整理判断草稿（同一通道再调一次，不产生新的出设备），失败不影响本轮。
+        try:
+            draft, changed = deliberate.run_draft(provider=provider, conv_store=conv_store, conversation_id=conversation_id, message_id=assistant_id)
+            yield (
+                "decision_draft",
+                {"draftId": draft["id"], "revision": draft["revision"], "status": draft["status"], "fields": draft["fields"], "changedFields": changed},
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("判断草稿整理失败：%s", type(exc).__name__)
 
     ok, reason = extract.should_extract(content)
     if ok and jobs.extraction_enabled():

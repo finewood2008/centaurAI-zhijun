@@ -1415,13 +1415,15 @@ export async function provisionMindosSession(): Promise<{ deviceId: string } | n
 // 知君 P1：对话 · 本体 · 确认（契约见 docs/development/zhijun-api-contract.md）
 // =====================================================================
 
-export type ConversationMode = 'chat' | 'onboarding'
+export type ConversationMode = 'chat' | 'onboarding' | 'review'
+export type TurnMode = 'chat' | 'deliberate'
 
 export interface Conversation {
   id: string
   title: string
   mode: ConversationMode
   status: 'active' | 'archived'
+  decisionId: string | null
   messageCount: number
   createdAt: string
   updatedAt: string
@@ -1448,6 +1450,74 @@ export interface Message {
 export interface ConversationDetail {
   conversation: Conversation
   messages: Message[]
+  decisionDraft?: DecisionDraft
+  decision?: GrowthDecision | null
+}
+
+// ---- P2：判断草稿 / 提醒（契约 §6–§8）----
+export interface DecisionDraftFields {
+  title: string
+  context: string
+  options: string[]
+  leaning: string | null
+  choice: string | null
+  rationale: string | null
+  confidence: number | null
+  expectedOutcome: string | null
+  reviewAt: string | null
+  keyQuestion: string | null
+  zhijunView: string | null
+  relatedEntityIds: string[]
+  evidenceRefs: string[]
+  userQuotes: string[]
+}
+
+export interface DecisionDraft {
+  id: string
+  conversationId: string
+  messageId: string | null
+  revision: number
+  status: 'draft' | 'confirmed' | 'discarded'
+  decisionId: string | null
+  fields: DecisionDraftFields
+  createdAt: string
+  updatedAt: string
+}
+
+export interface DecisionDraftEvent {
+  draftId: string
+  revision: number
+  status: DecisionDraft['status']
+  fields: DecisionDraftFields
+  changedFields: string[]
+}
+
+export interface DecisionDraftConfirmPayload {
+  choice?: string
+  rationale?: string
+  confidence?: number
+  expectedOutcome?: string
+  reviewAt?: string
+  title?: string
+  options?: string[]
+}
+
+export interface Nudge {
+  id: string
+  kind: 'review_due' | 'commitment_due' | 'checkin'
+  triggerKey: string
+  triggerRef: { decisionId?: string; title?: string }
+  whyNow: string
+  message: string
+  status: 'pending' | 'shown' | 'acted' | 'dismissed' | 'silenced'
+  scheduledFor: string
+  createdAt: string
+}
+
+export interface NudgePolicy {
+  enabled: boolean
+  maxPerDay: number
+  silencedRefs: string[]
 }
 
 export interface TurnReceipt {
@@ -1582,7 +1652,9 @@ export interface TurnMetaEvent {
   model: string
   external: boolean
   mode: ConversationMode
+  turnMode?: TurnMode
   depth: 'brief' | 'deep'
+  decisionId?: string | null
 }
 
 export interface ProvenanceMaterial {
@@ -1619,8 +1691,54 @@ export interface StreamErrorEvent {
   retryable: boolean
 }
 
-export function createConversation(payload: { mode?: ConversationMode; title?: string } = {}) {
+export function createConversation(payload: { mode?: ConversationMode; title?: string; decisionId?: string } = {}) {
   return postJson<Conversation>('/mindos/conversations', payload)
+}
+
+export function getDecisionDraft(conversationId: string) {
+  return request<DecisionDraft>(`/mindos/conversations/${encodeURIComponent(conversationId)}/decision-draft`)
+}
+
+export function confirmDecisionDraft(conversationId: string, payload: DecisionDraftConfirmPayload) {
+  return postJson<{ draft: DecisionDraft; decision: GrowthDecision }>(
+    `/mindos/conversations/${encodeURIComponent(conversationId)}/decision-draft/confirm`,
+    payload,
+  )
+}
+
+export function discardDecisionDraft(conversationId: string) {
+  return postJson<DecisionDraft>(`/mindos/conversations/${encodeURIComponent(conversationId)}/decision-draft/discard`, {})
+}
+
+export function recordConversationOutcome(conversationId: string, payload: { result: string; notes?: string }) {
+  return postJson<{ decision: GrowthDecision; nudgesActed: number }>(
+    `/mindos/conversations/${encodeURIComponent(conversationId)}/outcome`,
+    { result: payload.result, notes: payload.notes ?? '' },
+  )
+}
+
+export function getNudgesToday() {
+  return request<{ items: Nudge[]; policy: NudgePolicy }>('/mindos/nudges/today')
+}
+
+export function scanNudges() {
+  return postJson<{ created: number; checked: number }>('/mindos/nudges/scan', {})
+}
+
+export function dismissNudge(nudgeId: string) {
+  return postJson<Nudge>(`/mindos/nudges/${encodeURIComponent(nudgeId)}/dismiss`, {})
+}
+
+export function silenceNudge(nudgeId: string) {
+  return postJson<{ nudge: Nudge; policy: NudgePolicy }>(`/mindos/nudges/${encodeURIComponent(nudgeId)}/silence`, {})
+}
+
+export function getNudgePolicy() {
+  return request<NudgePolicy>('/mindos/nudges/policy')
+}
+
+export function putNudgePolicy(payload: Partial<NudgePolicy>) {
+  return putJson<NudgePolicy>('/mindos/nudges/policy', payload)
 }
 
 export function listConversations(limit = 50) {

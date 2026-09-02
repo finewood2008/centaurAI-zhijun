@@ -116,7 +116,19 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
         return {"state": "done", "revision": saved["revision"]}
     if kind == "project":
         return projection.write_projection(store)
+    if kind == "nudge_scan":
+        from . import nudges
+
+        return nudges.scan(conv_store=conv_store)
     return {"state": "skipped", "reason": f"unknown_kind:{kind}"}
+
+
+def enqueue_nudge_scan(*, store: OntologyStore | None = None) -> str | None:
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("nudge_scan", "hourly", payload={}, priority=0)
+
+
+_NUDGE_SCAN_INTERVAL = 3600.0
 
 
 class OntologyWorker:
@@ -170,7 +182,14 @@ class OntologyWorker:
                 logger.info("本体 worker 回收 %d 个租约过期任务", reclaimed)
         except Exception:  # noqa: BLE001
             pass
+        last_scan = 0.0
         while not self._stop_event.is_set():
+            if time.time() - last_scan >= _NUDGE_SCAN_INTERVAL:
+                last_scan = time.time()
+                try:
+                    enqueue_nudge_scan(store=store)
+                except Exception:  # noqa: BLE001
+                    pass
             try:
                 job = store.claim_next_job(owner, _LEASE_SECONDS)
             except Exception:  # noqa: BLE001

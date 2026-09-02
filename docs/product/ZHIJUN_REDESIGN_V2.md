@@ -68,7 +68,7 @@ PRD V1 第 28 行已经写了「先成为一面真正懂用户的镜子，再成
 
 ## 7. 参与判断的四种模式
 
-商量（当下：还原上下文 → 摆选项 → 一个关键问题 → 知君的看法 → 侧栏实时判断草稿 → 一键入判断簿）· 回访（到期问结果）· 提醒（事件触发、每日 ≤ 3、说明「为何现在」、遵守 `quietDomains`、可按主题静默）· 周回顾（可选）。P1 只落地了「商量」的对话侧提示，草稿面板与回访在 P2。
+商量（当下：还原上下文 → 摆选项 → 一个关键问题 → 知君的看法 → 侧栏实时判断草稿 → 一键入判断簿）· 回访（到期问结果 → 记下结果 → 五段复盘引导）· 提醒（事件触发、每日 ≤ 3、说明「为何现在」、遵守 `quietDomains`、可按主题永久静默）· 周回顾（可选，未做）。前三种已在 P2 落地；接口见契约 §6–§8。
 
 ## 8. 信息架构（4 个入口替代 15 个路由）
 
@@ -81,15 +81,17 @@ PRD V1 第 28 行已经写了「先成为一面真正懂用户的镜子，再成
 
 旧路由 `/materials*`、`/knowledge*`、`/search`、`/graph`、`/recycle-bin`、`/settings`、`/today` 保留但不进侧栏；`/qa`、`/generate`、`/governance`、`/corrections` 删除。视觉换成原型的米纸 / 墨 / 朱砂 / 宋体（令牌名保留、只换值）。
 
-## 9. 技术方案（P1 已落地部分）
+## 9. 技术方案（P1 + P2 已落地部分）
 
 ```
 backend/mindos/stores/ontology_store.py      实体 / 理解 / 证据 / 复核事件 / 本体任务（SQLite, ontology.db）
-backend/mindos/stores/conversation_store.py  会话 / 消息 / 摘要 / 出设备回执（SQLite, conversations.db）
+backend/mindos/stores/conversation_store.py  会话 / 消息 / 摘要 / 出设备回执 / 判断草稿 / 提醒（SQLite, conversations.db）
 backend/mindos/zhijun/                        provider（fake / ollama / openai-compatible / anthropic）
                                               gate · persona · context · extract · jobs · projection · turn · confirm
-backend/mindos/conversations.py               /api/mindos/conversations（SSE）
+                                              deliberate（商量：草稿抽取 / 校验 / 确认入判断簿）· nudges（到期提醒扫描）
+backend/mindos/conversations.py               /api/mindos/conversations（SSE、判断草稿、回访结果）
 backend/mindos/ontology.py                    /api/mindos/ontology
+backend/mindos/nudges.py                      /api/mindos/nudges
 backend/mindos/zhijun_status.py               /api/mindos/zhijun/status
 frontend/mindos-web/src/pages/{ConversationPage,OntologyPage,DataHubPage}.vue
 frontend/mindos-web/src/services/sse.ts       fetch + ReadableStream 的 SSE 客户端（带自定义头）
@@ -110,7 +112,7 @@ scripts/e2e_zhijun_phase1.py                  真实后端端到端（演示模�
 |---|---|---|
 | P0 叙事收敛 | README 重写、设计文档、契约、删除碎片文件、主题换色 | 本轮完成（gbrain / consumer_api / 旧 Electron 壳的删除推后到 P3，避免大面积改 server.py 与测试） |
 | P1 能聊、能记、能认 | 对话 SSE、两个存储、抽取 / 确认 / 投影、对话页 + 本体页 + 四入口 + 主题、建档对话、演示模型端到端 | **本轮完成（削减版）**；未做：主题线程、工具调用、就地编辑、Playwright 截图基线更新 |
-| P2 能商量、会回访 | 商量模式 + 实时判断草稿 → `growth_decisions`、回访会话、提醒策略与每日 ≤ 3、议题线程 | 未开始 |
+| P2 能商量、会回访 | 商量模式（`mode=deliberate`）+ 实时判断草稿 → 一键写入 `growth_decisions`（绑定章程版本）、到期提醒（`review_due`，每日 ≤ 3、静默领域、永久静默）、回访会话（开场备注 → 记下结果 → 五段复盘引导） | **本轮完成（削减版）**；未做：议题线程、承诺到期提醒、原则-行为张力提醒、复盘在对话内直接提交 |
 | P3 像良师 | 整合器（去重 / 矛盾 / 晋升 / 衰减）、原则-行为张力提醒、资料 → observed 理解、导出 / 全量删除、`server.py` 拆分与旧面退役 | 未开始 |
 | P4 | 只读 Context Pack（confirmed ∧ export_allowed）、移动采集、盒子部署 profile、语音、Electron 薄壳 | 未开始 |
 
@@ -124,7 +126,8 @@ scripts/e2e_zhijun_phase1.py                  真实后端端到端（演示模�
 | 建档对话（7 问） | 已实现（演示模型按脚本提问；真实模型按提示词） |
 | 对话页 / 本体页 / 资料枢纽 / 四入口 / 新主题 | 已实现，`npm run build` 与 node 测试通过；**未做浏览器截图回归** |
 | Ollama / OpenAI 兼容 / Anthropic 通道 | 代码已实现，解析逻辑有单元测试；**本机未接真实模型联调** |
-| 商量草稿面板、回访、提醒、整合器、资料 → 理解 | 未实现（P2 / P3） |
+| 商量 → 判断草稿 → 判断簿、到期提醒、回访 → 记结果 → 复盘引导 | 已实现（后端 67 个测试 + 端到端）；草稿的 选择/理由/把握/预期 只接受用户原话，演示模型用规则抽取，真实模型下的草稿质量**未评测** |
+| 整合器、资料 → 理解、承诺提醒、议题线程 | 未实现（P3） |
 | 硬件盒子、语音、移动端、Context Pack | 未实现（P4） |
 
 ## 12. 指标

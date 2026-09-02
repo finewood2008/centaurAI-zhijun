@@ -164,6 +164,42 @@ def main() -> int:
             assert roles.count("system") >= 1 and roles.count("assistant") == 3, roles
             steps.append(("会话记录", f"{len(roles)} 条消息（含 {roles.count('system')} 条系统备注）"))
 
+            # ---------------- P2：商量 → 草稿 → 判断簿 → 提醒 → 回访 → 结果
+            dconv = client.post(f"{base}/api/mindos/conversations", json={"mode": "chat", "title": "商量：远川项目怎么做"}, headers=HEADERS).json()
+            events = _sse_events(client, f"{base}/api/mindos/conversations/{dconv['id']}/messages", {"content": "我在纠结要不要把远川项目外包出去还是自己招人做。", "mode": "deliberate"})
+            draft = next(d for n, d in events if n == "decision_draft")
+            assert len(draft["fields"]["options"]) == 2, draft["fields"]
+            events = _sse_events(client, f"{base}/api/mindos/conversations/{dconv['id']}/messages", {"content": "我倾向自己招人，因为控制力更强，七成把握，预期三个月内团队到位。", "mode": "deliberate"})
+            draft = next(d for n, d in events if n == "decision_draft")
+            assert draft["revision"] == 2 and draft["fields"]["confidence"] == 70, draft
+            steps.append(("商量 → 判断草稿", f"两轮后草稿 revision={draft['revision']}，选项 {len(draft['fields']['options'])} 个，把握 {draft['fields']['confidence']}%（都来自用户原话）"))
+            yesterday = (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 86400 * 2)))
+            confirmed = client.post(
+                f"{base}/api/mindos/conversations/{dconv['id']}/decision-draft/confirm",
+                json={"choice": "自己招人", "expectedOutcome": "三个月内团队到位", "reviewAt": yesterday},
+                headers=HEADERS,
+            )
+            assert confirmed.status_code == 200, confirmed.text
+            decision = confirmed.json()["decision"]
+            assert decision["status"] == "open" and decision["confidence"] == 70, decision
+            steps.append(("一键入判断簿", f"判断「{decision['title']}」已写入 growth_decisions（回访日设为两天前以触发提醒）"))
+
+            scan = client.post(f"{base}/api/mindos/nudges/scan", headers=HEADERS).json()
+            today = client.get(f"{base}/api/mindos/nudges/today", headers=HEADERS).json()["items"]
+            assert scan["created"] >= 1 and today and today[0]["triggerRef"]["decisionId"] == decision["id"], (scan, today)
+            steps.append(("到期提醒", f"{today[0]['whyNow']}"))
+
+            rconv = client.post(f"{base}/api/mindos/conversations", json={"mode": "review", "decisionId": decision["id"]}, headers=HEADERS).json()
+            events = _sse_events(client, f"{base}/api/mindos/conversations/{rconv['id']}/messages", {"content": "招到了三个人，比预期晚了两周。"})
+            assert "回访" in _reply(events), _reply(events)
+            outcome = client.post(f"{base}/api/mindos/conversations/{rconv['id']}/outcome", json={"result": "招到了三个人，比预期晚两周", "notes": ""}, headers=HEADERS).json()
+            assert outcome["decision"]["status"] == "outcome_recorded" and outcome["nudgesActed"] >= 1, outcome
+            after = client.get(f"{base}/api/mindos/nudges/today", headers=HEADERS).json()["items"]
+            assert not after, after
+            events = _sse_events(client, f"{base}/api/mindos/conversations/{rconv['id']}/messages", {"content": "感觉当时低估了招人的周期。"})
+            assert "复盘" in _reply(events), _reply(events)
+            steps.append(("回访 → 记下结果 → 复盘引导", "判断状态 outcome_recorded，提醒已完成，知君按五段引导复盘"))
+
             page = client.get(f"{base}/mindos/", headers=HEADERS)
             served = page.status_code == 200 and "<div id=\"app\"" in page.text
             steps.append(("前端页面", "已由后端在 /mindos/ 提供" if served else f"未提供（{page.status_code}），请先 npm run build"))

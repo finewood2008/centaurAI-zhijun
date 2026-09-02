@@ -6,17 +6,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronUp, Sparkles } from 'lucide-vue-next'
 import {
   ApiError,
+  confirmDecisionDraft,
   createConversation,
   deleteConversation,
+  discardDecisionDraft,
   getConversation,
   getInbox,
   getOntologyStats,
   getZhijunStatus,
   listConversations,
+  recordConversationOutcome,
   reviewClaim,
   type Claim,
   type Conversation,
+  type DecisionDraft,
+  type DecisionDraftConfirmPayload,
+  type DecisionDraftEvent,
   type ExtractionEvent,
+  type GrowthDecision,
   type Message,
   type MessageDoneEvent,
   type OntologyStats,
@@ -24,6 +31,7 @@ import {
   type ReviewAction,
   type StreamErrorEvent,
   type TurnMetaEvent,
+  type TurnMode,
   type ZhijunStatus,
 } from '@/services/api'
 import { streamPost } from '@/services/sse'
@@ -35,6 +43,9 @@ import ClaimCandidateChip from '@/components/conversation/ClaimCandidateChip.vue
 import ProvenanceStrip from '@/components/conversation/ProvenanceStrip.vue'
 import Composer from '@/components/conversation/Composer.vue'
 import ConversationList from '@/components/conversation/ConversationList.vue'
+import LiveObjectPanel from '@/components/conversation/LiveObjectPanel.vue'
+import NudgeStrip from '@/components/conversation/NudgeStrip.vue'
+import ReviewOutcomePanel from '@/components/conversation/ReviewOutcomePanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -65,6 +76,91 @@ const deleting = ref(false)
 const reviewBusy = reactive<Record<string, boolean>>({})
 const listRef = ref<HTMLElement | null>(null)
 const composerRef = ref<InstanceType<typeof Composer> | null>(null)
+const nudgeRef = ref<InstanceType<typeof NudgeStrip> | null>(null)
+
+// P2：判断草稿（商量模式）与回访会话
+const draft = ref<DecisionDraft | null>(null)
+const draftChanged = ref<string[]>([])
+const draftBusy = ref(false)
+const draftError = ref('')
+const decision = ref<GrowthDecision | null>(null)
+const outcomeBusy = ref(false)
+const outcomeError = ref('')
+
+const isReview = computed(() => current.value?.mode === 'review')
+const showDraftPanel = computed(() => !!draft.value && draft.value.status !== 'discarded')
+const showSidePanel = computed(() => showDraftPanel.value || (isReview.value && !!decision.value))
+
+function pushNote(content: string, meta: Record<string, unknown>) {
+  if (!current.value) return
+  messages.value.push(
+    reactive<UiMessage>({
+      id: `local-note-${Date.now()}-${messages.value.length}`,
+      conversationId: current.value.id,
+      seq: messages.value.length + 1,
+      role: 'system',
+      content,
+      status: 'complete',
+      createdAt: new Date().toISOString(),
+      meta,
+    }),
+  )
+}
+
+async function onConfirmDraft(payload: DecisionDraftConfirmPayload) {
+  if (!current.value || draftBusy.value) return
+  draftBusy.value = true
+  draftError.value = ''
+  try {
+    const result = await confirmDecisionDraft(current.value.id, payload)
+    draft.value = result.draft
+    pushNote(`你记下了一个判断：${result.decision.title}（选了「${result.decision.choice}」，把握 ${result.decision.confidence}%）`, {
+      kind: 'decision_confirmed',
+      decisionId: result.decision.id,
+    })
+    toast({ type: 'success', message: '已记进判断簿，到期知君会来回访' })
+    await scrollToBottom()
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 400) draftError.value = err.message
+    else toast({ type: 'error', message: friendlyError(err, '记录失败') })
+  } finally {
+    draftBusy.value = false
+  }
+}
+
+async function onDiscardDraft() {
+  if (!current.value || draftBusy.value) return
+  draftBusy.value = true
+  try {
+    await discardDecisionDraft(current.value.id)
+    draft.value = null
+    draftChanged.value = []
+    toast({ type: 'info', message: '草稿已放弃，再商量时会重新整理' })
+  } catch (err) {
+    toast({ type: 'error', message: friendlyError(err, '操作失败') })
+  } finally {
+    draftBusy.value = false
+  }
+}
+
+async function onRecordOutcome(payload: { result: string; notes: string }) {
+  if (!current.value || outcomeBusy.value) return
+  outcomeBusy.value = true
+  outcomeError.value = ''
+  try {
+    const res = await recordConversationOutcome(current.value.id, payload)
+    decision.value = res.decision
+    pushNote(`你记下了结果：${payload.result.slice(0, 200)}`, { kind: 'outcome_recorded', decisionId: res.decision.id })
+    toast({ type: 'success', message: '结果已记下，知君会引导你复盘' })
+    nudgeRef.value?.reload()
+    await scrollToBottom()
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) outcomeError.value = '这个判断已经记过结果'
+    else outcomeError.value = friendlyError(err, '记录失败')
+  } finally {
+    outcomeBusy.value = false
+  }
+}
 
 const loadGate = createSessionGate()
 const pollGate = createSessionGate()
@@ -152,6 +248,11 @@ async function loadConversation(id: string) {
     if (!loadGate.isCurrent(session)) return
     current.value = detail.conversation
     messages.value = detail.messages.map(toUi)
+    draft.value = detail.decisionDraft && detail.decisionDraft.status !== 'discarded' ? detail.decisionDraft : null
+    draftChanged.value = []
+    draftError.value = ''
+    decision.value = detail.decision ?? null
+    outcomeError.value = ''
     await scrollToBottom()
   } catch (err) {
     if (!loadGate.isCurrent(session)) return
@@ -173,6 +274,11 @@ function resetToLanding() {
   messages.value = []
   messagesError.value = ''
   messagesLoading.value = false
+  draft.value = null
+  draftChanged.value = []
+  draftError.value = ''
+  decision.value = null
+  outcomeError.value = ''
 }
 
 watch(
@@ -237,7 +343,7 @@ async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversa
   return conv
 }
 
-async function send(content: string, depth: 'brief' | 'deep') {
+async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat') {
   if (streaming.value) return
   streaming.value = true
   let conv: Conversation
@@ -248,7 +354,7 @@ async function send(content: string, depth: 'brief' | 'deep') {
     toast({ type: 'error', message: friendlyError(err, '无法创建会话') })
     return
   }
-  await streamTurn(conv, content, depth)
+  await streamTurn(conv, content, depth, mode)
 }
 
 async function startOnboarding() {
@@ -265,7 +371,7 @@ async function startOnboarding() {
   await streamTurn(conv, '你好，我们开始吧', 'brief')
 }
 
-async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 'deep') {
+async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat') {
   const now = new Date().toISOString()
   const seqBase = messages.value.length
   const userMsg = reactive<UiMessage>({
@@ -298,8 +404,24 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
   try {
     await streamPost(
       `/mindos/conversations/${encodeURIComponent(conv.id)}/messages`,
-      { content, depth },
+      { content, depth, mode },
       {
+        decision_draft: (d) => {
+          const e = d as DecisionDraftEvent
+          draft.value = {
+            id: e.draftId,
+            conversationId: conv.id,
+            messageId: assistant.id.startsWith('local-') ? null : assistant.id,
+            revision: e.revision,
+            status: e.status,
+            decisionId: null,
+            fields: e.fields,
+            createdAt: draft.value?.createdAt ?? new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          }
+          draftChanged.value = [...(e.changedFields ?? [])]
+          draftError.value = ''
+        },
         meta: (d) => {
           const m = d as TurnMetaEvent
           assistant.id = m.messageId
@@ -451,19 +573,24 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <section class="zj-page__main" aria-live="polite">
+    <section class="zj-page__main" :class="{ 'has-panel': showSidePanel }" aria-live="polite">
       <header class="zj-page__head">
         <div>
           <h1 class="zj-page__title">{{ headerTitle }}</h1>
           <p class="zj-page__status">
             <span v-if="statusLine">{{ statusLine }}</span>
             <span v-if="status?.provider === 'fake'" class="zj-page__badge">演示模型</span>
+            <span v-if="isReview" class="zj-page__badge">回访</span>
             <span v-if="status?.extraction === 'beta'" class="zj-page__badge">抽取 beta</span>
             <span v-if="status && !status.workerRunning" class="zj-page__badge is-warn">抽取暂停</span>
           </p>
         </div>
       </header>
 
+      <NudgeStrip ref="nudgeRef" class="zj-page__nudges" />
+
+      <div class="zj-page__body">
+      <div class="zj-page__stream">
       <div ref="listRef" class="zj-page__messages">
         <div v-if="showIntro" class="zj-intro">
           <Sparkles :size="22" aria-hidden="true" />
@@ -509,10 +636,32 @@ onBeforeUnmount(() => {
           ref="composerRef"
           :streaming="streaming"
           :disabled="messagesLoading"
-          :placeholder="current?.mode === 'onboarding' ? '回答知君的问题，或者说说你想先聊什么…' : undefined"
+          :allow-deliberate="!isReview && current?.mode !== 'onboarding'"
+          :placeholder="current?.mode === 'onboarding' ? '回答知君的问题，或者说说你想先聊什么…' : isReview ? '说说实际发生了什么，和预期比差在哪…' : undefined"
           @send="send"
           @stop="stop"
         />
+      </div>
+      </div>
+
+      <div v-if="showSidePanel" class="zj-page__panel">
+        <ReviewOutcomePanel
+          v-if="isReview && decision"
+          :decision="decision"
+          :busy="outcomeBusy"
+          :error="outcomeError"
+          @record="onRecordOutcome"
+        />
+        <LiveObjectPanel
+          v-if="showDraftPanel && draft"
+          :draft="draft"
+          :changed-fields="draftChanged"
+          :busy="draftBusy"
+          :error="draftError"
+          @confirm="onConfirmDraft"
+          @discard="onDiscardDraft"
+        />
+      </div>
       </div>
     </section>
 
@@ -594,6 +743,32 @@ onBeforeUnmount(() => {
   color: var(--ws-warning-color, #b8862b);
   border-color: var(--ws-warning-color, #b8862b);
 }
+.zj-page__nudges {
+  margin: 0 4px 10px;
+}
+.zj-page__body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+}
+.zj-page__stream {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.zj-page__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 35%;
+  max-width: 420px;
+  min-width: 280px;
+  min-height: 0;
+  overflow-y: auto;
+}
 .zj-page__messages {
   flex: 1;
   min-height: 0;
@@ -663,6 +838,23 @@ onBeforeUnmount(() => {
 @media (max-width: 1199px) {
   .zj-page {
     grid-template-columns: 200px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1023px) {
+  .zj-page__body {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .zj-page__stream {
+    flex: none;
+    min-height: 50vh;
+  }
+  .zj-page__panel {
+    width: auto;
+    max-width: none;
+    min-width: 0;
+    overflow: visible;
   }
 }
 

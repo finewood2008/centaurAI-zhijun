@@ -54,7 +54,7 @@ REVIEW_ACTIONS = (
     "create",
 )
 SURFACES = ("conversation", "ontology_page", "onboarding", "decision_panel", "import", "system")
-JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project")
+JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan")
 JOB_STATES = ("queued", "running", "done", "failed")
 
 # 受控谓词词表：抽取器只能在分区对应的词表内选，越界整条丢弃。
