@@ -23,7 +23,7 @@ assert.match(router, /path: '\/c\/:conversationId', name: 'conversation-detail'/
 
 // 今日页：五个区块的组件都在，动作走 /chat?say= 与 /c/:id，不用 fetch
 const today = await readFile(new URL('../src/pages/TodayPage.vue', import.meta.url), 'utf8')
-for (const part of ['GreetingLine', 'FirstMeetCard', 'TodayNudges', 'NextStepsPanel', 'RecentOutcomes', 'BringSomething']) {
+for (const part of ['GreetingLine', 'FirstMeetCard', 'TodayNudges', 'TodayValueHero', 'NextStepsPanel', 'RecentOutcomes', 'BringSomething']) {
   assert.ok(today.includes(`import ${part} from`), `TodayPage 缺少 ${part}`)
 }
 assert.match(today, /Promise\.allSettled\(/)
@@ -31,6 +31,13 @@ assert.match(today, /path: '\/chat', query: \{ onboarding: '1' \}/)
 assert.match(today, /path: '\/chat', query: /)
 assert.match(today, /router\.push\(`\/c\/\$\{encodeURIComponent\(id\)\}`\)/)
 assert.doesNotMatch(today, /fetch\(/)
+const todayValue = await readFile(new URL('../src/components/today/TodayValueHero.vue', import.meta.url), 'utf8')
+assert.match(todayValue, /把今天聊过的/)
+assert.match(todayValue, /变成明天用得上的判断/)
+assert.match(todayValue, /不必反复交代自己/)
+assert.match(todayValue, /重要选择不再凭印象/)
+assert.match(todayValue, /结果回来，经验留下/)
+assert.match(todayValue, /来自你的真实使用/)
 // 对话页与今日页的接缝：?say= / ?deliberate=1 / ?onboarding=1 三个 query 都被读取；空白态跳转走 /chat，不再 import 提醒条与下一步面板
 assert.match(conversation, /route\.query\.say/)
 assert.match(conversation, /route\.query\.deliberate/)

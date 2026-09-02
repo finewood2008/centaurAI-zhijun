@@ -28,6 +28,7 @@ import {
 import GreetingLine from '@/components/today/GreetingLine.vue'
 import FirstMeetCard from '@/components/today/FirstMeetCard.vue'
 import TodayNudges from '@/components/today/TodayNudges.vue'
+import TodayValueHero from '@/components/today/TodayValueHero.vue'
 import RecentOutcomes from '@/components/today/RecentOutcomes.vue'
 import BringSomething from '@/components/today/BringSomething.vue'
 import NextStepsPanel from '@/components/conversation/NextStepsPanel.vue'
@@ -95,6 +96,16 @@ function openConversation(id: string) {
 function startOnboarding() {
   router.push({ path: '/chat', query: { onboarding: '1' } })
 }
+function startFromHero() {
+  if (showFirstMeet.value) {
+    startOnboarding()
+    return
+  }
+  router.push('/chat')
+}
+function openValueTarget(target: 'ontology' | 'judgments') {
+  router.push(target === 'ontology' ? '/me' : '/judgments')
+}
 
 async function loadAll() {
   const [s, c, g, cl] = await Promise.allSettled([
@@ -123,15 +134,28 @@ onBeforeUnmount(() => {
   <div class="zj-today">
     <GreetingLine :line="greeting" :summary="summary" :loading="loading" />
 
+    <TodayValueHero
+      v-if="!loading"
+      :established="!!stats?.hasOntology"
+      :confirmed="stats?.claims.confirmed ?? 0"
+      :decisions="growthToday?.stats.totalDecisions ?? 0"
+      :reviews="growthToday?.stats.totalReviews ?? 0"
+      :primary-label="showFirstMeet ? '先让知君认识我' : '带一件事来聊'"
+      @start="startFromHero"
+      @open="openValueTarget"
+    />
+
     <div v-if="loading" class="zj-today__skeleton" aria-hidden="true">
       <span class="zj-today__block" />
       <span class="zj-today__block is-short" />
       <span class="zj-today__block" />
     </div>
 
-    <FirstMeetCard v-else-if="showFirstMeet" @start="startOnboarding" />
+    <div v-else-if="showFirstMeet" class="zj-today__stream">
+      <FirstMeetCard @start="startOnboarding" />
+    </div>
 
-    <template v-else>
+    <div v-else class="zj-today__stream">
       <TodayNudges  @count="(n) => (nudgeCount = n)" />
 
       <section v-if="nextSteps.length" class="zj-today-section zj-today__next" aria-label="下一步">
@@ -141,7 +165,7 @@ onBeforeUnmount(() => {
       <RecentOutcomes :items="recent" @open="openConversation" />
 
       <BringSomething :pending-onboarding="pendingOnboarding" @pick="goChat" @resume="openConversation" />
-    </template>
+    </div>
   </div>
 </template>
 
@@ -160,10 +184,18 @@ onBeforeUnmount(() => {
 .zj-today {
   display: flex;
   flex-direction: column;
-  gap: 28px;
-  max-width: 760px;
+  gap: 22px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 8px 0 32px;
+}
+.zj-today__stream {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  width: 100%;
+  max-width: 760px;
+  margin: 6px auto 0;
 }
 /* NextStepsPanel 自带标题与上边距；这里把它的上边距抵掉，和其它区块一样对齐 */
 .zj-today__next :deep(.zj-next) {
@@ -175,6 +207,9 @@ onBeforeUnmount(() => {
 .zj-today__skeleton {
   display: grid;
   gap: 10px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
 }
 .zj-today__block {
   display: block;
