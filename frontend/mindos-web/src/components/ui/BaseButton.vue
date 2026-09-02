@@ -112,45 +112,45 @@ function onClick(ev: MouseEvent) {
 
 /* primary：主操作 */
 .ws-btn--primary {
-  background: var(--ws-button-primary-background, #0077ff);
+  background: var(--ws-button-primary-background, #a6452e);
   border: 1px solid transparent;
   color: var(--ws-button-color, #fff);
 }
 .ws-btn--primary:hover:not(.is-disabled) {
-  background: var(--ws-button-hover-primary-background, #298dff);
+  background: var(--ws-button-hover-primary-background, #b8543c);
 }
 .ws-btn--primary:active:not(.is-disabled) {
-  background: var(--ws-button-active-primary-background, #006ae5);
+  background: var(--ws-button-active-primary-background, #8f3a26);
 }
 
 /* secondary：常规操作 */
 .ws-btn--secondary {
   background: var(--ws-body-bg, #fff);
-  border: 1px solid var(--ws-button-plain-border-color, #dcdfe6);
-  color: var(--ws-button-plain-color, #606266);
+  border: 1px solid var(--ws-button-plain-border-color, #d8d3c8);
+  color: var(--ws-button-plain-color, #3c403d);
 }
 .ws-btn--secondary:hover:not(.is-disabled) {
-  border-color: var(--ws-button-plain-hover-border-color, #298dff);
-  color: var(--ws-button-plain-hover-border-color, #298dff);
+  border-color: var(--ws-button-plain-hover-border-color, #b8543c);
+  color: var(--ws-button-plain-hover-border-color, #b8543c);
 }
 .ws-btn--secondary:active:not(.is-disabled) {
-  border-color: var(--ws-button-plain-active-border-color, #006ae5);
-  color: var(--ws-button-plain-active-border-color, #006ae5);
+  border-color: var(--ws-button-plain-active-border-color, #8f3a26);
+  color: var(--ws-button-plain-active-border-color, #8f3a26);
 }
 
 /* text：文字链接型 */
 .ws-btn--text {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--ws-button-text-color, #1b99ff);
+  color: var(--ws-button-text-color, #a6452e);
 }
 .ws-btn--text:hover:not(.is-disabled) {
-  color: var(--ws-button-text-hover-color, #298cff);
+  color: var(--ws-button-text-hover-color, #b8543c);
 }
 
 /* danger：危险操作 */
 .ws-btn--danger {
-  background: var(--ws-button-danger-background, #ff4918);
+  background: var(--ws-button-danger-background, #a6452e);
   border: 1px solid transparent;
   color: var(--ws-button-color, #fff);
 }
@@ -163,7 +163,7 @@ function onClick(ev: MouseEvent) {
 
 /* success：成功/正向操作 */
 .ws-btn--success {
-  background: var(--ws-button-success-background, #12cd3d);
+  background: var(--ws-button-success-background, #4a7c59);
   border: 1px solid transparent;
   color: var(--ws-button-color, #fff);
 }

@@ -120,7 +120,7 @@ const emit = defineEmits<{
   font-weight: 600;
 }
 .zj-convs__time {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-convs__remove {

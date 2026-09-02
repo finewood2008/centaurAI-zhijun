@@ -652,7 +652,7 @@ onBeforeUnmount(() => {
 .ws-folders {
   width: 220px;
   flex-shrink: 0;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
   overflow: hidden;
@@ -662,7 +662,7 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 12px;
   font-weight: 600;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   letter-spacing: 0.04em;
 }
 
@@ -671,7 +671,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   padding: 12px 14px;
-  border-bottom: 1px solid var(--ws-border-color-3, #ebeef5);
+  border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
 }
 
 .ws-folders__list {
@@ -709,7 +709,7 @@ onBeforeUnmount(() => {
   border: 1px solid transparent;
   border-radius: var(--ws-radius, 6px);
   background: transparent;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   font-family: inherit;
   font-size: 13px;
   text-align: left;
@@ -720,12 +720,12 @@ onBeforeUnmount(() => {
     border-color 0.15s;
 }
 .ws-folders__item:hover {
-  background: var(--ws-card-bg, #f5f7fa);
+  background: var(--ws-surface-2, #fbf8f1);
 }
 .ws-folders__item.is-active {
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
-  color: var(--ws-primary-color, #0077ff);
-  border-color: var(--ws-border-color-2, #e4e7ed);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-border-color-2, #e2ded4);
 }
 .ws-folders__item--all {
   font-weight: 600;
@@ -736,7 +736,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 16px;
   flex-shrink: 0;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   cursor: pointer;
 }
 .ws-folders__caret--empty {
@@ -751,8 +751,8 @@ onBeforeUnmount(() => {
 }
 .ws-folders__count {
   flex-shrink: 0;
-  font-size: 11px;
-  color: var(--ws-text-secondary-color, #909399);
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 /* 行内操作按钮（hover 显示） */
@@ -775,7 +775,7 @@ onBeforeUnmount(() => {
 .ws-dialog-note {
   margin: 0 0 4px;
   font-size: 13px;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
 }
 
 /* 创建文件夹弹窗字段 */
@@ -788,7 +788,7 @@ onBeforeUnmount(() => {
 .ws-field > span {
   font-size: 12px;
   font-weight: 600;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 /* 目录选择下拉 */
@@ -809,7 +809,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 8px 0 0;
   font-size: 13px;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
 }
 .ws-radio label {
   display: flex;
@@ -827,7 +827,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(29, 33, 31, 0.42);
 }
 
 .gov-modal {
@@ -836,7 +836,7 @@ onBeforeUnmount(() => {
   padding: 20px;
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   box-shadow: var(--ws-shadow-lg, 0 16px 48px rgba(0, 0, 0, 0.18));
 }
 
@@ -844,13 +844,13 @@ onBeforeUnmount(() => {
   margin: 0 0 12px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 .gov-modal-hint {
   margin: 0 0 8px;
   font-size: 13px;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   word-break: break-word;
 }
 
@@ -878,17 +878,17 @@ onBeforeUnmount(() => {
 .ws-input {
   height: 34px;
   padding: 0 10px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   font-family: inherit;
   font-size: 13px;
   min-width: 0;
 }
 .ws-input:focus {
   outline: none;
-  border-color: var(--ws-input-focus-border-color, #1b99ff);
+  border-color: var(--ws-input-focus-border-color, #a6452e);
 }
 .ws-input--select {
   width: 120px;
@@ -904,9 +904,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
-  background: var(--ws-card-bg, #f5f7fa);
+  background: var(--ws-surface-2, #fbf8f1);
   margin-bottom: 12px;
 }
 
@@ -915,7 +915,7 @@ onBeforeUnmount(() => {
   border: none;
   border-radius: var(--ws-radius-sm, 4px);
   background: transparent;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -925,17 +925,17 @@ onBeforeUnmount(() => {
     background 0.15s;
 }
 .ws-seg__btn:hover {
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .ws-seg__btn.is-active {
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
   box-shadow: var(--ws-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));
 }
 
 /* 表格 */
 .ws-table {
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
   overflow: hidden;
@@ -943,9 +943,9 @@ onBeforeUnmount(() => {
 
 .ws-table__head {
   padding: 12px 16px;
-  border-bottom: 1px solid var(--ws-border-color-3, #ebeef5);
+  border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 /* 复杂表格小屏可横向滚动 */
@@ -962,23 +962,23 @@ onBeforeUnmount(() => {
 .ws-table__grid th {
   text-align: left;
   padding: 10px 16px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   font-weight: 600;
-  background: var(--ws-card-bg, #f5f7fa);
-  border-bottom: 1px solid var(--ws-border-color-3, #ebeef5);
+  background: var(--ws-surface-2, #fbf8f1);
+  border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
   white-space: nowrap;
 }
 .ws-table__grid td {
   padding: 10px 16px;
-  border-bottom: 1px solid var(--ws-border-color-3, #ebeef5);
-  color: var(--ws-text-color, #606266);
+  border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
+  color: var(--ws-text-color, #3c403d);
 }
 .ws-table__grid tbody tr {
   cursor: pointer;
   transition: background 0.15s;
 }
 .ws-table__grid tbody tr:hover {
-  background: var(--ws-table-hover-bg, rgba(0, 119, 255, 0.02));
+  background: var(--ws-table-hover-bg, rgba(166, 69, 46, 0.03));
 }
 .ws-table__grid tbody tr:last-child td {
   border-bottom: none;
@@ -990,7 +990,7 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 .ws-table__ops-col {
@@ -1004,13 +1004,13 @@ onBeforeUnmount(() => {
 .knowledge-card-state {
   display: inline-block;
   white-space: nowrap;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .knowledge-card-state.is-ready { color: #16803c; }
 .knowledge-card-state.is-pending { color: #a66a1f; }
 .knowledge-card-state.is-draft { color: #456d9b; }
 .knowledge-card-state.is-failed { color: #c43d3d; }
-.knowledge-card-state.is-muted { color: var(--ws-text-secondary-color, #909399); }
+.knowledge-card-state.is-muted { color: var(--ws-text-secondary-color, #686b66); }
 
 /* <900px：侧栏移到内容区上方，保持可用 */
 @media (max-width: 900px) {

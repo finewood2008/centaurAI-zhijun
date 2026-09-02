@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 出处条：一行摘要 + 可展开的依据清单。展开即回执的可见部分（送出了哪些理解、哪些资料片段、
-// 避开了几条被纠正的理解、用的是本地还是外部模型）。
+// 出处条：一行人话摘要 + 可展开的依据。展开即回执的可见部分（参考了哪些理解、哪些资料片段、
+// 避开了几条被纠正的理解、这轮用的是本机还是外部模型）。
 import { computed, ref } from 'vue'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { ProvenanceEvent, TurnMetaEvent } from '@/services/api'
 import { sectionLabel } from '@/shared/ontology'
 import { confirmedFraction } from '@/shared/selfmap'
+import { channelLine, channelShort } from '@/shared/model'
 import RingGlyph from '@/components/ui/RingGlyph.vue'
 import ProvenanceGraph from '@/components/conversation/ProvenanceGraph.vue'
 
@@ -19,22 +20,16 @@ const fraction = computed(() => confirmedFraction(props.provenance.confirmedClai
 
 const summary = computed(() => {
   const p = props.provenance
-  const parts = [
-    `${p.confirmedClaims.length} 条已确认`,
-    `${p.workingClaims.length} 条工作理解`,
-    `${p.materials.length} 段资料`,
-  ]
-  if (p.retractedNotices > 0) parts.push(`避开 ${p.retractedNotices} 条已纠正`)
-  return parts.join(' · ')
+  const parts: string[] = []
+  if (p.confirmedClaims.length) parts.push(`${p.confirmedClaims.length} 条你确认过的理解`)
+  if (p.workingClaims.length) parts.push(`${p.workingClaims.length} 条还没点头的`)
+  if (p.materials.length) parts.push(`${p.materials.length} 段资料`)
+  if (p.retractedNotices > 0) parts.push(`避开了 ${p.retractedNotices} 条你纠正过的`)
+  return parts.length ? `参考了 ${parts.join('、')}` : '这轮没有用到本体里的理解'
 })
 
-const channel = computed(() => {
-  if (!props.meta) return ''
-  if (props.meta.provider === 'fake') return '演示模型，未调用真实模型'
-  return props.meta.external
-    ? `外部模型「${props.meta.model}」：本轮问题与上述片段已发送至外部服务`
-    : `本地模型「${props.meta.model}」：数据未离开本机`
-})
+const channel = computed(() => channelLine(props.meta))
+const channelTag = computed(() => channelShort(props.meta))
 </script>
 
 <template>
@@ -47,27 +42,26 @@ const channel = computed(() => {
       @click="open = !open"
     >
       <RingGlyph :fraction="fraction" :size="14" />
-      <span class="zj-prov__lead">依据</span>
-      <span v-if="provenance.fromReceipt" class="zj-prov__receipt" title="由本轮回执还原">（回执）</span>
       <span class="zj-prov__summary">{{ summary }}</span>
-      <span v-if="channel" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ meta?.external ? '外部模型' : (meta?.provider === 'fake' ? '演示模型' : '本地模型') }}</span>
+      <span v-if="provenance.fromReceipt" class="zj-prov__receipt" title="由本轮回执还原">（回执）</span>
+      <span v-if="channelTag" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ channelTag }}</span>
       <component :is="open ? ChevronUp : ChevronDown" :size="14" aria-hidden="true" />
     </button>
     <div v-if="open" class="zj-prov__body">
       <ProvenanceGraph :provenance="provenance" />
       <p v-if="channel" class="zj-prov__line">{{ channel }}</p>
-      <p v-if="provenance.charterVersion" class="zj-prov__line">参考了人生章程第 {{ provenance.charterVersion }} 版。</p>
+      <p v-if="provenance.charterVersion" class="zj-prov__line">参考了你的人生章程（第 {{ provenance.charterVersion }} 版）。</p>
       <section v-if="provenance.confirmedClaims.length" class="zj-prov__group">
-        <h4>已确认的理解</h4>
+        <h4>你确认过的理解</h4>
         <ul>
           <li v-for="c in provenance.confirmedClaims" :key="c.id">
-            <RouterLink :to="{ path: '/me', query: { section: c.section } }">{{ c.content }}</RouterLink>
+            <RouterLink :to="{ path: '/me', query: { section: c.section, claim: c.id } }">{{ c.content }}</RouterLink>
             <span class="zj-prov__tag">{{ sectionLabel(c.section) }}</span>
           </li>
         </ul>
       </section>
       <section v-if="provenance.workingClaims.length" class="zj-prov__group">
-        <h4>还没确认的工作理解（知君只会以保留语气使用）</h4>
+        <h4>还没点头的理解（知君只会以保留语气使用）</h4>
         <ul>
           <li v-for="c in provenance.workingClaims" :key="c.id">
             <RouterLink to="/me/inbox">{{ c.content }}</RouterLink>
@@ -84,7 +78,7 @@ const channel = computed(() => {
           </li>
         </ul>
       </section>
-      <p class="zj-prov__line zj-prov__muted">本轮提示词约 {{ provenance.promptChars }} 字。</p>
+      <p class="zj-prov__line zj-prov__muted">这轮给模型的提示约 {{ provenance.promptChars }} 字。</p>
     </div>
   </div>
 </template>
@@ -114,18 +108,11 @@ const channel = computed(() => {
   border-color: var(--ws-border-color, #d8d3c8);
 }
 .zj-prov__receipt {
-  font-size: 11px;
-  color: var(--ws-text-secondary-color, #686b66);
-}
-
-.zj-prov__lead {
-  font-family: var(--ws-font-display, serif);
-  font-weight: 600;
-  color: var(--ws-text-color, #3c403d);
+  color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-prov__channel {
-  padding: 0 8px;
-  border-radius: 999px;
+  padding: 0 7px;
+  border-radius: 3px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
 }
 .zj-prov__channel.is-external {
@@ -137,7 +124,7 @@ const channel = computed(() => {
   padding: 10px 14px;
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-prov__line {
   margin: 0 0 6px;
@@ -170,7 +157,7 @@ const channel = computed(() => {
   display: inline-block;
   margin-right: 6px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 3px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
 }
 </style>

@@ -68,7 +68,7 @@ function onClick(ev: MouseEvent) {
   border: 1px solid transparent;
   border-radius: var(--ws-radius, 6px);
   background: transparent;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   cursor: pointer;
   transition:
     background 0.15s,
@@ -87,17 +87,17 @@ function onClick(ev: MouseEvent) {
 }
 
 .ws-icon-btn:hover:not(.is-disabled) {
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
-  color: var(--ws-primary-color, #0077ff);
-  border-color: var(--ws-border-color-2, #e4e7ed);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-border-color-2, #e2ded4);
 }
 
 .ws-icon-btn--primary:not(.is-disabled) {
-  color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
 }
 
 .ws-icon-btn--danger:not(.is-disabled) {
-  color: var(--ws-danger-color, #ff4918);
+  color: var(--ws-danger-color, #a6452e);
 }
 .ws-icon-btn--danger:hover:not(.is-disabled) {
   background: var(--ws-danger-color-bd, rgba(255, 73, 24, 0.06));

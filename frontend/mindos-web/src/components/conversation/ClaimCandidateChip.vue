@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 对话内的候选理解 chip：一句候选 + 五个动作。「部分对」展开内联文本框。
+// 对话内的候选理解 chip：一句候选 + 「对 / 不对」两个主动作；其余三个收进「···」并各带一句解释。
 // 只有明确点击才改变本体状态；chip 本身只是展示。
 import { ref } from 'vue'
 import type { Claim, ReviewAction } from '@/services/api'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import { layerMeta, sectionLabel, REVIEW_ACTIONS_WORKING } from '@/shared/ontology'
+import MoreMenu from '@/components/ui/MoreMenu.vue'
+import { layerMeta, sectionLabel, REVIEW_MORE, REVIEW_PRIMARY } from '@/shared/ontology'
 
 const props = defineProps<{
   claim: Claim
@@ -43,10 +44,10 @@ function submitPartial() {
       <span class="zj-chip__section">{{ sectionLabel(claim.section) }}</span>
     </div>
     <p class="zj-chip__content">{{ claim.content }}</p>
-    <p v-if="claim.evidence.length && claim.evidence[0].quote" class="zj-chip__quote">依据你的原话：「{{ claim.evidence[0].quote }}」</p>
+    <p v-if="claim.evidence.length && claim.evidence[0].quote" class="zj-chip__quote">你的原话：「{{ claim.evidence[0].quote }}」</p>
     <div v-if="!editing" class="zj-chip__actions">
       <button
-        v-for="item in REVIEW_ACTIONS_WORKING"
+        v-for="item in REVIEW_PRIMARY"
         :key="item.action"
         type="button"
         class="zj-chip__btn"
@@ -56,6 +57,7 @@ function submitPartial() {
       >
         {{ item.label }}
       </button>
+      <MoreMenu :items="REVIEW_MORE" :disabled="busy" label="其他处理" @select="(a) => onAction(a as ReviewAction)" />
     </div>
     <div v-else class="zj-chip__edit">
       <label class="zj-chip__edit-label" :for="`edit-${claim.id}`">改成更准确的说法</label>
@@ -75,7 +77,7 @@ function submitPartial() {
   padding: 10px 14px;
   border: 1px dashed var(--ws-primary-color, #a6452e);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-bg, rgba(166, 69, 46, 0.05));
+  background: var(--ws-card-bg, #fff);
 }
 .zj-chip__head {
   display: flex;
@@ -92,7 +94,7 @@ function submitPartial() {
 }
 .zj-chip__content {
   margin: 6px 0 2px;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.6;
   color: var(--ws-text-primary-color, #1d211f);
 }
@@ -103,18 +105,20 @@ function submitPartial() {
 }
 .zj-chip__actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
 }
 .zj-chip__btn {
-  padding: 4px 12px;
+  padding: 4px 14px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: 999px;
   background: var(--ws-body-bg, #fffcf6);
   color: var(--ws-text-color, #3c403d);
-  font-size: 12px;
-  font-weight: 600;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   transition:
     border-color 0.15s,

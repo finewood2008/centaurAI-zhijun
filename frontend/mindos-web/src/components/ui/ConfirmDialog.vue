@@ -121,7 +121,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(29, 33, 31, 0.42);
 }
 
 .ws-dialog {
@@ -130,7 +130,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   padding: 20px;
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   box-shadow: var(--ws-shadow-lg, 0 16px 48px rgba(0, 0, 0, 0.18));
 }
 
@@ -138,13 +138,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', onKeydown))
   margin: 0 0 12px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 .ws-dialog__message {
   font-size: 13px;
   line-height: 1.7;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   word-break: break-word;
 }
 

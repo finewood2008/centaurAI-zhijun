@@ -225,7 +225,7 @@ defineExpose({ reload: load })
   padding: 10px 12px;
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius, 6px);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
 }
 .zj-props__side-head {
   display: flex;

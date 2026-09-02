@@ -80,9 +80,11 @@ async function doPurge() {
   }
 }
 
-const cards = [
+const primaryCards = [
   { to: '/materials', icon: FolderOpen, title: '原材料', desc: '导入文档、图片、音频；查看处理状态与原件出处' },
-  { to: '/settings', icon: Settings, title: '设置（模型与隐私）', desc: '本地模型、外部模型开关与密钥、运行监控' },
+  { to: '/settings', icon: Settings, title: '偏好（模型与隐私）', desc: '用哪个模型、什么能出设备、提醒多不多' },
+]
+const moreCards = [
   { to: '/knowledge', icon: FileText, title: '知识档案', desc: '由资料整理出的知识卡片' },
   { to: '/recycle-bin', icon: Trash2, title: '回收站', desc: '恢复或永久清除已删除的资料' },
   { to: '/search', icon: Search, title: '搜索', desc: '在本地资料里找回细节' },
@@ -130,7 +132,7 @@ async function toggleProjection() {
     </div>
 
     <div class="zj-hub__grid">
-      <RouterLink v-for="c in cards" :key="c.to" :to="c.to" class="zj-hub__card">
+      <RouterLink v-for="c in primaryCards" :key="c.to" :to="c.to" class="zj-hub__card">
         <component :is="c.icon" :size="20" aria-hidden="true" />
         <span class="zj-hub__card-title">{{ c.title }}</span>
         <span class="zj-hub__card-desc">{{ c.desc }}</span>
@@ -139,54 +141,66 @@ async function toggleProjection() {
 
     <section class="zj-hub__boundary">
       <h2><ShieldCheck :size="18" aria-hidden="true" />边界</h2>
-      <p>原件不出设备。调用外部模型时，只发送完成当前回答所必需的问题和上下文片段；每一轮的出处条里都能看到送出了哪些理解和资料片段。标为敏感或受限的理解永远不会外发。</p>
-      <p>下面是知君「可以带走」的那部分——只包含你已确认、且允许导出的理解。这也是其他 Agent 能读到的全部。</p>
-      <div class="zj-hub__actions">
-        <BaseButton size="sm" :loading="projectionLoading" @click="toggleProjection">{{ projectionOpen ? '收起' : '查看可导出的认识' }}</BaseButton>
-        <BaseButton size="sm" :loading="exporting" @click="doExport()">导出全部认识（JSON）</BaseButton>
-        <BaseButton size="sm" variant="text" @click="exportOpen = !exportOpen">{{ exportOpen ? '收起分区' : '按分区导出' }}</BaseButton>
-      </div>
-      <div v-if="exportOpen" class="zj-hub__sections">
-        <label v-for="s in SECTIONS" :key="s.key" class="zj-hub__check">
-          <input type="checkbox" :checked="exportSections.includes(s.key)" @change="toggleSection(s.key)" />
-          <span>{{ s.label }}</span>
-        </label>
-        <BaseButton size="sm" :disabled="!exportSections.length" :loading="exporting" @click="doExport([...exportSections])">导出所选分区</BaseButton>
-      </div>
-      <div v-if="projectionOpen && projection" class="zj-hub__projection">
-        <p class="zj-hub__projection-meta">生成于 {{ projection.generatedAt }}</p>
-        <pre>{{ projection.exportableMarkdown || '（还没有可导出的已确认理解）' }}</pre>
-      </div>
-    </section>
-
-    <section class="zj-hub__pack">
-      <h2><PackageOpen :size="18" aria-hidden="true" />可以带走的认识</h2>
-      <p>其他 Agent 只能拿到你已确认、且打开了「可带走」的理解；敏感或受限内容永远不会出去。</p>
+      <p>原件不出设备。用外部模型时，只发送完成这一轮所必需的问题和片段，每一轮的出处条里都看得到送出了什么。标为敏感或受限的理解永远不外发。</p>
       <p v-if="packError" class="zj-hub__pack-meta">{{ packError }}</p>
-      <template v-else-if="pack">
-        <p class="zj-hub__pack-meta">
-          <strong>{{ pack.exportable }}</strong> 条可带走。
-          <template v-if="pack.receipts.last">
-            最近一次：{{ formatDate(pack.receipts.last.generatedAt) }} 由 {{ pack.receipts.last.consumer || '未署名的 Agent' }} 以「{{ pack.receipts.last.purpose }}」取走 {{ pack.receipts.last.included }} 条（累计 {{ pack.receipts.count }} 次）。
-          </template>
-          <template v-else>还没有其他 Agent 取过。</template>
-        </p>
-        <ul v-if="pack.items.length" class="zj-hub__pack-list">
-          <li v-for="c in pack.items" :key="c.id">
-            <span class="zj-hub__pack-section">{{ sectionLabel(c.section) }}</span>
-            <span>{{ c.content }}</span>
-          </li>
-        </ul>
-        <p v-else class="zj-hub__pack-meta">还没有打开「可带走」的理解。</p>
-        <RouterLink to="/me" class="zj-hub__pack-link">去「我的本体」逐条决定哪些可带走</RouterLink>
-      </template>
+      <p v-else-if="pack" class="zj-hub__pack-meta">
+        其他 Agent 能拿到的只有你确认过并打开「可带走」的理解，目前 <strong>{{ pack.exportable }}</strong> 条。
+        <RouterLink to="/me" class="zj-hub__pack-link">去「我的本体」逐条决定</RouterLink>
+      </p>
     </section>
 
-    <section class="zj-hub__danger">
-      <h2><AlertTriangle :size="18" aria-hidden="true" />删除全部记忆</h2>
-      <p>删除知君对你的全部认识（实体、理解、证据、复核记录），可选同时删除对话记录。资料原件与索引不受影响。此操作不可恢复，建议先导出。</p>
-      <BaseButton size="sm" variant="danger" @click="openPurge">删除全部记忆</BaseButton>
-    </section>
+    <details class="zj-hub__adv">
+      <summary>高级</summary>
+
+      <div class="zj-hub__grid zj-hub__grid--sub">
+        <RouterLink v-for="c in moreCards" :key="c.to" :to="c.to" class="zj-hub__card">
+          <component :is="c.icon" :size="18" aria-hidden="true" />
+          <span class="zj-hub__card-title">{{ c.title }}</span>
+          <span class="zj-hub__card-desc">{{ c.desc }}</span>
+        </RouterLink>
+      </div>
+
+      <section class="zj-hub__pack">
+        <h2><PackageOpen :size="18" aria-hidden="true" />可以带走的认识</h2>
+        <template v-if="pack">
+          <p class="zj-hub__pack-meta">
+            <template v-if="pack.receipts.last">
+              最近一次：{{ formatDate(pack.receipts.last.generatedAt) }} 由 {{ pack.receipts.last.consumer || '未署名的 Agent' }} 以「{{ pack.receipts.last.purpose }}」取走 {{ pack.receipts.last.included }} 条（累计 {{ pack.receipts.count }} 次）。
+            </template>
+            <template v-else>还没有其他 Agent 取过。</template>
+          </p>
+          <ul v-if="pack.items.length" class="zj-hub__pack-list">
+            <li v-for="c in pack.items" :key="c.id">
+              <span class="zj-hub__pack-section">{{ sectionLabel(c.section) }}</span>
+              <span>{{ c.content }}</span>
+            </li>
+          </ul>
+          <p v-else class="zj-hub__pack-meta">还没有打开「可带走」的理解。</p>
+        </template>
+        <div class="zj-hub__actions">
+          <BaseButton size="sm" :loading="projectionLoading" @click="toggleProjection">{{ projectionOpen ? '收起' : '查看可导出的认识' }}</BaseButton>
+          <BaseButton size="sm" :loading="exporting" @click="doExport()">导出全部认识（JSON）</BaseButton>
+          <BaseButton size="sm" variant="text" @click="exportOpen = !exportOpen">{{ exportOpen ? '收起分区' : '按分区导出' }}</BaseButton>
+        </div>
+        <div v-if="exportOpen" class="zj-hub__sections">
+          <label v-for="s in SECTIONS" :key="s.key" class="zj-hub__check">
+            <input type="checkbox" :checked="exportSections.includes(s.key)" @change="toggleSection(s.key)" />
+            <span>{{ s.label }}</span>
+          </label>
+          <BaseButton size="sm" :disabled="!exportSections.length" :loading="exporting" @click="doExport([...exportSections])">导出所选分区</BaseButton>
+        </div>
+        <div v-if="projectionOpen && projection" class="zj-hub__projection">
+          <p class="zj-hub__projection-meta">生成于 {{ projection.generatedAt }}</p>
+          <pre>{{ projection.exportableMarkdown || '（还没有可导出的已确认理解）' }}</pre>
+        </div>
+      </section>
+
+      <section class="zj-hub__danger">
+        <h2><AlertTriangle :size="18" aria-hidden="true" />删除全部记忆</h2>
+        <p>删除知君对你的全部认识（实体、理解、证据、复核记录），可选同时删除对话记录。资料原件与索引不受影响。此操作不可恢复，建议先导出。</p>
+        <BaseButton size="sm" variant="danger" @click="openPurge">删除全部记忆</BaseButton>
+      </section>
+    </details>
 
     <ConfirmDialog
       :open="purgeOpen"
@@ -215,9 +229,34 @@ async function toggleProjection() {
 <style scoped>
 .zj-hub__grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  margin-bottom: 28px;
+  max-width: 760px;
+  margin-bottom: 20px;
+}
+.zj-hub__grid--sub {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 12px 0 20px;
+}
+.zj-hub__adv {
+  max-width: 760px;
+  margin-top: 20px;
+}
+.zj-hub__adv > summary {
+  font-family: var(--ws-font-display, serif);
+  font-size: var(--ws-display-3, 16px);
+  font-weight: 600;
+  color: var(--ws-text-secondary-color, #686b66);
+  cursor: pointer;
+}
+.zj-hub__adv > summary:hover {
+  color: var(--ws-primary-color, #a6452e);
+}
+@media (max-width: 767px) {
+  .zj-hub__grid,
+  .zj-hub__grid--sub {
+    grid-template-columns: 1fr;
+  }
 }
 .zj-hub__card {
   display: flex;
@@ -226,7 +265,7 @@ async function toggleProjection() {
   padding: 18px;
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
   color: var(--ws-primary-color, #a6452e);
   text-decoration: none;
   transition:
@@ -253,7 +292,7 @@ async function toggleProjection() {
   padding: 18px 20px;
   border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-hub__boundary h2 {
   display: flex;
@@ -295,11 +334,11 @@ async function toggleProjection() {
 }
 .zj-hub__pack {
   max-width: 760px;
-  margin-top: 20px;
+  margin-top: 12px;
   padding: 18px 20px;
   border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-hub__pack h2 {
   display: flex;
@@ -335,11 +374,12 @@ async function toggleProjection() {
   flex: none;
   padding: 0 8px;
   border-radius: 999px;
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-hub__pack-link {
+  margin-left: 6px;
   font-size: 13px;
   color: var(--ws-primary-color, #a6452e);
 }
@@ -411,7 +451,7 @@ async function toggleProjection() {
   overflow: auto;
   padding: 12px 14px;
   border-radius: var(--ws-radius, 6px);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;

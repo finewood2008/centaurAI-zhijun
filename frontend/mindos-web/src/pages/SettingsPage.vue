@@ -24,6 +24,8 @@ import {
 import {
   api,
   ApiError,
+  getNudgePolicy,
+  putNudgePolicy,
   type ChatProviderConfig,
   type ChatProviderTestResult,
   type ListModelJobsResponse,
@@ -40,6 +42,39 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import { useToast } from '@/composables/useToast'
 
 const toast = useToast()
+
+// ---- 关系设置：提醒开关与每日上限（/api/mindos/nudges/policy）----
+const nudgeEnabled = ref(true)
+const nudgeMax = ref(3)
+const nudgeSaving = ref(false)
+const nudgeLoaded = ref(false)
+
+async function loadNudgePolicy() {
+  try {
+    const policy = await getNudgePolicy()
+    nudgeEnabled.value = policy.enabled
+    nudgeMax.value = policy.maxPerDay
+    nudgeLoaded.value = true
+  } catch {
+    nudgeLoaded.value = false
+  }
+}
+
+async function saveNudgePolicy() {
+  if (nudgeSaving.value) return
+  nudgeSaving.value = true
+  try {
+    const policy = await putNudgePolicy({ enabled: nudgeEnabled.value, maxPerDay: nudgeMax.value })
+    nudgeEnabled.value = policy.enabled
+    nudgeMax.value = policy.maxPerDay
+    toast({ type: 'success', message: '已记住' })
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error ? err.message : '保存失败' })
+    await loadNudgePolicy()
+  } finally {
+    nudgeSaving.value = false
+  }
+}
 
 const loading = ref(true)
 const loadError = ref('')
@@ -558,6 +593,7 @@ async function m2Cancel(job: ModelJob) {
 let m2TimerHandle: number | null = null
 
 onMounted(() => {
+  void loadNudgePolicy()
   loadAll()
   void m2LoadModels()
   void m2RefreshAll()
@@ -579,14 +615,159 @@ onUnmounted(() => {
 <template>
   <div class="page">
     <div class="page-head">
-      <h1>设置</h1>
-      <p>模型与运行时。修改保存后仅新请求生效；历史派生/问答使用各自任务开始时的配置快照。</p>
+      <h1>偏好</h1>
+      <p>关系怎么处、用哪个模型、什么能出设备。改动只对之后的对话生效。</p>
     </div>
 
+    <!-- ============ 关系设置 ============ -->
+    <section class="rt-section">
+      <header class="rt-section__head">
+        <div class="rt-section__title">
+          <span class="rt-section__icon"><Activity :size="16" aria-hidden="true" /></span>
+          <h2>关系设置</h2>
+        </div>
+      </header>
+      <div class="rt-form">
+        <label class="rt-field is-switch">
+          <span class="rt-field__line">
+            <span>让知君主动提醒我</span>
+            <span class="rt-toggle">
+              <input v-model="nudgeEnabled" type="checkbox" role="switch" :disabled="nudgeSaving || !nudgeLoaded" @change="saveNudgePolicy" />
+              <span class="rt-toggle__track" aria-hidden="true" />
+            </span>
+          </span>
+          <span class="rt-hint">只在有事的时候：判断到了回访日、承诺到期、一周攒了些东西值得回顾。每条都会说明为何现在，都可以划掉或永久静默。</span>
+        </label>
+        <label class="rt-field is-narrow" :class="{ 'is-disabled': !nudgeEnabled }">
+          每天最多几条
+          <select v-model.number="nudgeMax" :disabled="nudgeSaving || !nudgeLoaded || !nudgeEnabled" @change="saveNudgePolicy">
+            <option :value="1">1 条</option>
+            <option :value="2">2 条</option>
+            <option :value="3">3 条</option>
+            <option :value="5">5 条</option>
+          </select>
+        </label>
+        <p class="rt-note">哪些话题不想让知君主动提、AI 不该替你决定什么，写在<RouterLink to="/judgments" class="rt-link">「判断 · 我的方向」</RouterLink>里。</p>
+      </div>
+    </section>
+
     <ErrorState v-if="loadError" :message="loadError" retry-label="重试" @retry="loadAll" />
-    <div v-else-if="loading" class="loading-state">正在加载模型与运行时配置…</div>
+    <div v-else-if="loading" class="loading-state">正在加载模型配置…</div>
 
     <template v-else>
+      <!-- ============ 模型与隐私 ============ -->
+      <section class="rt-section">
+        <header class="rt-section__head">
+          <div class="rt-section__title">
+            <span class="rt-section__icon"><MessageSquare :size="16" aria-hidden="true" /></span>
+            <h2>模型与隐私</h2>
+          </div>
+          <span class="rt-section__source" :class="cSource === 'defaults' ? 'is-default' : 'is-custom'">
+            {{ cSource === 'defaults' ? '部署默认值' : '运行时设置' }}
+          </span>
+        </header>
+
+        <div class="rt-form">
+          <label class="rt-field is-switch">
+            <span class="rt-field__line">
+              <span>用外部模型跟知君对话</span>
+              <span class="rt-toggle">
+                <input v-model="cExternal" type="checkbox" role="switch" :disabled="cSaving" @change="disableExternalChatImmediately" />
+                <span class="rt-toggle__track" aria-hidden="true" />
+              </span>
+            </span>
+            <span class="rt-hint">
+              {{ cExternal ? '开启中：你的问题和完成这一轮所必需的理解、资料片段会发到下面配置的外部服务；原件不出设备，标为敏感的理解不外发。' : '关闭时一切都在本机；本机模型慢一些，但数据不出设备。' }}
+            </span>
+          </label>
+
+          <label class="rt-field">
+            提供商
+            <select v-model="cProvider">
+              <option value="ollama">本机模型（Ollama）</option>
+              <option value="openai">外部模型（OpenAI 兼容，如 DeepSeek）</option>
+            </select>
+          </label>
+
+          <template v-if="cProvider === 'openai'">
+            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable }">
+              服务地址
+              <input v-model="cBaseUrl" type="url" placeholder="https://api.deepseek.com/v1" :disabled="!cExternalEditable" />
+            </label>
+            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable }">
+              模型名
+              <input v-model="cModel" type="text" placeholder="deepseek-v4-flash" :disabled="!cExternalEditable" />
+            </label>
+            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable && !(cApiKeyConfigured && !cExternal) }">
+              API Key
+              <input v-model="cApiKey" type="password" placeholder="留空表示保持原密钥" :disabled="!cExternalEditable" autocomplete="off" />
+              <span class="rt-hint">
+                {{ cApiKeyConfigured ? `已配置${cApiKeyHint ? `（${cApiKeyHint}）` : ''}` : '未配置'
+                }}；密钥仅下发脱敏提示，不会回显。
+              </span>
+              <span v-if="cProvider === 'openai' && !cExternal && cApiKeyConfigured" class="rt-clear-key">
+                <label :class="{ 'is-marked': cClearApiKey }">
+                  <input v-model="cClearApiKey" type="checkbox" />
+                  <span>清除已配置密钥{{ cClearApiKey ? '（保存后生效）' : '（请保持外部问答关闭）' }}</span>
+                </label>
+              </span>
+            </label>
+          </template>
+          <div class="rt-field is-none-label">
+            <span class="rt-hint">外部关闭时，对话用本机模型 <code>{{ chatLocalModel }}</code>。</span>
+          </div>
+
+          <details class="rt-more">
+            <summary>更多</summary>
+            <label class="rt-field is-switch">
+              <span class="rt-field__line">
+                <span>外部失败时回退本机模型</span>
+                <span class="rt-toggle">
+                  <input v-model="cFallback" type="checkbox" role="switch" />
+                  <span class="rt-toggle__track" aria-hidden="true" />
+                </span>
+              </span>
+            </label>
+            <div class="rt-form__row">
+              <label class="rt-field is-narrow">
+                请求超时（秒）
+                <input v-model.number="cTimeout" type="number" min="1" step="1" />
+              </label>
+              <label class="rt-field is-narrow">
+                总预算（秒）
+                <input v-model.number="cBudget" type="number" min="1" step="1" />
+              </label>
+            </div>
+          </details>
+        </div>
+
+        <div class="rt-actions">
+          <BaseButton variant="secondary" size="sm" @click="testChat" :loading="cTesting">
+            <template v-if="!cTesting">测试连通性</template>
+            <template v-else>测试中…</template>
+          </BaseButton>
+          <BaseButton variant="primary" @click="saveChat" :loading="cSaving" :disabled="cTesting">
+            保存
+          </BaseButton>
+          <button type="button" class="rt-refresh" title="重新读取" aria-label="刷新对话问答配置" @click="refreshChat">
+            <RefreshCw :size="14" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div v-if="cTest" class="rt-test" :class="cTest.ok ? 'is-ok' : 'is-bad'">
+          <component :is="cTest.ok ? Check : X" :size="14" aria-hidden="true" />
+          <span v-if="cTest.ok">
+            连接成功 · {{ cTest.provider }} / {{ cTest.model }} · {{ cTest.latencyMs }}ms
+          </span>
+          <span v-else>连接失败 · {{ errorLabel(cTest.errorCode) }} · {{ cTest.latencyMs }}ms</span>
+        </div>
+      </section>
+
+
+      <!-- ============ 高级 · 运行时管理台 ============ -->
+      <details class="rt-adv">
+        <summary>高级 · 运行时管理台</summary>
+        <p class="rt-note">材料处理用哪个本机模型、机器资源、模型任务。平时不用碰。</p>
       <!-- ============ 材料处理（本地 Ollama） ============ -->
       <section class="rt-section">
         <header class="rt-section__head">
@@ -664,112 +845,6 @@ onUnmounted(() => {
           <component :is="mInferenceTest.ok ? Check : X" :size="14" aria-hidden="true" />
           <span v-if="mInferenceTest.ok">模型试运行成功 · {{ mInferenceTest.model }} · {{ mInferenceTest.latencyMs }}ms</span>
           <span v-else>模型试运行失败 · {{ errorLabel(mInferenceTest.errorCode) }} · {{ mInferenceTest.latencyMs }}ms</span>
-        </div>
-      </section>
-
-      <!-- ============ 对话问答（外部 LLM） ============ -->
-      <section class="rt-section">
-        <header class="rt-section__head">
-          <div class="rt-section__title">
-            <span class="rt-section__icon"><MessageSquare :size="16" aria-hidden="true" /></span>
-            <h2>对话问答（外部 LLM）</h2>
-          </div>
-          <span class="rt-section__source" :class="cSource === 'defaults' ? 'is-default' : 'is-custom'">
-            {{ cSource === 'defaults' ? '部署默认值' : '运行时设置' }}
-          </span>
-        </header>
-
-        <div class="rt-form">
-          <label class="rt-field is-switch">
-            <span class="rt-field__line">
-              <span>使用外部问答</span>
-              <span class="rt-toggle">
-                <input v-model="cExternal" type="checkbox" role="switch" :disabled="cSaving" @change="disableExternalChatImmediately" />
-                <span class="rt-toggle__track" aria-hidden="true" />
-              </span>
-            </span>
-            <span v-if="cExternal" class="rt-hint">
-              开启后，问题和检索证据将发送至所配置的外部 API；本期不对材料或知识卡片按授权过滤。
-            </span>
-          </label>
-
-          <label class="rt-field">
-            提供商
-            <select v-model="cProvider">
-              <option value="ollama">ollama（本地）</option>
-              <option value="openai">openai（兼容协议）</option>
-            </select>
-          </label>
-
-          <template v-if="cProvider === 'openai'">
-            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable }">
-              API Base URL
-              <input v-model="cBaseUrl" type="url" placeholder="https://api.example.com/v1" :disabled="!cExternalEditable" />
-            </label>
-            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable }">
-              外部模型名
-              <input v-model="cModel" type="text" placeholder="deepseek-chat" :disabled="!cExternalEditable" />
-            </label>
-            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable && !(cApiKeyConfigured && !cExternal) }">
-              API Key
-              <input v-model="cApiKey" type="password" placeholder="留空表示保持原密钥" :disabled="!cExternalEditable" autocomplete="off" />
-              <span class="rt-hint">
-                {{ cApiKeyConfigured ? `已配置${cApiKeyHint ? `（${cApiKeyHint}）` : ''}` : '未配置'
-                }}；密钥仅下发脱敏提示，不会回显。
-              </span>
-              <span v-if="cProvider === 'openai' && !cExternal && cApiKeyConfigured" class="rt-clear-key">
-                <label :class="{ 'is-marked': cClearApiKey }">
-                  <input v-model="cClearApiKey" type="checkbox" />
-                  <span>清除已配置密钥{{ cClearApiKey ? '（保存后生效）' : '（请保持外部问答关闭）' }}</span>
-                </label>
-              </span>
-            </label>
-          </template>
-          <div class="rt-field is-none-label">
-            <span class="rt-hint">外部关闭时，问答固定使用材料处理模型 <code>{{ chatLocalModel }}</code>。</span>
-          </div>
-
-          <label class="rt-field is-switch">
-            <span class="rt-field__line">
-              <span>外部失败时回退本地 Ollama</span>
-              <span class="rt-toggle">
-                <input v-model="cFallback" type="checkbox" role="switch" />
-                <span class="rt-toggle__track" aria-hidden="true" />
-              </span>
-            </span>
-          </label>
-
-          <div class="rt-form__row">
-            <label class="rt-field is-narrow">
-              请求超时（秒）
-              <input v-model.number="cTimeout" type="number" min="1" step="1" />
-            </label>
-            <label class="rt-field is-narrow">
-              总预算（秒）
-              <input v-model.number="cBudget" type="number" min="1" step="1" />
-            </label>
-          </div>
-        </div>
-
-        <div class="rt-actions">
-          <BaseButton variant="secondary" size="sm" @click="testChat" :loading="cTesting">
-            <template v-if="!cTesting">测试连通性</template>
-            <template v-else>测试中…</template>
-          </BaseButton>
-          <BaseButton variant="primary" @click="saveChat" :loading="cSaving" :disabled="cTesting">
-            保存
-          </BaseButton>
-          <button type="button" class="rt-refresh" title="重新读取" aria-label="刷新对话问答配置" @click="refreshChat">
-            <RefreshCw :size="14" aria-hidden="true" />
-          </button>
-        </div>
-
-        <div v-if="cTest" class="rt-test" :class="cTest.ok ? 'is-ok' : 'is-bad'">
-          <component :is="cTest.ok ? Check : X" :size="14" aria-hidden="true" />
-          <span v-if="cTest.ok">
-            连接成功 · {{ cTest.provider }} / {{ cTest.model }} · {{ cTest.latencyMs }}ms
-          </span>
-          <span v-else>连接失败 · {{ errorLabel(cTest.errorCode) }} · {{ cTest.latencyMs }}ms</span>
         </div>
       </section>
 
@@ -902,6 +977,7 @@ onUnmounted(() => {
         </div>
 
       </section>
+      </details>
     </template>
   </div>
 
@@ -923,12 +999,42 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.rt-adv {
+  margin-top: 8px;
+}
+.rt-adv > summary {
+  font-family: var(--ws-font-display, serif);
+  font-size: var(--ws-display-3, 16px);
+  font-weight: 600;
+  color: var(--ws-text-secondary-color, #686b66);
+  cursor: pointer;
+}
+.rt-adv > summary:hover {
+  color: var(--ws-primary-color, #a6452e);
+}
+.rt-adv[open] > summary {
+  margin-bottom: 8px;
+}
+.rt-more {
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.rt-more > summary {
+  cursor: pointer;
+}
+.rt-more[open] > summary {
+  margin-bottom: 8px;
+}
+.rt-link {
+  color: var(--ws-primary-color, #a6452e);
+}
+
 .rt-section {
   margin-bottom: 16px;
   padding: 16px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fff);
+  background: var(--ws-card-bg, #fff);
 }
 .rt-section__head {
   display: flex;
@@ -946,7 +1052,7 @@ onUnmounted(() => {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .rt-section__icon {
   display: inline-flex;
@@ -955,26 +1061,26 @@ onUnmounted(() => {
   width: 26px;
   height: 26px;
   border-radius: 6px;
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.08));
-  color: var(--ws-primary-color, #0077ff);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.09));
+  color: var(--ws-primary-color, #a6452e);
 }
 .rt-section__icon.is-local {
   background: var(--ws-success-soft, rgba(18, 205, 61, 0.1));
-  color: var(--ws-success, #12cd3d);
+  color: var(--ws-success, #4a7c59);
 }
 .rt-section__source {
   padding: 2px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 .rt-section__source.is-custom {
   background: var(--ws-accent-soft, rgba(0, 119, 255, 0.1));
-  color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
 }
 .rt-section__source.is-default {
   background: var(--ws-muted-soft, rgba(144, 147, 153, 0.12));
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .rt-health {
@@ -992,11 +1098,11 @@ onUnmounted(() => {
 }
 .rt-health__item.is-ok {
   background: var(--ws-success-soft, rgba(18, 205, 61, 0.1));
-  color: var(--ws-success, #12cd3d);
+  color: var(--ws-success, #4a7c59);
 }
 .rt-health__item.is-bad {
   background: var(--ws-danger-soft, rgba(255, 73, 24, 0.1));
-  color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
 }
 .rt-health__item.is-warn {
   background: var(--ws-warning-soft, rgba(230, 162, 60, 0.12));
@@ -1004,12 +1110,12 @@ onUnmounted(() => {
 }
 .rt-health__item.is-muted {
   background: var(--ws-muted-soft, rgba(144, 147, 153, 0.12));
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .rt-health__version {
   margin-left: auto;
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .rt-form {
@@ -1029,7 +1135,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 6px;
   font-size: 13px;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .rt-field.is-narrow {
   max-width: 200px;
@@ -1040,17 +1146,17 @@ onUnmounted(() => {
 .rt-field input,
 .rt-field select {
   padding: 8px 10px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius, 6px);
   font-family: inherit;
   font-size: 13px;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   background: var(--ws-body-bg, #fff);
 }
 .rt-field input:disabled,
 .rt-field select:disabled {
-  background: var(--ws-card-bg, #f5f7fa);
-  color: var(--ws-text-secondary-color, #909399);
+  background: var(--ws-surface-2, #fbf8f1);
+  color: var(--ws-text-secondary-color, #686b66);
   cursor: not-allowed;
 }
 .rt-field.is-switch {
@@ -1065,11 +1171,11 @@ onUnmounted(() => {
   gap: 8px;
 }
 .rt-field.is-none-label {
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .rt-hint {
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .rt-note.is-security-warning {
   color: var(--ws-warning-color, #e6a23c);
@@ -1077,8 +1183,8 @@ onUnmounted(() => {
 .rt-hint code {
   padding: 1px 6px;
   border-radius: 4px;
-  background: var(--ws-card-bg, #f5f7fa);
-  color: var(--ws-primary-color, #0077ff);
+  background: var(--ws-surface-2, #fbf8f1);
+  color: var(--ws-primary-color, #a6452e);
   font-family: inherit;
 }
 .rt-field.is-switch .rt-hint {
@@ -1102,7 +1208,7 @@ onUnmounted(() => {
   position: absolute;
   inset: 0;
   border-radius: 999px;
-  background: var(--ws-border-color-2, #e4e7ed);
+  background: var(--ws-border-color-2, #e2ded4);
   transition: background 0.15s;
   pointer-events: none;
 }
@@ -1119,7 +1225,7 @@ onUnmounted(() => {
   transition: transform 0.15s;
 }
 .rt-toggle input:checked + .rt-toggle__track {
-  background: var(--ws-primary-color, #0077ff);
+  background: var(--ws-primary-color, #a6452e);
 }
 .rt-toggle input:checked + .rt-toggle__track::after {
   transform: translateX(16px);
@@ -1132,7 +1238,7 @@ onUnmounted(() => {
   margin: 12px 0 0;
   font-size: 12px;
   line-height: 1.6;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .rt-actions {
@@ -1148,15 +1254,15 @@ onUnmounted(() => {
   width: 30px;
   height: 30px;
   margin-left: auto;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: 6px;
   background: transparent;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   cursor: pointer;
 }
 .rt-refresh:hover {
-  color: var(--ws-primary-color, #0077ff);
-  border-color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-primary-color, #a6452e);
 }
 
 .rt-test {
@@ -1170,11 +1276,11 @@ onUnmounted(() => {
 }
 .rt-test.is-ok {
   background: var(--ws-success-soft, rgba(18, 205, 61, 0.1));
-  color: var(--ws-success, #12cd3d);
+  color: var(--ws-success, #4a7c59);
 }
 .rt-test.is-bad {
   background: var(--ws-danger-soft, rgba(255, 73, 24, 0.1));
-  color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
 }
 
 /* ---- P2 运行监控 ----
@@ -1195,11 +1301,11 @@ onUnmounted(() => {
 }
 .m2-worker.is-ok {
   background: var(--ws-success-soft, rgba(18, 205, 61, 0.1));
-  color: var(--ws-success, #12cd3d);
+  color: var(--ws-success, #4a7c59);
 }
 .m2-worker.is-muted {
   background: var(--ws-muted-soft, rgba(144, 147, 153, 0.12));
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .m2-grid {
@@ -1210,7 +1316,7 @@ onUnmounted(() => {
 }
 .m2-cell {
   padding: 10px 12px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius, 6px);
 }
 .m2-cell__head {
@@ -1219,33 +1325,33 @@ onUnmounted(() => {
   gap: 6px;
   margin-bottom: 6px;
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .m2-cell__value {
   font-size: 18px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .m2-cell__value.is-muted {
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   font-weight: 500;
 }
 .m2-cell__gpu {
   margin-left: 6px;
   font-size: 12px;
   font-weight: 400;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .m2-cell__sub {
   margin-top: 2px;
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .m2-block {
   margin-top: 18px;
   padding-top: 14px;
-  border-top: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border-top: 1px solid var(--ws-border-color-2, #e2ded4);
 }
 .m2-block__head {
   display: flex;
@@ -1257,17 +1363,17 @@ onUnmounted(() => {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .m2-block__hint {
   font-size: 12px;
-  color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
 }
 .m2-refresh-text {
   margin-left: auto;
   border: 0;
   background: transparent;
-  color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
   font-size: 12px;
   cursor: pointer;
 }
@@ -1289,7 +1395,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius, 6px);
 }
 .m2-model__info {
@@ -1302,11 +1408,11 @@ onUnmounted(() => {
 .m2-model__name {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .m2-model__meta {
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .m2-model__actions {
   display: flex;
@@ -1314,7 +1420,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .m2-model__run-badge {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   padding: 3px 6px;
   border-radius: 999px;
@@ -1330,11 +1436,11 @@ onUnmounted(() => {
 .m2-pull input {
   flex: 1;
   padding: 8px 10px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius, 6px);
   font-family: inherit;
   font-size: 13px;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   background: var(--ws-body-bg, #fff);
 }
 
@@ -1351,32 +1457,32 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius, 6px);
 }
 .m2-job__state {
   flex-shrink: 0;
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 .m2-job__state.is-ok {
   background: var(--ws-success-soft, rgba(18, 205, 61, 0.1));
-  color: var(--ws-success, #12cd3d);
+  color: var(--ws-success, #4a7c59);
 }
 .m2-job__state.is-bad {
   background: var(--ws-danger-soft, rgba(255, 73, 24, 0.1));
-  color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
 }
 .m2-job__state.is-muted,
 .m2-job__state.is-cancelled {
   background: var(--ws-muted-soft, rgba(144, 147, 153, 0.12));
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .m2-job__state.is-queued {
   background: var(--ws-accent-soft, rgba(0, 119, 255, 0.1));
-  color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
 }
 .m2-job__state.is-cancelling {
   background: var(--ws-warning-soft, rgba(230, 162, 60, 0.12));
@@ -1390,15 +1496,15 @@ onUnmounted(() => {
 }
 .m2-job__title {
   font-size: 13px;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .m2-job__err {
   font-size: 12px;
-  color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
 }
 .m2-job__prog {
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .m2-job__cancel {
   display: inline-flex;
@@ -1407,16 +1513,16 @@ onUnmounted(() => {
   width: 26px;
   height: 26px;
   margin-left: auto;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: 6px;
   background: transparent;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   cursor: pointer;
   flex-shrink: 0;
 }
 .m2-job__cancel:hover {
-  color: var(--ws-danger, #ff4918);
-  border-color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
+  border-color: var(--ws-danger, #a6452e);
 }
 
 
@@ -1425,7 +1531,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .rt-clear-key label {
   display: inline-flex;
@@ -1435,11 +1541,11 @@ onUnmounted(() => {
   user-select: none;
 }
 .rt-clear-key label.is-marked {
-  color: var(--ws-danger, #ff4918);
+  color: var(--ws-danger, #a6452e);
   font-weight: 600;
 }
 .rt-clear-key input[type='checkbox'] {
-  accent-color: var(--ws-danger, #ff4918);
+  accent-color: var(--ws-danger, #a6452e);
   width: auto;
 }
 
@@ -1463,13 +1569,13 @@ onUnmounted(() => {
   margin: 0 0 10px;
   font-size: 16px;
   font-weight: 600;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .rt-conflict__body {
   margin: 0 0 18px;
   font-size: 13px;
   line-height: 1.7;
-  color: var(--ws-text-secondary-color, #606266);
+  color: var(--ws-text-secondary-color, #3c403d);
 }
 .rt-conflict__actions {
   display: flex;

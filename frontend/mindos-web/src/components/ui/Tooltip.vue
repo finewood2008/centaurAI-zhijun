@@ -42,7 +42,7 @@ withDefaults(
   z-index: 2000;
   padding: 4px 8px;
   border-radius: var(--ws-radius-sm, 4px);
-  background: var(--ws-text-primary-color, #303133);
+  background: var(--ws-text-primary-color, #1d211f);
   color: var(--ws-white, #fff);
   font-size: 12px;
   line-height: 1.4;

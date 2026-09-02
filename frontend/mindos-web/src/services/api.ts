@@ -1470,6 +1470,8 @@ export interface DecisionDraftFields {
   keyQuestion: string | null
   zhijunView: string | null
   relatedEntityIds: string[]
+  // 和这件事相似的、用户过去记下的判断（后端按标题 / 选择 / 经验的词面相似度挑出，最多 3 个）
+  relatedDecisionIds?: string[]
   evidenceRefs: string[]
   userQuotes: string[]
 }
@@ -1487,10 +1489,13 @@ export interface DecisionDraft {
 }
 
 export interface DecisionDraftEvent {
-  draftId: string
-  revision: number
+  // ready：演示模型同步整理好了；queued：真实模型下草稿是后台任务，fields 为空，前端轮询 GET /decision-draft
+  state?: 'ready' | 'queued'
+  jobId?: string | null
+  draftId: string | null
+  revision: number | null
   status: DecisionDraft['status']
-  fields: DecisionDraftFields
+  fields: DecisionDraftFields | null
   changedFields: string[]
 }
 
@@ -1506,9 +1511,9 @@ export interface DecisionDraftConfirmPayload {
 
 export interface Nudge {
   id: string
-  kind: 'review_due' | 'commitment_due' | 'checkin' | 'principle_tension'
+  kind: 'review_due' | 'commitment_due' | 'checkin' | 'principle_tension' | 'weekly_review'
   triggerKey: string
-  triggerRef: { decisionId?: string; title?: string; principleId?: string; actionId?: string }
+  triggerRef: { decisionId?: string; title?: string; principleId?: string; actionId?: string; claimId?: string; section?: string; summary?: string; weekStart?: string }
   whyNow: string
   message: string
   status: 'pending' | 'shown' | 'acted' | 'dismissed' | 'silenced'
@@ -1660,7 +1665,8 @@ export interface ReviewResult {
 
 export interface ClaimCreatePayload {
   content: string
-  section: Section
+  // 省略时由后端归类（按句子里的人 / 事 / 原则 / 愿望等线索）
+  section?: Section
   layer?: 'self_declared' | 'aspirational'
   predicate?: string
 }
@@ -1696,6 +1702,8 @@ export interface ZhijunStatus {
   external: boolean
   extraction: 'enabled' | 'beta' | 'disabled'
   workerRunning: boolean
+  // 后台还没跑完的整理任务数（抽取 / 草稿 / 摘要 / 第一次观察）
+  pendingJobs?: number
 }
 
 // SSE 事件载荷（POST /mindos/conversations/{id}/messages）

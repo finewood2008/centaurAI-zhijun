@@ -40,6 +40,7 @@ const decisions = ref<GrowthDecision[]>([])
 const decisionsLoading = ref(true)
 const decisionsError = ref('')
 const showDecisionForm = ref(false)
+const decisionStep = ref<1 | 2>(1)
 const decisionSaving = ref(false)
 const decisionTitle = ref('')
 const decisionContext = ref('')
@@ -171,7 +172,17 @@ function replaceDecision(updated: GrowthDecision) {
   decisions.value = decisions.value.map((item) => item.id === updated.id ? updated : item)
 }
 
+function nextDecisionStep() {
+  const options = parseLines(decisionOptions.value)
+  if (!decisionTitle.value.trim() || !decisionContext.value.trim() || !options.length || !decisionChoice.value.trim()) {
+    toast({ type: 'error', message: '先把这件事、背景、选项和你的选择说清楚' })
+    return
+  }
+  decisionStep.value = 2
+}
+
 function resetDecisionForm() {
+  decisionStep.value = 1
   decisionTitle.value = ''
   decisionContext.value = ''
   decisionOptions.value = ''
@@ -391,28 +402,32 @@ onMounted(async () => {
       <BaseButton variant="primary" @click="showDecisionForm = true"><Plus :size="15" aria-hidden="true" />记录判断</BaseButton>
     </div>
 
-    <form v-if="showDecisionForm" id="decision-create" class="growth-form decision-create" @submit.prevent="createDecision">
-      <div class="subform-head"><div><h3>记录当下的判断</h3><p>只记你此刻真正知道和相信的内容，不要预写结果。</p></div><button type="button" class="collapse-button" aria-label="收起判断表单" :disabled="decisionSaving" @click="showDecisionForm = false"><ChevronUp :size="18" /></button></div>
-      <label for="decision-title">判断主题 <span aria-hidden="true">*</span></label><input id="decision-title" v-model="decisionTitle" maxlength="300" :disabled="decisionSaving" placeholder="例如：是否在今季度进入新市场" required>
-      <label for="decision-context">背景与当前约束 <span aria-hidden="true">*</span></label><textarea id="decision-context" v-model="decisionContext" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="发生了什么，当时有哪些时间、资源或关系约束" required />
-      <label for="decision-options">我认真考虑过的选项 <small>每行一项</small> <span aria-hidden="true">*</span></label><textarea id="decision-options" v-model="decisionOptions" rows="3" :disabled="decisionSaving" placeholder="现在进入&#10;先小规模验证&#10;暂不进入" required />
-      <div class="form-grid">
-        <div class="field"><label for="decision-choice">我的选择 <span aria-hidden="true">*</span></label><textarea id="decision-choice" v-model="decisionChoice" rows="3" maxlength="2000" :disabled="decisionSaving" required /></div>
-        <div class="field"><label for="decision-expected">我预期会看到什么 <span aria-hidden="true">*</span></label><textarea id="decision-expected" v-model="decisionExpectedOutcome" rows="3" maxlength="5000" :disabled="decisionSaving" required /></div>
-      </div>
-      <label for="decision-rationale">为什么这样选 <span aria-hidden="true">*</span></label><textarea id="decision-rationale" v-model="decisionRationale" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="关键事实、假设与取舍" required />
-      <div class="form-grid compact-grid">
-        <div class="field"><label for="decision-confidence">当时把握（0–100）</label><input id="decision-confidence" v-model.number="decisionConfidence" type="number" min="0" max="100" :disabled="decisionSaving"></div>
-        <div class="field"><label for="decision-review-at">何时回看结果 <small>可留空</small></label><input id="decision-review-at" v-model="decisionReviewAt" type="datetime-local" :disabled="decisionSaving"></div>
-      </div>
-      <div class="form-actions"><BaseButton variant="secondary" :disabled="decisionSaving" @click="showDecisionForm = false">取消</BaseButton><BaseButton type="submit" variant="primary" :loading="decisionSaving">确认记录</BaseButton></div>
+    <form v-if="showDecisionForm" id="decision-create" class="growth-form decision-create" @submit.prevent="decisionStep === 1 ? nextDecisionStep() : createDecision()">
+      <div class="subform-head"><div><h3>记下当下的判断</h3><p>{{ decisionStep === 1 ? '第一步：这件事是什么，你打算怎么选。' : '第二步：为什么，以及到时候怎么看对不对。' }}</p></div><button type="button" class="collapse-button" aria-label="收起判断表单" :disabled="decisionSaving" @click="showDecisionForm = false"><ChevronUp :size="18" /></button></div>
+      <ol class="decision-steps" aria-label="两步"><li :class="{ 'is-on': decisionStep === 1, 'is-done': decisionStep === 2 }">这件事</li><li :class="{ 'is-on': decisionStep === 2 }">为什么</li></ol>
+      <template v-if="decisionStep === 1">
+        <label for="decision-title">这件事 <span aria-hidden="true">*</span></label><input id="decision-title" v-model="decisionTitle" maxlength="300" :disabled="decisionSaving" placeholder="例如：要不要这个季度进入新市场" required>
+        <label for="decision-context">背景 <span aria-hidden="true">*</span></label><textarea id="decision-context" v-model="decisionContext" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="发生了什么，有哪些时间、资源或关系上的约束" required />
+        <label for="decision-options">认真考虑过的选项 <small>每行一项</small> <span aria-hidden="true">*</span></label><textarea id="decision-options" v-model="decisionOptions" rows="3" :disabled="decisionSaving" placeholder="现在进入&#10;先小规模验证&#10;暂不进入" required />
+        <label for="decision-choice">我的选择 <span aria-hidden="true">*</span></label><textarea id="decision-choice" v-model="decisionChoice" rows="2" maxlength="2000" :disabled="decisionSaving" required />
+        <div class="form-actions"><BaseButton variant="secondary" :disabled="decisionSaving" @click="showDecisionForm = false">取消</BaseButton><BaseButton type="submit" variant="primary">下一步</BaseButton></div>
+      </template>
+      <template v-else>
+        <label for="decision-rationale">为什么这样选 <span aria-hidden="true">*</span></label><textarea id="decision-rationale" v-model="decisionRationale" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="关键的事实、假设和取舍" required />
+        <label for="decision-expected">我预期会看到什么 <span aria-hidden="true">*</span></label><textarea id="decision-expected" v-model="decisionExpectedOutcome" rows="2" maxlength="5000" :disabled="decisionSaving" placeholder="到时候怎么判断这个选择对不对" required />
+        <div class="form-grid compact-grid">
+          <div class="field"><label for="decision-confidence">把握有几成 <small>{{ decisionConfidence }}%</small></label><input id="decision-confidence" v-model.number="decisionConfidence" type="range" min="0" max="100" step="5" :disabled="decisionSaving"></div>
+          <div class="field"><label for="decision-review-at">什么时候回来看结果 <small>可留空</small></label><input id="decision-review-at" v-model="decisionReviewAt" type="datetime-local" :disabled="decisionSaving"></div>
+        </div>
+        <div class="form-actions"><BaseButton variant="secondary" :disabled="decisionSaving" @click="decisionStep = 1">上一步</BaseButton><BaseButton type="submit" variant="primary" :loading="decisionSaving">记下</BaseButton></div>
+      </template>
     </form>
 
     <JudgmentTimeline v-if="decisions.length" :decisions="decisions" :selected-id="highlightedId || null" @select="focusDecision" />
 
     <section class="board-section" aria-labelledby="decisions-heading">
       <div class="section-head">
-        <div class="growth-panel__title"><span class="panel-icon"><Target :size="19" aria-hidden="true" /></span><div><h2 id="decisions-heading">判断簿</h2><p>把事后解释变成当时可核对的记录。</p></div></div>
+        <div class="growth-panel__title"><span class="panel-icon"><Target :size="19" aria-hidden="true" /></span><div><h2 id="decisions-heading">判断簿</h2><p>把事后的解释，变成当时就写下、事后可核对的记录。</p></div></div>
         <div class="decision-counts"><span>{{ statusCounts.open }} 进行中</span><span>{{ statusCounts.outcome }} 待复盘</span><span>{{ statusCounts.reviewed }} 已复盘</span></div>
       </div>
       <div v-if="decisionsLoading" class="loading-state" aria-live="polite">正在加载判断簿…</div>
@@ -425,11 +440,10 @@ onMounted(async () => {
           <article v-for="decision in column.items" :id="`decision-${decision.id}`" :key="decision.id" class="decision-card" :class="{ 'is-overdue': isOverdue(decision), 'is-highlighted': highlightedId === decision.id }">
             <div class="decision-card__head"><h4>{{ decision.title }}</h4><span v-if="isOverdue(decision)" class="overdue-tag">已逾期</span></div>
             <DecisionStepper :status="decision.status" />
-            <p class="decision-context" :title="decision.context">{{ decision.context }}</p>
+            <p class="decision-choice"><small>当时选了</small>{{ decision.choice }}</p>
             <div class="decision-chips">
-              <span class="chip"><small>当时选了</small>{{ decision.choice }}</span>
               <span class="chip"><small>把握</small>{{ decision.confidence }}%</span>
-              <span class="chip"><small>回访日</small>{{ decision.reviewAt ? formatDate(decision.reviewAt) : '未定' }}</span>
+              <span v-if="decision.status === 'open'" class="chip"><small>回访</small>{{ decision.reviewAt ? formatDate(decision.reviewAt) : '未定' }}</span>
             </div>
             <details class="decision-details"><summary>当时的完整记录</summary><dl><dt>背景</dt><dd>{{ decision.context }}</dd><dt>考虑过的选项</dt><dd><ul><li v-for="option in decision.options" :key="option">{{ option }}</li></ul></dd><dt>理由与假设</dt><dd>{{ decision.rationale }}</dd><dt>预期结果</dt><dd>{{ decision.expectedOutcome }}</dd><dt>记录时间</dt><dd>{{ formatDate(decision.createdAt) }}<template v-if="decision.charterVersion"> · 基于章程第 {{ decision.charterVersion }} 版</template></dd></dl></details>
 
@@ -504,27 +518,28 @@ onMounted(async () => {
 .growth-head,.section-head,.growth-panel__head,.decision-card__head,.form-actions,.subform-head{justify-content:space-between}
 .growth-head{gap:16px}.growth-head h1,.growth-panel__title h2,.board__column-head h3,.decision-card__head h4{font-family:var(--ws-font-display)}
 .section-head{gap:12px;margin:6px 0 12px}
-.growth-panel{margin-bottom:18px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg);overflow:hidden}
+.growth-panel{margin-bottom:18px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg);overflow:hidden}
 .growth-panel__head{gap:12px;padding:15px 17px;border-bottom:1px solid var(--ws-border-color-3)}.growth-panel__title{gap:11px}.growth-panel__title h2{margin:0;font-size:17px}.growth-panel__title p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:12px}
 .panel-icon{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:var(--ws-edit-color);color:var(--ws-primary-color)}
-.version-badge,.decision-counts span{padding:4px 9px;border-radius:999px;background:var(--ws-card-bg);color:var(--ws-text-secondary-color);font-size:11px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.charter-panel__meta{gap:10px}
+.version-badge,.decision-counts span{padding:2px 8px;border-radius:3px;border:1px solid var(--ws-border-color);background:transparent;color:var(--ws-text-secondary-color);font-size: 12px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.charter-panel__meta{gap:10px}
 .board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
-.board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}
-.board__column-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 4px 4px}.board__column-head h3{margin:0;font-size:15px}.board__column-head small{color:var(--ws-text-secondary-color);font-size:11px}
+.board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-surface-2)}
+.board__column-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 4px 4px}.board__column-head h3{margin:0;font-size:15px}.board__column-head small{color:var(--ws-text-secondary-color);font-size: 12px}
 .board__empty{margin:0;padding:18px 8px;border:1px dashed var(--ws-border-color);border-radius:var(--ws-radius);color:var(--ws-text-secondary-color);font-size:12px;text-align:center}
-.decision-card{display:grid;gap:9px;padding:13px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.decision-card.is-overdue{border-color:rgba(166,69,46,.45)}.decision-card.is-highlighted{outline:2px solid var(--ws-primary-color,#a6452e);outline-offset:2px;transition:outline-color .3s}
+.decision-card{display:grid;gap:9px;padding:13px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}.decision-card.is-overdue{border-color:rgba(166,69,46,.45)}.decision-card.is-highlighted{outline:2px solid var(--ws-primary-color,#a6452e);outline-offset:2px;transition:outline-color .3s}
 .decision-card__head{align-items:flex-start;gap:8px}.decision-card__head h4{margin:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
-.overdue-tag{flex:none;padding:2px 7px;border-radius:999px;background:rgba(166,69,46,.1);color:var(--ws-primary-color);font-size:11px;font-weight:650}
-.decision-context{margin:0;color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.decision-chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;padding:3px 8px;border-radius:999px;background:var(--ws-card-bg);color:var(--ws-text-primary-color);font-size:11px;line-height:1.5;overflow-wrap:anywhere}.chip small{color:var(--ws-text-secondary-color);font-size:10px}.chip--plain{margin:2px 6px 2px 0}
-.decision-details{padding:6px 0;border-top:1px solid var(--ws-border-color-3)}.decision-details summary{color:var(--ws-primary-color);font-size:11px;cursor:pointer}.decision-details dl{display:grid;grid-template-columns:76px 1fr;gap:6px 10px;margin-top:9px;font-size:12px;line-height:1.6}.decision-details dt{color:var(--ws-text-secondary-color)}.decision-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.decision-details ul{margin:0;padding-left:18px}
-.outcome-block,.review-block,.latest-review{padding:11px 12px;border-radius:var(--ws-radius);background:var(--ws-card-bg)}.review-block{border:1px solid var(--ws-border-color-3)}.latest-review{margin:14px 17px}.outcome-block__title{gap:6px;color:var(--ws-success-color);font-size:12px;font-weight:700}.review-block .outcome-block__title{color:var(--ws-primary-color)}.outcome-block__title small{margin-left:auto;color:var(--ws-text-secondary-color);font-weight:400}.outcome-block p,.review-block p,.latest-review p{margin:7px 0 0;font-size:12px;line-height:1.65;white-space:pre-wrap}.muted{color:var(--ws-text-secondary-color)}
+.overdue-tag{flex:none;padding:1px 7px;border-radius:3px;border:1px solid var(--ws-primary-color);color:var(--ws-primary-color);font-size: 12px;font-weight:500}
+.decision-choice{margin:0;font-size:13px;line-height:1.55;color:var(--ws-text-primary-color);overflow-wrap:anywhere}.decision-choice small{display:block;margin-bottom:2px;color:var(--ws-text-secondary-color);font-size:12px}
+.decision-steps{display:flex;gap:14px;margin:0 0 4px;padding:0;list-style:none;font-size:12px;color:var(--ws-text-placeholder-color)}.decision-steps li{display:flex;align-items:center;gap:6px}.decision-steps li::before{content:'';width:8px;height:8px;border-radius:50%;border:1.5px solid currentColor}.decision-steps li.is-on{color:var(--ws-primary-color);font-weight:600}.decision-steps li.is-on::before{background:var(--ws-primary-color)}.decision-steps li.is-done{color:var(--ws-text-primary-color)}.decision-steps li.is-done::before{background:var(--ws-text-primary-color)}
+.decision-chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;padding:3px 8px;border-radius:999px;background:var(--ws-surface-2);color:var(--ws-text-primary-color);font-size: 12px;line-height:1.5;overflow-wrap:anywhere}.chip small{color:var(--ws-text-secondary-color);font-size: 12px}.chip--plain{margin:2px 6px 2px 0}
+.decision-details{padding:6px 0;border-top:1px solid var(--ws-border-color-3)}.decision-details summary{color:var(--ws-primary-color);font-size: 12px;cursor:pointer}.decision-details dl{display:grid;grid-template-columns:76px 1fr;gap:6px 10px;margin-top:9px;font-size:12px;line-height:1.6}.decision-details dt{color:var(--ws-text-secondary-color)}.decision-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.decision-details ul{margin:0;padding-left:18px}
+.outcome-block,.review-block,.latest-review{padding:11px 12px;border-radius:var(--ws-radius);background:var(--ws-surface-2)}.review-block{border:1px solid var(--ws-border-color-3)}.latest-review{margin:14px 17px}.outcome-block__title{gap:6px;color:var(--ws-success-color);font-size:12px;font-weight:600}.review-block .outcome-block__title{color:var(--ws-primary-color)}.outcome-block__title small{margin-left:auto;color:var(--ws-text-secondary-color);font-weight:400}.outcome-block p,.review-block p,.latest-review p{margin:7px 0 0;font-size:12px;line-height:1.65;white-space:pre-wrap}.muted{color:var(--ws-text-secondary-color)}
 .review-lessons{margin-top:9px;color:var(--ws-text-color);font-size:12px}.review-lessons ul{margin:5px 0 0;padding-left:18px}.review-next{display:flex;gap:8px;padding-top:8px;border-top:1px solid var(--ws-border-color-3)}.review-next strong{flex:none;color:var(--ws-primary-color)}
 .decision-actions{justify-content:flex-end;gap:10px}.decision-review-link{border:none;background:transparent;color:var(--ws-primary-color);font-family:inherit;font-size:12px;text-decoration:underline;cursor:pointer}.decision-review-link:disabled{opacity:.5;cursor:default}
-.growth-form{display:grid;gap:8px;padding:17px}.form-intro{margin:0 0 4px;color:var(--ws-text-color);font-size:13px}.growth-form label,.field label,.inline-form label{color:var(--ws-text-color);font-size:12px;font-weight:650}.growth-form label small,.field label small,.inline-form label small{color:var(--ws-text-secondary-color);font-weight:400}.growth-form input,.growth-form textarea,.inline-form textarea{width:100%;padding:9px 11px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius);background:var(--ws-body-bg);color:var(--ws-text-primary-color);font:inherit;font-size:13px;line-height:1.55}.growth-form input:focus,.growth-form textarea:focus,.inline-form textarea:focus{outline:0;border-color:var(--ws-primary-color);box-shadow:0 0 0 3px rgba(166,69,46,.15)}.growth-form textarea,.inline-form textarea{resize:vertical}.growth-form input:disabled,.growth-form textarea:disabled,.inline-form textarea:disabled{opacity:.6}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:grid;gap:8px}.compact-grid{align-items:end}.form-actions{justify-content:flex-end;gap:8px;margin-top:7px}.form-note{flex:1;color:var(--ws-text-secondary-color);font-size:11px}
-.decision-create{margin:0 0 18px;border:1px solid rgba(166,69,46,.35);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.subform-head{gap:12px;margin-bottom:3px}.subform-head h3{margin:0;font-size:14px}.subform-head p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:11px}.collapse-button{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--ws-text-secondary-color)}.collapse-button:hover{background:var(--ws-card-bg)}
+.growth-form{display:grid;gap:8px;padding:17px}.form-intro{margin:0 0 4px;color:var(--ws-text-color);font-size:13px}.growth-form label,.field label,.inline-form label{color:var(--ws-text-color);font-size:12px;font-weight:600}.growth-form label small,.field label small,.inline-form label small{color:var(--ws-text-secondary-color);font-weight:400}.growth-form input,.growth-form textarea,.inline-form textarea{width:100%;padding:9px 11px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius);background:var(--ws-body-bg);color:var(--ws-text-primary-color);font:inherit;font-size:13px;line-height:1.55}.growth-form input:focus,.growth-form textarea:focus,.inline-form textarea:focus{outline:0;border-color:var(--ws-primary-color);box-shadow:0 0 0 3px rgba(166,69,46,.15)}.growth-form textarea,.inline-form textarea{resize:vertical}.growth-form input:disabled,.growth-form textarea:disabled,.inline-form textarea:disabled{opacity:.6}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:grid;gap:8px}.compact-grid{align-items:end}.form-actions{justify-content:flex-end;gap:8px;margin-top:7px}.form-note{flex:1;color:var(--ws-text-secondary-color);font-size: 12px}
+.decision-create{margin:0 0 18px;border:1px solid rgba(166,69,46,.35);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}.subform-head{gap:12px;margin-bottom:3px}.subform-head h3{margin:0;font-size:14px}.subform-head p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size: 12px}.collapse-button{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--ws-text-secondary-color)}.collapse-button:hover{background:var(--ws-surface-2)}
 .inline-form{display:grid;gap:7px;padding:12px;border:1px solid rgba(166,69,46,.3);border-radius:var(--ws-radius);background:var(--ws-body-bg)}.inline-form h5{margin:0 0 3px;font-size:12px}.inline-form .form-actions{margin-top:3px}
-.charter-summary{padding:15px 17px}.charter-summary__vision{margin:0 0 12px;padding-bottom:12px;border-bottom:1px solid var(--ws-border-color-3);font-size:15px;line-height:1.55;overflow-wrap:anywhere}.charter-summary__vision small,.charter-summary__rows small{display:block;margin-bottom:4px;color:var(--ws-text-secondary-color);font-size:10px}.charter-summary__rows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.charter-summary__rows>div{min-width:0}.charter-line{color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+.charter-summary{padding:15px 17px}.charter-summary__vision{margin:0 0 12px;padding-bottom:12px;border-bottom:1px solid var(--ws-border-color-3);font-size:15px;line-height:1.55;overflow-wrap:anywhere}.charter-summary__vision small,.charter-summary__rows small{display:block;margin-bottom:4px;color:var(--ws-text-secondary-color);font-size: 12px}.charter-summary__rows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.charter-summary__rows>div{min-width:0}.charter-line{color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
 @media(max-width:1023px){.board{grid-template-columns:1fr}.charter-summary__rows{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:760px){.growth-head,.section-head,.growth-panel__head{align-items:stretch;flex-direction:column}.growth-panel__head{gap:10px}.charter-panel__meta{justify-content:space-between}.decision-counts{justify-content:flex-start}.charter-summary__rows{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.form-actions{align-items:stretch;flex-wrap:wrap}.form-note{flex-basis:100%}.decision-details dl{grid-template-columns:1fr}.decision-details dt{margin-top:5px}}
 </style>

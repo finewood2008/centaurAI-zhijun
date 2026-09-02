@@ -27,3 +27,16 @@ export function stripLabels(text: string): string {
   for (const { marker } of LAYER_MARKERS) out = out.split(marker).join('')
   return out.replace(CITE_RE, '')
 }
+
+/** 提醒种类的中文名（对话页顶部提醒条上的小印）。 */
+export const NUDGE_KIND_LABELS: Readonly<Record<string, string>> = {
+  review_due: '判断回访',
+  commitment_due: '承诺回访',
+  principle_tension: '原则与做法',
+  weekly_review: '每周回顾',
+  checkin: '打个招呼',
+}
+
+export function nudgeKindLabel(kind: string): string {
+  return NUDGE_KIND_LABELS[kind] ?? '提醒'
+}

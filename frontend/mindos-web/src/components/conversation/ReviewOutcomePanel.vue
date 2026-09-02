@@ -165,7 +165,7 @@ function submit() {
   border-color: var(--ws-input-focus-border-color, #a6452e);
 }
 .zj-review__hint {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--ws-text-placeholder-color, #a3a69f);
 }

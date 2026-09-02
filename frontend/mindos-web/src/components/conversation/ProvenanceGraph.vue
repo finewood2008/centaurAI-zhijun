@@ -113,7 +113,7 @@ function itemAria(item: ProvItem, groupLabel: string): string {
   overflow: visible;
 }
 .zj-pg__reply rect {
-  fill: var(--ws-card-bg, #f3efe6);
+  fill: var(--ws-surface-2, #fbf8f1);
   stroke: var(--ws-border-color, #d8d3c8);
 }
 .zj-pg__reply text {
@@ -207,7 +207,7 @@ function itemAria(item: ProvItem, groupLabel: string): string {
   padding: 4px 8px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
   box-shadow: var(--ws-shadow-sm);
   font-size: 12px;
   color: var(--ws-text-color, #3c403d);

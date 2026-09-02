@@ -26,6 +26,7 @@ const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
       <span class="zj-secnav__count" aria-label="待确认数量">{{ stats?.inbox ?? 0 }}</span>
     </button>
     <button
+      v-if="current === 'proposals' || (stats?.proposals ?? 0) > 0"
       type="button"
       class="zj-secnav__item zj-secnav__item--proposals"
       :class="{ 'is-active': current === 'proposals' }"
@@ -48,7 +49,7 @@ const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
       <span class="zj-secnav__label">{{ s.label }}</span>
       <span class="zj-secnav__hint">{{ s.hint }}</span>
       <span class="zj-secnav__count">
-        {{ stats?.bySection?.[s.key]?.confirmed ?? 0 }}<template v-if="stats?.bySection?.[s.key]?.working"> · 待确认 {{ stats.bySection[s.key].working }}</template>
+        {{ stats?.bySection?.[s.key]?.confirmed ?? 0 }}<span v-if="stats?.bySection?.[s.key]?.working" class="zj-secnav__pending" :title="`${stats.bySection[s.key].working} 条等你点头`">+{{ stats.bySection[s.key].working }}</span>
       </span>
     </button>
   </nav>
@@ -77,7 +78,11 @@ const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
   color: var(--ws-text-color, #3c403d);
 }
 .zj-secnav__item:hover {
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
+}
+.zj-secnav__pending {
+  margin-left: 4px;
+  color: var(--ws-primary-color, #a6452e);
 }
 .zj-secnav__item.is-active {
   background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
@@ -101,7 +106,7 @@ const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
 }
 .zj-secnav__hint {
   grid-area: hint;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-secnav__count {

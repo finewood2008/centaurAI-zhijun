@@ -44,7 +44,8 @@ const busy = reactive<Record<string, boolean>>({})
 const showCreate = ref(false)
 const creating = ref(false)
 const newContent = ref('')
-const newSection = ref<Section>('who')
+// 分区默认「让知君归类」（不传 section，由后端按句子线索归类）；只有用户选了才带上
+const newSection = ref<Section | ''>('')
 const newLayer = ref<'self_declared' | 'aspirational'>('self_declared')
 
 // ---- 全景 / 列表 视图（记住上次选择）
@@ -73,6 +74,7 @@ const mapError = ref('')
 const selected = ref<Claim | null>(null)
 const layerFilter = ref<Set<Layer> | null>(null)
 const focusSection = ref<Section | null>(null)
+const filtersOpen = ref(false)
 const LAYER_CHIPS = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, label: LAYER_META[key].label }))
 
 const SECTION_KEYS = new Set<string>(SECTIONS.map((s) => s.key))
@@ -96,7 +98,7 @@ const heading = computed(() => {
 const hint = computed(() => {
   if (current.value === 'inbox') return '这些是知君从对话里提出、还没经你确认的理解。确认后才会成为它对你的认识；否定后永远不会再出现。'
   if (current.value === 'proposals') return '知君整理时发现的疑问：两个名字是不是同一个人？两条理解是不是矛盾？它不会自己拍板，只等你定。'
-  if (showMap.value) return '离中心越近越可信。朱砂虚线是信任边界：外面的空心点是知君的猜测，你点头它才进来。点一个点看细节，点分区名只看那一片。'
+  if (showMap.value) return '离中心越近越可信；朱砂虚线外是知君的猜测，你点头才进来。点一个点看细节。'
   return SECTIONS.find((s) => s.key === current.value)?.hint ?? ''
 })
 
@@ -246,12 +248,14 @@ async function submitCreate() {
   if (!content) return
   creating.value = true
   try {
-    const created = await createClaim({ content, section: newSection.value, layer: newLayer.value })
-    if (current.value === newSection.value) items.value = [created, ...items.value]
+    const created = await createClaim(
+      newSection.value ? { content, section: newSection.value, layer: newLayer.value } : { content, layer: newLayer.value },
+    )
+    if (current.value === created.section) items.value = [created, ...items.value]
     mapItems.value = [created, ...mapItems.value]
     newContent.value = ''
     showCreate.value = false
-    toast({ type: 'success', message: `已记入「${sectionLabel(created.section)}」` })
+    toast({ type: 'success', message: newSection.value ? `已记入「${sectionLabel(created.section)}」` : `知君把它归到了「${sectionLabel(created.section)}」` })
     void loadStats()
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '保存失败') })
@@ -283,7 +287,7 @@ onBeforeUnmount(() => {
   <div class="page zj-me">
     <div class="page-head">
       <h1>我的本体</h1>
-      <p>知君目前对你的认识，全部可核对、可修正、可撤回。标签说明每条理解从哪里来。</p>
+      <p>知君目前对你的认识。每一条都可核对、可修正、可撤回。</p>
     </div>
 
     <div class="zj-me__grid">
@@ -310,6 +314,7 @@ onBeforeUnmount(() => {
           <label class="zj-me__field">
             <span>这条理解属于</span>
             <select v-model="newSection">
+              <option value="">让知君归类</option>
               <option v-for="s in SECTIONS" :key="s.key" :value="s.key">{{ s.label }}</option>
             </select>
           </label>
@@ -333,9 +338,10 @@ onBeforeUnmount(() => {
         <div v-if="showMap" class="zj-me__map" :class="{ 'has-panel': !!selected }">
           <div class="zj-me__map-main">
             <div class="zj-me__chips" role="group" aria-label="按来源筛选">
-              <button type="button" class="zj-me__chip" :class="{ 'is-on': !layerFilter }" :aria-pressed="!layerFilter" @click="toggleLayer(null)">全部</button>
+              <button type="button" class="zj-me__chip zj-me__chip--toggle" :class="{ 'is-on': filtersOpen || !!layerFilter }" :aria-expanded="filtersOpen" @click="filtersOpen = !filtersOpen">{{ layerFilter ? '筛选中' : '筛选' }}</button>
+              <button v-if="filtersOpen || layerFilter" type="button" class="zj-me__chip" :class="{ 'is-on': !layerFilter }" :aria-pressed="!layerFilter" @click="toggleLayer(null)">全部</button>
               <button
-                v-for="c in LAYER_CHIPS"
+                v-for="c in (filtersOpen || layerFilter ? LAYER_CHIPS : [])"
                 :key="c.key"
                 type="button"
                 class="zj-me__chip"
@@ -581,7 +587,7 @@ onBeforeUnmount(() => {
   padding: 10px;
   border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
 }
 .zj-me__panel-head {
   display: flex;

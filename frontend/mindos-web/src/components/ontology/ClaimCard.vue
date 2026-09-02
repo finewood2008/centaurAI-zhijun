@@ -1,14 +1,14 @@
 <script setup lang="ts">
-// 本体页的理解卡：层标签 + 信任状态 + 内容 + 来源深链 + 动作。
-// working：对 / 部分对 / 只适用于这件事 / 不对 / 先别存；confirmed：重申 / 撤回（撤回需确认弹窗）。
+// 本体页的理解卡：默认只露「层标签 + 一句话 + 从哪来 + 两个动作」；「详情」展开后才有谓词、证据、置信、导出开关。
+// working：对 / 不对 / ···（部分对 · 只适用于这件事 · 先别存）；confirmed：还是这样 / 不再这样了（需确认）/ ···（修正）。
 import { ref, watch } from 'vue'
 import { setClaimExport, type Claim, type ReviewAction } from '@/services/api'
 import { useToast } from '@/composables/useToast'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
-import { formatDate } from '@/shared/format'
-import { layerMeta, sectionLabel, trustMeta, REVIEW_ACTIONS_WORKING } from '@/shared/ontology'
+import MoreMenu from '@/components/ui/MoreMenu.vue'
+import { formatDay, layerMeta, predicateLabel, sectionLabel, sourceLine, trustMeta, REVIEW_MORE, REVIEW_PRIMARY } from '@/shared/ontology'
 
 const props = defineProps<{
   claim: Claim
@@ -21,6 +21,9 @@ const emit = defineEmits<{ (e: 'review', action: ReviewAction, editedContent?: s
 const editing = ref(false)
 const edited = ref('')
 const retractOpen = ref(false)
+const detailOpen = ref(false)
+
+const CONFIRMED_MORE = [{ action: 'partial', label: '修正', hint: '改几个字，保留出处' }]
 
 function act(action: ReviewAction) {
   if (props.busy) return
@@ -96,15 +99,13 @@ function evidenceKindLabel(kind: string): string {
 </script>
 
 <template>
-  <article class="zj-claim" :class="`is-${claim.trustState}`" :aria-busy="busy || undefined">
+  <article class="zj-claim" :class="[`is-${claim.trustState}`, { 'is-open': detailOpen }]" :aria-busy="busy || undefined">
     <header class="zj-claim__head">
       <StatusBadge :meta="layerMeta(claim.layer)" />
-      <StatusBadge :meta="trustMeta(claim.trustState)" />
-      <span v-if="claim.scope === 'context_only'" class="zj-claim__scope">只适用于当时那件事</span>
-      <span v-if="claim.promotionReady" class="zj-claim__flag zj-claim__flag--ready" title="至少两个独立来源提到过">多处提到</span>
-      <span v-if="claim.challenged && claim.trustState === 'working'" class="zj-claim__flag zj-claim__flag--challenged" :title="claim.challengeNote || '与另一条理解矛盾'">有矛盾</span>
+      <span v-if="claim.scope === 'context_only'" class="zj-seal zj-seal--muted">只适用于当时那件事</span>
+      <span v-if="claim.challenged && claim.trustState === 'working'" class="zj-seal zj-seal--warning" :title="claim.challengeNote || '与另一条理解矛盾'">有矛盾</span>
       <span v-if="showSection" class="zj-claim__section">{{ sectionLabel(claim.section) }}</span>
-      <span class="zj-claim__conf" :title="`置信度 ${Math.round(claim.confidence * 100)}%`">置信 {{ Math.round(claim.confidence * 100) }}%</span>
+      <button type="button" class="zj-claim__detail-btn" :aria-expanded="detailOpen" @click="detailOpen = !detailOpen">{{ detailOpen ? '收起' : '详情' }}</button>
     </header>
 
     <p v-if="!editing" class="zj-claim__content">{{ claim.content }}</p>
@@ -117,42 +118,49 @@ function evidenceKindLabel(kind: string): string {
       </div>
     </div>
 
-    <p class="zj-claim__names">
-      <span>{{ claim.subjectName }}</span>
-      <span class="zj-claim__pred">{{ claim.predicate }}</span>
-      <span v-if="claim.objectName">{{ claim.objectName }}</span>
-    </p>
+    <p class="zj-claim__source">{{ sourceLine(claim) }}</p>
 
-    <ul v-if="claim.evidence.length" class="zj-claim__evidence">
-      <li v-for="e in claim.evidence" :key="e.id">
-        <span class="zj-claim__ev-kind">{{ evidenceKindLabel(e.kind) }}</span>
-        <span v-if="e.quote" class="zj-claim__quote">「{{ e.quote }}」</span>
-        <RouterLink v-if="evidenceLink(e)" :to="evidenceLink(e)!" class="zj-claim__ev-link">查看来源</RouterLink>
-      </li>
-    </ul>
-
-    <div v-if="claim.trustState === 'confirmed'" class="zj-claim__export">
-      <button
-        type="button"
-        role="switch"
-        class="zj-claim__switch"
-        :class="{ 'is-on': exportOn && !exportLocked() }"
-        :aria-checked="exportOn && !exportLocked()"
-        :disabled="busy || exportBusy || exportLocked()"
-        :title="exportLocked() ? '敏感或受限的理解永远不会出设备' : '打开后，其他 Agent 取上下文包时可以拿到这一条'"
-        @click="toggleExport"
-      >
-        <span class="zj-claim__switch-knob" aria-hidden="true" />
-        <span class="zj-claim__switch-label">{{ exportLocked() ? '敏感内容不会带走' : exportOn ? '可带走' : '不带走' }}</span>
-      </button>
+    <div v-if="detailOpen" class="zj-claim__details">
+      <p class="zj-claim__meta">
+        <StatusBadge :meta="trustMeta(claim.trustState)" />
+        <span v-if="claim.promotionReady" class="zj-seal zj-seal--green" title="至少两个独立来源提到过">多处提到</span>
+        <span class="zj-claim__conf" :title="`置信度 ${Math.round(claim.confidence * 100)}%`">置信 {{ Math.round(claim.confidence * 100) }}%</span>
+      </p>
+      <p class="zj-claim__names">
+        <span>{{ claim.subjectName }}</span>
+        <span v-if="predicateLabel(claim.predicate)" class="zj-claim__pred">{{ predicateLabel(claim.predicate) }}</span>
+        <span v-if="claim.objectName">{{ claim.objectName }}</span>
+      </p>
+      <ul v-if="claim.evidence.length" class="zj-claim__evidence">
+        <li v-for="e in claim.evidence" :key="e.id">
+          <span class="zj-claim__ev-kind">{{ evidenceKindLabel(e.kind) }}</span>
+          <span v-if="e.quote" class="zj-claim__quote">「{{ e.quote }}」</span>
+          <RouterLink v-if="evidenceLink(e)" :to="evidenceLink(e)!" class="zj-claim__ev-link">查看来源</RouterLink>
+        </li>
+      </ul>
+      <div v-if="claim.trustState === 'confirmed'" class="zj-claim__export">
+        <button
+          type="button"
+          role="switch"
+          class="zj-claim__switch"
+          :class="{ 'is-on': exportOn && !exportLocked() }"
+          :aria-checked="exportOn && !exportLocked()"
+          :disabled="busy || exportBusy || exportLocked()"
+          :title="exportLocked() ? '敏感或受限的理解永远不会出设备' : '打开后，其他 Agent 取上下文包时可以拿到这一条'"
+          @click="toggleExport"
+        >
+          <span class="zj-claim__switch-knob" aria-hidden="true" />
+          <span class="zj-claim__switch-label">{{ exportLocked() ? '敏感内容不会带走' : exportOn ? '可带走' : '不带走' }}</span>
+        </button>
+      </div>
+      <p class="zj-claim__time">第一次记下 {{ formatDay(claim.firstSeen) }} · 最近一次确认 {{ formatDay(claim.lastReaffirmed) }}</p>
     </div>
 
-    <footer class="zj-claim__foot">
-      <span class="zj-claim__time">首次 {{ formatDate(claim.firstSeen) }} · 最近重申 {{ formatDate(claim.lastReaffirmed) }}</span>
-      <div v-if="!editing" class="zj-claim__actions">
+    <footer v-if="!editing" class="zj-claim__foot">
+      <div class="zj-claim__actions">
         <template v-if="claim.trustState === 'working'">
           <button
-            v-for="item in REVIEW_ACTIONS_WORKING"
+            v-for="item in REVIEW_PRIMARY"
             :key="item.action"
             type="button"
             class="zj-claim__btn"
@@ -160,20 +168,21 @@ function evidenceKindLabel(kind: string): string {
             :disabled="busy"
             @click="act(item.action)"
           >{{ item.label }}</button>
+          <MoreMenu :items="REVIEW_MORE" :disabled="busy" label="其他处理" @select="(a) => act(a as ReviewAction)" />
         </template>
         <template v-else-if="claim.trustState === 'confirmed'">
-          <button type="button" class="zj-claim__btn" :disabled="busy" @click="act('reaffirm')">重申</button>
-          <button type="button" class="zj-claim__btn" :disabled="busy" @click="act('partial')">修正</button>
-          <button type="button" class="zj-claim__btn is-danger" :disabled="busy" @click="act('retract')">撤回</button>
+          <button type="button" class="zj-claim__btn" :disabled="busy" title="现在还是这样，重新确认一次" @click="act('reaffirm')">还是这样</button>
+          <button type="button" class="zj-claim__btn is-danger" :disabled="busy" title="不再把它当作对你的认识" @click="act('retract')">不再这样了</button>
+          <MoreMenu :items="CONFIRMED_MORE" :disabled="busy" label="其他处理" @select="(a) => act(a as ReviewAction)" />
         </template>
       </div>
     </footer>
 
     <ConfirmDialog
       :open="retractOpen"
-      title="撤回这条理解？"
-      :message="`撤回后，知君不会再把「${claim.content}」当作对你的认识，也不会再在回答里复述它。`"
-      confirm-text="撤回"
+      title="不再这样了？"
+      :message="`知君不会再把「${claim.content}」当作对你的认识，也不会再在回答里提起它。`"
+      confirm-text="确定"
       danger
       @confirm="confirmRetract"
       @cancel="retractOpen = false"
@@ -186,11 +195,11 @@ function evidenceKindLabel(kind: string): string {
   padding: 14px 16px;
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-claim.is-working {
   border-style: dashed;
-  border-color: var(--ws-warning-color, #b8862b);
+  border-color: var(--ws-primary-color, #a6452e);
 }
 .zj-claim.is-retracted,
 .zj-claim.is-superseded {
@@ -205,31 +214,23 @@ function evidenceKindLabel(kind: string): string {
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
 }
-.zj-claim__scope,
 .zj-claim__section {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--ws-card-bg, #f3efe6);
+  color: var(--ws-text-placeholder-color, #a3a69f);
 }
-.zj-claim__flag {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.zj-claim__flag--ready {
-  background: rgba(74, 124, 89, 0.12);
-  color: var(--ws-success-color, #4a7c59);
-}
-.zj-claim__flag--challenged {
-  background: rgba(184, 134, 43, 0.14);
-  color: var(--ws-warning-color, #b8862b);
-}
-.zj-claim__conf {
+.zj-claim__detail-btn {
   margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zj-claim__detail-btn:hover {
+  color: var(--ws-primary-color, #a6452e);
 }
 .zj-claim__content {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   font-size: 15px;
   line-height: 1.7;
   color: var(--ws-text-primary-color, #1d211f);
@@ -237,8 +238,33 @@ function evidenceKindLabel(kind: string): string {
 .is-retracted .zj-claim__content {
   text-decoration: line-through;
 }
+.zj-claim__source {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-claim__details {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--ws-radius, 6px);
+  background: var(--ws-surface-2, #fbf8f1);
+}
+.zj-claim__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-claim__conf {
+  margin-left: auto;
+}
 .zj-claim__names {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
   display: flex;
@@ -247,12 +273,11 @@ function evidenceKindLabel(kind: string): string {
 }
 .zj-claim__pred {
   padding: 0 6px;
-  border-radius: 4px;
-  background: var(--ws-card-bg, #f3efe6);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: 3px;
+  border: 1px solid var(--ws-border-color, #d8d3c8);
 }
 .zj-claim__evidence {
-  margin: 0 0 8px;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: 12px;
@@ -266,20 +291,20 @@ function evidenceKindLabel(kind: string): string {
 }
 .zj-claim__ev-kind {
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 3px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
 }
 .zj-claim__quote {
   color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-claim__export {
-  margin: 2px 0 8px;
+  margin: 2px 0 0;
 }
 .zj-claim__switch {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 2px 4px;
+  padding: 2px 0;
   border: none;
   background: transparent;
   color: var(--ws-text-secondary-color, #686b66);
@@ -320,31 +345,32 @@ function evidenceKindLabel(kind: string): string {
   cursor: not-allowed;
   opacity: 0.7;
 }
+.zj-claim__time {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
 .zj-claim__foot {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 4px;
-}
-.zj-claim__time {
-  font-size: 11px;
-  color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-claim__actions {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  margin-left: auto;
 }
 .zj-claim__btn {
-  padding: 4px 12px;
+  padding: 4px 14px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: 999px;
   background: var(--ws-body-bg, #fffcf6);
   color: var(--ws-text-color, #3c403d);
-  font-size: 12px;
-  font-weight: 600;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }
 .zj-claim__btn:hover:not(:disabled) {

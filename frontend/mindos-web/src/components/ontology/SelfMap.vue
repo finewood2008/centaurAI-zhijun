@@ -140,7 +140,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
 
 <template>
   <div class="zj-map" :class="{ 'is-empty': isEmpty, 'is-compact': compact }">
-    <svg class="zj-map__svg" viewBox="0 0 720 720" role="group" :aria-label="ariaSummary">
+    <svg class="zj-map__svg" :viewBox="compact ? '0 0 720 720' : '-40 0 800 720'" role="group" :aria-label="ariaSummary">
       <title>本体全景</title>
       <!-- 扇区底色 + 分隔线 + 标签 -->
       <g class="zj-map__sectors">

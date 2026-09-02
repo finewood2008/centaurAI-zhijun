@@ -2,7 +2,7 @@
 // 各页面不得再自行定义 statusText / statusLabel / statusClass / STATUS_META。
 
 /** 语义色类型（供 StatusBadge 等组件消费） */
-export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'purple'
+export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'purple' | 'ink' | 'guess' | 'accent' | 'muted'
 
 export interface StatusMeta {
   label: string

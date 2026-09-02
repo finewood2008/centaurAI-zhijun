@@ -192,12 +192,12 @@ function isActive(item: NavItem): boolean {
         class="ws-sidebar__item"
         :class="{ 'is-active': currentPath === '/settings' }"
         :aria-current="currentPath === '/settings' ? 'page' : undefined"
-        aria-label="设置"
-        :title="'设置'"
+        aria-label="偏好"
+        :title="'偏好'"
         @click="emit('navigate')"
       >
         <Settings class="ws-sidebar__icon" :size="18" aria-hidden="true" />
-        <span class="ws-sidebar__label">设置</span>
+        <span class="ws-sidebar__label">偏好</span>
       </RouterLink>
     </div>
   </aside>
@@ -219,7 +219,7 @@ function isActive(item: NavItem): boolean {
   width: 240px;
   flex-shrink: 0;
   background: var(--ws-body-bg, #fff);
-  border-right: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border-right: 1px solid var(--ws-border-color-2, #e2ded4);
 }
 
 .ws-sidebar__brand {
@@ -228,7 +228,7 @@ function isActive(item: NavItem): boolean {
   gap: 10px;
   height: 60px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--ws-border-color-3, #ebeef5);
+  border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
   flex-shrink: 0;
 }
 
@@ -271,12 +271,12 @@ function isActive(item: NavItem): boolean {
   border: none;
   border-radius: var(--ws-radius, 6px);
   background: transparent;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   cursor: pointer;
 }
 .ws-sidebar__close:hover {
-  background: var(--ws-card-bg, #f5f7fa);
-  color: var(--ws-text-primary-color, #303133);
+  background: var(--ws-surface-2, #fbf8f1);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 .ws-sidebar__nav {
@@ -292,9 +292,9 @@ function isActive(item: NavItem): boolean {
 .ws-sidebar__group-title {
   margin: 0 0 4px;
   padding: 0 12px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   letter-spacing: 0.04em;
 }
 
@@ -314,7 +314,7 @@ function isActive(item: NavItem): boolean {
   padding: 9px 12px;
   border: 1px solid transparent;
   border-radius: var(--ws-radius, 6px);
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   font-size: 13px;
   font-weight: 500;
   text-decoration: none;
@@ -325,13 +325,13 @@ function isActive(item: NavItem): boolean {
 }
 
 .ws-sidebar__item:hover {
-  background: var(--ws-card-bg, #f5f7fa);
-  color: var(--ws-text-primary-color, #303133);
+  background: var(--ws-surface-2, #fbf8f1);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 .ws-sidebar__item.is-active {
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
-  color: var(--ws-primary-color, #0077ff);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
+  color: var(--ws-primary-color, #a6452e);
   font-weight: 600;
 }
 
@@ -350,7 +350,7 @@ function isActive(item: NavItem): boolean {
 
 .ws-sidebar__footer {
   padding: 12px 8px;
-  border-top: 1px solid var(--ws-border-color-3, #ebeef5);
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
 }
 
 /* 768-1199px：折叠为图标栏 */
@@ -411,6 +411,6 @@ function isActive(item: NavItem): boolean {
   position: fixed;
   inset: 0;
   z-index: 2090;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(29, 33, 31, 0.42);
 }
 </style>

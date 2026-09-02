@@ -719,7 +719,7 @@ async function saveSources() {
 
 .ws-side-panel {
   padding: 12px 14px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
 }
@@ -728,7 +728,7 @@ async function saveSources() {
   margin: 0 0 10px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   letter-spacing: 0.04em;
 }
 
@@ -743,16 +743,16 @@ async function saveSources() {
   width: 100%;
   height: 32px;
   padding: 0 8px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   font-family: inherit;
   font-size: 13px;
 }
 .knowledge-folder-select:focus {
   outline: none;
-  border-color: var(--ws-input-focus-border-color, #1b99ff);
+  border-color: var(--ws-input-focus-border-color, #a6452e);
 }
 .knowledge-folder-select:disabled {
   opacity: 0.55;
@@ -772,7 +772,7 @@ async function saveSources() {
   justify-content: space-between;
   gap: 6px;
   padding: 6px 8px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
 }
 
@@ -795,8 +795,8 @@ async function saveSources() {
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--ws-border-color-2, #f0f2f5);
-  color: var(--ws-text-secondary-color, #909399);
-  font-size: 11px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 12px;
 }
 
 .source-name {
@@ -804,7 +804,7 @@ async function saveSources() {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 13px;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 
@@ -812,7 +812,7 @@ async function saveSources() {
   flex: none;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   color: #b88230;
   background: #fdf6ec;
 }
@@ -827,7 +827,7 @@ async function saveSources() {
   border: 0;
   background: none;
   padding: 2px 4px;
-  color: var(--accent, #1b99ff);
+  color: var(--accent, #a6452e);
   font-size: 12px;
   cursor: pointer;
 }
@@ -846,7 +846,7 @@ async function saveSources() {
   flex-direction: column;
   gap: 8px;
   padding: 8px;
-  border: 1px dashed var(--ws-border-color, #dcdfe6);
+  border: 1px dashed var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
 }
 
@@ -897,7 +897,7 @@ async function saveSources() {
   gap: 12px;
   margin-top: 16px;
   padding: 12px 16px;
-  border: 1px solid var(--ws-border-color-2, #e4e7ed);
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
   box-shadow: var(--ws-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.06));

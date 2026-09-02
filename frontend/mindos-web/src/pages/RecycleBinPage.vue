@@ -64,7 +64,7 @@ onBeforeUnmount(() => loadGate.invalidate())
 
 <style scoped>
 .recycle-bin__section { margin-top: 18px; }.recycle-bin__section h2 { margin: 0 0 10px; font-size: 16px; }
-.recycle-bin__item { margin-top: 10px; padding: 12px; border: 1px solid var(--ws-border-color, #dcdfe6); border-radius: 8px; background: #fff; }
-.recycle-bin__item > span { display: block; margin-top: 3px; color: #909399; font-size: 12px; }
-.recycle-bin__title { padding: 0; border: 0; background: transparent; color: var(--ws-primary-color, #0077ff); font: inherit; font-weight: 600; cursor: pointer; }
+.recycle-bin__item { margin-top: 10px; padding: 12px; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 8px; background: #fff; }
+.recycle-bin__item > span { display: block; margin-top: 3px; color: #686b66; font-size: 12px; }
+.recycle-bin__title { padding: 0; border: 0; background: transparent; color: var(--ws-primary-color, #a6452e); font: inherit; font-weight: 600; cursor: pointer; }
 </style>

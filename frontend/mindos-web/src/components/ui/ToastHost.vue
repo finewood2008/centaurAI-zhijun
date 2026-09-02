@@ -62,7 +62,7 @@ const ICONS = {
   max-width: min(420px, 90vw);
   padding: 9px 14px;
   border-radius: var(--ws-radius, 6px);
-  background: var(--ws-text-primary-color, #303133);
+  background: var(--ws-text-primary-color, #1d211f);
   color: var(--ws-white, #fff);
   font-size: 13px;
   box-shadow: var(--ws-shadow-md, 0 6px 20px rgba(0, 0, 0, 0.1));
@@ -74,13 +74,13 @@ const ICONS = {
 }
 
 .ws-toast--success .ws-toast__icon {
-  color: var(--ws-success-color, #12cd3d);
+  color: var(--ws-success-color, #4a7c59);
 }
 .ws-toast--error .ws-toast__icon {
-  color: var(--ws-danger-color, #ff4918);
+  color: var(--ws-danger-color, #a6452e);
 }
 .ws-toast--info .ws-toast__icon {
-  color: var(--ws-main-color, #1b99ff);
+  color: var(--ws-main-color, #a6452e);
 }
 
 .ws-toast__message {

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-// 今日提醒条：安静、最多 3 条、每条都说明「为何现在」。去回访 / 稍后 / 不再提醒。
-import { onMounted, ref } from 'vue'
+// 今日提醒条：安静。默认只露一条，其余折在「还有 N 条」里；每条都说明「为何现在」。
+// 动作：去回访 / 去看看 / 一起看看 · 稍后 · 不再提醒。没有「检查」按钮——扫描由后台每小时做。
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BellRing } from 'lucide-vue-next'
 import { createConversation, dismissNudge, getNudgesToday, scanNudges, silenceNudge, type Nudge } from '@/services/api'
+import { nudgeKindLabel } from '@/shared/labels'
 import { useToast } from '@/composables/useToast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
@@ -12,8 +13,11 @@ const toast = useToast()
 
 const items = ref<Nudge[]>([])
 const busy = ref<Record<string, boolean>>({})
-const scanning = ref(false)
+const expanded = ref(false)
 const silenceTarget = ref<Nudge | null>(null)
+
+const visible = computed(() => (expanded.value ? items.value : items.value.slice(0, 1)))
+const hiddenCount = computed(() => Math.max(0, items.value.length - visible.value.length))
 
 async function load() {
   try {
@@ -25,52 +29,62 @@ async function load() {
 }
 
 async function scan() {
-  scanning.value = true
   try {
-    const res = await scanNudges()
+    await scanNudges()
     await load()
-    toast({ type: 'info', message: res.created ? `新增 ${res.created} 条提醒` : '暂时没有到期的回访' })
-  } catch (err) {
-    toast({ type: 'error', message: err instanceof Error ? err.message : '检查提醒失败' })
-  } finally {
-    scanning.value = false
-  }
-}
-
-async function goReview(n: Nudge) {
-  const decisionId = n.triggerRef?.decisionId
-  if (!decisionId) return
-  busy.value[n.id] = true
-  try {
-    const conv = await createConversation({ mode: 'review', decisionId })
-    items.value = items.value.filter((i) => i.id !== n.id)
-    router.push(`/c/${encodeURIComponent(conv.id)}`)
-  } catch (err) {
-    toast({ type: 'error', message: err instanceof Error ? err.message : '无法开始回访' })
-  } finally {
-    delete busy.value[n.id]
-  }
-}
-
-async function goPrinciples(n: Nudge) {
-  // 原则与做法的张力：不开会话，去本体的「我的原则」看两条理解；提醒标为已处理。
-  busy.value[n.id] = true
-  try {
-    await dismissNudge(n.id)
-    items.value = items.value.filter((i) => i.id !== n.id)
   } catch {
-    // 标记失败不阻塞跳转
+    // 手动扫描失败不打扰
+  }
+}
+
+function remove(id: string) {
+  items.value = items.value.filter((i) => i.id !== id)
+}
+
+function primaryLabel(n: Nudge): string {
+  if (n.kind === 'review_due') return '去回访'
+  if (n.kind === 'weekly_review') return '一起看看'
+  return '去看看'
+}
+
+async function primary(n: Nudge) {
+  busy.value[n.id] = true
+  try {
+    if (n.kind === 'review_due') {
+      const decisionId = n.triggerRef?.decisionId
+      if (!decisionId) return
+      const conv = await createConversation({ mode: 'review', decisionId })
+      remove(n.id)
+      router.push(`/c/${encodeURIComponent(conv.id)}`)
+      return
+    }
+    // 其余三种：标记已处理后跳到对应的地方；标记失败不阻塞跳转
+    try {
+      await dismissNudge(n.id)
+    } catch {
+      /* 忽略 */
+    }
+    remove(n.id)
+    if (n.kind === 'principle_tension') {
+      router.push({ path: '/me', query: { section: 'principles' } })
+    } else if (n.kind === 'commitment_due') {
+      const claimId = n.triggerRef?.claimId
+      router.push({ path: '/me', query: { section: n.triggerRef?.section || 'matters', ...(claimId ? { claim: claimId } : {}) } })
+    } else if (n.kind === 'weekly_review') {
+      router.push({ path: '/', query: { say: `我们一起回顾一下这周吧。${n.triggerRef?.summary || ''}` } })
+    }
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error ? err.message : '无法打开' })
   } finally {
     delete busy.value[n.id]
   }
-  router.push({ path: '/me', query: { section: 'principles' } })
 }
 
 async function later(n: Nudge) {
   busy.value[n.id] = true
   try {
     await dismissNudge(n.id)
-    items.value = items.value.filter((i) => i.id !== n.id)
+    remove(n.id)
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '操作失败' })
   } finally {
@@ -84,7 +98,7 @@ async function confirmSilence() {
   busy.value[n.id] = true
   try {
     await silenceNudge(n.id)
-    items.value = items.value.filter((i) => i.id !== n.id)
+    remove(n.id)
     toast({ type: 'success', message: '这件事不会再提醒了' })
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '操作失败' })
@@ -94,44 +108,43 @@ async function confirmSilence() {
   }
 }
 
+function silenceMessage(n: Nudge | null): string {
+  if (!n) return ''
+  if (n.kind === 'principle_tension') return '这条原则与做法的张力以后不会再提醒；你仍可以在「我的本体」里自己核对。'
+  if (n.kind === 'weekly_review') return '以后周末不再邀请你回顾；想看的时候随时在对话里说一声。'
+  if (n.kind === 'commitment_due') return '这件事到期后不会再提醒；它仍留在「我的本体 · 手头的事」里。'
+  return `「${n.triggerRef?.title || '这个判断'}」以后不会再出现在提醒里，你仍可以在判断页手动回访。`
+}
+
 onMounted(() => {
   void load()
 })
 
-defineExpose({ reload: load })
+defineExpose({ reload: load, scan })
 </script>
 
 <template>
-  <div class="zj-nudges">
-    <div v-if="items.length" class="zj-nudges__list" role="region" aria-label="今日提醒">
-      <article v-for="n in items" :key="n.id" class="zj-nudge">
-        <BellRing :size="16" aria-hidden="true" class="zj-nudge__icon" />
-        <div class="zj-nudge__body">
-          <p class="zj-nudge__msg" :class="{ 'is-question': n.kind === 'principle_tension' }">{{ n.message }}</p>
-          <p class="zj-nudge__why">为何现在：{{ n.whyNow }}</p>
-        </div>
-        <div class="zj-nudge__actions">
-          <button
-            v-if="n.kind === 'principle_tension'"
-            type="button"
-            class="zj-nudge__btn is-primary"
-            :disabled="busy[n.id]"
-            @click="goPrinciples(n)"
-          >去看看</button>
-          <button v-else type="button" class="zj-nudge__btn is-primary" :disabled="busy[n.id]" @click="goReview(n)">去回访</button>
-          <button type="button" class="zj-nudge__btn" :disabled="busy[n.id]" @click="later(n)">稍后</button>
-          <button type="button" class="zj-nudge__btn" :disabled="busy[n.id]" @click="silenceTarget = n">不再提醒</button>
-        </div>
-      </article>
-    </div>
-    <button type="button" class="zj-nudges__scan" :disabled="scanning" @click="scan">{{ scanning ? '检查中…' : '检查提醒' }}</button>
+  <div v-if="items.length" class="zj-nudges" role="region" aria-label="今日提醒">
+    <article v-for="n in visible" :key="n.id" class="zj-nudge" :class="`is-${n.kind}`">
+      <span class="zj-nudge__mark" aria-hidden="true" />
+      <div class="zj-nudge__body">
+        <span class="zj-seal zj-seal--muted zj-nudge__kind">{{ nudgeKindLabel(n.kind) }}</span>
+        <p class="zj-nudge__msg">{{ n.message }}</p>
+        <p class="zj-nudge__why">{{ n.whyNow }}</p>
+      </div>
+      <div class="zj-nudge__actions">
+        <button type="button" class="zj-nudge__btn is-primary" :disabled="busy[n.id]" @click="primary(n)">{{ primaryLabel(n) }}</button>
+        <button type="button" class="zj-nudge__btn" :disabled="busy[n.id]" @click="later(n)">稍后</button>
+        <button type="button" class="zj-nudge__btn is-quiet" :disabled="busy[n.id]" @click="silenceTarget = n">不再提醒</button>
+      </div>
+    </article>
+    <button v-if="hiddenCount > 0" type="button" class="zj-nudges__more" @click="expanded = true">还有 {{ hiddenCount }} 条</button>
+    <button v-else-if="expanded && items.length > 1" type="button" class="zj-nudges__more" @click="expanded = false">收起</button>
 
     <ConfirmDialog
       :open="!!silenceTarget"
       title="不再提醒这件事？"
-      :message="silenceTarget?.kind === 'principle_tension'
-        ? '这条原则与做法的张力以后不会再提醒；你仍可以在「我的本体」里自己核对。'
-        : `「${silenceTarget?.triggerRef?.title || '这个判断'}」以后不会再出现在提醒里，你仍可以在判断页手动回访。`"
+      :message="silenceMessage(silenceTarget)"
       confirm-text="不再提醒"
       @confirm="confirmSilence"
       @cancel="silenceTarget = null"
@@ -141,43 +154,41 @@ defineExpose({ reload: load })
 
 <style scoped>
 .zj-nudges {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-.zj-nudges__list {
   display: grid;
-  gap: 8px;
-  width: 100%;
+  gap: 6px;
 }
 .zj-nudge {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 12px;
   align-items: center;
   padding: 10px 14px;
-  border: 1px solid var(--ws-border-color-2, #e2ded4);
-  border-left: 3px solid var(--ws-primary-color, #a6452e);
+  border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-card-bg, #fff);
 }
-.zj-nudge__icon {
-  color: var(--ws-primary-color, #a6452e);
+.zj-nudge__mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ws-primary-color, #a6452e);
+}
+.zj-nudge__kind {
+  margin-bottom: 4px;
 }
 .zj-nudge__msg {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--ws-text-primary-color, #1d211f);
 }
-.zj-nudge__msg.is-question {
+.zj-nudge.is-principle_tension .zj-nudge__msg,
+.zj-nudge.is-weekly_review .zj-nudge__msg {
   font-family: var(--ws-font-display, serif);
-  font-size: 14px;
 }
 .zj-nudge__why {
   margin: 2px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-nudge__actions {
@@ -186,10 +197,10 @@ defineExpose({ reload: load })
   gap: 6px;
 }
 .zj-nudge__btn {
-  padding: 4px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: 999px;
-  background: var(--ws-body-bg, #fffcf6);
+  background: transparent;
   color: var(--ws-text-color, #3c403d);
   font-family: inherit;
   font-size: 12px;
@@ -199,19 +210,27 @@ defineExpose({ reload: load })
   border-color: var(--ws-primary-color, #a6452e);
   color: var(--ws-primary-color, #a6452e);
 }
+.zj-nudge__btn.is-quiet {
+  border-color: transparent;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-nudge__btn:hover:not(:disabled) {
+  border-color: var(--ws-primary-color, #a6452e);
+}
 .zj-nudge__btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
-.zj-nudges__scan {
+.zj-nudges__more {
+  justify-self: end;
   border: none;
   background: transparent;
-  color: var(--ws-text-placeholder-color, #a3a69f);
+  color: var(--ws-text-secondary-color, #686b66);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
-.zj-nudges__scan:hover {
+.zj-nudges__more:hover {
   color: var(--ws-primary-color, #a6452e);
 }
 @media (max-width: 767px) {

@@ -50,22 +50,22 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--ws-danger-color, #ff4918);
+  color: var(--ws-danger-color, #a6452e);
 }
 
 .ws-error__message {
   font-size: 13px;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   max-width: 480px;
   line-height: 1.6;
 }
 
 .ws-error__retry {
   padding: 6px 14px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius, 6px);
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-primary-color, #0077ff);
+  color: var(--ws-primary-color, #a6452e);
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -75,6 +75,6 @@ const emit = defineEmits<{ (e: 'retry'): void }>()
     color 0.15s;
 }
 .ws-error__retry:hover {
-  border-color: var(--ws-primary-color, #0077ff);
+  border-color: var(--ws-primary-color, #a6452e);
 }
 </style>

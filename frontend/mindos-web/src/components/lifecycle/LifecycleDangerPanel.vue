@@ -161,12 +161,12 @@ function close() {
 .lifecycle-danger--compact .lifecycle-danger__buttons { margin-top: 0; }
 .lifecycle-danger--compact .lifecycle-danger__preview { width: min(560px, 100%); margin-top: 12px; padding: 12px; border: 1px solid #f3c2c2; border-radius: 6px; background: #fff8f8; }
 .lifecycle-danger h2, .lifecycle-danger h3 { margin: 0 0 8px; font-size: 14px; color: #9b2525; }
-.lifecycle-danger p { margin: 6px 0; font-size: 13px; color: #606266; }
+.lifecycle-danger p { margin: 6px 0; font-size: 13px; color: #3c403d; }
 .lifecycle-danger__buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .lifecycle-danger__preview { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f3c2c2; }
 .lifecycle-danger__dependency { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; align-items: center; margin-top: 8px; padding: 8px; border: 1px solid #f1dddd; border-radius: 6px; background: #fff; font-size: 13px; }
 .lifecycle-danger__dependency strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lifecycle-danger__dependency span { color: #909399; font-size: 12px; }
-.lifecycle-danger__dependency select, .lifecycle-danger__dependency input { grid-column: 1 / -1; min-height: 30px; padding: 4px 7px; border: 1px solid #dcdfe6; border-radius: 5px; font: inherit; }
+.lifecycle-danger__dependency span { color: #686b66; font-size: 12px; }
+.lifecycle-danger__dependency select, .lifecycle-danger__dependency input { grid-column: 1 / -1; min-height: 30px; padding: 4px 7px; border: 1px solid #d8d3c8; border-radius: 5px; font: inherit; }
 .lifecycle-danger__error { color: #c43d3d !important; }.lifecycle-danger__hint { color: #a66a1f !important; }
 </style>

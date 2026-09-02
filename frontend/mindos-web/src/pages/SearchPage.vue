@@ -325,18 +325,18 @@ onBeforeUnmount(() => searchGate.invalidate())
   margin-bottom: 20px;
   padding: 0 14px;
   height: 42px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
   transition: border-color 0.15s;
 }
 .ws-search:focus-within {
-  border-color: var(--ws-input-focus-border-color, #1b99ff);
+  border-color: var(--ws-input-focus-border-color, #a6452e);
 }
 
 .ws-search__icon {
   flex-shrink: 0;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .ws-search__input {
@@ -345,12 +345,12 @@ onBeforeUnmount(() => searchGate.invalidate())
   border: none;
   outline: none;
   background: transparent;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   font-family: inherit;
   font-size: 14px;
 }
 .ws-search__input::placeholder {
-  color: var(--ws-text-placeholder-color, #c0c4cc);
+  color: var(--ws-text-placeholder-color, #a3a69f);
 }
 
 .ws-result {
@@ -367,10 +367,10 @@ onBeforeUnmount(() => searchGate.invalidate())
 
 .ws-tab {
   padding: 6px 14px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: 999px;
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   font-family: inherit;
   font-size: 12px;
   cursor: pointer;
@@ -380,31 +380,31 @@ onBeforeUnmount(() => searchGate.invalidate())
     background 0.15s;
 }
 .ws-tab:hover {
-  border-color: var(--ws-primary-color, #0077ff);
-  color: var(--ws-text-primary-color, #303133);
+  border-color: var(--ws-primary-color, #a6452e);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .ws-tab.is-active {
-  border-color: var(--ws-primary-color, #0077ff);
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
-  color: var(--ws-primary-color, #0077ff);
+  border-color: var(--ws-primary-color, #a6452e);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
+  color: var(--ws-primary-color, #a6452e);
   font-weight: 600;
 }
 
 .ws-total {
   margin-bottom: 14px;
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 /* CLIP 未就绪时的显式降级提示（区别于“未命中”） */
 .ws-visual-hint {
   margin: -6px 0 14px;
   padding: 8px 12px;
-  border: 1px dashed var(--ws-border-color, #dcdfe6);
+  border: 1px dashed var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.03));
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.03));
   font-size: 12px;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 /* 视觉命中（图片语义） */
@@ -420,10 +420,10 @@ onBeforeUnmount(() => searchGate.invalidate())
   gap: 14px;
   width: 100%;
   padding: 10px 16px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -432,7 +432,7 @@ onBeforeUnmount(() => searchGate.invalidate())
     background 0.15s;
 }
 .ws-visual-card:hover {
-  border-color: var(--ws-primary-color, #0077ff);
+  border-color: var(--ws-primary-color, #a6452e);
   background: var(--ws-edit-color, rgba(0, 119, 255, 0.04));
 }
 
@@ -475,11 +475,11 @@ onBeforeUnmount(() => searchGate.invalidate())
 .ws-visual-card__snippet {
   font-size: 12px;
   line-height: 1.6;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   overflow-wrap: anywhere;
 }
 .ws-visual-card__snippet--empty {
-  color: var(--ws-text-placeholder-color, #c0c4cc);
+  color: var(--ws-text-placeholder-color, #a3a69f);
   font-style: normal;
 }
 
@@ -491,10 +491,10 @@ onBeforeUnmount(() => searchGate.invalidate())
   flex-shrink: 0;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
-  color: var(--ws-main-color, #1b99ff);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
+  color: var(--ws-main-color, #a6452e);
 }
 
 /* 结果区 */
@@ -504,7 +504,7 @@ onBeforeUnmount(() => searchGate.invalidate())
 .ws-section h2 {
   margin: 0 0 10px;
   font-size: 14px;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 
 .ws-results {
@@ -520,10 +520,10 @@ onBeforeUnmount(() => searchGate.invalidate())
   gap: 6px;
   width: 100%;
   padding: 14px 16px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -532,7 +532,7 @@ onBeforeUnmount(() => searchGate.invalidate())
     background 0.15s;
 }
 .ws-result-card:hover {
-  border-color: var(--ws-primary-color, #0077ff);
+  border-color: var(--ws-primary-color, #a6452e);
   background: var(--ws-edit-color, rgba(0, 119, 255, 0.04));
 }
 
@@ -541,7 +541,7 @@ onBeforeUnmount(() => searchGate.invalidate())
   align-items: stretch;
   gap: 12px;
   padding: 12px 14px;
-  border: 1px solid var(--ws-border-color, #dcdfe6);
+  border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
 }
@@ -555,7 +555,7 @@ onBeforeUnmount(() => searchGate.invalidate())
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--ws-text-primary-color, #303133);
+  color: var(--ws-text-primary-color, #1d211f);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -563,7 +563,7 @@ onBeforeUnmount(() => searchGate.invalidate())
 .ws-unavailable-card__reason {
   font-size: 12px;
   line-height: 1.6;
-  color: var(--ws-text-secondary-color, #909399);
+  color: var(--ws-text-secondary-color, #686b66);
   overflow-wrap: anywhere;
 }
 .ws-unavailable-card__actions {
@@ -586,21 +586,21 @@ onBeforeUnmount(() => searchGate.invalidate())
 .ws-kind {
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 .ws-kind--knowledge {
-  background: var(--ws-edit-color, rgba(0, 119, 255, 0.06));
-  color: var(--ws-main-color, #1b99ff);
+  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
+  color: var(--ws-main-color, #a6452e);
 }
 .ws-kind--material {
   background: var(--ws-success-color-bd, rgba(18, 205, 61, 0.06));
-  color: var(--ws-success-color, #12cd3d);
+  color: var(--ws-success-color, #4a7c59);
 }
 
 .ws-result-card__score {
-  font-size: 11px;
-  color: var(--ws-text-secondary-color, #909399);
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
 }
 
 .ws-result-card__title {
@@ -610,7 +610,7 @@ onBeforeUnmount(() => searchGate.invalidate())
 .ws-result-card__snippet {
   font-size: 12px;
   line-height: 1.6;
-  color: var(--ws-text-color, #606266);
+  color: var(--ws-text-color, #3c403d);
   overflow-wrap: anywhere;
 }
 .ws-result-card__snippet :deep(mark) {

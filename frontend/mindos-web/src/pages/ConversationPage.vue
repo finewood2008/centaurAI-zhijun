@@ -11,6 +11,7 @@ import {
   deleteConversation,
   discardDecisionDraft,
   getConversation,
+  getDecisionDraft,
   getInbox,
   getOntologyStats,
   getZhijunStatus,
@@ -40,6 +41,7 @@ import { streamPost } from '@/services/sse'
 import { useToast } from '@/composables/useToast'
 import { createSessionGate } from '@/composables/sessionGate'
 import { reviewNote } from '@/shared/ontology'
+import { channelShort } from '@/shared/model'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
 import ClaimCandidateChip from '@/components/conversation/ClaimCandidateChip.vue'
 import ProvenanceStrip from '@/components/conversation/ProvenanceStrip.vue'
@@ -87,13 +89,17 @@ const draft = ref<DecisionDraft | null>(null)
 const draftChanged = ref<string[]>([])
 const draftBusy = ref(false)
 const draftError = ref('')
+// 真实模型下草稿是后台任务：SSE 只说「排队了」，这里轮询直到整理好（每 3 秒一次，最多 90 秒）
+const draftPending = ref(false)
+const draftTimedOut = ref(false)
+const draftPollGate = createSessionGate()
 const decision = ref<GrowthDecision | null>(null)
 const outcomeBusy = ref(false)
 const outcomeError = ref('')
 
 const isReview = computed(() => current.value?.mode === 'review')
 const isOnboarding = computed(() => current.value?.mode === 'onboarding')
-const showDraftPanel = computed(() => !!draft.value && draft.value.status !== 'discarded')
+const showDraftPanel = computed(() => (!!draft.value && draft.value.status !== 'discarded') || draftPending.value || draftTimedOut.value)
 const showSidePanel = computed(() => showDraftPanel.value || (isReview.value && !!decision.value) || isOnboarding.value)
 
 // ---- 建档：一边聊，本体图一边亮起来
@@ -220,6 +226,39 @@ async function onDiscardDraft() {
   }
 }
 
+async function pollDraft(conversationId: string) {
+  const session = draftPollGate.next()
+  const previousRevision = draft.value?.revision ?? 0
+  for (let i = 0; i < 30; i += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 3000))
+    if (!draftPollGate.isCurrent(session)) return
+    try {
+      const got = await getDecisionDraft(conversationId)
+      if (!draftPollGate.isCurrent(session)) return
+      if (got && got.fields && got.status !== 'discarded' && got.revision > previousRevision) {
+        draft.value = got
+        draftChanged.value = []
+        draftError.value = ''
+        draftPending.value = false
+        draftTimedOut.value = false
+        return
+      }
+    } catch {
+      // 还没生成（404）或暂时不可用：继续等
+    }
+  }
+  if (!draftPollGate.isCurrent(session)) return
+  draftPending.value = false
+  draftTimedOut.value = true
+}
+
+function retryDraft() {
+  if (!current.value) return
+  draftTimedOut.value = false
+  draftPending.value = true
+  void pollDraft(current.value.id)
+}
+
 async function onRecordOutcome(payload: { result: string; notes: string }) {
   if (!current.value || outcomeBusy.value) return
   outcomeBusy.value = true
@@ -260,11 +299,34 @@ const headerTitle = computed(() => {
   return '对话'
 })
 
-const statusLine = computed(() => {
-  if (!status.value) return ''
-  const channel = status.value.provider === 'fake' ? '演示' : status.value.external ? '外部模型' : '本地模型'
-  return `${channel} · ${status.value.model}`
-})
+const statusLine = computed(() => channelShort(status.value))
+// 后台还没整理完的事（抽取 / 草稿 / 摘要），页头只用一句淡字提示
+const pendingJobs = computed(() => status.value?.pendingJobs ?? 0)
+
+// ---- 空白态的三张起手卡：点一下把话头放进输入框，不自动发送
+interface Starter { title: string; desc: string; text: string; deliberate?: boolean }
+const STARTERS: Starter[] = [
+  { title: '我在考虑一件事', desc: '把选项、倾向和把握说清楚，知君帮你整理成一条判断', text: '我在考虑一件事：', deliberate: true },
+  { title: '最近发生了……', desc: '说说这周让你在意的事，知君会把它和你以前说过的连起来', text: '最近发生了一件事，' },
+  { title: '你怎么看我？', desc: '让知君用它目前对你的认识说说看，不对的地方你直接改', text: '基于你目前对我的认识，说说你眼中的我，哪些地方你其实不确定？' },
+]
+function useStarter(s: Starter) {
+  composerRef.value?.setDeliberate(!!s.deliberate)
+  composerRef.value?.setText(s.text)
+}
+
+// 从提醒条 / 其它页带着话头过来：?say=… → 放进输入框，然后把 query 清掉
+watch(
+  () => route.query.say,
+  (v) => {
+    if (typeof v !== 'string' || !v) return
+    void nextTick(() => {
+      composerRef.value?.setText(v)
+      void router.replace({ path: route.path, query: {} })
+    })
+  },
+  { immediate: true },
+)
 
 function friendlyError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
@@ -276,12 +338,16 @@ function friendlyError(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback
 }
 
+let statusTimer: number | null = null
 async function loadStatus() {
   try {
     status.value = await getZhijunStatus()
   } catch {
     status.value = null
   }
+  // 后台还在整理时每 8 秒看一眼，整理完就停
+  if (statusTimer) window.clearTimeout(statusTimer)
+  statusTimer = (status.value?.pendingJobs ?? 0) > 0 ? window.setTimeout(() => void loadStatus(), 8000) : null
 }
 
 async function loadStats() {
@@ -330,6 +396,9 @@ async function loadConversation(id: string) {
     draft.value = detail.decisionDraft && detail.decisionDraft.status !== 'discarded' ? detail.decisionDraft : null
     draftChanged.value = []
     draftError.value = ''
+    draftPending.value = false
+    draftTimedOut.value = false
+    draftPollGate.invalidate()
     decision.value = detail.decision ?? null
     outcomeError.value = ''
     if (detail.conversation.mode === 'onboarding') {
@@ -362,6 +431,9 @@ function resetToLanding() {
   draft.value = null
   draftChanged.value = []
   draftError.value = ''
+  draftPending.value = false
+  draftTimedOut.value = false
+  draftPollGate.invalidate()
   decision.value = null
   outcomeError.value = ''
   onboardingStep.value = null
@@ -497,11 +569,20 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
       {
         decision_draft: (d) => {
           const e = d as DecisionDraftEvent
+          if (e.state === 'queued' || !e.fields || !e.draftId) {
+            draftPending.value = true
+            draftTimedOut.value = false
+            void pollDraft(conv.id)
+            return
+          }
+          draftPending.value = false
+          draftTimedOut.value = false
+          draftPollGate.invalidate()
           draft.value = {
             id: e.draftId,
             conversationId: conv.id,
             messageId: assistant.id.startsWith('local-') ? null : assistant.id,
-            revision: e.revision,
+            revision: e.revision ?? 1,
             status: e.status,
             decisionId: null,
             fields: e.fields,
@@ -542,6 +623,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           const e = d as MessageDoneEvent
           assistant.status = e.status
           if (e.messageId) assistant.id = e.messageId
+          void loadStatus()
         },
         error: (d) => {
           const e = d as StreamErrorEvent
@@ -646,6 +728,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   loadGate.invalidate()
   pollGate.invalidate()
+  draftPollGate.invalidate()
+  if (statusTimer) window.clearTimeout(statusTimer)
   abortController?.abort()
 })
 </script>
@@ -675,10 +759,9 @@ onBeforeUnmount(() => {
           <h1 class="zj-page__title">{{ headerTitle }}</h1>
           <p class="zj-page__status">
             <span v-if="statusLine">{{ statusLine }}</span>
-            <span v-if="status?.provider === 'fake'" class="zj-page__badge">演示模型</span>
-            <span v-if="isReview" class="zj-page__badge">回访</span>
-            <span v-if="status?.extraction === 'beta'" class="zj-page__badge">抽取 beta</span>
-            <span v-if="status && !status.workerRunning" class="zj-page__badge is-warn">抽取暂停</span>
+            <span v-if="pendingJobs > 0" class="zj-page__pending">· 还在整理 {{ pendingJobs }} 件事</span>
+            <span v-if="isReview" class="zj-seal zj-seal--accent">回访</span>
+            <span v-if="status && !status.workerRunning" class="zj-seal zj-seal--warning" title="知君暂时不会从对话里提出新的理解">整理暂停</span>
           </p>
         </div>
       </header>
@@ -699,7 +782,13 @@ onBeforeUnmount(() => {
 
         <div v-else-if="!currentId && !messages.length" class="zj-blank">
           <p class="zj-blank__lead">想聊什么，或者正在考虑什么决定？</p>
-          <p class="zj-blank__hint">知君会基于「我的本体」里已确认的理解来回应，并标出哪些是你说过的、哪些只是它的推测。</p>
+          <div class="zj-blank__cards" role="group" aria-label="起个头">
+            <button v-for="s in STARTERS" :key="s.title" type="button" class="zj-blank__card" @click="useStarter(s)">
+              <span class="zj-blank__card-title">{{ s.title }}</span>
+              <span class="zj-blank__card-desc">{{ s.desc }}</span>
+            </button>
+          </div>
+          <p class="zj-blank__hint">知君会基于你确认过的理解来回应，并标出哪些是你说过的、哪些只是它的推测。</p>
         </div>
 
         <div v-if="messagesLoading" class="loading-state">正在打开会话…</div>
@@ -780,13 +869,16 @@ onBeforeUnmount(() => {
           @record="onRecordOutcome"
         />
         <LiveObjectPanel
-          v-if="showDraftPanel && draft"
-          :draft="draft"
+          v-if="showDraftPanel"
+          :draft="draft && draft.status !== 'discarded' ? draft : null"
           :changed-fields="draftChanged"
           :busy="draftBusy"
           :error="draftError"
+          :pending="draftPending"
+          :timed-out="draftTimedOut"
           @confirm="onConfirmDraft"
           @discard="onDiscardDraft"
+          @retry="retryDraft"
         />
       </div>
       </div>
@@ -821,7 +913,7 @@ onBeforeUnmount(() => {
   padding: 12px;
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-page__side-toggle {
   display: none;
@@ -848,9 +940,13 @@ onBeforeUnmount(() => {
 .zj-page__title {
   margin: 0;
   font-family: var(--ws-font-display, serif);
-  font-size: 22px;
-  font-weight: 700;
+  font-size: var(--ws-display-2, 20px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-page__pending {
+  color: var(--ws-muted-color, #8a8d88);
 }
 .zj-page__status {
   display: flex;
@@ -860,15 +956,6 @@ onBeforeUnmount(() => {
   margin: 4px 0 0;
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
-}
-.zj-page__badge {
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid var(--ws-border-color, #d8d3c8);
-}
-.zj-page__badge.is-warn {
-  color: var(--ws-warning-color, #b8862b);
-  border-color: var(--ws-warning-color, #b8862b);
 }
 .zj-page__nudges {
   margin: 0 4px 10px;
@@ -900,13 +987,13 @@ onBeforeUnmount(() => {
   padding: 14px;
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-onb__title {
   margin: 0 0 8px;
   font-family: var(--ws-font-display, serif);
-  font-size: 15px;
-  font-weight: 700;
+  font-size: var(--ws-display-3, 16px);
+  font-weight: 600;
   color: var(--ws-text-primary-color, #1d211f);
 }
 .zj-onb__counts {
@@ -928,7 +1015,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.3;
   text-align: center;
   color: var(--ws-text-secondary-color, #686b66);
@@ -955,7 +1042,7 @@ onBeforeUnmount(() => {
 }
 .zj-onb__hint {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-onb__done {
@@ -1003,13 +1090,14 @@ onBeforeUnmount(() => {
   padding: 28px 32px;
   border: 1px solid var(--ws-border-color-2, #e2ded4);
   border-radius: var(--ws-radius-lg, 8px);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
   color: var(--ws-primary-color, #a6452e);
 }
 .zj-intro h2 {
   margin: 0;
   font-family: var(--ws-font-display, serif);
-  font-size: 24px;
+  font-size: var(--ws-display-1, 26px);
+  font-weight: 600;
   color: var(--ws-text-primary-color, #1d211f);
 }
 .zj-intro p {
@@ -1041,6 +1129,46 @@ onBeforeUnmount(() => {
   font-size: 13px;
   line-height: 1.7;
   color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-blank__cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0 14px;
+  text-align: left;
+}
+.zj-blank__card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--ws-border-color-3, #ebe7de);
+  border-radius: var(--ws-radius-lg, 8px);
+  background: var(--ws-card-bg, #fff);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.zj-blank__card:hover {
+  border-color: var(--ws-primary-color, #a6452e);
+  transform: translateY(-1px);
+}
+.zj-blank__card-title {
+  font-family: var(--ws-font-display, serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-blank__card-desc {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+@media (max-width: 767px) {
+  .zj-blank__cards {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 1199px) {

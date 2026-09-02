@@ -56,11 +56,11 @@ function onClick(e: MouseEvent) {
   padding: 14px 18px;
   border-radius: var(--ws-radius-lg, 8px);
   border: 1px solid var(--ws-border-color-3, #ebe7de);
-  background: var(--ws-body-bg, #fffcf6);
+  background: var(--ws-card-bg, #fff);
 }
 .zj-msg--user {
   margin-left: auto;
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
   border-color: var(--ws-border-color-2, #e2ded4);
 }
 .zj-msg--assistant {
@@ -137,14 +137,14 @@ function onClick(e: MouseEvent) {
 .zj-prose code {
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
   font-size: 0.92em;
 }
 .zj-prose pre {
   overflow-x: auto;
   padding: 10px 12px;
   border-radius: var(--ws-radius, 6px);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
 }
 .zj-prose blockquote {
   margin: 0 0 0.6em;
@@ -155,34 +155,29 @@ function onClick(e: MouseEvent) {
 .layer-badge {
   display: inline-block;
   margin: 0 3px 0 0;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid transparent;
+  padding: 0 6px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  background: transparent;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.5;
+  letter-spacing: 0.02em;
   vertical-align: 1px;
   white-space: nowrap;
 }
 .layer-badge--told {
-  background: var(--ws-success-color-bd, rgba(74, 124, 89, 0.08));
-  color: var(--ws-success-color, #4a7c59);
-  border-color: rgba(74, 124, 89, 0.25);
+  color: var(--ws-text-primary-color, #1d211f);
 }
 .layer-badge--material {
-  background: var(--ws-edit-color, rgba(166, 69, 46, 0.06));
-  color: var(--ws-text-color, #3c403d);
-  border-color: var(--ws-border-color, #d8d3c8);
+  color: var(--ws-success-color, #4a7c59);
 }
 .layer-badge--guess {
-  background: var(--ws-warning-color-bd, rgba(184, 134, 43, 0.08));
-  color: var(--ws-warning-color, #b8862b);
-  border-color: rgba(184, 134, 43, 0.3);
+  color: var(--ws-primary-color, #a6452e);
+  border-style: dashed;
 }
 .layer-badge--view {
-  background: transparent;
   color: var(--ws-primary-color, #a6452e);
-  border-color: var(--ws-primary-color, #a6452e);
 }
 .cite-chip {
   display: inline-block;
@@ -190,7 +185,7 @@ function onClick(e: MouseEvent) {
   padding: 0 6px;
   border-radius: 999px;
   border: 1px solid var(--ws-border-color, #d8d3c8);
-  background: var(--ws-card-bg, #f3efe6);
+  background: var(--ws-surface-2, #fbf8f1);
   color: var(--ws-text-color, #3c403d);
   font-size: 12px;
   line-height: 1.5;
