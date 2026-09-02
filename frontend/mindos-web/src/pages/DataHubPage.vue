@@ -1,12 +1,82 @@
 <script setup lang="ts">
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
-import { ref } from 'vue'
-import { FileText, FolderOpen, Search, Settings, Trash2, ShieldCheck } from 'lucide-vue-next'
-import { getProjection, type OntologyProjection } from '@/services/api'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { FileText, FolderOpen, Search, Settings, Trash2, ShieldCheck, AlertTriangle } from 'lucide-vue-next'
+import { exportOntology, getProjection, purgeOntology, type OntologyProjection, type Section } from '@/services/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { useToast } from '@/composables/useToast'
+import { SECTIONS } from '@/shared/ontology'
+import { PURGE_PHRASE, exportFileName, purgeConfirmed } from '@/shared/proposals'
 
 const toast = useToast()
+const router = useRouter()
+
+// ---- 导出（JSON 下载）
+const exporting = ref(false)
+const exportSections = ref<Section[]>([])
+const exportOpen = ref(false)
+
+function downloadJson(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+async function doExport(sections?: Section[]) {
+  exporting.value = true
+  try {
+    const data = await exportOntology({ sections })
+    downloadJson(data, exportFileName())
+    toast({ type: 'success', message: `已导出 ${data.claims.length} 条已确认理解、${data.entities.length} 个实体` })
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error ? err.message : '导出失败' })
+  } finally {
+    exporting.value = false
+  }
+}
+
+function toggleSection(key: Section) {
+  const idx = exportSections.value.indexOf(key)
+  if (idx >= 0) exportSections.value.splice(idx, 1)
+  else exportSections.value.push(key)
+}
+
+// ---- 全量删除（需逐字输入确认词）
+const purgeOpen = ref(false)
+const purgeInput = ref('')
+const purgeConversations = ref(true)
+const purging = ref(false)
+const purgeReady = computed(() => purgeConfirmed(purgeInput.value))
+
+function openPurge() {
+  purgeInput.value = ''
+  purgeConversations.value = true
+  purgeOpen.value = true
+}
+
+async function doPurge() {
+  if (!purgeReady.value || purging.value) return
+  purging.value = true
+  try {
+    const r = await purgeOntology({ confirm: purgeInput.value.trim(), includeConversations: purgeConversations.value })
+    purgeOpen.value = false
+    const conv = r.conversations ? `，${r.conversations.conversations} 段对话` : ''
+    toast({ type: 'success', message: `已删除 ${r.ontology.claims} 条理解、${r.ontology.entities} 个实体${conv}` })
+    router.push('/')
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error ? err.message : '删除失败' })
+  } finally {
+    purging.value = false
+  }
+}
 
 const cards = [
   { to: '/materials', icon: FolderOpen, title: '原材料', desc: '导入文档、图片、音频；查看处理状态与原件出处' },
@@ -56,12 +126,51 @@ async function toggleProjection() {
       <h2><ShieldCheck :size="18" aria-hidden="true" />边界</h2>
       <p>原件不出设备。调用外部模型时，只发送完成当前回答所必需的问题和上下文片段；每一轮的出处条里都能看到送出了哪些理解和资料片段。标为敏感或受限的理解永远不会外发。</p>
       <p>下面是知君「可以带走」的那部分——只包含你已确认、且允许导出的理解。这也是其他 Agent 能读到的全部。</p>
-      <BaseButton size="sm" :loading="projectionLoading" @click="toggleProjection">{{ projectionOpen ? '收起' : '查看可导出的认识' }}</BaseButton>
+      <div class="zj-hub__actions">
+        <BaseButton size="sm" :loading="projectionLoading" @click="toggleProjection">{{ projectionOpen ? '收起' : '查看可导出的认识' }}</BaseButton>
+        <BaseButton size="sm" :loading="exporting" @click="doExport()">导出全部认识（JSON）</BaseButton>
+        <BaseButton size="sm" variant="text" @click="exportOpen = !exportOpen">{{ exportOpen ? '收起分区' : '按分区导出' }}</BaseButton>
+      </div>
+      <div v-if="exportOpen" class="zj-hub__sections">
+        <label v-for="s in SECTIONS" :key="s.key" class="zj-hub__check">
+          <input type="checkbox" :checked="exportSections.includes(s.key)" @change="toggleSection(s.key)" />
+          <span>{{ s.label }}</span>
+        </label>
+        <BaseButton size="sm" :disabled="!exportSections.length" :loading="exporting" @click="doExport([...exportSections])">导出所选分区</BaseButton>
+      </div>
       <div v-if="projectionOpen && projection" class="zj-hub__projection">
         <p class="zj-hub__projection-meta">生成于 {{ projection.generatedAt }}</p>
         <pre>{{ projection.exportableMarkdown || '（还没有可导出的已确认理解）' }}</pre>
       </div>
     </section>
+
+    <section class="zj-hub__danger">
+      <h2><AlertTriangle :size="18" aria-hidden="true" />删除全部记忆</h2>
+      <p>删除知君对你的全部认识（实体、理解、证据、复核记录），可选同时删除对话记录。资料原件与索引不受影响。此操作不可恢复，建议先导出。</p>
+      <BaseButton size="sm" variant="danger" @click="openPurge">删除全部记忆</BaseButton>
+    </section>
+
+    <ConfirmDialog
+      :open="purgeOpen"
+      title="真的要删除全部记忆？"
+      confirm-text="删除"
+      danger
+      :loading="purging"
+      @confirm="doPurge"
+      @cancel="purgeOpen = false"
+    >
+      <p class="zj-hub__purge-text">这会清空知君对你的全部认识，不可恢复。请逐字输入「{{ PURGE_PHRASE }}」确认。</p>
+      <label class="zj-hub__purge-field">
+        <span class="zj-hub__purge-label">确认词</span>
+        <input v-model="purgeInput" type="text" class="zj-hub__purge-input" :placeholder="PURGE_PHRASE" autocomplete="off" />
+      </label>
+      <label class="zj-hub__check">
+        <input v-model="purgeConversations" type="checkbox" />
+        <span>同时删除对话记录</span>
+      </label>
+      <p v-if="purgeInput && !purgeReady" class="zj-hub__purge-hint">确认词不一致，需要逐字输入。</p>
+      <p v-else-if="!purgeReady" class="zj-hub__purge-hint">输入确认词后才能删除。</p>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -122,6 +231,85 @@ async function toggleProjection() {
   font-size: 14px;
   line-height: 1.8;
   color: var(--ws-text-color, #3c403d);
+}
+.zj-hub__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.zj-hub__sections {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px dashed var(--ws-border-color, #d8d3c8);
+  border-radius: var(--ws-radius, 6px);
+}
+.zj-hub__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ws-text-color, #3c403d);
+  cursor: pointer;
+}
+.zj-hub__danger {
+  max-width: 760px;
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid rgba(166, 69, 46, 0.35);
+  border-radius: var(--ws-radius-lg, 8px);
+  background: rgba(166, 69, 46, 0.04);
+}
+.zj-hub__danger h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 18px;
+  color: var(--ws-danger-color, #a6452e);
+}
+.zj-hub__danger p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ws-text-color, #3c403d);
+}
+.zj-hub__purge-text,
+.zj-hub__purge-hint {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ws-text-color, #3c403d);
+}
+.zj-hub__purge-hint {
+  margin: 8px 0 0;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-hub__purge-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.zj-hub__purge-label {
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-hub__purge-input {
+  padding: 8px 10px;
+  border: 1px solid var(--ws-border-color, #d8d3c8);
+  border-radius: var(--ws-radius, 6px);
+  background: var(--ws-body-bg, #fffcf6);
+  font-family: inherit;
+  font-size: 14px;
+}
+.zj-hub__purge-input:focus {
+  outline: none;
+  border-color: var(--ws-input-focus-border-color, #a6452e);
 }
 .zj-hub__projection {
   margin-top: 12px;

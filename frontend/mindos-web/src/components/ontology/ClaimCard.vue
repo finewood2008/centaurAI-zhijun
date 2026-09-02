@@ -77,6 +77,8 @@ function evidenceKindLabel(kind: string): string {
       <StatusBadge :meta="layerMeta(claim.layer)" />
       <StatusBadge :meta="trustMeta(claim.trustState)" />
       <span v-if="claim.scope === 'context_only'" class="zj-claim__scope">只适用于当时那件事</span>
+      <span v-if="claim.promotionReady" class="zj-claim__flag zj-claim__flag--ready" title="至少两个独立来源提到过">多处提到</span>
+      <span v-if="claim.challenged && claim.trustState === 'working'" class="zj-claim__flag zj-claim__flag--challenged" :title="claim.challengeNote || '与另一条理解矛盾'">有矛盾</span>
       <span v-if="showSection" class="zj-claim__section">{{ sectionLabel(claim.section) }}</span>
       <span class="zj-claim__conf" :title="`置信度 ${Math.round(claim.confidence * 100)}%`">置信 {{ Math.round(claim.confidence * 100) }}%</span>
     </header>
@@ -168,6 +170,20 @@ function evidenceKindLabel(kind: string): string {
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--ws-card-bg, #f3efe6);
+}
+.zj-claim__flag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.zj-claim__flag--ready {
+  background: rgba(74, 124, 89, 0.12);
+  color: var(--ws-success-color, #4a7c59);
+}
+.zj-claim__flag--challenged {
+  background: rgba(184, 134, 43, 0.14);
+  color: var(--ws-warning-color, #b8862b);
 }
 .zj-claim__conf {
   margin-left: auto;

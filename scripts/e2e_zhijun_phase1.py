@@ -200,6 +200,22 @@ def main() -> int:
             assert "复盘" in _reply(events), _reply(events)
             steps.append(("回访 → 记下结果 → 复盘引导", "判断状态 outcome_recorded，提醒已完成，知君按五段引导复盘"))
 
+            # ---------------- P3：整合器 → 矛盾裁决 → 张力提醒 → 导出
+            for content, section in (("我从不在周末加班", "principles"), ("我这周末在加班赶远川项目", "matters"), ("我不坚持先看数据再拍板", "principles"), ("我坚持先看数据再拍板", "principles")):
+                r = client.post(f"{base}/api/mindos/ontology/claims", json={"content": content, "section": section}, headers=HEADERS)
+                assert r.status_code == 200, r.text
+            report = client.post(f"{base}/api/mindos/ontology/consolidate", headers=HEADERS).json()
+            proposals = client.get(f"{base}/api/mindos/ontology/proposals", headers=HEADERS).json()
+            assert report["conflicts"] >= 1 and report["tensions"] >= 1, (report, proposals)
+            contradiction = next(c for c in proposals["conflicts"] if c["kind"] == "contradiction")
+            resolved = client.post(f"{base}/api/mindos/ontology/proposals/conflicts/{contradiction['id']}/resolve", json={"keep": "a"}, headers=HEADERS)
+            assert resolved.status_code == 200, resolved.text
+            tension = [n for n in client.get(f"{base}/api/mindos/nudges/today", headers=HEADERS).json()["items"] if n["kind"] == "principle_tension"]
+            assert tension and tension[0]["message"].endswith("？"), tension
+            export = client.get(f"{base}/api/mindos/ontology/export", headers=HEADERS).json()
+            assert export["claims"] and all(c["trustState"] == "confirmed" for c in export["claims"]), len(export["claims"])
+            steps.append(("整合 → 裁决 → 张力提醒 → 导出", f"矛盾对 {report['conflicts']} 已裁决 1，张力提醒 1 条（问句），导出 {len(export['claims'])} 条已确认理解"))
+
             page = client.get(f"{base}/mindos/", headers=HEADERS)
             served = page.status_code == 200 and "<div id=\"app\"" in page.text
             steps.append(("前端页面", "已由后端在 /mindos/ 提供" if served else f"未提供（{page.status_code}），请先 npm run build"))

@@ -223,3 +223,31 @@ interface Nudge { id: string; kind: 'review_due' | 'commitment_due' | 'checkin';
 - `POST /api/mindos/conversations` body 增加 `decisionId?: string`；`mode: "review"` 时必填。创建后自动追加一条 `role=system` 的开场备注（「这是对「…」的回访：当时你选了…，预期…」），知君在此会话里只问结果与感受、不给新建议。
 - `POST /api/mindos/conversations/{id}/outcome` body `{result, notes?}` → 调 `growth_decisions/{decisionId}/outcome`（状态非 open 时 409），追加系统备注，提醒状态 → acted。
 - 结果记录后，知君下一轮按五段做复盘引导；复盘仍由现有 `POST /api/mindos/growth/reviews` 提交（判断页）。
+
+---
+
+## P3 增补（整合 · 裁决 · 资料理解 · 导出 / 全量删除）— 版本 p3-2026-09-02
+
+### 9. 整合与裁决 `/api/mindos/ontology`
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/proposals` | `{merges: MergeProposal[], conflicts: Conflict[], total}`：待用户裁决的实体合并候选与理解矛盾对 |
+| POST | `/proposals/merges/{id}/resolve` | body `{accept: boolean}`；接受 → from 实体并入 into（别名迁移、理解改指） |
+| POST | `/proposals/conflicts/{id}/resolve` | body `{keep: 'a'|'b'|'both'}`；留 a 则 b 撤回（反之亦然），both = 两条都对 |
+| POST | `/consolidate` | 立即运行整合器（否则每日一次或每新增 20 条理解后由后台 worker 触发）→ 报告 `{mergeProposals, challenged, conflicts, merged, tensions, promoted, decayed, deferred, pairsJudged}` |
+| GET | `/export?sections=who,people&includeWorking=false` | `{exportedAt, schemaVersion, entities, claims, reviewEvents}`（默认只导出已确认） |
+| POST | `/purge` | body `{confirm: "删除全部记忆", includeConversations?: true}` → `{ontology:{purged,claims,entities}, conversations?:{conversations,messages}}`；确认词不符 400 `CONFIRM_MISMATCH` |
+
+```ts
+interface MergeProposal { id: string; fromEntityId: string; intoEntityId: string; fromName: string; intoName: string
+  reason: string; score: number; status: 'pending'|'accepted'|'rejected'; createdAt: string }
+interface Conflict { id: string; kind: 'contradiction'|'tension'; claimA: Claim; claimB: Claim; verdictBy: string
+  note: string; status: 'pending'|'resolved'|'dismissed'; resolution: 'a'|'b'|'both'|null; createdAt: string }
+```
+`OntologyStats` 新增 `proposals: number`（待裁决总数）；`Claim` 新增 `promotionReady: boolean`（≥2 个独立来源，inbox 置顶，前端标「多处提到」）。
+提醒 `Nudge.kind` 新增 `principle_tension`（措辞是问句：「…是原则变了，还是这次情况特殊？」），`triggerRef = {principleId, actionId}`；点击应打开 `/me?section=principles`。
+
+### 10. 资料 → 理解
+
+资料的实体 / 关系抽取完成后，后台把关系三元组写成 `observed` 工作理解（主语是资料实体，不是「我」；涉及人 → 我的人，否则 → 我的事），证据 `kind=material_span`。资料被永久删除时，只靠它支撑的工作理解自动撤回（`retractionReason=evidence_purged`）。前端不需要新页面：这些理解按分区出现在本体页与 inbox，ClaimCard 的证据链接指向 `/materials/:materialId`。

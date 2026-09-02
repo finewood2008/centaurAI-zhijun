@@ -707,6 +707,12 @@ def purge_material(material_id: str, req: DeletionExecuteRequest) -> dict:
         _restore_active_index()
         logger.error("材料永久清除失败（治理/标注清理）%s: %s", material_id, exc)
         raise HTTPException(500, "永久清除失败：治理或标注清理异常，请重试")
+    # 知君 P3：只靠该资料支撑的工作理解撤回，证据脱钩；本体侧异常不阻断清除。
+    try:
+        from .stores.ontology_store import OntologyStore
+        OntologyStore.instance().detach_material(material_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("材料清除后本体脱钩失败 %s: %s", material_id, type(exc).__name__)
     # 物理文件：已回收则位于回收目录；否则位于原路径。删除后不再可命中（索引已清）。
     for candidate in (
         _trash_path(material_id, record["file_name"]) if record.get("recycled") else None,

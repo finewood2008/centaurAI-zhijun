@@ -956,6 +956,16 @@ def _relation_evidence(source_text: str, subject: str, predicate: str, obj: str)
     return ""
 
 
+def _notify_ontology(material_id: str) -> None:
+    """知君 P3：关系记录写成 ok 后，把资料实体/关系送去本体做 observed 工作理解（入队，幂等，失败不影响流水线）。"""
+    try:
+        from .zhijun.materials import notify_material
+
+        notify_material(material_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("本体通知失败 %s: %s", material_id, type(exc).__name__)
+
+
 def _make_relation(subject: dict, predicate: str, obj: dict, confidence: float, evidence: str) -> dict:
     key = f"{subject['name']}\x1f{predicate}\x1f{obj['name']}"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
@@ -1265,6 +1275,7 @@ def _generate_relations(material_id: str, source_path: str, force: bool = False)
                 OWNER_MATERIAL, material_id, KIND_RELATION_EXTRACTION, "ok",
                 {"items": fallback.items, "source": "fallback"}, input_hash, _generator_name(snap),
             )
+            _notify_ontology(material_id)
         else:
             status = "unavailable" if _is_unavailable(exc) else "failed"
             store.set_derived_record(
@@ -1278,6 +1289,7 @@ def _generate_relations(material_id: str, source_path: str, force: bool = False)
             OWNER_MATERIAL, material_id, KIND_RELATION_EXTRACTION, "ok",
             {"items": items, "source": "llm"}, input_hash, _generator_name(snap),
         )
+        _notify_ontology(material_id)
         return
     # 模型响应无法通过严格校验（含全部幻觉）不是“模型不可用”。按状态契约写
     # failed，保留后续重试机会；不能以空 fallback 固化为 ok。

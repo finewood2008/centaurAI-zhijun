@@ -52,6 +52,20 @@ async function goReview(n: Nudge) {
   }
 }
 
+async function goPrinciples(n: Nudge) {
+  // 原则与做法的张力：不开会话，去本体的「我的原则」看两条理解；提醒标为已处理。
+  busy.value[n.id] = true
+  try {
+    await dismissNudge(n.id)
+    items.value = items.value.filter((i) => i.id !== n.id)
+  } catch {
+    // 标记失败不阻塞跳转
+  } finally {
+    delete busy.value[n.id]
+  }
+  router.push({ path: '/me', query: { section: 'principles' } })
+}
+
 async function later(n: Nudge) {
   busy.value[n.id] = true
   try {
@@ -93,11 +107,18 @@ defineExpose({ reload: load })
       <article v-for="n in items" :key="n.id" class="zj-nudge">
         <BellRing :size="16" aria-hidden="true" class="zj-nudge__icon" />
         <div class="zj-nudge__body">
-          <p class="zj-nudge__msg">{{ n.message }}</p>
+          <p class="zj-nudge__msg" :class="{ 'is-question': n.kind === 'principle_tension' }">{{ n.message }}</p>
           <p class="zj-nudge__why">为何现在：{{ n.whyNow }}</p>
         </div>
         <div class="zj-nudge__actions">
-          <button type="button" class="zj-nudge__btn is-primary" :disabled="busy[n.id]" @click="goReview(n)">去回访</button>
+          <button
+            v-if="n.kind === 'principle_tension'"
+            type="button"
+            class="zj-nudge__btn is-primary"
+            :disabled="busy[n.id]"
+            @click="goPrinciples(n)"
+          >去看看</button>
+          <button v-else type="button" class="zj-nudge__btn is-primary" :disabled="busy[n.id]" @click="goReview(n)">去回访</button>
           <button type="button" class="zj-nudge__btn" :disabled="busy[n.id]" @click="later(n)">稍后</button>
           <button type="button" class="zj-nudge__btn" :disabled="busy[n.id]" @click="silenceTarget = n">不再提醒</button>
         </div>
@@ -108,7 +129,9 @@ defineExpose({ reload: load })
     <ConfirmDialog
       :open="!!silenceTarget"
       title="不再提醒这件事？"
-      :message="`「${silenceTarget?.triggerRef?.title || '这个判断'}」以后不会再出现在提醒里，你仍可以在判断页手动回访。`"
+      :message="silenceTarget?.kind === 'principle_tension'
+        ? '这条原则与做法的张力以后不会再提醒；你仍可以在「我的本体」里自己核对。'
+        : `「${silenceTarget?.triggerRef?.title || '这个判断'}」以后不会再出现在提醒里，你仍可以在判断页手动回访。`"
       confirm-text="不再提醒"
       @confirm="confirmSilence"
       @cancel="silenceTarget = null"
@@ -147,6 +170,10 @@ defineExpose({ reload: load })
   font-size: 13px;
   line-height: 1.6;
   color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-nudge__msg.is-question {
+  font-family: var(--ws-font-display, serif);
+  font-size: 14px;
 }
 .zj-nudge__why {
   margin: 2px 0 0;

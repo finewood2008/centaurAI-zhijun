@@ -70,7 +70,9 @@ def _store() -> OntologyStore:
 
 
 def get_stats():
-    return _store().stats()
+    stats = _store().stats()
+    stats["proposals"] = len(_store().list_merge_proposals()) + len(_store().list_conflicts())
+    return stats
 
 
 def list_claims(
@@ -161,9 +163,99 @@ def get_projection():
     return projection.projection_payload(_store())
 
 
+# ---------------------------------------------------------------- P3：裁决 / 整合 / 导出 / 全量删除
+class MergeResolve(_StrictModel):
+    accept: bool
+
+
+class ConflictResolve(_StrictModel):
+    keep: Literal["a", "b", "both"]
+
+
+class PurgeRequest(_StrictModel):
+    confirm: str = Field(min_length=1, max_length=40)
+    includeConversations: bool = True
+
+
+PURGE_PHRASE = "删除全部记忆"
+
+
+def list_proposals():
+    store = _store()
+    merges = store.list_merge_proposals()
+    conflicts = store.list_conflicts()
+    return {"merges": merges, "conflicts": conflicts, "total": len(merges) + len(conflicts)}
+
+
+def resolve_merge(proposal_id: str, req: MergeResolve):
+    try:
+        result = _store().resolve_merge_proposal(proposal_id, accept=req.accept)
+    except OntologyError as exc:
+        raise _map(exc) from None
+    try:
+        enqueue_projection(store=_store())
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+def resolve_conflict(conflict_id: str, req: ConflictResolve):
+    try:
+        result = _store().resolve_conflict(conflict_id, keep=req.keep)
+    except OntologyError as exc:
+        raise _map(exc) from None
+    try:
+        enqueue_projection(store=_store())
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
+def consolidate_now():
+    from .zhijun import consolidate
+    from .zhijun.provider import ProviderError, build_provider
+
+    try:
+        provider = build_provider()
+    except ProviderError:
+        provider = None
+    return consolidate.run(store=_store(), provider=provider)
+
+
+def export_ontology(sections: str | None = Query(None), includeWorking: bool = Query(False)):
+    wanted = tuple(s.strip() for s in (sections or "").split(",") if s.strip())
+    bad = [s for s in wanted if s not in SECTIONS]
+    if bad:
+        raise _error(400, "BAD_REQUEST", f"section 不合法：{','.join(bad)}")
+    return _store().export_payload(sections=wanted or None, include_working=includeWorking)
+
+
+def purge_all(req: PurgeRequest):
+    if req.confirm.strip() != PURGE_PHRASE:
+        raise _error(400, "CONFIRM_MISMATCH", f"请输入「{PURGE_PHRASE}」以确认")
+    result = {"ontology": _store().purge_all()}
+    if req.includeConversations:
+        from .stores.conversation_store import ConversationStore
+
+        result["conversations"] = ConversationStore.instance().purge_all()
+    try:
+        from .zhijun import projection as projection_module
+
+        projection_module.write_projection(_store())
+    except Exception:  # noqa: BLE001
+        pass
+    return result
+
+
 def _build_router(write_guard=None) -> APIRouter:
     built = APIRouter(prefix=_PREFIX, tags=_TAGS)
     write_dependencies = [Depends(write_guard)] if write_guard is not None else []
+    built.add_api_route("/proposals", list_proposals, methods=["GET"])
+    built.add_api_route("/proposals/merges/{proposal_id}/resolve", resolve_merge, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/proposals/conflicts/{conflict_id}/resolve", resolve_conflict, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/consolidate", consolidate_now, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/export", export_ontology, methods=["GET"])
+    built.add_api_route("/purge", purge_all, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/stats", get_stats, methods=["GET"])
     built.add_api_route("/claims", list_claims, methods=["GET"])
     built.add_api_route("/claims", create_claim, methods=["POST"], dependencies=write_dependencies)

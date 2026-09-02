@@ -17,8 +17,9 @@ import {
 import { useToast } from '@/composables/useToast'
 import { createSessionGate } from '@/composables/sessionGate'
 import { SECTIONS, sectionLabel } from '@/shared/ontology'
-import SectionNav from '@/components/ontology/SectionNav.vue'
+import SectionNav, { type NavKey } from '@/components/ontology/SectionNav.vue'
 import ClaimCard from '@/components/ontology/ClaimCard.vue'
+import ProposalsPanel from '@/components/ontology/ProposalsPanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -42,15 +43,21 @@ const newLayer = ref<'self_declared' | 'aspirational'>('self_declared')
 
 const SECTION_KEYS = new Set<string>(SECTIONS.map((s) => s.key))
 
-const current = computed<Section | 'inbox'>(() => {
+const current = computed<NavKey>(() => {
   if (route.path.endsWith('/inbox')) return 'inbox'
   const q = route.query.section
+  if (q === 'proposals') return 'proposals'
   return typeof q === 'string' && SECTION_KEYS.has(q) ? (q as Section) : 'who'
 })
 
-const heading = computed(() => (current.value === 'inbox' ? '知君最近学到的' : sectionLabel(current.value)))
+const heading = computed(() => {
+  if (current.value === 'inbox') return '知君最近学到的'
+  if (current.value === 'proposals') return '需要你裁决'
+  return sectionLabel(current.value)
+})
 const hint = computed(() => {
   if (current.value === 'inbox') return '这些是知君从对话里提出、还没经你确认的理解。确认后才会成为它对你的认识；否定后永远不会再出现。'
+  if (current.value === 'proposals') return '知君整理时发现的疑问：两个名字是不是同一个人？两条理解是不是矛盾？它不会自己拍板，只等你定。'
   return SECTIONS.find((s) => s.key === current.value)?.hint ?? ''
 })
 
@@ -69,6 +76,12 @@ async function loadStats() {
 
 async function load() {
   const session = gate.next()
+  if (current.value === 'proposals') {
+    items.value = []
+    loading.value = false
+    error.value = ''
+    return
+  }
   loading.value = true
   error.value = ''
   try {
@@ -86,9 +99,13 @@ async function load() {
   }
 }
 
-function select(key: Section | 'inbox') {
+function select(key: NavKey) {
   if (key === 'inbox') router.push('/me/inbox')
   else router.push({ path: '/me', query: { section: key } })
+}
+
+function onProposalsChanged() {
+  void loadStats()
 }
 
 watch(current, () => {
@@ -166,10 +183,12 @@ onBeforeUnmount(() => gate.invalidate())
             <h2>{{ heading }}</h2>
             <p>{{ hint }}</p>
           </div>
-          <BaseButton size="sm" @click="showCreate = !showCreate">{{ showCreate ? '收起' : '补一条' }}</BaseButton>
+          <BaseButton v-if="current !== 'proposals'" size="sm" @click="showCreate = !showCreate">{{ showCreate ? '收起' : '补一条' }}</BaseButton>
         </header>
 
-        <form v-if="showCreate" class="zj-me__create" @submit.prevent="submitCreate">
+        <ProposalsPanel v-if="current === 'proposals'" @changed="onProposalsChanged" />
+
+        <form v-if="showCreate && current !== 'proposals'" class="zj-me__create" @submit.prevent="submitCreate">
           <label class="zj-me__field">
             <span>这条理解属于</span>
             <select v-model="newSection">
@@ -192,7 +211,8 @@ onBeforeUnmount(() => gate.invalidate())
           </div>
         </form>
 
-        <div v-if="loading" class="loading-state">正在读取…</div>
+        <div v-if="current === 'proposals'" />
+        <div v-else-if="loading" class="loading-state">正在读取…</div>
         <ErrorState v-else-if="error" :message="error" @retry="load" />
         <EmptyState
           v-else-if="!items.length"

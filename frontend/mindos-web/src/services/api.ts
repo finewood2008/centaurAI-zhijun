@@ -1504,9 +1504,9 @@ export interface DecisionDraftConfirmPayload {
 
 export interface Nudge {
   id: string
-  kind: 'review_due' | 'commitment_due' | 'checkin'
+  kind: 'review_due' | 'commitment_due' | 'checkin' | 'principle_tension'
   triggerKey: string
-  triggerRef: { decisionId?: string; title?: string }
+  triggerRef: { decisionId?: string; title?: string; principleId?: string; actionId?: string }
   whyNow: string
   message: string
   status: 'pending' | 'shown' | 'acted' | 'dismissed' | 'silenced'
@@ -1585,8 +1585,60 @@ export interface Claim {
   retractedAt: string | null
   retractionReason: string | null
   challenged: boolean
+  challengeNote?: string | null
+  promotionReady?: boolean
   deferredUntil: string | null
   evidence: ClaimEvidence[]
+}
+
+// P3：整合与裁决
+export interface MergeProposal {
+  id: string
+  fromEntityId: string
+  intoEntityId: string
+  fromName: string | null
+  intoName: string | null
+  reason: string
+  score: number
+  status: 'pending' | 'accepted' | 'rejected'
+  createdAt: string
+}
+
+export interface Conflict {
+  id: string
+  kind: 'contradiction' | 'tension'
+  claimA: Claim
+  claimB: Claim
+  verdictBy: string
+  note: string
+  status: 'pending' | 'resolved' | 'dismissed'
+  resolution: 'a' | 'b' | 'both' | null
+  createdAt: string
+}
+
+export interface ConsolidateReport {
+  mergeProposals: number
+  challenged: number
+  conflicts: number
+  merged: number
+  tensions: number
+  promoted: number
+  decayed: number
+  deferred: number
+  pairsJudged: number
+}
+
+export interface OntologyExport {
+  exportedAt: string
+  schemaVersion: string
+  entities: OntologyEntity[]
+  claims: Claim[]
+  reviewEvents: unknown[]
+}
+
+export interface PurgeResult {
+  ontology: { purged: boolean; claims: number; entities: number }
+  conversations?: { conversations: number; messages: number }
 }
 
 export interface ReviewRequest {
@@ -1627,6 +1679,7 @@ export interface OntologyStats {
   claims: { working: number; confirmed: number; retracted: number; superseded: number }
   bySection: Record<Section, { confirmed: number; working: number }>
   inbox: number
+  proposals?: number
 }
 
 export interface OntologyProjection {
@@ -1802,4 +1855,33 @@ export function getProjection() {
 
 export function getZhijunStatus() {
   return request<ZhijunStatus>('/mindos/zhijun/status')
+}
+
+// ---- P3：整合与裁决、导出 / 全量删除
+export function getProposals() {
+  return request<{ merges: MergeProposal[]; conflicts: Conflict[]; total: number }>('/mindos/ontology/proposals')
+}
+
+export function resolveMergeProposal(proposalId: string, accept: boolean) {
+  return postJson<MergeProposal>(`/mindos/ontology/proposals/merges/${encodeURIComponent(proposalId)}/resolve`, { accept })
+}
+
+export function resolveConflict(conflictId: string, keep: 'a' | 'b' | 'both') {
+  return postJson<Conflict>(`/mindos/ontology/proposals/conflicts/${encodeURIComponent(conflictId)}/resolve`, { keep })
+}
+
+export function consolidateNow() {
+  return postJson<ConsolidateReport>('/mindos/ontology/consolidate', {})
+}
+
+export function exportOntology(params: { sections?: Section[]; includeWorking?: boolean } = {}) {
+  const query = new URLSearchParams()
+  if (params.sections && params.sections.length) query.set('sections', params.sections.join(','))
+  if (params.includeWorking) query.set('includeWorking', 'true')
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return request<OntologyExport>(`/mindos/ontology/export${suffix}`)
+}
+
+export function purgeOntology(payload: { confirm: string; includeConversations: boolean }) {
+  return postJson<PurgeResult>('/mindos/ontology/purge', payload)
 }

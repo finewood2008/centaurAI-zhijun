@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS nudge_policies (
 
 CREATE TABLE IF NOT EXISTS nudge_events (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin')),
+    kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin','principle_tension')),
     trigger_key TEXT NOT NULL,
     trigger_ref_json TEXT NOT NULL,
     why_now TEXT NOT NULL CHECK(length(why_now) > 0),
@@ -178,6 +178,31 @@ class ConversationStore:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
                 if "decision_id" not in columns:
                     conn.execute("ALTER TABLE conversations ADD COLUMN decision_id TEXT")
+                # P3：提醒类型增加 principle_tension（P2 建的库 CHECK 不含它，需重建表）。
+                ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nudge_events'").fetchone()
+                if ddl and "principle_tension" not in (ddl[0] or ""):
+                    conn.executescript(
+                        """
+                        ALTER TABLE nudge_events RENAME TO nudge_events_old;
+                        CREATE TABLE nudge_events (
+                            id TEXT PRIMARY KEY,
+                            kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin','principle_tension')),
+                            trigger_key TEXT NOT NULL,
+                            trigger_ref_json TEXT NOT NULL,
+                            why_now TEXT NOT NULL CHECK(length(why_now) > 0),
+                            message TEXT NOT NULL,
+                            status TEXT NOT NULL CHECK(status IN ('pending','shown','acted','dismissed','silenced')),
+                            scheduled_for TEXT NOT NULL,
+                            shown_at TEXT,
+                            acted_at TEXT,
+                            created_at TEXT NOT NULL
+                        );
+                        INSERT INTO nudge_events SELECT * FROM nudge_events_old;
+                        DROP TABLE nudge_events_old;
+                        CREATE INDEX IF NOT EXISTS idx_nudges_status ON nudge_events(status, scheduled_for);
+                        CREATE INDEX IF NOT EXISTS idx_nudges_trigger ON nudge_events(trigger_key, created_at DESC);
+                        """
+                    )
                 conn.commit()
             finally:
                 conn.close()
@@ -676,7 +701,7 @@ class ConversationStore:
 
         ``now`` 允许调用方传入扫描时刻（测试与补扫用），去重窗口与创建时间都以它为准。
         """
-        if kind not in ("review_due", "commitment_due", "checkin"):
+        if kind not in ("review_due", "commitment_due", "checkin", "principle_tension"):
             raise ConversationError(f"提醒类型不合法：{kind}")
         if not (why_now or "").strip():
             raise ConversationError("why_now 不能为空")
@@ -752,6 +777,23 @@ class ConversationStore:
                 (trigger_key,),
             )
         return self.save_nudge_policy(silenced_refs=refs)
+
+    def purge_all(self) -> dict:
+        """全量删除对话层（不可恢复）：会话、消息、摘要、回执、草稿、提醒；策略保留。"""
+        with self._lock, self._connect() as conn:
+            counts = {
+                "conversations": conn.execute("SELECT COUNT(*) AS n FROM conversations").fetchone()["n"],
+                "messages": conn.execute("SELECT COUNT(*) AS n FROM messages").fetchone()["n"],
+            }
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for table in ("turn_receipts", "decision_drafts", "conversation_summaries", "messages", "nudge_events", "conversations"):
+                    conn.execute(f"DELETE FROM {table}")
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return {k: int(v) for k, v in counts.items()}
 
     def list_nudges(self, *, statuses: tuple[str, ...] = ("pending", "shown", "acted", "dismissed", "silenced"), limit: int = 50) -> list[dict]:
         with self._connect() as conn:

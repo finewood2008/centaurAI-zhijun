@@ -216,6 +216,32 @@ CREATE TABLE IF NOT EXISTS ontology_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS entity_merge_proposals (
+    id TEXT PRIMARY KEY,
+    from_entity_id TEXT NOT NULL REFERENCES entities(id),
+    into_entity_id TEXT NOT NULL REFERENCES entities(id),
+    reason TEXT NOT NULL,
+    score REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','accepted','rejected')),
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_merge_pair ON entity_merge_proposals(from_entity_id, into_entity_id) WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS claim_conflicts (
+    id TEXT PRIMARY KEY,
+    claim_a_id TEXT NOT NULL REFERENCES claims(id),
+    claim_b_id TEXT NOT NULL REFERENCES claims(id),
+    kind TEXT NOT NULL CHECK(kind IN ('contradiction','tension')),
+    verdict_by TEXT NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','resolved','dismissed')),
+    resolution TEXT,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_conflict_pair ON claim_conflicts(claim_a_id, claim_b_id) WHERE status = 'pending';
 """
 
 _CLAIM_SELECT = """
@@ -382,6 +408,10 @@ class OntologyStore:
                 conn.execute(
                     "INSERT OR IGNORE INTO ontology_meta (key, value) VALUES ('schema_version', '1')"
                 )
+                # P3：多来源晋升标记（旧库补列）。
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(claims)")}
+                if "promotion_ready" not in columns:
+                    conn.execute("ALTER TABLE claims ADD COLUMN promotion_ready INTEGER NOT NULL DEFAULT 0")
                 conn.commit()
             finally:
                 conn.close()
@@ -615,6 +645,7 @@ class OntologyStore:
             "validTo": row["valid_to"],
             "challenged": bool(row["challenged"]),
             "challengeNote": row["challenge_note"],
+            "promotionReady": bool(row["promotion_ready"]) if "promotion_ready" in keys else False,
             "deferredUntil": row["deferred_until"],
             "firstSeen": row["first_seen"],
             "lastReaffirmed": row["last_reaffirmed"],
@@ -941,7 +972,7 @@ class OntologyStore:
             if not include_hidden:
                 query += " AND c.challenged = 0 AND (c.deferred_until IS NULL OR c.deferred_until <= ?)"
                 params.append(utc_now())
-            query += " ORDER BY c.last_reaffirmed DESC, c.created_at DESC LIMIT ?"
+            query += " ORDER BY c.promotion_ready DESC, c.last_reaffirmed DESC, c.created_at DESC LIMIT ?"
             params.append(int(limit))
             rows = conn.execute(query, params).fetchall()
             return [self._claim(r, self._evidence_for(conn, r["id"])) for r in rows]  # type: ignore[misc]
@@ -1396,6 +1427,279 @@ class OntologyStore:
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(*) AS n FROM ontology_jobs WHERE state IN ('queued','running')").fetchone()
         return int(row["n"]) if row else 0
+
+
+    # ------------------------------------------------------------------ P3：整合器用的系统级变更
+    def set_challenged(self, claim_id: str, note: str, *, challenged: bool = True) -> dict | None:
+        """整合器标记「被后续理解矛盾」；只影响 working 理解是否进入上下文与 inbox。"""
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE claims SET challenged = ?, challenge_note = ?, updated_at = ? WHERE id = ? AND trust_state = 'working'",
+                (1 if challenged else 0, (note or "")[:300] if challenged else None, utc_now(), claim_id),
+            )
+            return self._fetch_claim(conn, claim_id)
+
+    def set_promotion_ready(self, claim_id: str, ready: bool = True) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute("UPDATE claims SET promotion_ready = ?, updated_at = ? WHERE id = ?", (1 if ready else 0, utc_now(), claim_id))
+
+    def system_retract(self, claim_id: str, reason: str, *, note: str = "") -> dict | None:
+        """唯一允许的自动状态变化：只对 working 理解生效（挑战超期、证据被删）。"""
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT trust_state, content FROM claims WHERE id = ?", (claim_id,)).fetchone()
+                if row is None or row["trust_state"] != "working":
+                    conn.execute("ROLLBACK")
+                    return None
+                conn.execute(
+                    "UPDATE claims SET trust_state = 'retracted', retracted_at = ?, retraction_reason = ?, updated_at = ? WHERE id = ?",
+                    (now, reason, now, claim_id),
+                )
+                self._insert_review_event(
+                    conn, target_type="claim", target_id=claim_id, action="retract", actor="system", surface="system",
+                    before={"trustState": "working", "content": row["content"]}, after={"trustState": "retracted", "reason": reason}, note=note,
+                )
+                self._bump_revision(conn)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            return self._fetch_claim(conn, claim_id)
+
+    def system_defer(self, claim_id: str, until: str) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE claims SET deferred_until = ?, updated_at = ? WHERE id = ? AND trust_state = 'working'",
+                (until, utc_now(), claim_id),
+            )
+
+    def evidence_source_count(self, claim_id: str) -> int:
+        """独立来源数：不同会话算不同来源，资料按 material_id 算，用户编辑算一个。"""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT kind, conversation_id, material_id FROM claim_evidence WHERE claim_id = ?", (claim_id,)).fetchall()
+        sources = set()
+        for r in rows:
+            if r["material_id"]:
+                sources.add(f"m:{r['material_id']}")
+            elif r["conversation_id"]:
+                sources.add(f"c:{r['conversation_id']}")
+            else:
+                sources.add(f"k:{r['kind']}")
+        return len(sources)
+
+    # ---- 实体合并候选
+    @staticmethod
+    def _proposal(row: sqlite3.Row | None, from_name: str | None = None, into_name: str | None = None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "fromEntityId": row["from_entity_id"],
+            "intoEntityId": row["into_entity_id"],
+            "fromName": from_name,
+            "intoName": into_name,
+            "reason": row["reason"],
+            "score": float(row["score"]),
+            "status": row["status"],
+            "createdAt": row["created_at"],
+            "resolvedAt": row["resolved_at"],
+        }
+
+    def create_merge_proposal(self, from_entity_id: str, into_entity_id: str, *, reason: str, score: float) -> dict | None:
+        if from_entity_id == into_entity_id or ME_ENTITY_ID in (from_entity_id, into_entity_id):
+            return None
+        a, b = sorted([from_entity_id, into_entity_id])
+        with self._lock, self._connect() as conn:
+            if conn.execute(
+                "SELECT 1 FROM entity_merge_proposals WHERE ((from_entity_id = ? AND into_entity_id = ?) OR (from_entity_id = ? AND into_entity_id = ?)) "
+                "AND status != 'accepted' AND julianday(created_at) > julianday('now') - 30",
+                (a, b, b, a),
+            ).fetchone():
+                return None
+            pid = f"mrg_{uuid.uuid4().hex[:12]}"
+            conn.execute(
+                "INSERT INTO entity_merge_proposals (id, from_entity_id, into_entity_id, reason, score, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+                (pid, from_entity_id, into_entity_id, reason[:200], float(score), utc_now()),
+            )
+        # 事务提交后再读（另一个连接看不到未提交的行）。
+        return self.get_merge_proposal(pid)
+
+    def get_merge_proposal(self, proposal_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT p.*, f.canonical_name AS from_name, i.canonical_name AS into_name FROM entity_merge_proposals p "
+                "LEFT JOIN entities f ON f.id = p.from_entity_id LEFT JOIN entities i ON i.id = p.into_entity_id WHERE p.id = ?",
+                (proposal_id,),
+            ).fetchone()
+            return self._proposal(row, row["from_name"], row["into_name"]) if row else None
+
+    def list_merge_proposals(self, *, status: str = "pending", limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT p.*, f.canonical_name AS from_name, i.canonical_name AS into_name FROM entity_merge_proposals p "
+                "LEFT JOIN entities f ON f.id = p.from_entity_id LEFT JOIN entities i ON i.id = p.into_entity_id "
+                "WHERE p.status = ? ORDER BY p.created_at DESC LIMIT ?",
+                (status, int(limit)),
+            ).fetchall()
+            return [self._proposal(r, r["from_name"], r["into_name"]) for r in rows]  # type: ignore[misc]
+
+    def resolve_merge_proposal(self, proposal_id: str, *, accept: bool, surface: str = "ontology_page") -> dict:
+        """接受：from 实体并入 into（别名迁移、理解主宾改指、from 标 merged）。拒绝：只改状态。"""
+        now = utc_now()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = conn.execute("SELECT * FROM entity_merge_proposals WHERE id = ?", (proposal_id,)).fetchone()
+                if row is None:
+                    raise OntologyNotFoundError("合并候选不存在")
+                if row["status"] != "pending":
+                    raise OntologyConflictError("合并候选已处理")
+                if accept:
+                    src, dst = row["from_entity_id"], row["into_entity_id"]
+                    aliases = conn.execute("SELECT alias, alias_norm FROM entity_aliases WHERE entity_id = ?", (src,)).fetchall()
+                    for al in aliases:
+                        conn.execute(
+                            "INSERT OR IGNORE INTO entity_aliases (entity_id, alias, alias_norm, source, created_at) VALUES (?, ?, ?, 'merge', ?)",
+                            (dst, al["alias"], al["alias_norm"], now),
+                        )
+                    conn.execute("UPDATE claims SET subject_entity_id = ?, updated_at = ? WHERE subject_entity_id = ?", (dst, now, src))
+                    conn.execute("UPDATE claims SET object_entity_id = ?, updated_at = ? WHERE object_entity_id = ?", (dst, now, src))
+                    conn.execute("UPDATE entities SET status = 'merged', merged_into_id = ?, updated_at = ? WHERE id = ?", (dst, now, src))
+                    self._insert_review_event(conn, target_type="entity", target_id=src, action="merge", surface=surface, after={"into": dst})
+                conn.execute(
+                    "UPDATE entity_merge_proposals SET status = ?, resolved_at = ? WHERE id = ?",
+                    ("accepted" if accept else "rejected", now, proposal_id),
+                )
+                self._bump_revision(conn)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return self.get_merge_proposal(proposal_id)  # type: ignore[return-value]
+
+    # ---- 理解矛盾对
+    def create_conflict(self, claim_a_id: str, claim_b_id: str, *, kind: str = "contradiction", verdict_by: str = "model", note: str = "") -> dict | None:
+        if claim_a_id == claim_b_id or kind not in ("contradiction", "tension"):
+            return None
+        a, b = sorted([claim_a_id, claim_b_id])
+        with self._lock, self._connect() as conn:
+            if conn.execute(
+                "SELECT 1 FROM claim_conflicts WHERE claim_a_id = ? AND claim_b_id = ? AND (status = 'pending' OR julianday(created_at) > julianday('now') - 30)",
+                (a, b),
+            ).fetchone():
+                return None
+            cid = f"cfl_{uuid.uuid4().hex[:12]}"
+            conn.execute(
+                "INSERT INTO claim_conflicts (id, claim_a_id, claim_b_id, kind, verdict_by, note, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+                (cid, a, b, kind, verdict_by, (note or "")[:300], utc_now()),
+            )
+        return self.get_conflict(cid)
+
+    def _conflict(self, conn: sqlite3.Connection, row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "kind": row["kind"],
+            "claimA": self._fetch_claim(conn, row["claim_a_id"], with_evidence=False),
+            "claimB": self._fetch_claim(conn, row["claim_b_id"], with_evidence=False),
+            "verdictBy": row["verdict_by"],
+            "note": row["note"],
+            "status": row["status"],
+            "resolution": row["resolution"],
+            "createdAt": row["created_at"],
+            "resolvedAt": row["resolved_at"],
+        }
+
+    def get_conflict(self, conflict_id: str) -> dict | None:
+        with self._connect() as conn:
+            return self._conflict(conn, conn.execute("SELECT * FROM claim_conflicts WHERE id = ?", (conflict_id,)).fetchone())
+
+    def list_conflicts(self, *, status: str = "pending", limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM claim_conflicts WHERE status = ? ORDER BY created_at DESC LIMIT ?", (status, int(limit))).fetchall()
+            return [self._conflict(conn, r) for r in rows]  # type: ignore[misc]
+
+    def resolve_conflict(self, conflict_id: str, *, keep: str, surface: str = "ontology_page") -> dict:
+        """keep ∈ {a, b, both}：留 a 则 b 撤回（反之亦然）；both = 两条都对，标为已处理不再提示。"""
+        if keep not in ("a", "b", "both"):
+            raise OntologyError("keep 只能是 a / b / both")
+        conflict = self.get_conflict(conflict_id)
+        if conflict is None:
+            raise OntologyNotFoundError("矛盾对不存在")
+        if conflict["status"] != "pending":
+            raise OntologyConflictError("矛盾对已处理")
+        if keep in ("a", "b"):
+            loser = conflict["claimB"] if keep == "a" else conflict["claimA"]
+            if loser and loser["trustState"] in ("working", "confirmed"):
+                action = "reject" if loser["trustState"] == "working" else "retract"
+                self.transition(loser["id"], action, surface=surface, note=f"矛盾裁决：保留另一条（{conflict_id}）")
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE claim_conflicts SET status = 'resolved', resolution = ?, resolved_at = ? WHERE id = ?",
+                (keep, utc_now(), conflict_id),
+            )
+        return self.get_conflict(conflict_id)  # type: ignore[return-value]
+
+    # ---- 资料脱钩 / 导出 / 全量删除
+    def detach_material(self, material_id: str) -> dict:
+        """资料被永久删除：删除其证据；只靠该资料支撑的 working 理解撤回，confirmed 理解保留但记事件。"""
+        with self._connect() as conn:
+            claim_ids = [r["claim_id"] for r in conn.execute("SELECT DISTINCT claim_id FROM claim_evidence WHERE material_id = ?", (material_id,)).fetchall()]
+        retracted, kept = [], []
+        for claim_id in claim_ids:
+            with self._connect() as conn:
+                others = conn.execute(
+                    "SELECT COUNT(*) AS n FROM claim_evidence WHERE claim_id = ? AND (material_id IS NULL OR material_id != ?)",
+                    (claim_id, material_id),
+                ).fetchone()["n"]
+                state = conn.execute("SELECT trust_state FROM claims WHERE id = ?", (claim_id,)).fetchone()["trust_state"]
+            if others == 0 and state == "working":
+                self.system_retract(claim_id, "evidence_purged", note=f"资料 {material_id} 已删除")
+                retracted.append(claim_id)
+            else:
+                kept.append(claim_id)
+        with self._lock, self._connect() as conn:
+            conn.execute("DELETE FROM claim_evidence WHERE material_id = ?", (material_id,))
+            self._bump_revision(conn)
+        return {"materialId": material_id, "retracted": retracted, "kept": kept}
+
+    def export_payload(self, *, sections: tuple[str, ...] | None = None, include_working: bool = False) -> dict:
+        states = ("confirmed", "working") if include_working else ("confirmed",)
+        claims = self.list_claims(trust_states=states, limit=5000)
+        if sections:
+            allowed = set(sections)
+            claims = [c for c in claims if c["section"] in allowed]
+        return {
+            "exportedAt": utc_now(),
+            "schemaVersion": self.meta_get("schema_version", "1"),
+            "entities": self.list_entities(limit=5000),
+            "claims": claims,
+            "reviewEvents": self.review_events(limit=5000),
+        }
+
+    def purge_all(self) -> dict:
+        """全量删除本体（不可恢复）：实体 / 理解 / 证据 / 复核事件 / 候选 / 任务；保留「我」实体。"""
+        with self._lock, self._connect() as conn:
+            counts = {
+                "claims": conn.execute("SELECT COUNT(*) AS n FROM claims").fetchone()["n"],
+                "entities": conn.execute("SELECT COUNT(*) AS n FROM entities WHERE type != 'me'").fetchone()["n"],
+            }
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for table in ("claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
+                    conn.execute(f"DELETE FROM {table}")
+                conn.execute("DELETE FROM entity_aliases WHERE entity_id != ?", (ME_ENTITY_ID,))
+                conn.execute("DELETE FROM entities WHERE id != ?", (ME_ENTITY_ID,))
+                conn.execute("INSERT INTO ontology_meta (key, value) VALUES ('purged_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (utc_now(),))
+                self._bump_revision(conn)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return {"purged": True, **{k: int(v) for k, v in counts.items()}}
 
 
 def reset_for_tests(db_path: str | Path | None = None) -> OntologyStore:

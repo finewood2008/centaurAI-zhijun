@@ -3,12 +3,14 @@
 import type { OntologyStats, Section } from '@/services/api'
 import { SECTIONS } from '@/shared/ontology'
 
+export type NavKey = Section | 'inbox' | 'proposals'
+
 defineProps<{
   stats: OntologyStats | null
-  current: Section | 'inbox'
+  current: NavKey
 }>()
 
-const emit = defineEmits<{ (e: 'select', key: Section | 'inbox'): void }>()
+const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
 </script>
 
 <template>
@@ -22,6 +24,17 @@ const emit = defineEmits<{ (e: 'select', key: Section | 'inbox'): void }>()
     >
       <span class="zj-secnav__label">知君最近学到的</span>
       <span class="zj-secnav__count" aria-label="待确认数量">{{ stats?.inbox ?? 0 }}</span>
+    </button>
+    <button
+      type="button"
+      class="zj-secnav__item zj-secnav__item--proposals"
+      :class="{ 'is-active': current === 'proposals' }"
+      :aria-current="current === 'proposals' ? 'page' : undefined"
+      @click="emit('select', 'proposals')"
+    >
+      <span class="zj-secnav__label">需要你裁决</span>
+      <span class="zj-secnav__hint">同一个人？两条矛盾？</span>
+      <span class="zj-secnav__count" aria-label="待裁决数量">{{ stats?.proposals ?? 0 }}</span>
     </button>
     <button
       v-for="s in SECTIONS"
@@ -72,9 +85,13 @@ const emit = defineEmits<{ (e: 'select', key: Section | 'inbox'): void }>()
   color: var(--ws-primary-color, #a6452e);
 }
 .zj-secnav__item--inbox {
-  margin-bottom: 8px;
   border-style: dashed;
   border-color: var(--ws-primary-color, #a6452e);
+}
+.zj-secnav__item--proposals {
+  margin-bottom: 8px;
+  border-style: dashed;
+  border-color: var(--ws-border-color, #d8d3c8);
 }
 .zj-secnav__label {
   grid-area: label;

@@ -96,6 +96,13 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
             provider_gate.release(channel)
         if result.get("created") or result.get("promoted"):
             enqueue_projection(store=store)
+            try:
+                from . import consolidate
+
+                if consolidate.should_run(store):
+                    enqueue_consolidate(store=store)
+            except Exception:  # noqa: BLE001
+                pass
         user_turns = conv_store.count_messages(conversation_id, role="user")
         if user_turns and user_turns % _SUMMARY_EVERY_TURNS == 0:
             enqueue_summary(conversation_id, store=store)
@@ -120,7 +127,32 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
         from . import nudges
 
         return nudges.scan(conv_store=conv_store)
+    if kind == "consolidate":
+        from . import consolidate
+
+        try:
+            provider = build_provider()
+        except ProviderError:
+            provider = None
+        return consolidate.run(store=store, conv_store=conv_store, provider=provider)
+    if kind == "extract_material":
+        from . import materials
+
+        result = materials.run(job["ownerId"], store=store)
+        if result.get("created"):
+            enqueue_projection(store=store)
+        return result
     return {"state": "skipped", "reason": f"unknown_kind:{kind}"}
+
+
+def enqueue_consolidate(*, store: OntologyStore | None = None) -> str | None:
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("consolidate", "nightly", payload={}, priority=-1)
+
+
+def enqueue_material_extraction(material_id: str, *, store: OntologyStore | None = None) -> str | None:
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("extract_material", material_id, payload={"materialId": material_id}, priority=2)
 
 
 def enqueue_nudge_scan(*, store: OntologyStore | None = None) -> str | None:
@@ -188,6 +220,10 @@ class OntologyWorker:
                 last_scan = time.time()
                 try:
                     enqueue_nudge_scan(store=store)
+                    from . import consolidate
+
+                    if consolidate.should_run(store):
+                        enqueue_consolidate(store=store)
                 except Exception:  # noqa: BLE001
                     pass
             try:
