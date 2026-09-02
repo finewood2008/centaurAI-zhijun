@@ -1710,6 +1710,8 @@ export interface TurnMetaEvent {
   turnMode?: TurnMode
   depth: 'brief' | 'deep'
   decisionId?: string | null
+  // 建档会话：本轮在问第几个问题（1–7），8 = 收尾；其它模式为 null
+  onboardingStep?: number | null
 }
 
 export interface ProvenanceMaterial {

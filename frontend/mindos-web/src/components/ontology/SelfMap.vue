@@ -32,6 +32,12 @@ const props = defineProps<{
   selectedId?: string | null
   layerFilter?: Set<Layer> | null
   focusSection?: Section | null
+  // 紧凑模式：更小的分区标签、只留信任边界一句说明、不出图例（建档时放在侧栏用）
+  compact?: boolean
+  // 建档时正在问的那个分区：柔和朱砂底 + 加粗标签
+  highlightSection?: Section | null
+  // 刚刚记下的理解：朱砂光晕脉冲约 2 秒
+  newIds?: Set<string> | null
 }>()
 
 const emit = defineEmits<{
@@ -103,6 +109,10 @@ function isDimmed(section: Section): boolean {
   return !!props.focusSection && props.focusSection !== section
 }
 
+function isNew(id: string): boolean {
+  return !!props.newIds && props.newIds.has(id)
+}
+
 // ---- 提示与选择
 const tip = ref<Node | null>(null)
 function showTip(node: Node) {
@@ -129,7 +139,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
 </script>
 
 <template>
-  <div class="zj-map" :class="{ 'is-empty': isEmpty }">
+  <div class="zj-map" :class="{ 'is-empty': isEmpty, 'is-compact': compact }">
     <svg class="zj-map__svg" viewBox="0 0 720 720" role="group" :aria-label="ariaSummary">
       <title>本体全景</title>
       <!-- 扇区底色 + 分隔线 + 标签 -->
@@ -138,9 +148,10 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
           v-for="s in sectors"
           :key="s.key"
           class="zj-map__sector"
-          :class="{ 'is-dimmed': isDimmed(s.key), 'is-focus': focusSection === s.key }"
+          :class="{ 'is-dimmed': isDimmed(s.key), 'is-focus': focusSection === s.key, 'is-highlight': highlightSection === s.key }"
         >
           <path :d="s.path" :fill="s.index % 2 === 0 ? '#F7F3EA' : '#FBF8F1'" />
+          <path v-if="highlightSection === s.key" :d="s.path" fill="#A6452E" fill-opacity="0.09" class="zj-map__sector-tint" />
           <line :x1="polar(sectorStartDeg(s.index), SECTOR_INNER).x" :y1="polar(sectorStartDeg(s.index), SECTOR_INNER).y" :x2="s.divider.x" :y2="s.divider.y" stroke="#E2DED4" stroke-width="1" />
           <g
             class="zj-map__sector-label"
@@ -163,10 +174,10 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.core" fill="none" stroke="#1D211F" stroke-width="1.2" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.reaffirm" fill="none" stroke="#8B8E88" stroke-width="1.2" stroke-dasharray="1.5 5" stroke-linecap="round" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.boundary" fill="none" stroke="#A6452E" stroke-width="1.5" stroke-dasharray="7 5" />
-        <text :x="CENTER" :y="CENTER - RINGS.core - 6" text-anchor="middle" class="zj-map__ring-label">已确认 · 进入本体</text>
-        <text :x="CENTER" :y="CENTER - RINGS.reaffirm - 6" text-anchor="middle" class="zj-map__ring-label">需重申 · 超过 60 天没再提</text>
+        <text v-if="!compact" :x="CENTER" :y="CENTER - RINGS.core - 6" text-anchor="middle" class="zj-map__ring-label">已确认 · 进入本体</text>
+        <text v-if="!compact" :x="CENTER" :y="CENTER - RINGS.reaffirm - 6" text-anchor="middle" class="zj-map__ring-label">需重申 · 超过 60 天没再提</text>
         <text :x="CENTER" :y="CENTER - RINGS.boundary - 6" text-anchor="middle" class="zj-map__ring-label zj-map__ring-label--boundary">
-          信任边界 · 外面是知君的猜测，等你点头才进来<tspan v-if="inboxCount > 0" class="zj-map__ring-inbox">　● {{ inboxCount }} 条等你点头</tspan>
+          {{ compact ? '朱砂线外：知君的猜测，等你点头' : '信任边界 · 外面是知君的猜测，等你点头才进来' }}<tspan v-if="inboxCount > 0" class="zj-map__ring-inbox">　● {{ inboxCount }} 条等你点头</tspan>
         </text>
       </g>
 
@@ -177,7 +188,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
           :key="n.claim.id"
           class="zj-map__node"
           data-testid="selfmap-node"
-          :class="[layerClass(n.claim.layer), `zj-map__node--${n.band}`, { 'is-selected': selectedId === n.claim.id, 'is-dimmed': isDimmed(n.claim.section) }]"
+          :class="[layerClass(n.claim.layer), `zj-map__node--${n.band}`, { 'is-selected': selectedId === n.claim.id, 'is-dimmed': isDimmed(n.claim.section), 'is-new': isNew(n.claim.id) }]"
           :style="{ '--i': i }"
           role="button"
           tabindex="0"
@@ -190,6 +201,7 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
           @keydown.enter.prevent="pick(n)"
           @keydown.space.prevent="pick(n)"
         >
+          <circle v-if="isNew(n.claim.id)" :cx="n.x" :cy="n.y" :r="n.size + 6" class="zj-map__glow" />
           <circle v-if="n.claim.promotionReady" :cx="n.x" :cy="n.y" :r="n.size + 5" class="zj-map__halo" />
           <circle v-if="selectedId === n.claim.id" :cx="n.x" :cy="n.y" :r="n.size + 4" class="zj-map__selected" />
           <circle :cx="n.x" :cy="n.y" :r="n.size" class="zj-map__dot" />
@@ -238,8 +250,8 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
       <RouterLink to="/" class="zj-map__cta">去聊几句</RouterLink>
     </div>
 
-    <!-- 图例（文字承载含义） -->
-    <dl class="zj-map__legend">
+    <!-- 图例（文字承载含义）；紧凑模式由外层说明 -->
+    <dl v-if="!compact" class="zj-map__legend">
       <div v-for="l in legendLayers" :key="l.key" class="zj-map__legend-item">
         <dt><span class="zj-map__swatch" :class="`zj-map__swatch--${l.key}`" aria-hidden="true" /></dt>
         <dd>{{ l.label }}</dd>
@@ -298,6 +310,31 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
 }
 .zj-map__sector.is-focus .zj-map__sector-title {
   fill: #a6452e;
+}
+.zj-map__sector.is-highlight .zj-map__sector-title {
+  fill: #a6452e;
+  font-weight: 700;
+}
+.zj-map__sector-tint {
+  transition: fill-opacity 0.3s ease;
+}
+.zj-map.is-compact .zj-map__sector-title {
+  font-size: 12px;
+}
+.zj-map.is-compact .zj-map__sector-count {
+  font-size: 9px;
+}
+.zj-map.is-compact .zj-map__ring-label {
+  font-size: 10px;
+}
+.zj-map.is-compact .zj-map__seal-sub {
+  font-size: 10px;
+}
+.zj-map__glow {
+  fill: none;
+  stroke: #a6452e;
+  stroke-width: 2;
+  animation: zj-map-glow 2s ease-out both;
 }
 .zj-map__sector-count {
   font-family: -apple-system, 'PingFang SC', sans-serif;
@@ -517,9 +554,31 @@ const legendLayers = (Object.keys(LAYER_META) as Layer[]).map((key) => ({ key, .
     transform: scale(1);
   }
 }
+@keyframes zj-map-glow {
+  0% {
+    stroke-opacity: 0.9;
+    transform: scale(0.6);
+  }
+  60% {
+    stroke-opacity: 0.5;
+    transform: scale(1.6);
+  }
+  100% {
+    stroke-opacity: 0;
+    transform: scale(2);
+  }
+}
+.zj-map__glow {
+  transform-origin: center;
+  transform-box: fill-box;
+}
 @media (prefers-reduced-motion: reduce) {
   .zj-map__node {
     animation: none;
+  }
+  .zj-map__glow {
+    animation: none;
+    stroke-opacity: 0.6;
   }
 }
 </style>

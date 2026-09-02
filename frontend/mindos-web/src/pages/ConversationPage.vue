@@ -14,6 +14,7 @@ import {
   getInbox,
   getOntologyStats,
   getZhijunStatus,
+  listClaims,
   listConversations,
   recordConversationOutcome,
   reviewClaim,
@@ -29,6 +30,7 @@ import {
   type OntologyStats,
   type ProvenanceEvent,
   type ReviewAction,
+  type Section,
   type StreamErrorEvent,
   type TurnMetaEvent,
   type TurnMode,
@@ -48,6 +50,7 @@ import NudgeStrip from '@/components/conversation/NudgeStrip.vue'
 import ReviewOutcomePanel from '@/components/conversation/ReviewOutcomePanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
+import SelfMap from '@/components/ontology/SelfMap.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
@@ -89,8 +92,81 @@ const outcomeBusy = ref(false)
 const outcomeError = ref('')
 
 const isReview = computed(() => current.value?.mode === 'review')
+const isOnboarding = computed(() => current.value?.mode === 'onboarding')
 const showDraftPanel = computed(() => !!draft.value && draft.value.status !== 'discarded')
-const showSidePanel = computed(() => showDraftPanel.value || (isReview.value && !!decision.value))
+const showSidePanel = computed(() => showDraftPanel.value || (isReview.value && !!decision.value) || isOnboarding.value)
+
+// ---- 建档：一边聊，本体图一边亮起来
+const ONBOARDING_STEPS: { title: string; section: Section }[] = [
+  { title: '称呼与角色', section: 'who' },
+  { title: '手头的事', section: 'matters' },
+  { title: '在意的人', section: 'people' },
+  { title: '最近一次判断', section: 'ways' },
+  { title: '一条原则', section: 'principles' },
+  { title: '一两年后', section: 'direction' },
+  { title: '不想让 AI 碰的', section: 'principles' },
+]
+const onboardingStep = ref<number | null>(null)
+const mapClaims = ref<Claim[]>([])
+const newClaimIds = ref<Set<string>>(new Set())
+let glowTimer: number | null = null
+const mapPollGate = createSessionGate()
+
+const highlightSection = computed<Section | null>(() => {
+  const step = onboardingStep.value
+  if (!step || step < 1 || step > ONBOARDING_STEPS.length) return null
+  return ONBOARDING_STEPS[step - 1].section
+})
+const onboardingDone = computed(() => (onboardingStep.value ?? 0) >= ONBOARDING_STEPS.length + 1)
+const onboardingCounts = computed(() => ({
+  confirmed: stats.value?.claims?.confirmed ?? mapClaims.value.filter((c) => c.trustState === 'confirmed').length,
+  working: stats.value?.inbox ?? mapClaims.value.filter((c) => c.trustState === 'working').length,
+}))
+
+function stepFromMessages(): number | null {
+  // 刷新后没有 SSE meta：用户已发 k 条 → 知君刚问的是第 k 个问题（k ≤ 7），之后是收尾
+  const userTurns = messages.value.filter((m) => m.role === 'user').length
+  if (userTurns <= 0) return null
+  return Math.min(userTurns, ONBOARDING_STEPS.length + 1)
+}
+
+async function loadMapClaims(): Promise<Set<string>> {
+  try {
+    const res = await listClaims({ trust: ['confirmed', 'working'], limit: 500 })
+    mapClaims.value = res.items
+    return new Set(res.items.map((c) => c.id))
+  } catch {
+    return new Set(mapClaims.value.map((c) => c.id))
+  }
+}
+
+function flashNew(ids: Set<string>) {
+  if (!ids.size) return
+  newClaimIds.value = new Set([...newClaimIds.value, ...ids])
+  if (glowTimer) window.clearTimeout(glowTimer)
+  glowTimer = window.setTimeout(() => {
+    newClaimIds.value = new Set()
+    glowTimer = null
+  }, 2400)
+}
+
+async function pollMap() {
+  const session = mapPollGate.next()
+  const before = new Set(mapClaims.value.map((c) => c.id))
+  for (let i = 0; i < 10; i += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 2000))
+    if (!mapPollGate.isCurrent(session)) return
+    const after = await loadMapClaims()
+    if (!mapPollGate.isCurrent(session)) return
+    const fresh = new Set([...after].filter((id) => !before.has(id)))
+    if (fresh.size) {
+      flashNew(fresh)
+      void loadStats()
+      return
+    }
+  }
+  void loadStats()
+}
 
 function pushNote(content: string, meta: Record<string, unknown>) {
   if (!current.value) return
@@ -256,6 +332,12 @@ async function loadConversation(id: string) {
     draftError.value = ''
     decision.value = detail.decision ?? null
     outcomeError.value = ''
+    if (detail.conversation.mode === 'onboarding') {
+      onboardingStep.value = stepFromMessages()
+      void loadMapClaims()
+    } else {
+      onboardingStep.value = null
+    }
     await scrollToBottom()
   } catch (err) {
     if (!loadGate.isCurrent(session)) return
@@ -282,6 +364,10 @@ function resetToLanding() {
   draftError.value = ''
   decision.value = null
   outcomeError.value = ''
+  onboardingStep.value = null
+  mapClaims.value = []
+  newClaimIds.value = new Set()
+  mapPollGate.invalidate()
 }
 
 watch(
@@ -433,6 +519,10 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           assistant.provider = m.provider
           assistant.model = m.model
           assistant.external = m.external
+          if (m.mode === 'onboarding') {
+            onboardingStep.value = m.onboardingStep ?? stepFromMessages()
+            if (!mapClaims.value.length) void loadMapClaims()
+          }
         },
         provenance: (d) => {
           assistant.provenance = d as ProvenanceEvent
@@ -443,7 +533,10 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
         },
         extraction: (d) => {
           const e = d as ExtractionEvent
-          if (e.state === 'queued') void pollInbox(assistant)
+          if (e.state === 'queued') {
+            void pollInbox(assistant)
+            if (conv.mode === 'onboarding') void pollMap()
+          }
         },
         message_done: (d) => {
           const e = d as MessageDoneEvent
@@ -649,6 +742,36 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="showSidePanel" class="zj-page__panel">
+        <section v-if="isOnboarding" class="zj-onb" data-testid="onboarding-map" aria-label="建档进度与本体全景">
+          <h2 class="zj-onb__title">知君眼中的你，正在成形</h2>
+          <SelfMap
+            :claims="mapClaims"
+            :stats="stats"
+            :highlight-section="highlightSection"
+            :new-ids="newClaimIds"
+            compact
+            @select="(c) => router.push(`/me?section=${c.section}&claim=${encodeURIComponent(c.id)}`)"
+          />
+          <p class="zj-onb__counts">已经记下 {{ onboardingCounts.confirmed }} 条，等你点头 {{ onboardingCounts.working }} 条</p>
+          <ol class="zj-onb__steps" data-testid="onboarding-steps" aria-label="认识你的七个问题">
+            <li
+              v-for="(s, i) in ONBOARDING_STEPS"
+              :key="s.title"
+              class="zj-onb__step"
+              :class="{ 'is-done': (onboardingStep ?? 0) > i + 1, 'is-current': onboardingStep === i + 1 }"
+              :aria-current="onboardingStep === i + 1 ? 'step' : undefined"
+            >
+              <span class="zj-onb__dot" aria-hidden="true" />
+              <span class="zj-onb__label">{{ s.title }}</span>
+            </li>
+          </ol>
+          <p class="zj-onb__hint">认识你的七个问题 · 每答一个，对应的那一片就会亮起来。</p>
+          <div v-if="onboardingDone" class="zj-onb__done">
+            <h3>这是我目前对你的认识</h3>
+            <p>七个问题都聊过了。去「我的本体」核对一遍：对的点个头，不对的直接改。</p>
+            <BaseButton variant="primary" @click="router.push('/me')">去核对</BaseButton>
+          </div>
+        </section>
         <ReviewOutcomePanel
           v-if="isReview && decision"
           :decision="decision"
@@ -772,6 +895,84 @@ onBeforeUnmount(() => {
   min-width: 280px;
   min-height: 0;
   overflow-y: auto;
+}
+.zj-onb {
+  padding: 14px;
+  border: 1px solid var(--ws-border-color-3, #ebe7de);
+  border-radius: var(--ws-radius-lg, 8px);
+  background: var(--ws-body-bg, #fffcf6);
+}
+.zj-onb__title {
+  margin: 0 0 8px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-onb__counts {
+  margin: 8px 0 10px;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+  text-align: center;
+}
+.zj-onb__steps {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.zj-onb__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-onb__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ws-border-color, #d8d3c8);
+  background: transparent;
+}
+.zj-onb__step.is-done .zj-onb__dot {
+  background: var(--ws-text-primary-color, #1d211f);
+  border-color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-onb__step.is-current {
+  color: var(--ws-primary-color, #a6452e);
+  font-weight: 700;
+}
+.zj-onb__step.is-current .zj-onb__dot {
+  border-color: var(--ws-primary-color, #a6452e);
+  background: var(--ws-primary-color, #a6452e);
+  box-shadow: 0 0 0 3px rgba(166, 69, 46, 0.18);
+}
+.zj-onb__hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-onb__done {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px dashed var(--ws-primary-color, #a6452e);
+  border-radius: var(--ws-radius-lg, 8px);
+}
+.zj-onb__done h3 {
+  margin: 0 0 6px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 14px;
+}
+.zj-onb__done p {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-page__messages {
   flex: 1;

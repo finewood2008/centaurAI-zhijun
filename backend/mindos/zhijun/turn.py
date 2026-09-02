@@ -146,6 +146,8 @@ def _run_locked(
             "turnMode": mode,
             "depth": depth,
             "decisionId": conversation.get("decisionId"),
+            # 建档：本轮是第几问（1–7），问完后为 8；前端据此高亮本体图对应扇面
+            "onboardingStep": user_turns if (conversation.get("mode") == "onboarding") else None,
         },
     )
     yield ("provenance", assembled.provenance)
