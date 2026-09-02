@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 「最近留下的」：最近三段有产出的会话，每条一行：模式方印 · 标题 · 产出一行 · 相对时间。
 import type { Conversation } from '@/services/api'
+import { ChevronRight } from 'lucide-vue-next'
 import { conversationModeLabel, outcomesLine, relativeTime } from '@/shared/labels'
 
 defineProps<{ items: Conversation[] }>()
@@ -21,6 +22,7 @@ function titleOf(c: Conversation): string {
           <span class="zj-recent__title">{{ titleOf(c) }}</span>
           <span class="zj-recent__outcomes">{{ outcomesLine(c.outcomes) }}</span>
           <span class="zj-recent__time">{{ relativeTime(c.lastMessageAt || c.updatedAt) }}</span>
+          <ChevronRight class="zj-recent__arrow" :size="15" aria-hidden="true" />
         </button>
       </li>
     </ul>
@@ -37,7 +39,7 @@ function titleOf(c: Conversation): string {
 }
 .zj-recent__row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -55,6 +57,10 @@ function titleOf(c: Conversation): string {
 .zj-recent__row:hover {
   border-color: var(--ws-primary-color, #a6452e);
 }
+.zj-recent__row:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 2px;
+}
 .zj-recent__seal {
   flex: none;
 }
@@ -67,20 +73,27 @@ function titleOf(c: Conversation): string {
 }
 .zj-recent__outcomes,
 .zj-recent__time {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ws-text-secondary-color, #686b66);
   white-space: nowrap;
+}
+.zj-recent__arrow {
+  color: var(--ws-text-placeholder-color, #a3a69f);
 }
 .zj-recent__time {
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
 @media (max-width: 767px) {
   .zj-recent__row {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr) auto;
   }
   .zj-recent__outcomes,
   .zj-recent__time {
     grid-column: 2;
+  }
+  .zj-recent__arrow {
+    grid-column: 3;
+    grid-row: 1 / span 3;
   }
 }
 </style>

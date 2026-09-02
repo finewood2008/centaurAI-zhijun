@@ -149,10 +149,10 @@ onBeforeUnmount(() => {
 /* 今日页各区块共用的标题（子组件里也用，故不加 scoped）：小字、字距略宽、灰色，不做徽章 */
 .zj-today-section__title {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.06em;
-  color: var(--ws-text-placeholder-color, #a3a69f);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 </style>
 

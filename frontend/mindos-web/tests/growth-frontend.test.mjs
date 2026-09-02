@@ -45,6 +45,8 @@ assert.match(growth, /<details v-if="decisions\.length" class="growth-trend" :op
 assert.match(growth, /<summary>查看趋势<\/summary>/)
 assert.match(growth, /decisions\.value\.length >= 5/)
 assert.match(growth, /localStorage\.setItem\(TREND_KEY/)
+assert.match(growth, /visibleBoardColumns = computed\(\(\) => boardColumns\.value\.filter/)
+assert.match(growth, /v-for="column in visibleBoardColumns"/)
 
 assert.match(growth, /new Date\(decisionReviewAt\.value\)/)
 assert.match(growth, /reviewAt = localDate\.toISOString\(\)/)

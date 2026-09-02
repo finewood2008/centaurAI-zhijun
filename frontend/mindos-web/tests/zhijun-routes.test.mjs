@@ -8,6 +8,9 @@ const sidebar = await readFile(new URL('../src/layouts/AppSidebar.vue', import.m
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 const sse = await readFile(new URL('../src/services/sse.ts', import.meta.url), 'utf8')
 const conversation = await readFile(new URL('../src/pages/ConversationPage.vue', import.meta.url), 'utf8')
+const nextSteps = await readFile(new URL('../src/components/conversation/NextStepsPanel.vue', import.meta.url), 'utf8')
+const recentOutcomes = await readFile(new URL('../src/components/today/RecentOutcomes.vue', import.meta.url), 'utf8')
+const selfMap = await readFile(new URL('../src/components/ontology/SelfMap.vue', import.meta.url), 'utf8')
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
 // 路由：今日首屏 + 四入口 + 会话详情；旧问答/生成/治理/纠错页不再存在
@@ -34,6 +37,13 @@ assert.match(conversation, /route\.query\.deliberate/)
 assert.match(conversation, /route\.query\.onboarding/)
 assert.doesNotMatch(conversation, /import (NudgeStrip|NextStepsPanel) from/)
 assert.doesNotMatch(conversation, /router\.(push|replace)\('\/'\)/)
+// 成果回执能跨页面重开；今日页有唯一主动作与明确的可点击线索；本体边界说明移出图内，避免顶端碰撞。
+assert.match(conversation, /turnOutcomes\.value = null[\s\S]*refreshOutcomes\(id, true\)/)
+assert.match(nextSteps, /'is-primary': index === 0/)
+assert.match(nextSteps, /ChevronRight/)
+assert.match(recentOutcomes, /ChevronRight/)
+assert.match(selfMap, /v-if="compact"[\s\S]*zj-map__ring-label--boundary/)
+assert.match(selfMap, /class="zj-map__boundary-note"/)
 // 其它页「去对话」类跳转都指向 /chat，不再落到今日页
 for (const rel of ['../src/components/ontology/SelfMap.vue', '../src/pages/OntologyPage.vue', '../src/pages/DataHubPage.vue']) {
   const src = await readFile(new URL(rel, import.meta.url), 'utf8')

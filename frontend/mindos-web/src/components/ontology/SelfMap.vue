@@ -181,7 +181,7 @@ const legendOpen = ref(false)
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.core" fill="none" stroke="#1D211F" stroke-width="1.2" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.reaffirm" fill="none" stroke="#8B8E88" stroke-width="1.2" stroke-dasharray="1.5 5" stroke-linecap="round" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.boundary" fill="none" stroke="#A6452E" stroke-width="1.5" stroke-dasharray="7 5" />
-        <text :x="CENTER" :y="CENTER - RINGS.boundary - 6" text-anchor="middle" class="zj-map__ring-label zj-map__ring-label--boundary">
+        <text v-if="compact" :x="CENTER" :y="CENTER - RINGS.boundary - 6" text-anchor="middle" class="zj-map__ring-label zj-map__ring-label--boundary">
           {{ compact ? '朱砂线外：知君的猜测，等你点头' : '信任边界 · 外面是知君的猜测，等你点头才进来' }}<tspan v-if="inboxCount > 0" class="zj-map__ring-inbox">　● {{ inboxCount }} 条等你点头</tspan>
         </text>
       </g>
@@ -238,6 +238,10 @@ const legendOpen = ref(false)
         <text :x="CENTER" :y="CENTER + RINGS.boundary + 22" text-anchor="middle" class="zj-map__empty-line zj-map__empty-line--cinnabar">朱砂线外：知君的猜测，等你点头才进来</text>
       </g>
     </svg>
+
+    <p v-if="!compact && !isEmpty" class="zj-map__boundary-note">
+      <span aria-hidden="true" />信任边界 · 朱砂线外是知君的猜测，等你点头才进来<template v-if="inboxCount > 0"> · {{ inboxCount }} 条待确认</template>
+    </p>
 
     <!-- 悬停 / 聚焦提示 -->
     <div v-if="tip" class="zj-map__tip" :style="tipStyle" role="tooltip">
@@ -353,6 +357,21 @@ const legendOpen = ref(false)
 }
 .zj-map__ring-inbox {
   font-weight: 700;
+}
+.zj-map__boundary-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: -8px 0 10px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+.zj-map__boundary-note > span {
+  width: 22px;
+  border-top: 1.5px dashed var(--ws-primary-color, #a6452e);
 }
 .zj-map__seal-text {
   font-size: 26px;

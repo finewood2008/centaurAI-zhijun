@@ -55,7 +55,7 @@ defineEmits<{ (e: 'pick', text: string, deliberate: boolean): void; (e: 'resume'
   color: var(--ws-text-primary-color, #1d211f);
 }
 .zj-bring__resume-desc {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--ws-text-secondary-color, #686b66);
 }
@@ -88,7 +88,7 @@ defineEmits<{ (e: 'pick', text: string, deliberate: boolean): void; (e: 'resume'
   color: var(--ws-text-primary-color, #1d211f);
 }
 .zj-bring__card-desc {
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--ws-text-secondary-color, #686b66);
 }

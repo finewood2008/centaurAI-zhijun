@@ -67,7 +67,7 @@ function dueText(iso: string | null | undefined): string {
   border-left: 3px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-card-bg, #fff);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-outcomes__title {

@@ -8,7 +8,16 @@ export function formatDate(
 ): string {
   if (value === null || value === undefined || value === '') return fallback
   const d = new Date(value)
-  return Number.isNaN(d.valueOf()) ? fallback : d.toLocaleString('zh-CN', { hour12: false })
+  return Number.isNaN(d.valueOf())
+    ? fallback
+    : d.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      })
 }
 
 /** 文件大小（字节）格式化为可读文本。 */

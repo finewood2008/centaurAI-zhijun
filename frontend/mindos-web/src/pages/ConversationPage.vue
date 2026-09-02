@@ -513,6 +513,8 @@ async function loadConversation(id: string) {
     reviewSaveError.value = ''
     closingStreaming.value = false
     turnOutcomes.value = null
+    // 成果不是一次性提示：重新打开旧会话时也要能核对这段对话留下了什么。
+    void refreshOutcomes(id, true)
     if (detail.conversation.mode === 'onboarding') {
       onboardingStep.value = stepFromMessages()
       void loadMapClaims()

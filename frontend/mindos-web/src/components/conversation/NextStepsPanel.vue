@@ -4,6 +4,7 @@
 // 没有内容时由父组件不渲染。措辞不催：「到了回访的时候」，不是「逾期未处理」。
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ChevronRight } from 'lucide-vue-next'
 import { createConversation } from '@/services/api'
 import type { NextStep } from '@/shared/labels'
 import { useToast } from '@/composables/useToast'
@@ -53,10 +54,11 @@ async function pick(step: NextStep) {
   <section v-if="items.length" class="zj-next" data-testid="next-steps" aria-label="下一步">
     <h3 class="zj-next__title">下一步</h3>
     <ul class="zj-next__list">
-      <li v-for="s in items" :key="s.key">
-        <button type="button" class="zj-next__row" :disabled="busy[s.key]" @click="pick(s)">
+      <li v-for="(s, index) in items" :key="s.key">
+        <button type="button" class="zj-next__row" :class="{ 'is-primary': index === 0 }" :disabled="busy[s.key]" @click="pick(s)">
           <span class="zj-seal zj-seal--muted zj-next__seal">{{ kindLabel(s.kind) }}</span>
           <span class="zj-next__text">{{ s.text }}</span>
+          <ChevronRight class="zj-next__arrow" :size="15" aria-hidden="true" />
         </button>
       </li>
     </ul>
@@ -70,10 +72,10 @@ async function pick(step: NextStep) {
 }
 .zj-next__title {
   margin: 0 0 6px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.06em;
-  color: var(--ws-text-placeholder-color, #a3a69f);
+  color: var(--ws-text-secondary-color, #686b66);
 }
 .zj-next__list {
   display: grid;
@@ -101,6 +103,17 @@ async function pick(step: NextStep) {
 .zj-next__row:hover:not(:disabled) {
   border-color: var(--ws-primary-color, #a6452e);
 }
+.zj-next__row.is-primary {
+  border-color: rgba(166, 69, 46, 0.45);
+  border-left-width: 3px;
+  background: linear-gradient(90deg, rgba(166, 69, 46, 0.08), var(--ws-card-bg, #fff) 48%);
+  color: var(--ws-text-primary-color, #1d211f);
+  font-weight: 600;
+}
+.zj-next__row:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 2px;
+}
 .zj-next__row:disabled {
   opacity: 0.6;
   cursor: default;
@@ -109,9 +122,14 @@ async function pick(step: NextStep) {
   flex: none;
 }
 .zj-next__text {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.zj-next__arrow {
+  flex: none;
+  color: var(--ws-primary-color, #a6452e);
 }
 </style>

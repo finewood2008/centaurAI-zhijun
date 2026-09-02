@@ -344,10 +344,13 @@ function sortForBoard(items: GrowthDecision[]): GrowthDecision[] {
 
 // 判断优先的三栏看板：进行中（逾期在前）/ 待复盘 / 已复盘
 const boardColumns = computed(() => [
-  { key: 'open', title: '进行中', hint: '等结果回来', empty: '没有正在等结果的判断', items: sortForBoard(decisions.value.filter((d) => d.status === 'open')) },
-  { key: 'outcome', title: '待复盘', hint: '结果已记下', empty: '没有待复盘的判断', items: sortForBoard(decisions.value.filter((d) => d.status === 'outcome_recorded')) },
-  { key: 'reviewed', title: '已复盘', hint: '经验已留下', empty: '还没有完成复盘的判断', items: decisions.value.filter((d) => d.status === 'reviewed') },
+  { key: 'open', title: '进行中', hint: '等结果回来', items: sortForBoard(decisions.value.filter((d) => d.status === 'open')) },
+  { key: 'outcome', title: '待复盘', hint: '结果已记下', items: sortForBoard(decisions.value.filter((d) => d.status === 'outcome_recorded')) },
+  { key: 'reviewed', title: '已复盘', hint: '经验已留下', items: decisions.value.filter((d) => d.status === 'reviewed') },
 ] as const)
+
+// 有数据时只显示实际处于使用中的阶段，避免空列永久占掉三分之一页面。
+const visibleBoardColumns = computed(() => boardColumns.value.filter((column) => column.items.length > 0))
 
 const latestReviewed = computed(() => {
   const reviewed = decisions.value.filter((d) => d.review)
@@ -455,10 +458,9 @@ onMounted(async () => {
       <div v-if="decisionsLoading" class="loading-state" aria-live="polite">正在加载判断簿…</div>
       <ErrorState v-else-if="decisionsError" :message="decisionsError" @retry="loadDecisions" />
       <EmptyState v-else-if="!decisions.length" title="还没有判断记录" description="从一个当下正在做的真实选择开始，不需要一次写得完美；在对话里打开「我在考虑…」也能记。"><template #action><BaseButton variant="primary" size="sm" @click="showDecisionForm = true">记录第一次判断</BaseButton></template></EmptyState>
-      <div v-else class="board">
-        <section v-for="column in boardColumns" :key="column.key" class="board__column" :aria-labelledby="`column-${column.key}`">
+      <div v-else class="board" :class="`board--${visibleBoardColumns.length}`">
+        <section v-for="column in visibleBoardColumns" :key="column.key" class="board__column" :aria-labelledby="`column-${column.key}`">
           <header class="board__column-head"><h3 :id="`column-${column.key}`">{{ column.title }}</h3><small>{{ column.hint }} · {{ column.items.length }}</small></header>
-          <p v-if="!column.items.length" class="board__empty">{{ column.empty }}</p>
           <article v-for="decision in column.items" :id="`decision-${decision.id}`" :key="decision.id" class="decision-card" :class="{ 'is-overdue': isOverdue(decision), 'is-highlighted': highlightedId === decision.id }">
             <div class="decision-card__head"><h4>{{ decision.title }}</h4><span v-if="isOverdue(decision)" class="overdue-tag">已逾期</span></div>
             <DecisionStepper :status="decision.status" />
@@ -550,16 +552,15 @@ onMounted(async () => {
 .panel-icon{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:var(--ws-edit-color);color:var(--ws-primary-color)}
 .version-badge,.decision-counts span{padding:2px 8px;border-radius:3px;border:1px solid var(--ws-border-color);background:transparent;color:var(--ws-text-secondary-color);font-size: 12px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.charter-panel__meta{gap:10px}
 .growth-trend{margin:0 0 18px}.growth-trend>summary{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--ws-text-secondary-color);font-size:12px;cursor:pointer;list-style:none}.growth-trend>summary::-webkit-details-marker{display:none}.growth-trend>summary::before{content:'';width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s}.growth-trend[open]>summary::before{transform:rotate(90deg)}.growth-trend>summary:hover{color:var(--ws-primary-color)}
-.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}.board--1{grid-template-columns:minmax(0,560px)}.board--2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-surface-2)}
 .board__column-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 4px 4px}.board__column-head h3{margin:0;font-size:15px}.board__column-head small{color:var(--ws-text-secondary-color);font-size: 12px}
-.board__empty{margin:0;padding:18px 8px;border:1px dashed var(--ws-border-color);border-radius:var(--ws-radius);color:var(--ws-text-secondary-color);font-size:12px;text-align:center}
 .decision-card{display:grid;gap:9px;padding:13px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}.decision-card.is-overdue{border-color:rgba(166,69,46,.45)}.decision-card.is-highlighted{outline:2px solid var(--ws-primary-color,#a6452e);outline-offset:2px;transition:outline-color .3s}
 .decision-card__head{align-items:flex-start;gap:8px}.decision-card__head h4{margin:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
 .overdue-tag{flex:none;padding:1px 7px;border-radius:3px;border:1px solid var(--ws-primary-color);color:var(--ws-primary-color);font-size: 12px;font-weight:500}
 .decision-choice{margin:0;font-size:13px;line-height:1.55;color:var(--ws-text-primary-color);overflow-wrap:anywhere}.decision-choice small{display:block;margin-bottom:2px;color:var(--ws-text-secondary-color);font-size:12px}
-.decision-steps{display:flex;gap:14px;margin:0 0 4px;padding:0;list-style:none;font-size:12px;color:var(--ws-text-placeholder-color)}.decision-steps li{display:flex;align-items:center;gap:6px}.decision-steps li::before{content:'';width:8px;height:8px;border-radius:50%;border:1.5px solid currentColor}.decision-steps li.is-on{color:var(--ws-primary-color);font-weight:600}.decision-steps li.is-on::before{background:var(--ws-primary-color)}.decision-steps li.is-done{color:var(--ws-text-primary-color)}.decision-steps li.is-done::before{background:var(--ws-text-primary-color)}
-.decision-chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;padding:3px 8px;border-radius:999px;background:var(--ws-surface-2);color:var(--ws-text-primary-color);font-size: 12px;line-height:1.5;overflow-wrap:anywhere}.chip small{color:var(--ws-text-secondary-color);font-size: 12px}.chip--plain{margin:2px 6px 2px 0}
+.decision-steps{display:flex;gap:14px;margin:0 0 4px;padding:0;list-style:none;font-size:13px;color:var(--ws-text-placeholder-color)}.decision-steps li{display:flex;align-items:center;gap:6px}.decision-steps li::before{content:'';width:8px;height:8px;border-radius:50%;border:1.5px solid currentColor}.decision-steps li.is-on{color:var(--ws-primary-color);font-weight:600}.decision-steps li.is-on::before{background:var(--ws-primary-color)}.decision-steps li.is-done{color:var(--ws-text-primary-color)}.decision-steps li.is-done::before{background:var(--ws-text-primary-color)}
+.decision-chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;padding:3px 8px;border-radius:999px;background:var(--ws-surface-2);color:var(--ws-text-primary-color);font-size:13px;line-height:1.5;overflow-wrap:anywhere}.chip small{color:var(--ws-text-secondary-color);font-size:13px}.chip--plain{margin:2px 6px 2px 0}
 .decision-details{padding:6px 0;border-top:1px solid var(--ws-border-color-3)}.decision-details summary{color:var(--ws-primary-color);font-size: 12px;cursor:pointer}.decision-details dl{display:grid;grid-template-columns:76px 1fr;gap:6px 10px;margin-top:9px;font-size:12px;line-height:1.6}.decision-details dt{color:var(--ws-text-secondary-color)}.decision-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.decision-details ul{margin:0;padding-left:18px}
 .outcome-block,.review-block,.latest-review{padding:11px 12px;border-radius:var(--ws-radius);background:var(--ws-surface-2)}.review-block{border:1px solid var(--ws-border-color-3)}.latest-review{margin:14px 17px}.outcome-block__title{gap:6px;color:var(--ws-success-color);font-size:12px;font-weight:600}.review-block .outcome-block__title{color:var(--ws-primary-color)}.outcome-block__title small{margin-left:auto;color:var(--ws-text-secondary-color);font-weight:400}.outcome-block p,.review-block p,.latest-review p{margin:7px 0 0;font-size:12px;line-height:1.65;white-space:pre-wrap}.muted{color:var(--ws-text-secondary-color)}
 .review-lessons{margin-top:9px;color:var(--ws-text-color);font-size:12px}.review-lessons ul{margin:5px 0 0;padding-left:18px}.review-next{display:flex;gap:8px;padding-top:8px;border-top:1px solid var(--ws-border-color-3)}.review-next strong{flex:none;color:var(--ws-primary-color)}
