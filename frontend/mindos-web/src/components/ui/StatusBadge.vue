@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 状态标签（「印」式方标）：统一文案 + 语义色。文案与语义色来自 src/shared/status.ts，不允许页面自定义。
-// 层：你告诉我的=墨；资料里看到的=青绿；我推测的=朱砂虚线；你想成为的 / 知君的看法=朱砂实线。
+// 数据层使用中性名称：亲口陈述=墨；资料观察=青绿；知君推测=朱砂虚线；理想方向 / 知君的看法=朱砂实线。
 import type { StatusMeta } from '@/shared/status'
 
 withDefaults(

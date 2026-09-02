@@ -96,9 +96,9 @@ const heading = computed(() => {
   return sectionLabel(current.value)
 })
 const hint = computed(() => {
-  if (current.value === 'inbox') return '这些是知君从对话里提出、还没经你确认的理解。确认后才会成为它对你的认识；否定后永远不会再出现。'
+  if (current.value === 'inbox') return '这些是知君从对话里提出、还没经你确认的理解。只有你点头，它们才会留下；否定后不会再次出现。'
   if (current.value === 'proposals') return '知君整理时发现的疑问：两个名字是不是同一个人？两条理解是不是矛盾？它不会自己拍板，只等你定。'
-  if (showMap.value) return '离中心越近越可信；朱砂虚线外是知君的猜测，你点头才进来。点一个点看细节。'
+  if (showMap.value) return '离中心越近，越是我确认过的；朱砂虚线外是知君的推测，我点头才会留下。点一个点看细节。'
   return SECTIONS.find((s) => s.key === current.value)?.hint ?? ''
 })
 
@@ -287,7 +287,7 @@ onBeforeUnmount(() => {
   <div class="page zj-me">
     <div class="page-head">
       <h1>我的本体</h1>
-      <p>知君目前对你的认识。每一条都可核对、可修正、可撤回。</p>
+      <p>属于你的自我理解档案。知君可以提出理解，由你决定什么留下。</p>
     </div>
 
     <div class="zj-me__grid">
@@ -321,8 +321,8 @@ onBeforeUnmount(() => {
           <label class="zj-me__field">
             <span>它是</span>
             <select v-model="newLayer">
-              <option value="self_declared">我现在就是这样（你告诉我的）</option>
-              <option value="aspirational">我想成为这样（你想成为的）</option>
+              <option value="self_declared">我现在就是这样（亲口陈述）</option>
+              <option value="aspirational">我想成为这样（理想方向）</option>
             </select>
           </label>
           <label class="zj-me__field zj-me__field--wide">

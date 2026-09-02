@@ -16,10 +16,10 @@ export function sectionLabel(section: string): string {
 }
 
 export const LAYER_META: Record<Layer, StatusMeta> = {
-  self_declared: { label: '你告诉我的', tone: 'ink' },
-  observed: { label: '资料里看到的', tone: 'success' },
-  hypothesis: { label: '我推测的', tone: 'guess' },
-  aspirational: { label: '你想成为的', tone: 'accent' },
+  self_declared: { label: '亲口陈述', tone: 'ink' },
+  observed: { label: '资料观察', tone: 'success' },
+  hypothesis: { label: '知君推测', tone: 'guess' },
+  aspirational: { label: '理想方向', tone: 'accent' },
 }
 
 export function layerMeta(layer: string): StatusMeta {

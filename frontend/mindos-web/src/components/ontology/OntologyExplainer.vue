@@ -1,12 +1,12 @@
 <script setup lang="ts">
-// 一张小图解释「本体」：中心是我，三个环——实线（你确认过的）、点线（很久没再提）、朱砂虚线（信任边界，外面是猜测）。
+// 一张小图解释「本体」：中心是我，三个环——实线（我确认过的）、点线（很久没再提）、朱砂虚线（信任边界，外面是知君的推测）。
 // 与本体全景同一套视觉词汇；含义同时由文字给出。
 defineProps<{ compact?: boolean }>()
 </script>
 
 <template>
   <figure class="zj-explainer" :class="{ 'is-compact': compact }">
-    <svg viewBox="0 0 360 200" role="img" aria-label="本体图解：中心是我；离中心越近越可信；朱砂虚线外面是知君的猜测，等你点头才进来" class="zj-explainer__svg">
+    <svg viewBox="0 0 360 200" role="img" aria-label="本体图解：中心是我；离中心越近，越是我确认过的；朱砂虚线外是知君的推测，等我确认" class="zj-explainer__svg">
       <g transform="translate(120 100)">
         <circle r="92" fill="#FBF8F1" />
         <circle r="92" fill="none" stroke="#A6452E" stroke-width="1.5" stroke-dasharray="7 5" />
@@ -29,14 +29,14 @@ defineProps<{ compact?: boolean }>()
       </g>
       <g class="zj-explainer__captions">
         <text x="250" y="52" class="zj-explainer__cap">实线环内</text>
-        <text x="250" y="67" class="zj-explainer__sub">你确认过的，知君当作事实</text>
+        <text x="250" y="67" class="zj-explainer__sub">我确认过的，知君当作事实</text>
         <text x="250" y="104" class="zj-explainer__cap">点线环</text>
         <text x="250" y="119" class="zj-explainer__sub">很久没再提，可能变了</text>
         <text x="250" y="166" class="zj-explainer__cap zj-explainer__cap--cinnabar">朱砂虚线外</text>
-        <text x="250" y="181" class="zj-explainer__sub">知君的猜测，等你点头才进来</text>
+        <text x="250" y="181" class="zj-explainer__sub">知君的推测，等我确认</text>
       </g>
     </svg>
-    <figcaption class="zj-explainer__caption">本体，就是知君眼中的你：离中心越近越可信；你点头，猜测才会进来；你摇头，它就永远不再提。</figcaption>
+    <figcaption class="zj-explainer__caption">这是属于我的本体：离中心越近，越是我确认过的；知君的推测，只有我点头才会留下。</figcaption>
   </figure>
 </template>
 

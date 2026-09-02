@@ -41,7 +41,7 @@ def render(store: OntologyStore) -> tuple[str, str]:
         by_section.setdefault(claim["section"], []).append(claim)
 
     stamp = _now()
-    full = [f"# 知君对我的认识（已确认）", f"", f"> 生成于 {stamp}；共 {len(claims)} 条已确认理解。只有你确认过的内容才会出现在这里。", ""]
+    full = [f"# 知君对我的认识（已确认）", f"", f"> 生成于 {stamp}；共 {len(claims)} 条已确认理解。只有我确认过的内容才会出现在这里。", ""]
     export = [f"# 用户画像（由知君本体投影，仅含允许导出的已确认理解）", f"", f"> 生成于 {stamp}。", ""]
     exported = 0
     for section in SECTIONS:

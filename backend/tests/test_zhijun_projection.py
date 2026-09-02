@@ -47,6 +47,7 @@ class ProjectionTests(unittest.TestCase):
         )
         self.store.create_claim({"content": "我可能偏内向", "section": "who", "layer": "hypothesis"}, [])
         full, export = projection.render(self.store)
+        self.assertIn("只有我确认过的内容才会出现在这里", full)
         self.assertIn("我在做远川项目", full)
         self.assertIn("我正在处理一段家庭矛盾", full)
         self.assertNotIn("我可能偏内向", full)

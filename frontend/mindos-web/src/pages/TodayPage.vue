@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
 
         <article class="zj-letter">
           <div class="zj-letter__eyebrow">
-            <span>今天我想告诉你</span>
+            <span>知君 · 今日来信</span>
             <i v-if="overview.brief.status === 'refreshing'">我在重新整理</i>
           </div>
           <h1>{{ overview.brief.headline }}</h1>

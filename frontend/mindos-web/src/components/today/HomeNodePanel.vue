@@ -56,7 +56,7 @@ async function openDecision() {
   <aside class="zj-home-panel" aria-label="共同地图详情">
     <header class="zj-home-panel__head">
       <div>
-        <span>{{ node.ring === 'remembered' ? '我记得' : node.ring === 'tracking' ? '我们在跟进' : '我还不确定' }}</span>
+        <span>{{ node.ring === 'remembered' ? '知君记得' : node.ring === 'tracking' ? '一起跟进' : '等你确认' }}</span>
         <strong>{{ node.summary }}</strong>
       </div>
       <button type="button" aria-label="关闭详情" @click="$emit('close')"><X :size="17" aria-hidden="true" /></button>

@@ -61,6 +61,10 @@ class MentorCoreTests(unittest.TestCase):
         self._env.stop()
         self._tmp.cleanup()
 
+    def test_persona_uses_bounded_partner_identity(self) -> None:
+        self.assertIn("有记忆边界、可核对、不会替用户决定的 AI 长期思考伙伴", persona.PERSONA_CORE)
+        self.assertNotIn("AI 良师益友", persona.PERSONA_CORE)
+
     # ---- 历史判断进商量
     def test_similar_decisions_prefer_reviewed_and_feed_context(self) -> None:
         reviewed = self.growth.create_decision(_decision("远川项目测试要不要外包"))

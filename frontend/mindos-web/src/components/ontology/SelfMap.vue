@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 本体全景：一眼看懂「知君眼中的我」。
-// 中心是「我」，六个扇区是六个分区；离中心越近越可信：实线环内是你确认过的，点线环是很久没再提的，
-// 朱砂虚线是信任边界——边界外面的空心点是知君的猜测，等你点头才进来。所有含义都同时用文字表达。
+// 中心是「我」，六个扇区是六个分区；离中心越近越可信：实线环内是我确认过的，点线环是很久没再提的，
+// 朱砂虚线是信任边界——边界外面的空心点是知君的推测，等我确认才进来。所有含义都同时用文字表达。
 import { computed, ref } from 'vue'
 import type { Claim, Layer, OntologyStats, Section } from '@/services/api'
 import { LAYER_META, SECTIONS, layerMeta, trustMeta } from '@/shared/ontology'
@@ -182,7 +182,7 @@ const legendOpen = ref(false)
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.reaffirm" fill="none" stroke="#8B8E88" stroke-width="1.2" stroke-dasharray="1.5 5" stroke-linecap="round" />
         <circle :cx="CENTER" :cy="CENTER" :r="RINGS.boundary" fill="none" stroke="#A6452E" stroke-width="1.5" stroke-dasharray="7 5" />
         <text v-if="compact" :x="CENTER" :y="CENTER - RINGS.boundary - 6" text-anchor="middle" class="zj-map__ring-label zj-map__ring-label--boundary">
-          {{ compact ? '朱砂线外：知君的猜测，等你点头' : '信任边界 · 外面是知君的猜测，等你点头才进来' }}<tspan v-if="inboxCount > 0" class="zj-map__ring-inbox">　● {{ inboxCount }} 条等你点头</tspan>
+          {{ compact ? '朱砂线外：知君的推测，等我确认' : '信任边界 · 外面是知君的推测，等我确认才会留下' }}<tspan v-if="inboxCount > 0" class="zj-map__ring-inbox">　● {{ inboxCount }} 条等我确认</tspan>
         </text>
       </g>
 
@@ -232,15 +232,15 @@ const legendOpen = ref(false)
 
       <!-- 空状态解释 -->
       <g v-if="isEmpty" class="zj-map__empty" aria-hidden="true">
-        <text :x="CENTER" :y="CENTER + 80" text-anchor="middle" class="zj-map__empty-title">本体，就是知君眼中的你。</text>
-        <text :x="CENTER" :y="CENTER + RINGS.core - 14" text-anchor="middle" class="zj-map__empty-line">靠近中心：你确认过的</text>
+        <text :x="CENTER" :y="CENTER + 80" text-anchor="middle" class="zj-map__empty-title">这是属于我的本体。</text>
+        <text :x="CENTER" :y="CENTER + RINGS.core - 14" text-anchor="middle" class="zj-map__empty-line">靠近中心：我确认过的</text>
         <text :x="CENTER" :y="CENTER + RINGS.reaffirm - 14" text-anchor="middle" class="zj-map__empty-line">点线环：很久没再提，可能变了</text>
-        <text :x="CENTER" :y="CENTER + RINGS.boundary + 22" text-anchor="middle" class="zj-map__empty-line zj-map__empty-line--cinnabar">朱砂线外：知君的猜测，等你点头才进来</text>
+        <text :x="CENTER" :y="CENTER + RINGS.boundary + 22" text-anchor="middle" class="zj-map__empty-line zj-map__empty-line--cinnabar">朱砂线外：知君的推测，等我确认</text>
       </g>
     </svg>
 
     <p v-if="!compact && !isEmpty" class="zj-map__boundary-note">
-      <span aria-hidden="true" />信任边界 · 朱砂线外是知君的猜测，等你点头才进来<template v-if="inboxCount > 0"> · {{ inboxCount }} 条待确认</template>
+      <span aria-hidden="true" />信任边界 · 朱砂线外是知君的推测，等我确认才会留下<template v-if="inboxCount > 0"> · {{ inboxCount }} 条待确认</template>
     </p>
 
     <!-- 悬停 / 聚焦提示 -->
@@ -270,7 +270,7 @@ const legendOpen = ref(false)
       </div>
       <div class="zj-map__legend-item zj-map__legend-item--ring">
         <dt><span class="zj-map__swatch-ring zj-map__swatch-ring--core" aria-hidden="true" /></dt>
-        <dd>实线环内：你确认过的</dd>
+        <dd>实线环内：我确认过的</dd>
       </div>
       <div class="zj-map__legend-item zj-map__legend-item--ring">
         <dt><span class="zj-map__swatch-ring zj-map__swatch-ring--reaffirm" aria-hidden="true" /></dt>

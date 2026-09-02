@@ -12,9 +12,9 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'select', node: HomeMapNode): void }>()
 
 const RING_META: Record<HomeRing, { label: string; radius: number; angles: number[] }> = {
-  remembered: { label: '我记得', radius: 18, angles: [-90, 0, 90, 180] },
-  tracking: { label: '我们在跟进', radius: 31, angles: [-60, 60, 180] },
-  uncertain: { label: '我还不确定', radius: 43, angles: [-72, 48, 168] },
+  remembered: { label: '知君记得', radius: 18, angles: [-90, 0, 90, 180] },
+  tracking: { label: '一起跟进', radius: 31, angles: [-60, 60, 180] },
+  uncertain: { label: '等你确认', radius: 43, angles: [-72, 48, 168] },
 }
 
 const placed = computed(() => {
@@ -39,16 +39,16 @@ const daysLabel = computed(() => props.relationshipDays > 0 ? `我们认识的�
   <section class="zj-rmap" aria-label="我与知君的共同地图">
     <header class="zj-rmap__head">
       <div>
-        <p>我与你走到这里</p>
+        <p>知君与你走到这里</p>
         <h2>共同地图</h2>
       </div>
       <span>{{ nodes.length ? `${nodes.length} 个正在发光的位置` : '等待第一盏灯亮起' }}</span>
     </header>
 
     <div class="zj-rmap__legend" aria-label="地图图例">
-      <span class="is-remembered"><i />我记得</span>
-      <span class="is-tracking"><i />我们在跟进</span>
-      <span class="is-uncertain"><i />我还不确定</span>
+      <span class="is-remembered"><i />知君记得</span>
+      <span class="is-tracking"><i />一起跟进</span>
+      <span class="is-uncertain"><i />等你确认</span>
     </div>
 
     <div class="zj-rmap__stage" :class="{ 'is-empty': empty }">
