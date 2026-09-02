@@ -61,6 +61,59 @@ def _extractive_summary(messages: list[dict], max_chars: int = 400) -> tuple[str
     return summary, points[-8:]
 
 
+_SUMMARY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "themes": {"type": "array", "items": {"type": "string"}},
+        "open_loops": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["summary", "themes", "open_loops"],
+    "additionalProperties": False,
+}
+_SUMMARY_SYSTEM = """你是知君的对话整理助手。把这段对话整理成：summary（≤ 200 字，只记事实、决定、偏好、待办）、themes（用户反复提到或在意的主题，≤ 6 条短语）、open_loops（用户说要做还没做的事，≤ 4 条）。不要编造。只输出 JSON。"""
+
+
+def _model_summary(messages: list[dict]) -> tuple[str, list[str], str]:
+    """有真实模型时用模型出主题与待办；否则抽取式。返回 (summary, key_points, generated_by)。"""
+    user_texts = [m["content"] for m in messages if m.get("role") == "user" and (m.get("content") or "").strip()]
+    try:
+        provider = build_provider()
+    except ProviderError:
+        provider = None
+    if provider is None or provider.name == "fake":
+        summary, points = _extractive_summary(messages)
+        return summary, points, "extractive"
+    from .provider import ChatRequest
+
+    transcript = "\n".join(f"{'用户' if m['role'] == 'user' else '知君'}：{(m.get('content') or '').strip()[:300]}" for m in messages[-24:] if m.get("role") in ("user", "assistant"))
+    request = ChatRequest(system=_SUMMARY_SYSTEM, messages=[{"role": "user", "content": transcript}], max_tokens=800, temperature=0.0, json_schema=_SUMMARY_SCHEMA, effort="low", debug={"task": "summary", "userTexts": user_texts})
+    channel = "external" if provider.external else "local"
+    if not provider_gate.acquire(channel, timeout=60.0):
+        summary, points = _extractive_summary(messages)
+        return summary, points, "extractive"
+    try:
+        raw = provider.complete_json(request)
+    except (ProviderError, ValueError):
+        summary, points = _extractive_summary(messages)
+        return summary, points, "extractive"
+    finally:
+        provider_gate.release(channel)
+    themes = [str(t).strip()[:40] for t in (raw.get("themes") or []) if str(t).strip()][:6]
+    loops = ["待办：" + str(t).strip()[:40] for t in (raw.get("open_loops") or []) if str(t).strip()][:4]
+    return str(raw.get("summary") or "")[:400], themes + loops, provider.name
+
+
+def enqueue_draft(conversation_id: str, message_id: str | None, *, store: OntologyStore | None = None) -> str | None:
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("draft_turn", conversation_id, payload={"conversationId": conversation_id, "messageId": message_id}, priority=8)
+
+
+def enqueue_first_observation(conversation_id: str, message_id: str | None, *, store: OntologyStore | None = None) -> str | None:
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("first_observation", conversation_id, payload={"conversationId": conversation_id, "messageId": message_id}, priority=4)
+
+
 def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -> dict:
     kind = job["kind"]
     payload = job.get("payload") or {}
@@ -112,15 +165,37 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
         messages = conv_store.list_messages(conversation_id)
         if not messages:
             return {"state": "skipped", "reason": "empty"}
-        summary, points = _extractive_summary(messages)
+        summary, points, generated_by = _model_summary(messages)
         saved = conv_store.save_summary(
             conversation_id,
             up_to_seq=messages[-1]["seq"],
             summary=summary,
             key_points=points,
-            generated_by="extractive",
+            generated_by=generated_by,
         )
         return {"state": "done", "revision": saved["revision"]}
+    if kind == "draft_turn":
+        from . import deliberate
+
+        provider = build_provider()
+        channel = "external" if provider.external else "local"
+        if not provider_gate.acquire(channel, timeout=60.0):
+            raise ProviderError("模型通道繁忙", status_code=429, code="PROVIDER_BUSY", retryable=True)
+        try:
+            draft, changed = deliberate.run_draft(provider=provider, conv_store=conv_store, conversation_id=payload.get("conversationId"), message_id=payload.get("messageId"))
+        finally:
+            provider_gate.release(channel)
+        return {"state": "done", "draftId": draft["id"], "revision": draft["revision"], "changed": changed}
+    if kind == "first_observation":
+        provider = build_provider()
+        channel = "external" if provider.external else "local"
+        if not provider_gate.acquire(channel, timeout=60.0):
+            raise ProviderError("模型通道繁忙", status_code=429, code="PROVIDER_BUSY", retryable=True)
+        try:
+            result = extract.first_observation(provider=provider, store=store, conversation_id=payload.get("conversationId"), message_id=payload.get("messageId"))
+        finally:
+            provider_gate.release(channel)
+        return result
     if kind == "project":
         return projection.write_projection(store)
     if kind == "nudge_scan":

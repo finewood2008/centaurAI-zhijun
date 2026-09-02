@@ -18,6 +18,12 @@ def status():
         extraction = "beta"
     else:
         extraction = "enabled"
+    try:
+        from .stores.ontology_store import OntologyStore
+
+        pending = OntologyStore.instance().pending_jobs()
+    except Exception:  # noqa: BLE001
+        pending = None
     return {
         "provider": info.get("provider"),
         "model": info.get("model"),
@@ -26,6 +32,7 @@ def status():
         "error": info.get("error"),
         "extraction": extraction,
         "workerRunning": jobs.worker_running(),
+        "pendingJobs": pending,
     }
 
 

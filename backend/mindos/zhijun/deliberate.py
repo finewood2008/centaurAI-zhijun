@@ -73,6 +73,7 @@ def default_fields() -> dict:
         "keyQuestion": None,
         "zhijunView": None,
         "relatedEntityIds": [],
+        "relatedDecisionIds": [],
         "evidenceRefs": [],
         "userQuotes": [],
     }
@@ -187,6 +188,7 @@ def validate_draft(raw: dict, *, user_texts: list[str], prev_fields: dict | None
     quotes = [str(q).strip() for q in (raw.get("userQuotes") or []) if str(q).strip()]
     fields["userQuotes"] = [q for q in quotes if _in_user_text(q, user_texts)][:10]
     fields["relatedEntityIds"] = list(prev.get("relatedEntityIds") or [])
+    fields["relatedDecisionIds"] = list(prev.get("relatedDecisionIds") or [])
     fields["evidenceRefs"] = list(prev.get("evidenceRefs") or [])
 
     changed = [key for key in fields if fields[key] != prev.get(key)]
@@ -208,6 +210,18 @@ def run_draft(*, provider: ChatProvider, conv_store: ConversationStore, conversa
         ref = json.dumps({"kind": "message", "conversationId": conversation_id, "messageId": message_id}, ensure_ascii=False)
         if ref not in fields["evidenceRefs"]:
             fields["evidenceRefs"] = (fields["evidenceRefs"] + [ref])[-20:]
+    # 相似的历史判断：只引用用户自己记下的判断 id，进证据引用；不加评价。
+    try:
+        from .history import similar_decisions
+
+        related = similar_decisions("\n".join(user_texts), k=3)
+        fields["relatedDecisionIds"] = [d["id"] for d in related]
+        for d in related:
+            ref = json.dumps({"kind": "decision", "id": d["id"]}, ensure_ascii=False)
+            if ref not in fields["evidenceRefs"]:
+                fields["evidenceRefs"] = (fields["evidenceRefs"] + [ref])[-20:]
+    except Exception:  # noqa: BLE001
+        fields.setdefault("relatedDecisionIds", [])
     draft = conv_store.upsert_draft(conversation_id, fields, message_id=message_id)
     return draft, changed
 

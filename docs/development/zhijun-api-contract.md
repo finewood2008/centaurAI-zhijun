@@ -272,3 +272,16 @@ interface Conflict { id: string; kind: 'contradiction'|'tension'; claimA: Claim;
 - ClaimCard：已确认理解显示「可带走」开关（`exportAllowed`）；敏感 / 受限的开关禁用并说明。
 - 资料与边界：「可以带走的认识」区块 = `GET /ontology/context-pack`（数量、最近一次被谁以什么用途取走、列表）。
 - 桌面薄壳：`frontend/shell/`（Electron，只加载 `/mindos/`，无 preload / IPC）。
+
+---
+
+## 「良师」内核增补 — 版本 mentor-2026-09-02
+
+- `POST /{id}/messages` 的 SSE `decision_draft` 事件新增 `state: 'ready' | 'queued'`：演示模型同步整理（ready，带 fields）；真实模型（推理型要几十秒）改为后台任务，先发 `queued`，前端每 3 秒轮询 `GET /{id}/decision-draft` 最多 90 秒，`revision` 变化即更新面板。`fields` 新增 `relatedDecisionIds: string[]`（用户自己记下的相似判断，可链接到 `/judgments`）。
+- 建档第 8 轮（问完）后，后台生成一条「第一次观察」：`layer=hypothesis` 的工作理解，出现在 inbox / 建档地图上，等用户点头。
+- 复盘 `POST /api/mindos/growth/reviews` 成功后，每条 `lessons[i]` 变成 `principles` 分区、`layer=aspirational` 的待确认理解（证据 `kind=review`）；≥2 次复盘写下相近经验 → `promotionReady`。
+- 提醒 `Nudge.kind` 新增 `commitment_due`（`triggerRef={claimId, section}`；承诺到期前一天与当天，措辞带「不想聊也可以先划掉」）与 `weekly_review`（只在周日触发，`triggerRef={summary, weekStart}`；前端「一起看看」= 新建 chat 会话并自动发送「我们一起看看这周吧：{summary}」；「稍后 / 不再提醒」同其它类型）。
+- `POST /api/mindos/ontology/claims` 的 `section` / `layer` 可省略：服务端按规则分类（用户可在结果卡上改）。
+- `GET /api/mindos/zhijun/status` 新增 `pendingJobs`（后台任务数），前端可据此显示「知君还在整理 N 件事」。
+- 外部模型：`ZHIJUN_OPENAI_TASK_MODEL` 指定后台 JSON 任务模型（默认同主模型）；JSON 任务预算至少 6000 token（推理型模型会先写推理）。
+- 思考开关：`ZHIJUN_OPENAI_THINKING=deepseek`（base_url 含 deepseek 时自动）会按强度发送 `thinking`：effort=low（简短回复、抽取、摘要、草稿）关闭思考，effort=medium/high（深聊、商量、第一次观察）开启并把预算放宽到 ≥6000；其它 OpenAI 兼容服务不发送该参数（`ZHIJUN_OPENAI_THINKING=off` 可强制关闭）。

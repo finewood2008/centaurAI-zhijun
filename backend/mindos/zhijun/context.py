@@ -110,6 +110,7 @@ def assemble(
     charter: dict | None = None,
     turn_mode: str = "chat",
     decision: dict | None = None,
+    past_decisions: list[dict] | None = None,
 ) -> Assembled:
     channel = "external" if provider.external else "local"
     budget = BUDGETS[channel]
@@ -131,6 +132,11 @@ def assemble(
         parts.append(charter_text)
 
     confirmed = ontology.search_claims(user_text, k=12, trust_states=("confirmed",), include_hidden=True)
+    # 良师的底气来自原则与做法：商量 / 回访 / 深入时无论词面是否命中，都把已确认的原则与做法带上（最多 6 条）。
+    if turn_mode == "deliberate" or mode == "review" or depth == "deep":
+        seen = {c["id"] for c in confirmed}
+        anchors = ontology.search_claims("", k=6, trust_states=("confirmed",), sections=("principles", "ways"), include_hidden=True)
+        confirmed = confirmed + [c for c in anchors if c["id"] not in seen]
     working = ontology.search_claims(user_text, k=6, trust_states=("working",), include_hidden=False)
     retracted = ontology.search_claims(
         user_text, k=5, trust_states=("retracted", "superseded"), include_hidden=True, min_score=0.35
@@ -182,8 +188,15 @@ def assemble(
             for ev in materials
         ]
 
+    history_text = persona.past_decisions_block(past_decisions or [], budget=900 if channel == "external" else 400)
+    if history_text:
+        parts.append(history_text)
+
     if summary and summary.get("summary"):
         parts.append("## 本次对话此前的摘要\n" + str(summary["summary"])[:600])
+    themes_text = persona.themes_block(summary)
+    if themes_text:
+        parts.append(themes_text)
 
     system = "\n\n".join(p for p in parts if p)
     messages = _render_history(recent_messages, budget["recent"])
@@ -224,6 +237,7 @@ def assemble(
         "userTurns": user_turns,
         "decision": {k: decision.get(k) for k in ("id", "title", "choice", "confidence", "expectedOutcome", "status")} if decision else None,
         "outcomeRecorded": outcome_recorded,
+        "pastDecisions": [{"id": d["id"], "title": d.get("title"), "choice": d.get("choice"), "confidence": d.get("confidence")} for d in (past_decisions or [])],
         "confirmedClaims": [c["content"] for c in confirmed],
         "workingClaims": [c["content"] for c in working],
         "retractedNotices": len(retracted),

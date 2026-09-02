@@ -15,7 +15,7 @@ from ..stores.ontology_store import OntologyStore
 from . import context as context_module
 from . import deliberate, extract, jobs
 from .gate import conversation_locks, provider_gate
-from .provider import ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
+from .provider import ONBOARDING_QUESTIONS, ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,14 @@ def _run_locked(
     user_message = conv_store.append_message(conversation_id, "user", content)
     user_turns = conv_store.count_messages(conversation_id, role="user")
     decision = _decision_for(conversation)
+    past_decisions: list[dict] = []
+    if mode == "deliberate" or conversation.get("mode") == "review":
+        try:
+            from .history import similar_decisions
+
+            past_decisions = similar_decisions(content, k=3, exclude_id=conversation.get("decisionId"))
+        except Exception:  # noqa: BLE001 - 历史缺失不阻塞对话
+            past_decisions = []
     assembled = context_module.assemble(
         conversation=conversation,
         user_text=content,
@@ -131,6 +139,7 @@ def _run_locked(
         charter=_charter(),
         turn_mode=mode,
         decision=decision,
+        past_decisions=past_decisions,
     )
     assistant_id = f"msg_{uuid.uuid4().hex[:12]}"
     yield (
@@ -155,9 +164,10 @@ def _run_locked(
     request = ChatRequest(
         system=assembled.system,
         messages=assembled.messages,
-        max_tokens=DEEP_MAX_TOKENS if depth == "deep" else BRIEF_MAX_TOKENS,
+        max_tokens=DEEP_MAX_TOKENS if (depth == "deep" or mode == "deliberate") else BRIEF_MAX_TOKENS,
         temperature=0.4,
-        effort="medium" if depth == "deep" else "low",
+        # 商量 / 回访 / 深入是需要推理的轮次：effort 提到 medium。
+        effort="medium" if (depth == "deep" or mode == "deliberate" or conversation.get("mode") == "review") else "low",
         debug=assembled.debug,
     )
     buffer: list[str] = []
@@ -232,15 +242,25 @@ def _run_locked(
         return
 
     if mode == "deliberate":
-        # 商量模式：同步整理判断草稿（同一通道再调一次，不产生新的出设备），失败不影响本轮。
+        # 商量模式：演示模型同步整理草稿；真实模型（推理型要几十秒）改为后台任务，前端轮询 GET /decision-draft。
+        if provider.name == "fake":
+            try:
+                draft, changed = deliberate.run_draft(provider=provider, conv_store=conv_store, conversation_id=conversation_id, message_id=assistant_id)
+                yield (
+                    "decision_draft",
+                    {"state": "ready", "draftId": draft["id"], "revision": draft["revision"], "status": draft["status"], "fields": draft["fields"], "changedFields": changed},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("判断草稿整理失败：%s", type(exc).__name__)
+        else:
+            job_id = jobs.enqueue_draft(conversation_id, assistant_id, store=ontology)
+            yield ("decision_draft", {"state": "queued", "jobId": job_id, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []})
+
+    if conversation.get("mode") == "onboarding" and user_turns > len(ONBOARDING_QUESTIONS):
         try:
-            draft, changed = deliberate.run_draft(provider=provider, conv_store=conv_store, conversation_id=conversation_id, message_id=assistant_id)
-            yield (
-                "decision_draft",
-                {"draftId": draft["id"], "revision": draft["revision"], "status": draft["status"], "fields": draft["fields"], "changedFields": changed},
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("判断草稿整理失败：%s", type(exc).__name__)
+            jobs.enqueue_first_observation(conversation_id, assistant_id, store=ontology)
+        except Exception:  # noqa: BLE001
+            pass
 
     ok, reason = extract.should_extract(content)
     if ok and jobs.extraction_enabled():

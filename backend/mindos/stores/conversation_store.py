@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS nudge_policies (
 
 CREATE TABLE IF NOT EXISTS nudge_events (
     id TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin','principle_tension')),
+    kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin','principle_tension','weekly_review')),
     trigger_key TEXT NOT NULL,
     trigger_ref_json TEXT NOT NULL,
     why_now TEXT NOT NULL CHECK(length(why_now) > 0),
@@ -180,13 +180,13 @@ class ConversationStore:
                     conn.execute("ALTER TABLE conversations ADD COLUMN decision_id TEXT")
                 # P3：提醒类型增加 principle_tension（P2 建的库 CHECK 不含它，需重建表）。
                 ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nudge_events'").fetchone()
-                if ddl and "principle_tension" not in (ddl[0] or ""):
+                if ddl and "weekly_review" not in (ddl[0] or ""):
                     conn.executescript(
                         """
                         ALTER TABLE nudge_events RENAME TO nudge_events_old;
                         CREATE TABLE nudge_events (
                             id TEXT PRIMARY KEY,
-                            kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin','principle_tension')),
+                            kind TEXT NOT NULL CHECK(kind IN ('review_due','commitment_due','checkin','principle_tension','weekly_review')),
                             trigger_key TEXT NOT NULL,
                             trigger_ref_json TEXT NOT NULL,
                             why_now TEXT NOT NULL CHECK(length(why_now) > 0),
@@ -701,7 +701,7 @@ class ConversationStore:
 
         ``now`` 允许调用方传入扫描时刻（测试与补扫用），去重窗口与创建时间都以它为准。
         """
-        if kind not in ("review_due", "commitment_due", "checkin", "principle_tension"):
+        if kind not in ("review_due", "commitment_due", "checkin", "principle_tension", "weekly_review"):
             raise ConversationError(f"提醒类型不合法：{kind}")
         if not (why_now or "").strip():
             raise ConversationError("why_now 不能为空")

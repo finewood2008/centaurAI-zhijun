@@ -187,7 +187,7 @@ def _fake_section(sentence: str) -> tuple[str, str, str]:
         return "ways", "self_declared", "prefers"
     if any(
         k in sentence
-        for k in ("朋友", "同事", "老婆", "妻子", "丈夫", "老公", "女儿", "儿子", "合伙人", "老板", "团队", "父母", "妈", "爸", "孩子", "搭档", "伙伴")
+        for k in ("朋友", "同事", "老婆", "妻子", "丈夫", "老公", "太太", "女儿", "儿子", "合伙人", "老板", "团队", "父母", "妈", "爸", "孩子", "搭档", "伙伴", "一起", "认识", "关系")
     ):
         return "people", "self_declared", "knows"
     if any(k in sentence for k in ("项目", "工作", "在做", "负责", "公司", "创业", "产品", "计划", "正在", "忙")):
@@ -348,6 +348,22 @@ class FakeProvider:
         debug = req.debug or {}
         if debug.get("task") == "decision_draft":
             return fake_draft(list(debug.get("userTexts") or []), str(debug.get("assistantText") or ""))
+        if debug.get("task") == "summary":
+            texts = [str(t) for t in (debug.get("userTexts") or []) if str(t).strip()]
+            themes = list(dict.fromkeys(t.strip()[:24] for t in texts))[:4]
+            loops = [t.strip()[:40] for t in texts if any(k in t for k in ("打算", "准备", "下周", "要做", "计划"))][:3]
+            return {"summary": "；".join(t.strip()[:60] for t in texts)[:400], "themes": themes, "open_loops": loops}
+        if debug.get("task") == "first_observation":
+            basis = list(debug.get("basisClaims") or [])
+            if len(basis) < 2:
+                return {"content": None, "basis_claim_ids": [], "section": "ways", "question": None}
+            a, b = basis[0], basis[1]
+            return {
+                "content": f"你提到「{a['content'][:16]}」和「{b['content'][:16]}」时都在先把人和事理清楚，我猜你做事习惯先搭人再搭事",
+                "basis_claim_ids": [a["id"], b["id"]],
+                "section": "ways",
+                "question": "——对吗？这只是印象，你点头它才算数。",
+            }
         user_text = str(debug.get("userText") or "")
         if not user_text:
             for message in reversed(req.messages):
@@ -412,15 +428,33 @@ class OllamaProvider:
 
 
 # ---------------------------------------------------------------- OpenAI-compatible
+JSON_TASK_MIN_TOKENS = 6000
+
+
 class OpenAICompatibleProvider:
     name = "openai"
     external = True
 
-    def __init__(self, base_url: str, model: str, api_key: str, *, timeout: float) -> None:
+    def __init__(self, base_url: str, model: str, api_key: str, *, timeout: float, task_model: str | None = None, thinking: str | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         self.model = model
+        # 后台 JSON 任务（抽取 / 草稿 / 摘要 / 矛盾判定）可用更快的模型；推理型模型会先花预算写 reasoning，
+        # 预算太小时正文为空，所以 JSON 任务的 max_tokens 至少 JSON_TASK_MIN_TOKENS。
+        self.task_model = task_model or model
         self._api_key = api_key
         self._timeout = timeout
+        # 思考开关：DeepSeek 接受 ``thinking: {"type": "disabled"}``。effort=low（简短回复、抽取、摘要、草稿）
+        # 关掉思考——不截断、更快；effort=medium/high（深聊、商量、第一次观察）保留思考并放宽预算。
+        # 其它 OpenAI 兼容服务可能拒绝未知参数，所以只在 DeepSeek 或 ZHIJUN_OPENAI_THINKING=deepseek 时发送。
+        self._thinking = thinking or ("deepseek" if "deepseek" in base_url.lower() else "off")
+
+    def _apply_thinking(self, body: dict, req: ChatRequest) -> None:
+        if self._thinking != "deepseek":
+            return
+        deep = (req.effort or "low") != "low"
+        body["thinking"] = {"type": "enabled" if deep else "disabled"}
+        if deep:
+            body["max_tokens"] = max(int(body["max_tokens"]), JSON_TASK_MIN_TOKENS)
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._api_key}"}
@@ -433,6 +467,7 @@ class OpenAICompatibleProvider:
             "max_tokens": req.max_tokens,
             "stream": True,
         }
+        self._apply_thinking(body, req)
         resp = _open(self._base_url + "/chat/completions", body, timeout=self._timeout, headers=self._headers(), provider="外部模型", channel="chat")
         finish = None
         usage: Usage | None = None
@@ -463,20 +498,31 @@ class OpenAICompatibleProvider:
 
     def complete_json(self, req: ChatRequest) -> dict:
         body = {
-            "model": self.model,
+            "model": self.task_model,
             "messages": [{"role": "system", "content": req.system}, *req.messages],
             "temperature": req.temperature,
-            "max_tokens": req.max_tokens,
+            "max_tokens": max(int(req.max_tokens), JSON_TASK_MIN_TOKENS),
             "stream": False,
             "response_format": {"type": "json_object"},
         }
+        self._apply_thinking(body, req)
         resp = _open(self._base_url + "/chat/completions", body, timeout=self._timeout, headers=self._headers(), provider="外部模型", channel="chat")
         payload = json.loads(resp.read().decode("utf-8"))
         try:
-            content = payload["choices"][0]["message"]["content"]
+            choice = payload["choices"][0]
+            content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError("外部模型返回异常", status_code=502, code="PROVIDER_REJECTED", retryable=True) from exc
-        return parse_json_object(content or "")
+        if not (content or "").strip():
+            if choice.get("finish_reason") == "length":
+                raise ProviderError(
+                    "外部模型把输出预算花在推理上、正文为空：请把后台任务模型换成非推理模型（ZHIJUN_OPENAI_TASK_MODEL）或提高预算",
+                    status_code=502,
+                    code="EMPTY_REPLY",
+                    retryable=False,
+                )
+            raise ProviderError("外部模型返回空内容", status_code=502, code="EMPTY_REPLY", retryable=True)
+        return parse_json_object(content)
 
 
 # ---------------------------------------------------------------- Anthropic
@@ -589,15 +635,24 @@ def build_provider(snapshot=None) -> ChatProvider:
         return AnthropicProvider(model=model, api_key=key, timeout=float(snap.timeout_seconds), fallbacks=fallbacks)
     use_openai = override == "openai" or (not override and snap.provider == "openai" and snap.external_enabled)
     if use_openai:
-        key = get_provider().resolve_api_key(snap)
-        if not snap.base_url or not snap.model or not key:
+        # 环境变量优先（联调 / 评测用；密钥只在进程环境里，不落库不写日志），否则用设置页快照 + secret store。
+        base_url = os.environ.get("ZHIJUN_OPENAI_BASE_URL", "").strip() or snap.base_url
+        model = os.environ.get("ZHIJUN_OPENAI_MODEL", "").strip() or snap.model
+        key = os.environ.get("ZHIJUN_OPENAI_API_KEY", "").strip() or get_provider().resolve_api_key(snap)
+        if not base_url or not model or not key:
             raise ProviderError(
                 "外部模型配置不完整：请在设置里填写 BaseURL、API Key 与 Model",
                 status_code=503,
                 code="PROVIDER_MISCONFIGURED",
                 retryable=False,
             )
-        return OpenAICompatibleProvider(snap.base_url, snap.model, key, timeout=float(snap.timeout_seconds))
+        try:
+            timeout = float(os.environ.get("ZHIJUN_OPENAI_TIMEOUT", "") or snap.timeout_seconds)
+        except ValueError:
+            timeout = float(snap.timeout_seconds)
+        task_model = os.environ.get("ZHIJUN_OPENAI_TASK_MODEL", "").strip() or None
+        thinking = os.environ.get("ZHIJUN_OPENAI_THINKING", "").strip() or None
+        return OpenAICompatibleProvider(base_url, model, key, timeout=timeout, task_model=task_model, thinking=thinking)
     local = snap.local
     try:
         num_ctx = int(os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX)

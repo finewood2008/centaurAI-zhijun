@@ -205,6 +205,13 @@ def create_review(req: ReviewCreate):
         raise HTTPException(409, str(exc)) from None
     if result is None:
         raise HTTPException(404, "判断不存在")
+    # 知君：复盘经验 → 原则候选（单向、失败不影响复盘本身）。
+    try:
+        from .zhijun.growth_hooks import on_review
+
+        on_review(result.get("review") or {}, result.get("decision"))
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 

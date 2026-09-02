@@ -32,8 +32,9 @@ class _StrictModel(BaseModel):
 
 class ClaimCreate(_StrictModel):
     content: str = Field(min_length=1, max_length=120)
-    section: Literal["who", "people", "matters", "principles", "ways", "direction"]
-    layer: Literal["self_declared", "aspirational"] = "self_declared"
+    # 省略 section / layer 时由规则分类器判定（用户可在结果卡上改）。
+    section: Literal["who", "people", "matters", "principles", "ways", "direction"] | None = None
+    layer: Literal["self_declared", "aspirational"] | None = None
     predicate: str | None = Field(default=None, max_length=40)
     objectName: str | None = Field(default=None, max_length=80)
     objectType: Literal["person", "organization", "project", "place", "topic", "event", "term"] = "person"
@@ -103,6 +104,14 @@ def get_claim(claim_id: str):
 def create_claim(req: ClaimCreate):
     store = _store()
     object_id = None
+    section, layer, predicate = req.section, req.layer, req.predicate
+    if section is None or layer is None:
+        from .zhijun.provider import _fake_section
+
+        guessed_section, guessed_layer, guessed_predicate = _fake_section(req.content)
+        section = section or guessed_section
+        layer = layer or ("aspirational" if guessed_layer == "aspirational" else "self_declared")
+        predicate = predicate or (guessed_predicate if section == guessed_section else None)
     try:
         if req.objectName:
             object_id = store.upsert_entity(req.objectName, req.objectType, alias_source="user")["id"]
@@ -110,10 +119,10 @@ def create_claim(req: ClaimCreate):
             {
                 "subject_entity_id": ME_ENTITY_ID,
                 "object_entity_id": object_id,
-                "predicate": req.predicate,
+                "predicate": predicate,
                 "content": req.content,
-                "section": req.section,
-                "layer": req.layer,
+                "section": section,
+                "layer": layer,
                 "confidence": 1.0,
                 "privacy_level": req.privacyLevel,
                 "export_allowed": req.exportAllowed,

@@ -54,7 +54,7 @@ REVIEW_ACTIONS = (
     "create",
 )
 SURFACES = ("conversation", "ontology_page", "onboarding", "decision_panel", "import", "system")
-JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan")
+JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation")
 JOB_STATES = ("queued", "running", "done", "failed")
 
 # 受控谓词词表：抽取器只能在分区对应的词表内选，越界整条丢弃。
@@ -1498,11 +1498,13 @@ class OntologyStore:
     def evidence_source_count(self, claim_id: str) -> int:
         """独立来源数：不同会话算不同来源，资料按 material_id 算，用户编辑算一个。"""
         with self._connect() as conn:
-            rows = conn.execute("SELECT kind, conversation_id, material_id FROM claim_evidence WHERE claim_id = ?", (claim_id,)).fetchall()
+            rows = conn.execute("SELECT kind, conversation_id, material_id, decision_id FROM claim_evidence WHERE claim_id = ?", (claim_id,)).fetchall()
         sources = set()
         for r in rows:
             if r["material_id"]:
                 sources.add(f"m:{r['material_id']}")
+            elif r["decision_id"]:
+                sources.add(f"d:{r['decision_id']}")
             elif r["conversation_id"]:
                 sources.add(f"c:{r['conversation_id']}")
             else:

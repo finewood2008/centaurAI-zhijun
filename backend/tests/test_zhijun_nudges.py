@@ -118,6 +118,33 @@ class NudgeTests(unittest.TestCase):
         self.assertEqual(nudge_service.scan(conv_store=self.convs, growth=self.growth, now=later + timedelta(days=10))["created"], 0)
         self.assertEqual(self.client.post("/api/mindos/nudges/ndg_missing/dismiss").status_code, 404)
 
+    def test_commitment_due_and_weekly_review(self) -> None:
+        onto = ontology_store_module.OntologyStore.instance()
+        due = _iso(self.now - timedelta(hours=2))
+        commit = onto.create_claim(
+            {"content": "我承诺三个月内把团队招齐", "section": "matters", "layer": "self_declared", "predicate": "committed_to", "valid_to": due},
+            [{"kind": "conversation_turn", "conversation_id": "c1", "message_id": "m1", "quote": "三个月内把团队招齐"}],
+            trust_state="confirmed",
+            trust_origin="utterance",
+        )
+        result = nudge_service.scan(conv_store=self.convs, growth=self.growth, now=self.now)
+        kinds = [n["kind"] for n in self.convs.list_nudges()]
+        self.assertIn("commitment_due", kinds)
+        self.assertNotIn("weekly_review", kinds)  # 非周日不触发
+        item = next(n for n in self.convs.list_nudges() if n["kind"] == "commitment_due")
+        self.assertEqual(item["triggerRef"]["claimId"], commit["id"])
+        self.assertIn("期限", item["whyNow"])
+        # 周日 + 本周有判断 → 每周回顾，且一周内只有一条
+        sunday = self.now + timedelta(days=(6 - self.now.weekday()) % 7)
+        self.growth.create_decision(_decision("要不要涨价", sunday + timedelta(days=3)))
+        with patch.dict(os.environ, {"ZHIJUN_WEEKLY_ANYDAY": "1"}):
+            first = nudge_service.scan(conv_store=self.convs, growth=self.growth, now=self.now)
+            again = nudge_service.scan(conv_store=self.convs, growth=self.growth, now=self.now)
+        weekly = [n for n in self.convs.list_nudges() if n["kind"] == "weekly_review"]
+        self.assertEqual(len(weekly), 1)
+        self.assertIn("要不要花五分钟一起看看", weekly[0]["message"])
+        self.assertNotIn("连续", weekly[0]["message"])
+
     def test_review_conversation_records_outcome_and_acts_nudge(self) -> None:
         decision = self.growth.create_decision(_decision("要不要涨价", self.now - timedelta(days=1)))
         self.client.post("/api/mindos/nudges/scan")
