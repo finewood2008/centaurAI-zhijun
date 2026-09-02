@@ -47,6 +47,7 @@ import LiveObjectPanel from '@/components/conversation/LiveObjectPanel.vue'
 import NudgeStrip from '@/components/conversation/NudgeStrip.vue'
 import ReviewOutcomePanel from '@/components/conversation/ReviewOutcomePanel.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 
@@ -596,6 +597,7 @@ onBeforeUnmount(() => {
           <Sparkles :size="22" aria-hidden="true" />
           <h2>先让我认识真实的你</h2>
           <p>知君不会凭空给建议，也不会只凭一次聊天定义你。先聊十几分钟：你是谁、在做什么、最在意的人、最近一个判断、一条你认同的原则、以及不想让 AI 碰的领域。</p>
+          <OntologyExplainer class="zj-intro__explainer" compact />
           <p class="zj-intro__trust">原件留在设备内 · 只有经过你确认的理解才会留下</p>
           <BaseButton variant="primary" :loading="streaming" @click="startOnboarding">开始第一次对话</BaseButton>
         </div>
@@ -812,6 +814,9 @@ onBeforeUnmount(() => {
   font-size: 14px;
   line-height: 1.8;
   color: var(--ws-text-color, #3c403d);
+}
+.zj-intro__explainer {
+  margin: 8px auto 4px;
 }
 .zj-intro__trust {
   font-size: 12px;

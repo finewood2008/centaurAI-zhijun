@@ -5,6 +5,8 @@ import { computed, ref } from 'vue'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import type { ProvenanceEvent, TurnMetaEvent } from '@/services/api'
 import { sectionLabel } from '@/shared/ontology'
+import { confirmedFraction } from '@/shared/selfmap'
+import RingGlyph from '@/components/ui/RingGlyph.vue'
 
 const props = defineProps<{
   provenance: ProvenanceEvent
@@ -12,6 +14,7 @@ const props = defineProps<{
 }>()
 
 const open = ref(false)
+const fraction = computed(() => confirmedFraction(props.provenance.confirmedClaims.length, props.provenance.workingClaims.length))
 
 const summary = computed(() => {
   const p = props.provenance
@@ -41,6 +44,7 @@ const channel = computed(() => {
       :aria-expanded="open"
       @click="open = !open"
     >
+      <RingGlyph :fraction="fraction" :size="14" />
       <span class="zj-prov__lead">依据</span>
       <span class="zj-prov__summary">{{ summary }}</span>
       <span v-if="channel" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ meta?.external ? '外部模型' : (meta?.provider === 'fake' ? '演示模型' : '本地模型') }}</span>

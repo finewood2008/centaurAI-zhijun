@@ -3,7 +3,7 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createConversation } from '@/services/api'
-import { BookOpenCheck, ChevronDown, ChevronUp, Plus, RotateCcw, Sprout, Target } from 'lucide-vue-next'
+import { BookOpenCheck, ChevronUp, Plus, RotateCcw, Sprout, Target } from 'lucide-vue-next'
 import {
   api,
   ApiError,
@@ -13,6 +13,7 @@ import {
 } from '@/services/api'
 import { formatDate } from '@/shared/format'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import DecisionStepper from '@/components/growth/DecisionStepper.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import { useToast } from '@/composables/useToast'
@@ -311,6 +312,37 @@ async function completeReview(decision: GrowthDecision) {
   }
 }
 
+function isOverdue(decision: GrowthDecision): boolean {
+  if (decision.status !== 'open' || !decision.reviewAt) return false
+  const at = new Date(decision.reviewAt).valueOf()
+  return Number.isFinite(at) && at < Date.now()
+}
+
+function sortForBoard(items: GrowthDecision[]): GrowthDecision[] {
+  return [...items].sort((a, b) => {
+    const oa = isOverdue(a) ? 0 : 1
+    const ob = isOverdue(b) ? 0 : 1
+    if (oa !== ob) return oa - ob
+    const ra = a.reviewAt ? new Date(a.reviewAt).valueOf() : Number.POSITIVE_INFINITY
+    const rb = b.reviewAt ? new Date(b.reviewAt).valueOf() : Number.POSITIVE_INFINITY
+    if (ra !== rb) return ra - rb
+    return b.createdAt.localeCompare(a.createdAt)
+  })
+}
+
+// 判断优先的三栏看板：进行中（逾期在前）/ 待复盘 / 已复盘
+const boardColumns = computed(() => [
+  { key: 'open', title: '进行中', hint: '等结果回来', empty: '没有正在等结果的判断', items: sortForBoard(decisions.value.filter((d) => d.status === 'open')) },
+  { key: 'outcome', title: '待复盘', hint: '结果已记下', empty: '没有待复盘的判断', items: sortForBoard(decisions.value.filter((d) => d.status === 'outcome_recorded')) },
+  { key: 'reviewed', title: '已复盘', hint: '经验已留下', empty: '还没有完成复盘的判断', items: decisions.value.filter((d) => d.status === 'reviewed') },
+] as const)
+
+const latestReviewed = computed(() => {
+  const reviewed = decisions.value.filter((d) => d.review)
+  if (!reviewed.length) return null
+  return reviewed.sort((a, b) => String(b.review?.createdAt ?? '').localeCompare(String(a.review?.createdAt ?? '')))[0]
+})
+
 function statusLabel(status: GrowthDecisionStatus): string {
   if (status === 'open') return '待观察结果'
   if (status === 'outcome_recorded') return '待复盘'
@@ -341,30 +373,92 @@ onMounted(async () => {
 <template>
   <div class="page growth-page">
     <div class="page-head growth-head">
-      <div><h1>成长</h1><p>记下当时为什么这样选，再用真实结果校准你对自己和世界的理解。</p></div>
+      <div><h1>判断</h1><p>记下当时为什么这样选，等结果回来再一起复盘。</p></div>
       <BaseButton variant="primary" @click="showDecisionForm = true"><Plus :size="15" aria-hidden="true" />记录判断</BaseButton>
     </div>
 
+    <form v-if="showDecisionForm" id="decision-create" class="growth-form decision-create" @submit.prevent="createDecision">
+      <div class="subform-head"><div><h3>记录当下的判断</h3><p>只记你此刻真正知道和相信的内容，不要预写结果。</p></div><button type="button" class="collapse-button" aria-label="收起判断表单" :disabled="decisionSaving" @click="showDecisionForm = false"><ChevronUp :size="18" /></button></div>
+      <label for="decision-title">判断主题 <span aria-hidden="true">*</span></label><input id="decision-title" v-model="decisionTitle" maxlength="300" :disabled="decisionSaving" placeholder="例如：是否在今季度进入新市场" required>
+      <label for="decision-context">背景与当前约束 <span aria-hidden="true">*</span></label><textarea id="decision-context" v-model="decisionContext" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="发生了什么，当时有哪些时间、资源或关系约束" required />
+      <label for="decision-options">我认真考虑过的选项 <small>每行一项</small> <span aria-hidden="true">*</span></label><textarea id="decision-options" v-model="decisionOptions" rows="3" :disabled="decisionSaving" placeholder="现在进入&#10;先小规模验证&#10;暂不进入" required />
+      <div class="form-grid">
+        <div class="field"><label for="decision-choice">我的选择 <span aria-hidden="true">*</span></label><textarea id="decision-choice" v-model="decisionChoice" rows="3" maxlength="2000" :disabled="decisionSaving" required /></div>
+        <div class="field"><label for="decision-expected">我预期会看到什么 <span aria-hidden="true">*</span></label><textarea id="decision-expected" v-model="decisionExpectedOutcome" rows="3" maxlength="5000" :disabled="decisionSaving" required /></div>
+      </div>
+      <label for="decision-rationale">为什么这样选 <span aria-hidden="true">*</span></label><textarea id="decision-rationale" v-model="decisionRationale" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="关键事实、假设与取舍" required />
+      <div class="form-grid compact-grid">
+        <div class="field"><label for="decision-confidence">当时把握（0–100）</label><input id="decision-confidence" v-model.number="decisionConfidence" type="number" min="0" max="100" :disabled="decisionSaving"></div>
+        <div class="field"><label for="decision-review-at">何时回看结果 <small>可留空</small></label><input id="decision-review-at" v-model="decisionReviewAt" type="datetime-local" :disabled="decisionSaving"></div>
+      </div>
+      <div class="form-actions"><BaseButton variant="secondary" :disabled="decisionSaving" @click="showDecisionForm = false">取消</BaseButton><BaseButton type="submit" variant="primary" :loading="decisionSaving">确认记录</BaseButton></div>
+    </form>
+
+    <section class="board-section" aria-labelledby="decisions-heading">
+      <div class="section-head">
+        <div class="growth-panel__title"><span class="panel-icon"><Target :size="19" aria-hidden="true" /></span><div><h2 id="decisions-heading">判断簿</h2><p>把事后解释变成当时可核对的记录。</p></div></div>
+        <div class="decision-counts"><span>{{ statusCounts.open }} 进行中</span><span>{{ statusCounts.outcome }} 待复盘</span><span>{{ statusCounts.reviewed }} 已复盘</span></div>
+      </div>
+      <div v-if="decisionsLoading" class="loading-state" aria-live="polite">正在加载判断簿…</div>
+      <ErrorState v-else-if="decisionsError" :message="decisionsError" @retry="loadDecisions" />
+      <EmptyState v-else-if="!decisions.length" title="还没有判断记录" description="从一个当下正在做的真实选择开始，不需要一次写得完美；在对话里打开「我在考虑…」也能记。"><template #action><BaseButton variant="primary" size="sm" @click="showDecisionForm = true">记录第一次判断</BaseButton></template></EmptyState>
+      <div v-else class="board">
+        <section v-for="column in boardColumns" :key="column.key" class="board__column" :aria-labelledby="`column-${column.key}`">
+          <header class="board__column-head"><h3 :id="`column-${column.key}`">{{ column.title }}</h3><small>{{ column.hint }} · {{ column.items.length }}</small></header>
+          <p v-if="!column.items.length" class="board__empty">{{ column.empty }}</p>
+          <article v-for="decision in column.items" :id="`decision-${decision.id}`" :key="decision.id" class="decision-card" :class="{ 'is-overdue': isOverdue(decision) }">
+            <div class="decision-card__head"><h4>{{ decision.title }}</h4><span v-if="isOverdue(decision)" class="overdue-tag">已逾期</span></div>
+            <DecisionStepper :status="decision.status" />
+            <p class="decision-context" :title="decision.context">{{ decision.context }}</p>
+            <div class="decision-chips">
+              <span class="chip"><small>当时选了</small>{{ decision.choice }}</span>
+              <span class="chip"><small>把握</small>{{ decision.confidence }}%</span>
+              <span class="chip"><small>回访日</small>{{ decision.reviewAt ? formatDate(decision.reviewAt) : '未定' }}</span>
+            </div>
+            <details class="decision-details"><summary>当时的完整记录</summary><dl><dt>背景</dt><dd>{{ decision.context }}</dd><dt>考虑过的选项</dt><dd><ul><li v-for="option in decision.options" :key="option">{{ option }}</li></ul></dd><dt>理由与假设</dt><dd>{{ decision.rationale }}</dd><dt>预期结果</dt><dd>{{ decision.expectedOutcome }}</dd><dt>记录时间</dt><dd>{{ formatDate(decision.createdAt) }}<template v-if="decision.charterVersion"> · 基于章程第 {{ decision.charterVersion }} 版</template></dd></dl></details>
+
+            <section v-if="decision.outcome" class="outcome-block"><div class="outcome-block__title"><BookOpenCheck :size="16" aria-hidden="true" />真实结果 <small>{{ formatDate(decision.outcome.recordedAt) }}</small></div><p>{{ decision.outcome.result }}</p><p v-if="decision.outcome.notes" class="muted">补充：{{ decision.outcome.notes }}</p></section>
+            <section v-if="decision.review" class="review-block">
+              <div class="outcome-block__title"><Sprout :size="16" aria-hidden="true" />复盘 <small>{{ formatDate(decision.review.createdAt) }}</small></div>
+              <p>{{ decision.review.reflection }}</p>
+              <div class="review-lessons"><strong>留下的经验</strong><ul><li v-for="lesson in decision.review.lessons" :key="lesson">{{ lesson }}</li></ul></div>
+              <p class="review-next"><strong>下一步</strong>{{ decision.review.nextAction }}</p>
+            </section>
+
+            <div v-if="decision.status === 'open' && activeOutcomeId !== decision.id" class="decision-actions"><button type="button" class="decision-review-link" :disabled="reviewOpeningId === decision.id" @click="openReviewConversation(decision)">和知君回访</button><BaseButton variant="primary" size="sm" @click="startOutcome(decision)"><RotateCcw :size="14" aria-hidden="true" />记结果</BaseButton></div>
+            <form v-if="decision.status === 'open' && activeOutcomeId === decision.id" class="inline-form" @submit.prevent="recordOutcome(decision)">
+              <h5>当初的预期是：{{ decision.expectedOutcome }}</h5><label :for="`outcome-result-${decision.id}`">真实结果 <span aria-hidden="true">*</span></label><textarea :id="`outcome-result-${decision.id}`" v-model="outcomeResult" rows="3" maxlength="10000" :disabled="outcomeSavingId === decision.id" required /><label :for="`outcome-notes-${decision.id}`">补充说明 <small>可留空</small></label><textarea :id="`outcome-notes-${decision.id}`" v-model="outcomeNotes" rows="2" maxlength="10000" :disabled="outcomeSavingId === decision.id" /><div class="form-actions"><BaseButton variant="secondary" size="sm" :disabled="outcomeSavingId === decision.id" @click="activeOutcomeId = ''">取消</BaseButton><BaseButton type="submit" variant="primary" size="sm" :loading="outcomeSavingId === decision.id">保存结果</BaseButton></div>
+            </form>
+
+            <div v-if="decision.status === 'outcome_recorded' && activeReviewId !== decision.id" class="decision-actions"><BaseButton variant="primary" size="sm" @click="startReview(decision)"><BookOpenCheck :size="14" aria-hidden="true" />复盘</BaseButton></div>
+            <form v-if="decision.status === 'outcome_recorded' && activeReviewId === decision.id" class="inline-form" @submit.prevent="completeReview(decision)">
+              <h5>从预期与真实结果的差异开始</h5><label :for="`review-reflection-${decision.id}`">我现在怎么看这次判断 <span aria-hidden="true">*</span></label><textarea :id="`review-reflection-${decision.id}`" v-model="reviewReflection" rows="3" maxlength="10000" :disabled="reviewSavingId === decision.id" required /><label :for="`review-lessons-${decision.id}`">值得留下的经验 <small>每行一项</small> <span aria-hidden="true">*</span></label><textarea :id="`review-lessons-${decision.id}`" v-model="reviewLessons" rows="3" :disabled="reviewSavingId === decision.id" required /><label :for="`review-next-${decision.id}`">下一步行动 <span aria-hidden="true">*</span></label><textarea :id="`review-next-${decision.id}`" v-model="reviewNextAction" rows="2" maxlength="5000" :disabled="reviewSavingId === decision.id" required /><div class="form-actions"><BaseButton variant="secondary" size="sm" :disabled="reviewSavingId === decision.id" @click="activeReviewId = ''">取消</BaseButton><BaseButton type="submit" variant="primary" size="sm" :loading="reviewSavingId === decision.id">确认完成复盘</BaseButton></div>
+            </form>
+          </article>
+        </section>
+      </div>
+    </section>
+
     <section class="growth-panel charter-panel" aria-labelledby="charter-heading">
       <div class="growth-panel__head">
-        <div class="growth-panel__title"><span class="panel-icon"><Sprout :size="19" aria-hidden="true" /></span><div><h2 id="charter-heading">人生章程</h2><p>它是知君理解你想去哪里的用户授权依据。</p></div></div>
-        <span v-if="charter" class="version-badge">第 {{ charter.version }} 版 · 共 {{ charterVersionCount }} 版</span>
+        <div class="growth-panel__title"><span class="panel-icon"><Sprout :size="19" aria-hidden="true" /></span><div><h2 id="charter-heading">我的方向（人生章程）</h2><p>知君挑战你、提醒你时的依据；改动会生成新版本，不改写历史。</p></div></div>
+        <div class="charter-panel__meta"><span v-if="charter" class="version-badge">第 {{ charter.version }} 版 · {{ formatDate(charter.createdAt) }}</span><BaseButton v-if="charter && !showCharterForm" variant="secondary" size="sm" @click="startCharterEdit">修改</BaseButton></div>
       </div>
       <div v-if="charterLoading" class="loading-state" aria-live="polite">正在加载人生章程…</div>
       <ErrorState v-else-if="charterError" :message="charterError" @retry="loadCharter" />
       <div v-else-if="charter && !showCharterForm" class="charter-summary">
-        <div class="charter-summary__vision"><small>我想成为</small><strong>{{ charter.vision }}</strong></div>
-        <div class="charter-summary__grid">
-          <div><small>重要角色</small><span>{{ charter.roles.length ? charter.roles.join('、') : '未填写' }}</span></div>
-          <div><small>当前目标</small><span>{{ charter.goals.length ? charter.goals.join('、') : '未填写' }}</span></div>
-          <div><small>长期原则</small><span>{{ charter.principles.length ? charter.principles.join('、') : '未填写' }}</span></div>
-          <div><small>知君如何挑战我</small><span>{{ charter.challengeStyle }}</span></div>
-          <div><small>AI 决策边界</small><span>{{ charter.boundaries.length ? charter.boundaries.join('、') : '未填写' }}</span></div>
-          <div><small>静默领域</small><span>{{ charter.quietDomains.length ? charter.quietDomains.join('、') : '无' }}</span></div>
+        <p class="charter-summary__vision"><small>我想成为</small>{{ charter.vision }}</p>
+        <div class="charter-summary__rows">
+          <div><small>角色</small><span v-if="!charter.roles.length" class="muted">未填写</span><span v-for="item in charter.roles" :key="item" class="chip chip--plain">{{ item }}</span></div>
+          <div><small>原则</small><span v-if="!charter.principles.length" class="muted">未填写</span><span v-for="item in charter.principles" :key="item" class="chip chip--plain">{{ item }}</span></div>
+          <div><small>目标</small><span v-if="!charter.goals.length" class="muted">未填写</span><span v-for="item in charter.goals" :key="item" class="chip chip--plain">{{ item }}</span></div>
+          <div><small>不该由 AI 决定</small><span v-if="!charter.boundaries.length" class="muted">未填写</span><span v-for="item in charter.boundaries" :key="item" class="chip chip--plain">{{ item }}</span></div>
+          <div><small>知君可以如何挑战我</small><span class="charter-line">{{ charter.challengeStyle }}</span></div>
+          <div><small>不要主动提起</small><span v-if="!charter.quietDomains.length" class="muted">无</span><span v-for="item in charter.quietDomains" :key="item" class="chip chip--plain">{{ item }}</span></div>
         </div>
-        <div class="charter-summary__actions"><BaseButton variant="secondary" size="sm" @click="startCharterEdit">更新章程</BaseButton></div>
       </div>
       <form v-else-if="showCharterForm" class="growth-form" @submit.prevent="saveCharter">
+        <p v-if="!charter" class="form-intro">先写下你想成为谁，知君才有依据挑战你。</p>
         <label for="charter-vision">我想成为怎样的人 <span aria-hidden="true">*</span></label>
         <textarea id="charter-vision" v-model="charterVision" rows="3" maxlength="2000" :disabled="charterSaving" placeholder="用你自己的语言描述人生愿景" required />
         <div class="form-grid">
@@ -381,67 +475,40 @@ onMounted(async () => {
       </form>
     </section>
 
-    <section class="growth-panel" aria-labelledby="decisions-heading">
-      <div class="growth-panel__head">
-        <div class="growth-panel__title"><span class="panel-icon"><Target :size="19" aria-hidden="true" /></span><div><h2 id="decisions-heading">判断簿</h2><p>把事后解释变成当时可核对的记录。</p></div></div>
-        <div class="decision-counts"><span>{{ statusCounts.open }} 进行中</span><span>{{ statusCounts.outcome }} 待复盘</span><span>{{ statusCounts.reviewed }} 已完成</span></div>
-      </div>
-
-      <form v-if="showDecisionForm" id="decision-create" class="growth-form decision-create" @submit.prevent="createDecision">
-        <div class="subform-head"><div><h3>记录当下的判断</h3><p>只记你此刻真正知道和相信的内容，不要预写结果。</p></div><button type="button" class="collapse-button" aria-label="收起判断表单" :disabled="decisionSaving" @click="showDecisionForm = false"><ChevronUp :size="18" /></button></div>
-        <label for="decision-title">判断主题 <span aria-hidden="true">*</span></label><input id="decision-title" v-model="decisionTitle" maxlength="300" :disabled="decisionSaving" placeholder="例如：是否在今季度进入新市场" required>
-        <label for="decision-context">背景与当前约束 <span aria-hidden="true">*</span></label><textarea id="decision-context" v-model="decisionContext" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="发生了什么，当时有哪些时间、资源或关系约束" required />
-        <label for="decision-options">我认真考虑过的选项 <small>每行一项</small> <span aria-hidden="true">*</span></label><textarea id="decision-options" v-model="decisionOptions" rows="3" :disabled="decisionSaving" placeholder="现在进入&#10;先小规模验证&#10;暂不进入" required />
-        <div class="form-grid">
-          <div class="field"><label for="decision-choice">我的选择 <span aria-hidden="true">*</span></label><textarea id="decision-choice" v-model="decisionChoice" rows="3" maxlength="2000" :disabled="decisionSaving" required /></div>
-          <div class="field"><label for="decision-expected">我预期会看到什么 <span aria-hidden="true">*</span></label><textarea id="decision-expected" v-model="decisionExpectedOutcome" rows="3" maxlength="5000" :disabled="decisionSaving" required /></div>
-        </div>
-        <label for="decision-rationale">为什么这样选 <span aria-hidden="true">*</span></label><textarea id="decision-rationale" v-model="decisionRationale" rows="3" maxlength="10000" :disabled="decisionSaving" placeholder="关键事实、假设与取舍" required />
-        <div class="form-grid compact-grid">
-          <div class="field"><label for="decision-confidence">当时信心度（0–100）</label><input id="decision-confidence" v-model.number="decisionConfidence" type="number" min="0" max="100" :disabled="decisionSaving"></div>
-          <div class="field"><label for="decision-review-at">何时回看结果 <small>可留空</small></label><input id="decision-review-at" v-model="decisionReviewAt" type="datetime-local" :disabled="decisionSaving"></div>
-        </div>
-        <div class="form-actions"><BaseButton variant="secondary" :disabled="decisionSaving" @click="showDecisionForm = false">取消</BaseButton><BaseButton type="submit" variant="primary" :loading="decisionSaving">确认记录</BaseButton></div>
-      </form>
-      <button v-else type="button" class="open-form-button" @click="showDecisionForm = true"><Plus :size="16" aria-hidden="true" />记录一次重要判断<ChevronDown :size="16" aria-hidden="true" /></button>
-
-      <div v-if="decisionsLoading" class="loading-state" aria-live="polite">正在加载判断簿…</div>
-      <ErrorState v-else-if="decisionsError" :message="decisionsError" @retry="loadDecisions" />
-      <EmptyState v-else-if="!decisions.length" title="还没有判断记录" description="从一个当下正在做的真实选择开始，不需要一次写得完美。"><template #action><BaseButton variant="primary" size="sm" @click="showDecisionForm = true">记录第一次判断</BaseButton></template></EmptyState>
-      <div v-else class="decision-list">
-        <article v-for="decision in decisions" :id="`decision-${decision.id}`" :key="decision.id" class="decision-card">
-          <div class="decision-card__head"><div><h3>{{ decision.title }}</h3><p>{{ formatDate(decision.createdAt) }}<template v-if="decision.charterVersion"> · 基于章程第 {{ decision.charterVersion }} 版</template></p></div><span class="decision-status" :class="`is-${decision.status}`">{{ statusLabel(decision.status) }}</span></div>
-          <div class="decision-summary"><div><small>当时选择</small><strong>{{ decision.choice }}</strong></div><div><small>信心度</small><strong>{{ decision.confidence }}%</strong></div><div><small>观察时间</small><strong>{{ formatDate(decision.reviewAt) }}</strong></div></div>
-          <details class="decision-details"><summary>查看当时的完整记录</summary><dl><dt>背景</dt><dd>{{ decision.context }}</dd><dt>考虑过的选项</dt><dd><ul><li v-for="option in decision.options" :key="option">{{ option }}</li></ul></dd><dt>理由与假设</dt><dd>{{ decision.rationale }}</dd><dt>预期结果</dt><dd>{{ decision.expectedOutcome }}</dd></dl></details>
-
-          <section v-if="decision.outcome" class="outcome-block"><div class="outcome-block__title"><BookOpenCheck :size="16" aria-hidden="true" />真实结果 <small>{{ formatDate(decision.outcome.recordedAt) }}</small></div><p>{{ decision.outcome.result }}</p><p v-if="decision.outcome.notes" class="muted">补充：{{ decision.outcome.notes }}</p></section>
-          <section v-if="decision.review" class="review-block">
-            <div class="outcome-block__title"><Sprout :size="16" aria-hidden="true" />这次成长复盘 <small>{{ formatDate(decision.review.createdAt) }}</small></div>
-            <p>{{ decision.review.reflection }}</p>
-            <div class="review-lessons"><strong>留下的经验</strong><ul><li v-for="lesson in decision.review.lessons" :key="lesson">{{ lesson }}</li></ul></div>
-            <p class="review-next"><strong>下一步</strong>{{ decision.review.nextAction }}</p>
-          </section>
-
-          <div v-if="decision.status === 'open' && activeOutcomeId !== decision.id" class="decision-actions"><button type="button" class="decision-review-link" :disabled="reviewOpeningId === decision.id" @click="openReviewConversation(decision)">和知君回访</button><BaseButton variant="primary" size="sm" @click="startOutcome(decision)"><RotateCcw :size="14" aria-hidden="true" />记录真实结果</BaseButton></div>
-          <form v-if="decision.status === 'open' && activeOutcomeId === decision.id" class="inline-form" @submit.prevent="recordOutcome(decision)">
-            <h4>当初的预期是：{{ decision.expectedOutcome }}</h4><label :for="`outcome-result-${decision.id}`">真实结果 <span aria-hidden="true">*</span></label><textarea :id="`outcome-result-${decision.id}`" v-model="outcomeResult" rows="3" maxlength="10000" :disabled="outcomeSavingId === decision.id" required /><label :for="`outcome-notes-${decision.id}`">补充说明 <small>可留空</small></label><textarea :id="`outcome-notes-${decision.id}`" v-model="outcomeNotes" rows="2" maxlength="10000" :disabled="outcomeSavingId === decision.id" /><div class="form-actions"><BaseButton variant="secondary" size="sm" :disabled="outcomeSavingId === decision.id" @click="activeOutcomeId = ''">取消</BaseButton><BaseButton type="submit" variant="primary" size="sm" :loading="outcomeSavingId === decision.id">保存结果</BaseButton></div>
-          </form>
-
-          <div v-if="decision.status === 'outcome_recorded' && activeReviewId !== decision.id" class="decision-actions"><BaseButton variant="primary" size="sm" @click="startReview(decision)"><BookOpenCheck :size="14" aria-hidden="true" />完成复盘</BaseButton></div>
-          <form v-if="decision.status === 'outcome_recorded' && activeReviewId === decision.id" class="inline-form" @submit.prevent="completeReview(decision)">
-            <h4>从预期与真实结果的差异开始</h4><label :for="`review-reflection-${decision.id}`">我现在怎么看这次判断 <span aria-hidden="true">*</span></label><textarea :id="`review-reflection-${decision.id}`" v-model="reviewReflection" rows="3" maxlength="10000" :disabled="reviewSavingId === decision.id" required /><label :for="`review-lessons-${decision.id}`">值得留下的经验 <small>每行一项</small> <span aria-hidden="true">*</span></label><textarea :id="`review-lessons-${decision.id}`" v-model="reviewLessons" rows="3" :disabled="reviewSavingId === decision.id" required /><label :for="`review-next-${decision.id}`">下一步行动 <span aria-hidden="true">*</span></label><textarea :id="`review-next-${decision.id}`" v-model="reviewNextAction" rows="2" maxlength="5000" :disabled="reviewSavingId === decision.id" required /><div class="form-actions"><BaseButton variant="secondary" size="sm" :disabled="reviewSavingId === decision.id" @click="activeReviewId = ''">取消</BaseButton><BaseButton type="submit" variant="primary" size="sm" :loading="reviewSavingId === decision.id">确认完成复盘</BaseButton></div>
-          </form>
-        </article>
-      </div>
+    <section v-if="latestReviewed && latestReviewed.review" class="growth-panel" aria-labelledby="latest-review-heading">
+      <div class="growth-panel__head"><div class="growth-panel__title"><span class="panel-icon"><BookOpenCheck :size="19" aria-hidden="true" /></span><div><h2 id="latest-review-heading">最近复盘</h2><p>{{ latestReviewed.title }} · {{ formatDate(latestReviewed.review.createdAt) }}</p></div></div></div>
+      <div class="latest-review"><p>{{ latestReviewed.review.reflection }}</p><div class="review-lessons"><strong>留下的经验</strong><ul><li v-for="lesson in latestReviewed.review.lessons" :key="lesson">{{ lesson }}</li></ul></div><p class="review-next"><strong>下一步</strong>{{ latestReviewed.review.nextAction }}</p></div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.charter-summary{padding:15px 17px}.charter-summary__vision{display:grid;gap:4px;padding-bottom:12px;border-bottom:1px solid var(--ws-border-color-3)}.charter-summary small{color:var(--ws-text-secondary-color);font-size:10px}.charter-summary__vision strong{font-size:15px;line-height:1.55;overflow-wrap:anywhere}.charter-summary__grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px}.charter-summary__grid>div{display:grid;align-content:start;gap:4px;min-width:0}.charter-summary__grid span{color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow-wrap:anywhere}.charter-summary__actions{display:flex;justify-content:flex-end;margin-top:13px}
-.review-block{margin-top:10px;padding:12px;border:1px solid #cfe1ff;border-radius:var(--ws-radius);background:#f8fbff}.review-block .outcome-block__title{color:var(--ws-primary-color)}.review-block p{margin:7px 0 0;font-size:12px;line-height:1.65;white-space:pre-wrap}.review-lessons{margin-top:9px;color:var(--ws-text-color);font-size:12px}.review-lessons ul{margin:5px 0 0;padding-left:18px}.review-next{display:flex;gap:8px;padding-top:8px;border-top:1px solid #dceaff}.review-next strong{flex:none;color:var(--ws-primary-color)}
-.growth-page{max-width:1040px}.growth-head,.growth-panel__head,.growth-panel__title,.decision-card__head,.decision-actions,.form-actions,.subform-head,.outcome-block__title{display:flex;align-items:center}.growth-head,.growth-panel__head,.decision-card__head,.form-actions,.subform-head{justify-content:space-between}.growth-head{gap:16px}.growth-panel{margin-bottom:18px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg);overflow:hidden}.growth-panel__head{gap:12px;padding:15px 17px;border-bottom:1px solid var(--ws-border-color-3)}.growth-panel__title{gap:11px}.growth-panel__title h2{margin:0;font-size:16px}.growth-panel__title p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:11px}.panel-icon{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:var(--ws-edit-color);color:var(--ws-primary-color)}.version-badge,.decision-counts span{padding:4px 8px;border-radius:999px;background:var(--ws-card-bg);color:var(--ws-text-secondary-color);font-size:11px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}
-.growth-form{display:grid;gap:8px;padding:17px}.growth-form label,.field label,.inline-form label{color:var(--ws-text-color);font-size:12px;font-weight:650}.growth-form label small,.field label small,.inline-form label small{color:var(--ws-text-secondary-color);font-weight:400}.growth-form input,.growth-form textarea,.inline-form textarea{width:100%;padding:9px 11px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius);background:var(--ws-body-bg);color:var(--ws-text-primary-color);font:inherit;font-size:13px;line-height:1.55}.growth-form input:focus,.growth-form textarea:focus,.inline-form textarea:focus{outline:0;border-color:var(--ws-primary-color);box-shadow:0 0 0 3px var(--accent-ring)}.growth-form textarea,.inline-form textarea{resize:vertical}.growth-form input:disabled,.growth-form textarea:disabled,.inline-form textarea:disabled{opacity:.6}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:grid;gap:8px}.compact-grid{align-items:end}.form-actions{justify-content:flex-end;gap:8px;margin-top:7px}.form-note{flex:1;color:var(--ws-text-secondary-color);font-size:11px}.decision-create{margin:14px;border:1px solid #b9d7ff;border-radius:var(--ws-radius-lg);background:#fbfdff}.subform-head{gap:12px;margin-bottom:3px}.subform-head h3{margin:0;font-size:14px}.subform-head p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:11px}.collapse-button{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--ws-text-secondary-color)}.collapse-button:hover{background:var(--ws-card-bg)}.open-form-button{display:flex;align-items:center;justify-content:center;gap:7px;width:calc(100% - 28px);margin:14px;padding:11px;border:1px dashed #b9d7ff;border-radius:var(--ws-radius);background:#fbfdff;color:var(--ws-primary-color);font:inherit;font-size:12px;font-weight:650}
-.decision-list{display:grid;gap:10px;padding:0 14px 14px}.decision-card{padding:15px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.decision-card__head{align-items:flex-start;gap:10px}.decision-card__head h3{margin:0;font-size:15px;overflow-wrap:anywhere}.decision-card__head p{margin:4px 0 0;color:var(--ws-text-secondary-color);font-size:10px}.decision-status{flex:none;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:650}.decision-status.is-open{background:var(--ws-warning-color-bd);color:#9a5b00}.decision-status.is-outcome_recorded{background:var(--ws-edit-color);color:var(--ws-primary-color)}.decision-status.is-reviewed{background:var(--ws-success-color-bd);color:#09822a}.decision-summary{display:grid;grid-template-columns:minmax(0,2fr) repeat(2,minmax(120px,1fr));gap:8px;margin:12px 0}.decision-summary>div{display:grid;gap:3px;padding:9px 10px;border-radius:var(--ws-radius);background:var(--ws-card-bg)}.decision-summary small{color:var(--ws-text-secondary-color);font-size:10px}.decision-summary strong{font-size:12px;overflow-wrap:anywhere}.decision-details{padding:8px 0;border-top:1px solid var(--ws-border-color-3);border-bottom:1px solid var(--ws-border-color-3)}.decision-details summary{color:var(--ws-primary-color);font-size:11px;cursor:pointer}.decision-details dl{display:grid;grid-template-columns:100px 1fr;gap:7px 10px;margin-top:11px;font-size:12px;line-height:1.6}.decision-details dt{color:var(--ws-text-secondary-color)}.decision-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.decision-details ul{margin:0;padding-left:18px}.outcome-block{margin-top:10px;padding:11px 12px;border-radius:var(--ws-radius);background:#f7fbf8}.outcome-block__title{gap:6px;color:#09822a;font-size:12px;font-weight:700}.outcome-block__title small{margin-left:auto;color:var(--ws-text-secondary-color);font-weight:400}.outcome-block p{margin:7px 0 0;font-size:12px;line-height:1.6;white-space:pre-wrap}.outcome-block .muted{color:var(--ws-text-secondary-color)}.decision-actions{justify-content:flex-end;align-items:center;gap:10px;margin-top:11px}.decision-review-link{border:none;background:transparent;color:var(--ws-primary-color);font-family:inherit;font-size:12px;text-decoration:underline;cursor:pointer}.decision-review-link:disabled{opacity:.5;cursor:default}.inline-form{display:grid;gap:7px;margin-top:11px;padding:12px;border:1px solid #b9d7ff;border-radius:var(--ws-radius);background:#fbfdff}.inline-form h4{margin:0 0 3px;font-size:12px}.inline-form .form-actions{margin-top:3px}
-@media(max-width:760px){.growth-head,.growth-panel__head{align-items:stretch;flex-direction:column}.growth-panel__head{gap:10px}.version-badge{align-self:flex-start}.decision-counts{justify-content:flex-start}.charter-summary__grid{grid-template-columns:1fr}.form-grid,.decision-summary{grid-template-columns:1fr}.form-actions{align-items:stretch;flex-wrap:wrap}.form-note{flex-basis:100%}.decision-details dl{grid-template-columns:1fr}.decision-details dt{margin-top:5px}}
+.growth-page{max-width:1180px}
+.growth-head,.section-head,.growth-panel__head,.growth-panel__title,.decision-card__head,.decision-actions,.form-actions,.subform-head,.outcome-block__title,.charter-panel__meta{display:flex;align-items:center}
+.growth-head,.section-head,.growth-panel__head,.decision-card__head,.form-actions,.subform-head{justify-content:space-between}
+.growth-head{gap:16px}.growth-head h1,.growth-panel__title h2,.board__column-head h3,.decision-card__head h4{font-family:var(--ws-font-display)}
+.section-head{gap:12px;margin:6px 0 12px}
+.growth-panel{margin-bottom:18px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg);overflow:hidden}
+.growth-panel__head{gap:12px;padding:15px 17px;border-bottom:1px solid var(--ws-border-color-3)}.growth-panel__title{gap:11px}.growth-panel__title h2{margin:0;font-size:17px}.growth-panel__title p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:12px}
+.panel-icon{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:var(--ws-edit-color);color:var(--ws-primary-color)}
+.version-badge,.decision-counts span{padding:4px 9px;border-radius:999px;background:var(--ws-card-bg);color:var(--ws-text-secondary-color);font-size:11px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.charter-panel__meta{gap:10px}
+.board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}
+.board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}
+.board__column-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:0 4px 4px}.board__column-head h3{margin:0;font-size:15px}.board__column-head small{color:var(--ws-text-secondary-color);font-size:11px}
+.board__empty{margin:0;padding:18px 8px;border:1px dashed var(--ws-border-color);border-radius:var(--ws-radius);color:var(--ws-text-secondary-color);font-size:12px;text-align:center}
+.decision-card{display:grid;gap:9px;padding:13px;border:1px solid var(--ws-border-color-2);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.decision-card.is-overdue{border-color:rgba(166,69,46,.45)}
+.decision-card__head{align-items:flex-start;gap:8px}.decision-card__head h4{margin:0;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
+.overdue-tag{flex:none;padding:2px 7px;border-radius:999px;background:rgba(166,69,46,.1);color:var(--ws-primary-color);font-size:11px;font-weight:650}
+.decision-context{margin:0;color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.decision-chips{display:flex;flex-wrap:wrap;gap:6px}.chip{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;padding:3px 8px;border-radius:999px;background:var(--ws-card-bg);color:var(--ws-text-primary-color);font-size:11px;line-height:1.5;overflow-wrap:anywhere}.chip small{color:var(--ws-text-secondary-color);font-size:10px}.chip--plain{margin:2px 6px 2px 0}
+.decision-details{padding:6px 0;border-top:1px solid var(--ws-border-color-3)}.decision-details summary{color:var(--ws-primary-color);font-size:11px;cursor:pointer}.decision-details dl{display:grid;grid-template-columns:76px 1fr;gap:6px 10px;margin-top:9px;font-size:12px;line-height:1.6}.decision-details dt{color:var(--ws-text-secondary-color)}.decision-details dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.decision-details ul{margin:0;padding-left:18px}
+.outcome-block,.review-block,.latest-review{padding:11px 12px;border-radius:var(--ws-radius);background:var(--ws-card-bg)}.review-block{border:1px solid var(--ws-border-color-3)}.latest-review{margin:14px 17px}.outcome-block__title{gap:6px;color:var(--ws-success-color);font-size:12px;font-weight:700}.review-block .outcome-block__title{color:var(--ws-primary-color)}.outcome-block__title small{margin-left:auto;color:var(--ws-text-secondary-color);font-weight:400}.outcome-block p,.review-block p,.latest-review p{margin:7px 0 0;font-size:12px;line-height:1.65;white-space:pre-wrap}.muted{color:var(--ws-text-secondary-color)}
+.review-lessons{margin-top:9px;color:var(--ws-text-color);font-size:12px}.review-lessons ul{margin:5px 0 0;padding-left:18px}.review-next{display:flex;gap:8px;padding-top:8px;border-top:1px solid var(--ws-border-color-3)}.review-next strong{flex:none;color:var(--ws-primary-color)}
+.decision-actions{justify-content:flex-end;gap:10px}.decision-review-link{border:none;background:transparent;color:var(--ws-primary-color);font-family:inherit;font-size:12px;text-decoration:underline;cursor:pointer}.decision-review-link:disabled{opacity:.5;cursor:default}
+.growth-form{display:grid;gap:8px;padding:17px}.form-intro{margin:0 0 4px;color:var(--ws-text-color);font-size:13px}.growth-form label,.field label,.inline-form label{color:var(--ws-text-color);font-size:12px;font-weight:650}.growth-form label small,.field label small,.inline-form label small{color:var(--ws-text-secondary-color);font-weight:400}.growth-form input,.growth-form textarea,.inline-form textarea{width:100%;padding:9px 11px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius);background:var(--ws-body-bg);color:var(--ws-text-primary-color);font:inherit;font-size:13px;line-height:1.55}.growth-form input:focus,.growth-form textarea:focus,.inline-form textarea:focus{outline:0;border-color:var(--ws-primary-color);box-shadow:0 0 0 3px rgba(166,69,46,.15)}.growth-form textarea,.inline-form textarea{resize:vertical}.growth-form input:disabled,.growth-form textarea:disabled,.inline-form textarea:disabled{opacity:.6}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:grid;gap:8px}.compact-grid{align-items:end}.form-actions{justify-content:flex-end;gap:8px;margin-top:7px}.form-note{flex:1;color:var(--ws-text-secondary-color);font-size:11px}
+.decision-create{margin:0 0 18px;border:1px solid rgba(166,69,46,.35);border-radius:var(--ws-radius-lg);background:var(--ws-body-bg)}.subform-head{gap:12px;margin-bottom:3px}.subform-head h3{margin:0;font-size:14px}.subform-head p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:11px}.collapse-button{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--ws-text-secondary-color)}.collapse-button:hover{background:var(--ws-card-bg)}
+.inline-form{display:grid;gap:7px;padding:12px;border:1px solid rgba(166,69,46,.3);border-radius:var(--ws-radius);background:var(--ws-body-bg)}.inline-form h5{margin:0 0 3px;font-size:12px}.inline-form .form-actions{margin-top:3px}
+.charter-summary{padding:15px 17px}.charter-summary__vision{margin:0 0 12px;padding-bottom:12px;border-bottom:1px solid var(--ws-border-color-3);font-size:15px;line-height:1.55;overflow-wrap:anywhere}.charter-summary__vision small,.charter-summary__rows small{display:block;margin-bottom:4px;color:var(--ws-text-secondary-color);font-size:10px}.charter-summary__rows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.charter-summary__rows>div{min-width:0}.charter-line{color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+@media(max-width:1023px){.board{grid-template-columns:1fr}.charter-summary__rows{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:760px){.growth-head,.section-head,.growth-panel__head{align-items:stretch;flex-direction:column}.growth-panel__head{gap:10px}.charter-panel__meta{justify-content:space-between}.decision-counts{justify-content:flex-start}.charter-summary__rows{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.form-actions{align-items:stretch;flex-wrap:wrap}.form-note{flex-basis:100%}.decision-details dl{grid-template-columns:1fr}.decision-details dt{margin-top:5px}}
 </style>

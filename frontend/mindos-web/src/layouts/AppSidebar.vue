@@ -1,8 +1,11 @@
 <script setup lang="ts">
 // 侧栏导航：四个一级入口 对话 / 我的本体 / 判断 / 资料与边界；底部设置。
 // 桌面 ≥768px 常驻（768-1199 折叠为图标栏），<768px 转为抽屉（由 open 控制）。
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { getOntologyStats } from '@/services/api'
+import { confirmedFraction } from '@/shared/selfmap'
+import RingGlyph from '@/components/ui/RingGlyph.vue'
 import {
   Database,
   MessageCircle,
@@ -36,6 +39,19 @@ const groups: NavGroup[] = [
     ],
   },
 ]
+
+// 「我的本体」旁的小环：实心弧 = 已确认占比。读取失败静默。
+const ontoCounts = ref<{ confirmed: number; working: number } | null>(null)
+onMounted(async () => {
+  try {
+    const stats = await getOntologyStats()
+    ontoCounts.value = { confirmed: stats.claims.confirmed, working: stats.claims.working }
+  } catch {
+    ontoCounts.value = null
+  }
+})
+const ontoFraction = computed(() => (ontoCounts.value ? confirmedFraction(ontoCounts.value.confirmed, ontoCounts.value.working) : 0))
+const ontoTitle = computed(() => (ontoCounts.value ? `已确认 ${ontoCounts.value.confirmed} 条 · 待确认 ${ontoCounts.value.working} 条` : ''))
 
 const props = defineProps<{
   open?: boolean
@@ -163,6 +179,7 @@ function isActive(item: NavItem): boolean {
             >
               <component :is="item.icon" class="ws-sidebar__icon" :size="18" aria-hidden="true" />
               <span class="ws-sidebar__label">{{ item.label }}</span>
+              <RingGlyph v-if="item.to === '/me' && ontoCounts" class="ws-sidebar__ring" :fraction="ontoFraction" :size="18" :title="ontoTitle" />
             </RouterLink>
           </li>
         </ul>
@@ -323,6 +340,10 @@ function isActive(item: NavItem): boolean {
   cursor: not-allowed;
 }
 
+.ws-sidebar__ring {
+  margin-left: auto;
+  opacity: 0.85;
+}
 .ws-sidebar__icon {
   flex-shrink: 0;
 }
