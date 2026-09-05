@@ -16,6 +16,8 @@
 
 Electron SDK 与 data-engine 的后续集成调研见 [技术架构图](docs/development/ARCHITECTURE-0905.md)、[集成方案](docs/development/INTEGRATION-0905.md) 和 [二次审核记录](docs/development/REVIEW-0905.md)，其中区分了当前实现、接口缺口及建议实施步骤。
 
+进入实施前的接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。这些是待实现设计，尚未接通正式 SDK 业务链路。
+
 ## 主要入口
 
 | 入口 | 做什么 |

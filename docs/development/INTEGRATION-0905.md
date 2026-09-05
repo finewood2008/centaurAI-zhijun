@@ -2,6 +2,8 @@
 
 > 状态：技术方案草案，尚未实施 SDK / data-engine 业务集成。日期：2026-09-05（同步产品源 `22dc9a3` 后复核）。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，原审核见 [审核记录](REVIEW-0905.md)，本次更新及验证见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
 
+实施规格入口：[桌面接口合同与 M0](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移](DOMAIN-INTEGRATION-0905.md)、[工作包与交付依赖](INTEGRATION-WORKPACKAGES-0905.md)。本文维护源码事实与总体方案，配套规格维护拟实现接口和验收，正式应用/跨仓合同未冻结的字段按 D01–D05 跟踪。
+
 ## 调研计划与交付标准
 
 - [x] 切换分支，确认三个仓库的源码与工作区状态。
@@ -19,7 +21,7 @@
 
 | 仓库 | 分支 / HEAD | 本次观察范围 |
 | --- | --- | --- |
-| 知君 | `dev/first-integrate-check-0905`，基于目标 `4515a7e`；产品源 `22dc9a3` | 本次同步上游 2 个提交、76 个文件增量；保留既有集成文档；本地修复及远程提交见同步记录 |
+| 知君 | `dev/first-integrate-check-0905` / `94239a1`；产品源 `22dc9a3` | 已提交上游 2 个提交、76 个文件增量和本地文稿保护修复；本轮在此基础上细化规格，不改业务代码 |
 | Connectivity SDK | `dev/integrate-sdk-20260902` / `819831c` | 二次审核时工作区干净；Electron 1.2.0、auth、配网包与 release 已进入当前提交 |
 | data-engine | `dev/integrate-sdk-20260902` / `ec2854e` | **HEAD + 未提交修改**；上传、模型运行时等文件有改动，`pocket_uploads.py` 未跟踪 |
 | OS / Remote Agent（仅补查连接和鉴权） | `dev/integrate-sdk-20260902` / `9f7354e` | 二次审核时工作区干净；不是本轮实施目标 |
@@ -35,6 +37,10 @@
 建议采用「知君桌面客户端 + 盒端 data-engine 与知君领域模块」方案。PC 不启动 Python、Chroma 或 Ollama；开发者可以另用 Web 本地入口。知君现有领域后端不能删除，因为当前 data-engine 没有兼容知君的对话、本体、判断、提醒或首次建档 API。它另有开关控制的 Claim/Profile 域，见第 5.2 节，不能把两套个人知识语义视为等价。[A1] [D1] [D12]
 
 首轮可交付的是：**登录 → 列设备 → 选择已绑定盒子 → 建立 SDK 会话 → 通过正式业务鉴权读取资料列表 → 断开并清理。** 这里必须实际通过 `/api/mindos/materials`，不能只用 `/health` 成功代表业务可用。完成该链路后再接知君领域和聊天流。
+
+该交付现命名为 M0：业务操作仅 `materials.list`，暴露字段、query、连接phase/generation、取消边界与错误体已在桌面规格中明确。现有 onboarding guard 不属于 M0；事项/聊天/上传待后续交付开放。M0 的模拟合同验收和正式盒端验收分别记录，不将前者代替后者。
+
+本轮规格复核补充一个资料合同差异：data-engine 当前列表/摄取服务已产生 `queued`，参考 PC request/response policy 仍只有另外四种状态。知君主进程不能原样复制该枚举，应按桌面规格同时补齐 query、响应投影及页面状态，并在 M0 验证含排队资料的列表。
 
 | 优先级 | 已确认问题 | 对实施的影响 |
 | --- | --- | --- |
@@ -285,6 +291,8 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 
 ## 6. 分阶段工作包、依赖与验收
 
+下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。M0桌面类型定义只是 [文档样例](contracts/desktop-contract-v1.ts)，通过类型检查也不代表preload、SDK适配或业务身份桥已实现。
+
 | 阶段 | 工作与受影响文件（拟） | 前置依赖 | 完成标准 |
 | --- | --- | --- | --- |
 | P0 合同冻结 | 本文；SDK/sidecar版本清单；应用注册；身份桥；接口、归属与限额矩阵 | SDK、Admin、Agent、后端负责人确认可实施版本 | 记录方法/路径/query/body/header/响应/错误/身份/限额；目录与同盒多账号边界明确；未提交特性有固定交付物 |
@@ -325,7 +333,7 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 
 当前SDK合同强制Direct-only，不提供可任选的relay策略。推荐首期先支持当前开发机对应的 macOS ARM64与已绑定在线盒子；配网、跨平台签名和完整模型管理不与第一条资料读取链路绑定。此为减少外部依赖的实施建议，尚未成为用户确认的产品范围。
 
-开始编码前需要确认：
+正式联调、发布组合冻结或领域迁移前需要落实下列输入（对应桌面规格 D01–D05）。这些输入未齐备时，仍可先写宿主骨架、注入式adapter、模拟合同和隔离迁移测试；真实连接和运行库迁移保持不放行：
 
 1. **领域部署**：知君领域模块并入盒端 data-engine，还是盒端独立服务？推荐前者，并通过服务适配层保留边界。
 2. **应用身份与归属**：知君 applicationId、purpose、requestedScopes、允许设备/路径/限额、Consumer/Gateway地址与安全存储 namespace；同盒多账号、设备转让、目录归属与个人Claim事实源。
