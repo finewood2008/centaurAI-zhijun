@@ -1,6 +1,7 @@
 """P10 知识图谱测试。"""
 import sys
 import unittest
+import tempfile
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 import numpy as np
@@ -8,6 +9,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mindos import graph
+from mindos.stores import card_ledger_store, job_store
 import vector_store
 
 
@@ -70,6 +72,12 @@ class TestGraphHelpers(unittest.TestCase):
 class TestBuildGraph(unittest.TestCase):
 
     def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        card_ledger_store.reset_for_tests(Path(self.tmp.name) / "cards.db")
+        self.addCleanup(card_ledger_store.reset_for_tests)
+        job_store.reset_for_tests(Path(self.tmp.name) / "jobs.db")
+        self.addCleanup(job_store.reset_for_tests)
         self.material_records = [
             {"material_id": "mindos_a", "file_name": "A.pdf", "file_type": "document", "source_path": "/w/A.pdf"},
             {"material_id": "mindos_b", "file_name": "B.png", "file_type": "image", "source_path": "/w/B.png"},
@@ -83,13 +91,26 @@ class TestBuildGraph(unittest.TestCase):
 
     def _material_patch(self, **overrides):
         _read = overrides.get("read_page", {"path": "", "content": ""})
+        # Current cards become retrievable only after explicit confirmation and indexing.
+        for item in overrides.get("list_pages", {"items": []})["items"]:
+            page = _read(item["path"]) if callable(_read) else _read
+            if not graph.knowledge._is_mindos_card(page):
+                continue
+            kid = graph.knowledge._knowledge_id(page["path"])
+            revision = graph.knowledge._content_revision(page["content"])
+            card_ledger_store.confirm_and_enqueue(kid, page["path"], revision, kid, {"body": page["content"]})
+            card_ledger_store.activate_vector(kid, 1)
+        store = job_store.JobStore.instance()
+        for rec in self.material_records:
+            store.register(rec["material_id"], rec["file_name"], rec["file_type"], rec["source_path"])
+        for mid in overrides.get("recycled", set()):
+            store.set_recycled(mid, True)
         read_page_patch = (
             patch("mindos.graph.knowledge.wiki_store.read_page", side_effect=_read)
             if callable(_read)
             else patch("mindos.graph.knowledge.wiki_store.read_page", return_value=_read)
         )
         return [
-            patch.object(graph.ingestion.JobStore, "instance", return_value=MagicMock(list=lambda: self.material_records)),
             patch("mindos.graph.ingestion.material_tags", return_value=overrides.get("material_tags", [])),
             patch("mindos.graph.ingestion.source_path_of", return_value=overrides.get("source_path", "/w/A.pdf")),
             patch("mindos.graph.ingestion.material_for_source", return_value=overrides.get("material_for_source", None)),
@@ -99,8 +120,6 @@ class TestBuildGraph(unittest.TestCase):
             patch("mindos.graph.knowledge.search_cards", return_value=overrides.get("search_cards", [])),
             patch("mindos.graph.knowledge.wiki_store.list_pages", return_value=overrides.get("list_pages", {"items": []})),
             read_page_patch,
-            patch("mindos.graph.governance_store.instance",
-                  return_value=MagicMock(archived_material_ids=lambda: overrides.get("archived", set()))),
         ]
 
     def test_empty_graph(self):
@@ -138,9 +157,10 @@ class TestBuildGraph(unittest.TestCase):
         card_node = next(n for n in data["nodes"] if n["type"] == "knowledge")
         self.assertEqual(card_node["label"], "Card")
         # 引用次数：卡片引用 1 个来源，材料被引用 1 次
-        material_node = next(n for n in data["nodes"] if n["type"] == "material")
+        material_node = next(n for n in data["nodes"] if n["id"] == "mindos_a")
         self.assertEqual(card_node["referenceCount"], 1)
         self.assertEqual(material_node["referenceCount"], 1)
+        self.assertEqual(next(n for n in data["nodes"] if n["id"] == "mindos_b")["referenceCount"], 0)
 
     def test_old_wiki_page_filtered(self):
         old_page = {
@@ -175,9 +195,9 @@ class TestBuildGraph(unittest.TestCase):
         self.assertGreaterEqual(len(similar_edges), 1)
         self.assertEqual(data["stats"]["similarEdges"], len(similar_edges))
 
-    def test_graph_excludes_archived_material(self):
-        """已归档材料不出现在图谱节点与边中（治理归档仅改状态，不物理删除）。"""
-        self._start(self._material_patch(archived={"mindos_a"}))
+    def test_graph_excludes_recycled_material(self):
+        """已回收材料不出现在图谱节点与边中，记录仍保留可恢复。"""
+        self._start(self._material_patch(recycled={"mindos_a"}))
         data = graph.build_graph()
         material_ids = {n["id"] for n in data["nodes"] if n["type"] == "material"}
         self.assertNotIn("mindos_a", material_ids)  # 已归档材料被排除
@@ -186,12 +206,12 @@ class TestBuildGraph(unittest.TestCase):
         for edge in data["edges"]:
             self.assertNotIn("mindos_a", (edge["source"], edge["target"]))
 
-    def test_graph_excludes_archived_knowledge(self):
-        """已归档/已合并知识卡片不进入图谱节点，也不参与相似召回。"""
+    def test_graph_excludes_recycled_and_merged_knowledge(self):
+        """已回收/已合并知识卡片不进入图谱节点，也不参与相似召回。"""
         active_card = {"path": "/wiki/active.md",
                        "content": '---\ntitle: "Active"\nmindos_card: true\n---\n# Active\nbody text'}
         archived_card = {"path": "/wiki/archived.md",
-                         "content": '---\ntitle: "Archived"\nmindos_card: true\nmindos_archived: true\n---\n# Archived\nbody text'}
+                         "content": '---\ntitle: "Archived"\nmindos_card: true\nmindos_recycled: true\n---\n# Archived\nbody text'}
         merged_card = {"path": "/wiki/merged.md",
                        "content": '---\ntitle: "Merged"\nmindos_card: true\nmindos_merged_into: "knowledge_x"\n---\n# Merged\nbody'}
 

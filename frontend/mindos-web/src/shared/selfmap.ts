@@ -13,8 +13,9 @@ export const RINGS = { core: 150, reaffirm: 230, boundary: 300 } as const
 export const SECTOR_INNER = 60
 export const SECTOR_OUTER = 330
 export const BANDS = {
-  fresh: [80, 140] as const,
-  stale: [160, 220] as const,
+  calibrated: [80, 140] as const,
+  uncalibrated: [175, 210] as const,
+  contextual: [250, 280] as const,
   working: [310, 330] as const,
   challenged: 345,
 } as const
@@ -54,17 +55,20 @@ export function isStale(claim: Pick<Claim, 'lastReaffirmed'>, now: number = Date
   return now - t > STALE_DAYS * 24 * 3600 * 1000
 }
 
-export type Band = 'fresh' | 'stale' | 'working' | 'challenged'
+export type Band = 'calibrated' | 'uncalibrated' | 'contextual' | 'working' | 'challenged'
+type MapClaim = Pick<Claim, 'trustState' | 'challenged' | 'lastReaffirmed'> & Partial<Pick<Claim, 'selfAlignment' | 'scope'>>
 
-export function nodeBand(claim: Pick<Claim, 'trustState' | 'challenged' | 'lastReaffirmed'>, now: number = Date.now()): Band {
+export function nodeBand(claim: MapClaim, _now: number = Date.now()): Band {
   if (claim.trustState === 'working') return claim.challenged ? 'challenged' : 'working'
-  return isStale(claim, now) ? 'stale' : 'fresh'
+  if (claim.scope === 'context_only' || claim.selfAlignment?.framing === 'context_only') return 'contextual'
+  return claim.selfAlignment?.level == null ? 'uncalibrated' : 'calibrated'
 }
 
-/** 半径由信任状态决定环带，由 id 哈希决定环带内的具体位置。 */
-export function nodeRadius(claim: Pick<Claim, 'id' | 'trustState' | 'challenged' | 'lastReaffirmed'>, now: number = Date.now()): number {
+/** 正式校准决定圈内远近；哈希仅用于未校准、情境和待确认区域排布。 */
+export function nodeRadius(claim: MapClaim & { id: string }, now: number = Date.now()): number {
   const band = nodeBand(claim, now)
   if (band === 'challenged') return BANDS.challenged
+  if (band === 'calibrated') return 140 - 15 * Math.max(0, Math.min(4, claim.selfAlignment?.level ?? 0))
   const [lo, hi] = BANDS[band]
   return lo + (hi - lo) * hashToUnit(`${claim.id}:r`)
 }

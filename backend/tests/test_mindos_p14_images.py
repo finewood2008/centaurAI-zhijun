@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import fitz
 from docx import Document
+from fastapi import Request
 from fastapi.responses import FileResponse
 
 import parser
@@ -282,7 +283,11 @@ class IndexOcrIntegrationTests(unittest.TestCase):
     @contextlib.contextmanager
     def _patch_deps(self, ocr_text: str, ocr_ready: bool):
         add_calls: list[tuple] = []
-        with patch.object(watcher, "get_source_hash", return_value=None), patch.object(
+        # This integration ends at OCR/index storage. Do not let unrelated
+        # asynchronous model jobs outlive the temporary derived database.
+        with patch.object(watcher, "_submit_material_summary"), patch.object(
+            watcher, "_submit_material_analysis"
+        ), patch.object(watcher, "get_source_hash", return_value=None), patch.object(
             watcher, "_index_fingerprint", return_value="hash-v1"
         ), patch.object(
             watcher.derived_store, "material_id_for_source", return_value=self.material_id
@@ -418,7 +423,7 @@ class PartFileEndpointTests(unittest.TestCase):
               "image": {"blob": _make_png_bytes(), "mime": "image/png", "width": 40, "height": 30}}],
         )
         with self._job_store_mock():
-            resp = uploads.mindos_material_part_file("mindos_end1", rows[0]["id"])
+            resp = uploads.mindos_material_part_file("mindos_end1", rows[0]["id"], Request({"type": "http"}))
         self.assertIsInstance(resp, FileResponse)
 
     def test_non_image_part_404(self):
@@ -428,7 +433,7 @@ class PartFileEndpointTests(unittest.TestCase):
         )
         with self._job_store_mock():
             with self.assertRaises(Exception) as ctx:
-                uploads.mindos_material_part_file("mindos_end1", rows[0]["id"])
+                uploads.mindos_material_part_file("mindos_end1", rows[0]["id"], Request({"type": "http"}))
         self.assertEqual(getattr(ctx.exception, "status_code", None), 404)
 
     def test_part_belonging_to_other_material_404(self):
@@ -440,13 +445,13 @@ class PartFileEndpointTests(unittest.TestCase):
         # 用另一资料 ID 访问 → 归属校验失败 → 404
         with self._job_store_mock():
             with self.assertRaises(Exception) as ctx:
-                uploads.mindos_material_part_file("mindos_end2", rows[0]["id"])
+                uploads.mindos_material_part_file("mindos_end2", rows[0]["id"], Request({"type": "http"}))
         self.assertEqual(getattr(ctx.exception, "status_code", None), 404)
 
     def test_missing_part_404(self):
         with self._job_store_mock():
             with self.assertRaises(Exception) as ctx:
-                uploads.mindos_material_part_file("mindos_end1", "no-such-part")
+                uploads.mindos_material_part_file("mindos_end1", "no-such-part", Request({"type": "http"}))
         self.assertEqual(getattr(ctx.exception, "status_code", None), 404)
 
 

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from runtime_paths import CONVERSATIONS_DB_PATH
+from .sqlite_connection import ClosingConnection
 
 MODES = ("chat", "onboarding", "deliberate", "review")
 ROLES = ("user", "assistant", "system")
@@ -29,7 +30,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     message_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    last_message_at TEXT
+    last_message_at TEXT,
+    pinned_at TEXT,
+    metadata_revision INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_recent ON conversations(status, last_message_at DESC);
 
@@ -140,6 +143,10 @@ class ConversationNotFoundError(ConversationError):
     """会话或消息不存在（404）。"""
 
 
+class ConversationConflictError(ConversationError):
+    """会话信息已被更新，请重新读取后操作（409）。"""
+
+
 class ConversationStore:
     _instance: "ConversationStore | None" = None
     _instance_lock = threading.Lock()
@@ -174,10 +181,18 @@ class ConversationStore:
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript(_SCHEMA)
+                summary_columns = {row[1] for row in conn.execute("PRAGMA table_info(conversation_summaries)")}
+                if "metadata_json" not in summary_columns:
+                    conn.execute("ALTER TABLE conversation_summaries ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
                 # P2：回访会话绑定判断（旧库补列）。
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
                 if "decision_id" not in columns:
                     conn.execute("ALTER TABLE conversations ADD COLUMN decision_id TEXT")
+                if "pinned_at" not in columns:
+                    conn.execute("ALTER TABLE conversations ADD COLUMN pinned_at TEXT")
+                if "metadata_revision" not in columns:
+                    conn.execute("ALTER TABLE conversations ADD COLUMN metadata_revision INTEGER NOT NULL DEFAULT 0")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_management ON conversations(status, pinned_at DESC, last_message_at DESC)")
                 # P3：提醒类型增加 principle_tension（P2 建的库 CHECK 不含它，需重建表）。
                 ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nudge_events'").fetchone()
                 if ddl and "weekly_review" not in (ddl[0] or ""):
@@ -210,7 +225,7 @@ class ConversationStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._ensure()
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        conn = sqlite3.connect(str(self._db_path), timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -233,6 +248,8 @@ class ConversationStore:
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
             "lastMessageAt": row["last_message_at"],
+            "pinnedAt": row["pinned_at"] if "pinned_at" in keys else None,
+            "metadataRevision": int(row["metadata_revision"]) if "metadata_revision" in keys else 0,
         }
 
     @staticmethod
@@ -278,26 +295,151 @@ class ConversationStore:
                 conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             )
 
-    def list_conversations(self, *, limit: int = 50, status: str = "active") -> list[dict]:
+    def list_conversations(self, *, limit: int = 50, status: str = "active", device_scope: str | None = None, mode: str | None = None) -> list[dict]:
+        if status not in ("active", "archived", "all"):
+            raise ConversationError("status 不合法")
+        if mode is not None and mode not in MODES:
+            raise ConversationError("mode 不合法")
+        where, params = [], []
+        if status != "all":
+            where.append("status = ?")
+            params.append(status)
+        if device_scope is not None:
+            where.append("device_scope = ?")
+            params.append(device_scope)
+        if mode is not None:
+            where.append("mode = ?")
+            params.append(mode)
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM conversations WHERE status = ? "
-                "ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT ?",
-                (status, int(limit)),
+                "SELECT * FROM conversations" + (" WHERE " + " AND ".join(where) if where else "") +
+                " ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC LIMIT ?",
+                (*params, int(limit)),
             ).fetchall()
             return [self._conversation(r) for r in rows]  # type: ignore[misc]
 
-    def find_conversation_by_decision(self, decision_id: str, *, mode: str = "review", status: str = "active") -> dict | None:
+    def find_conversation_by_decision(self, decision_id: str, *, mode: str = "review", status: str = "active", device_scope: str | None = None) -> dict | None:
         """同一判断已有的会话（最近一条）；回访会话按 decisionId 复用，不重复开。"""
         if not decision_id:
             return None
+        if status not in ("active", "archived", "all"):
+            raise ConversationError("status 不合法")
+        where, params = ["decision_id = ?", "mode = ?"], [decision_id, mode]
+        if status != "all":
+            where.append("status = ?")
+            params.append(status)
+        if device_scope is not None:
+            where.append("device_scope = ?")
+            params.append(device_scope)
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM conversations WHERE decision_id = ? AND mode = ? AND status = ? "
-                "ORDER BY COALESCE(last_message_at, created_at) DESC LIMIT 1",
-                (decision_id, mode, status),
+                "SELECT * FROM conversations WHERE " + " AND ".join(where) +
+                " ORDER BY COALESCE(last_message_at, created_at) DESC, id DESC LIMIT 1",
+                params,
             ).fetchone()
         return self._conversation(row)
+
+    def update_metadata(self, conversation_id: str, *, expected_revision: int, title: str | None = None,
+                        status: str | None = None, pinned: bool | None = None, device_scope: str | None = None) -> dict:
+        if title is None and status is None and pinned is None:
+            raise ConversationError("请提供需要修改的会话信息")
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ConversationError("会话修订号不合法")
+        if title is not None:
+            if not isinstance(title, str) or not 1 <= len(title.strip()) <= 80:
+                raise ConversationError("会话名称须为 1 至 80 个字")
+            title = title.strip()
+        if status is not None and status not in ("active", "archived"):
+            raise ConversationError("status 不合法")
+        if pinned is not None and type(pinned) is not bool:
+            raise ConversationError("pinned 必须是布尔值")
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+            if row is None or (device_scope is not None and row["device_scope"] != device_scope):
+                raise ConversationNotFoundError("会话不存在")
+            current_revision = int(row["metadata_revision"])
+            same = ((title is None or title == row["title"]) and (status is None or status == row["status"])
+                    and (pinned is None or pinned == (row["pinned_at"] is not None)))
+            if expected_revision > current_revision or (expected_revision != current_revision and not same):
+                raise ConversationConflictError("会话信息已更新，请重新读取后操作")
+            if same:
+                return self._conversation(row)
+            sets, params = [], []
+            if title is not None:
+                sets.append("title = ?")
+                params.append(title)
+            if status is not None:
+                sets.append("status = ?")
+                params.append(status)
+            if pinned is not None:
+                sets.append("pinned_at = ?")
+                params.append((row["pinned_at"] or utc_now()) if pinned else None)
+            # Organization is not new conversation activity; home generation and
+            # chronological recency must not react to a rename, pin or archive.
+            conn.execute("UPDATE conversations SET " + ", ".join(sets) + ", metadata_revision = metadata_revision + 1 WHERE id = ?",
+                         (*params, conversation_id))
+            return self._conversation(conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone())
+
+    @staticmethod
+    def _search_snippet(text: str, query: str) -> str:
+        text = " ".join((text or "").split())
+        position = text.casefold().find(query.casefold())
+        start = max(0, position - 45) if position >= 0 else 0
+        snippet = text[start:start + 138]
+        return (("…" if start else "") + snippet + ("…" if start + 138 < len(text) else ""))[:140]
+
+    def query_conversations(self, *, status: str = "active", q: str = "", offset: int = 0,
+                            limit: int = 50, device_scope: str | None = None) -> dict:
+        if status not in ("active", "archived", "all"):
+            raise ConversationError("status 不合法")
+        if not isinstance(q, str) or len(q.strip()) > 100:
+            raise ConversationError("搜索文字不能超过 100 字")
+        if type(offset) is not int or not 0 <= offset <= 2**63 - 1 or type(limit) is not int or not 1 <= limit <= 200:
+            raise ConversationError("分页范围不合法")
+        query = q.strip()
+        where, params = [], []
+        if status != "all":
+            where.append("c.status = ?")
+            params.append(status)
+        if device_scope is not None:
+            where.append("c.device_scope = ?")
+            params.append(device_scope)
+        pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        title_match = "c.title LIKE ? ESCAPE '\\' COLLATE NOCASE"
+        body_match = "m.content LIKE ? ESCAPE '\\' COLLATE NOCASE"
+        if query:
+            where.append("(" + title_match + " OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
+                         "AND m.role IN ('user', 'assistant') AND " + body_match + "))")
+            params.extend((pattern, pattern))
+        condition = " WHERE " + " AND ".join(where) if where else ""
+        activity = "COALESCE(c.last_message_at, c.created_at) DESC, c.id DESC"
+        if query:
+            order = "title_match DESC, " + activity
+        elif status == "archived":
+            order = activity
+        else:
+            order = "CASE WHEN c.status = 'active' THEN c.pinned_at ELSE NULL END DESC, " + activity
+        with self._connect() as conn:
+            # A consistent snapshot keeps total, page and snippets in agreement
+            # even if a background reply arrives while the list is being read.
+            conn.execute("BEGIN")
+            total = int(conn.execute("SELECT COUNT(*) FROM conversations c" + condition, params).fetchone()[0])
+            select = "SELECT c.*" + (", " + title_match + " AS title_match" if query else "")
+            rows = conn.execute(select + " FROM conversations c" + condition + " ORDER BY " + order + " LIMIT ? OFFSET ?",
+                                (*([pattern] if query else []), *params, limit, offset)).fetchall()
+            items = []
+            for row in rows:
+                item = self._conversation(row)
+                if query:
+                    if row["title_match"]:
+                        item["searchMatch"] = {"field": "title", "messageId": None, "snippet": self._search_snippet(row["title"], query)}
+                    else:
+                        message = conn.execute("SELECT m.id, m.content FROM messages m WHERE m.conversation_id = ? "
+                            "AND m.role IN ('user', 'assistant') AND " + body_match + " ORDER BY m.seq DESC LIMIT 1", (row["id"], pattern)).fetchone()
+                        item["searchMatch"] = {"field": "message", "messageId": message["id"], "snippet": self._search_snippet(message["content"], query)}
+                items.append(item)
+        return {"items": items, "total": total, "hasMore": offset + len(items) < total}
 
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._lock, self._connect() as conn:
@@ -368,8 +510,10 @@ class ConversationStore:
                     title = (content or "").strip().replace("\n", " ")[:30]
                 conn.execute(
                     "UPDATE conversations SET message_count = message_count + 1, updated_at = ?, "
-                    "last_message_at = ?, title = ? WHERE id = ?",
-                    (now, now, title, conversation_id),
+                    "last_message_at = ?, title = ?, "
+                    "metadata_revision = metadata_revision + CASE WHEN status = 'archived' AND ? THEN 1 ELSE 0 END, "
+                    "status = CASE WHEN status = 'archived' AND ? THEN 'active' ELSE status END WHERE id = ?",
+                    (now, now, title, role == "user" and status == "complete", role == "user" and status == "complete", conversation_id),
                 )
                 conn.execute("COMMIT")
             except Exception:
@@ -386,11 +530,18 @@ class ConversationStore:
         status: str | None = None,
         usage: dict | None = None,
         meta: dict | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        external: bool | None = None,
     ) -> dict | None:
         if status is not None and status not in MESSAGE_STATUSES:
             raise ConversationError(f"status 不合法：{status}")
         sets: list[str] = []
         params: list = []
+        for column, value in (("provider", provider), ("model", model), ("external", int(external) if external is not None else None)):
+            if value is not None:
+                sets.append(f"{column} = ?")
+                params.append(value)
         if content is not None:
             sets.append("content = ?")
             params.append(content)
@@ -459,6 +610,7 @@ class ConversationStore:
         summary: str,
         key_points: list[str] | None = None,
         generated_by: str = "model",
+        meta: dict | None = None,
     ) -> dict:
         now = utc_now()
         with self._lock, self._connect() as conn:
@@ -470,9 +622,9 @@ class ConversationStore:
                 ).fetchone()
                 revision = int(row["r"]) + 1
                 conn.execute(
-                    "INSERT INTO conversation_summaries (conversation_id, revision, up_to_seq, summary, key_points_json, generated_by, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (conversation_id, revision, int(up_to_seq), summary, _json(key_points or []), generated_by, now),
+                    "INSERT INTO conversation_summaries (conversation_id, revision, up_to_seq, summary, key_points_json, generated_by, created_at, metadata_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (conversation_id, revision, int(up_to_seq), summary, _json(key_points or []), generated_by, now, _json(meta or {})),
                 )
                 conn.execute("COMMIT")
             except Exception:
@@ -485,6 +637,7 @@ class ConversationStore:
             "summary": summary,
             "keyPoints": key_points or [],
             "generatedBy": generated_by,
+            "meta": meta or {},
             "createdAt": now,
         }
 
@@ -503,8 +656,22 @@ class ConversationStore:
             "summary": row["summary"],
             "keyPoints": _load(row["key_points_json"], []),
             "generatedBy": row["generated_by"],
+            "meta": _load(row["metadata_json"], {}),
             "createdAt": row["created_at"],
         }
+
+    def get_summary(self, conversation_id: str, revision: int) -> dict | None:
+        """Read an immutable summary revision for scoped source resolution."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT * FROM conversation_summaries WHERE conversation_id=? AND revision=?",
+                               (conversation_id, revision)).fetchone()
+        if row is None:
+            return None
+        return {"conversationId": row["conversation_id"], "revision": int(row["revision"]),
+                "upToSeq": int(row["up_to_seq"]), "summary": row["summary"],
+                "keyPoints": _load(row["key_points_json"], []),
+                "generatedBy": row["generated_by"], "meta": _load(row["metadata_json"], {}),
+                "createdAt": row["created_at"]}
 
     # ------------------------------------------------------------------ 回执
     def save_receipt(
@@ -754,7 +921,7 @@ class ConversationStore:
             )
             return self._nudge(conn.execute("SELECT * FROM nudge_events WHERE id = ?", (nudge_id,)).fetchone())
 
-    def today_nudges(self, *, now: str | None = None, max_per_day: int | None = None) -> list[dict]:
+    def today_nudges(self, *, now: str | None = None, max_per_day: int | None = None, eligible=None) -> list[dict]:
         """今日可展示的提醒（pending/shown，按计划时间），最多 max_per_day 条；返回时把 pending 标为 shown。"""
         policy = self.nudge_policy()
         if not policy["enabled"]:
@@ -764,10 +931,11 @@ class ConversationStore:
         with self._lock, self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM nudge_events WHERE status IN ('pending','shown') AND scheduled_for <= ? "
-                "ORDER BY scheduled_for ASC, created_at ASC LIMIT ?",
-                (current, int(limit)),
+                "ORDER BY scheduled_for ASC, created_at ASC",
+                (current,),
             ).fetchall()
             items = [self._nudge(r) for r in rows]
+            items = [item for item in items if item and (eligible is None or eligible(item))][:int(limit)]
             for item in items:
                 if item and item["status"] == "pending":
                     conn.execute("UPDATE nudge_events SET status = 'shown', shown_at = ? WHERE id = ?", (current, item["id"]))

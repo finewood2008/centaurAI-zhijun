@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from runtime_paths import RUNTIME_SETTINGS_DB_PATH
@@ -37,6 +38,13 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 CREATE TABLE IF NOT EXISTS runtime_meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_provider_profiles (
+    id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    payload TEXT NOT NULL,
+    secret_ref TEXT,
     updated_at REAL NOT NULL
 );
 -- 本应用创建的 secret_ref 台账：跨后端（keyring 无法列举自有 ref）提供可恢复的孤儿清理。
@@ -65,6 +73,10 @@ class RevisionConflictError(ValueError):
     def __init__(self, latest: dict) -> None:
         super().__init__("配置已被其他会话更新，请刷新后重试")
         self.latest = latest
+
+
+class ActiveProviderError(ValueError):
+    pass
 
 
 class RuntimeSettingsStore:
@@ -110,6 +122,20 @@ class RuntimeSettingsStore:
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
                 conn.executescript(_SCHEMA)
+                # Only a persisted legacy channel is imported; no environment
+                # token is copied and GET never creates a provider profile.
+                conn.execute("BEGIN IMMEDIATE")
+                migrated = conn.execute("SELECT 1 FROM runtime_meta WHERE key='external_profiles_migrated'").fetchone()
+                legacy = conn.execute("SELECT payload,secret_ref FROM runtime_settings WHERE section=?", (SECTION_CHAT,)).fetchone()
+                if not migrated and legacy:
+                    payload = json.loads(legacy[0])
+                    if payload.get("provider") == "openai" and payload.get("baseUrl") and not payload.get("externalProviderId"):
+                        ident = "ext_" + uuid.uuid4().hex[:16]
+                        profile = {"name": "已配置的在线服务", "baseUrl": payload["baseUrl"], "model": payload.get("model")}
+                        conn.execute("INSERT INTO external_provider_profiles VALUES(?,1,?,?,?)", (ident, json.dumps(profile, ensure_ascii=False), legacy[1], time.time()))
+                        payload.update(externalProviderId=ident, externalProviderRevision=1)
+                        conn.execute("UPDATE runtime_settings SET payload=? WHERE section=?", (json.dumps(payload, ensure_ascii=False), SECTION_CHAT))
+                    conn.execute("INSERT INTO runtime_meta VALUES('external_profiles_migrated','{}',?)", (time.time(),))
                 conn.commit()
             finally:
                 conn.close()
@@ -146,6 +172,77 @@ class RuntimeSettingsStore:
             return [self._row_to_dict(r) for r in rows]
         finally:
             conn.close()
+
+    @staticmethod
+    def _profile(row):
+        return {"id": row["id"], "revision": row["revision"], "payload": json.loads(row["payload"]),
+                "secret_ref": row["secret_ref"], "updated_at": row["updated_at"]} if row else None
+
+    def list_external_profiles(self):
+        with self._connect() as db:
+            return [self._profile(r) for r in db.execute("SELECT * FROM external_provider_profiles ORDER BY updated_at,id")]
+
+    def get_external_profile(self, ident):
+        with self._connect() as db:
+            return self._profile(db.execute("SELECT * FROM external_provider_profiles WHERE id=?", (ident,)).fetchone())
+
+    def put_external_profile(self, ident, expected_revision, payload, secret_ref):
+        creating = ident is None
+        ident = ident or "ext_" + uuid.uuid4().hex[:16]
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            old = self._profile(db.execute("SELECT * FROM external_provider_profiles WHERE id=?", (ident,)).fetchone())
+            if not creating and not old:
+                raise KeyError("供应商不存在")
+            if old and expected_revision != old["revision"]:
+                raise RevisionConflictError(old)
+            revision = old["revision"] + 1 if old else 1
+            db.execute("INSERT OR REPLACE INTO external_provider_profiles VALUES(?,?,?,?,?)",
+                       (ident, revision, json.dumps(payload, ensure_ascii=False), secret_ref, time.time()))
+            return self._profile(db.execute("SELECT * FROM external_provider_profiles WHERE id=?", (ident,)).fetchone())
+
+    def activate_external_profile(self, ident, expected_revision, model, chat_revision, defaults):
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            profile = self._profile(db.execute("SELECT * FROM external_provider_profiles WHERE id=?", (ident,)).fetchone())
+            if not profile:
+                raise KeyError("供应商不存在")
+            if profile["revision"] != expected_revision:
+                raise RevisionConflictError(profile)
+            row = db.execute("SELECT * FROM runtime_settings WHERE section=?", (SECTION_CHAT,)).fetchone()
+            actual = row["revision"] if row else 0
+            if chat_revision != actual:
+                raise RevisionConflictError(self._row_to_dict(row) if row else {"revision": 0})
+            if not profile["secret_ref"]:
+                raise ValueError("供应商尚未配置 API Key")
+            now, revision = time.time(), profile["revision"] + 1
+            payload = {**profile["payload"], "model": model}
+            db.execute("UPDATE external_provider_profiles SET revision=?,payload=?,updated_at=? WHERE id=?",
+                       (revision, json.dumps(payload, ensure_ascii=False), now, ident))
+            chat = {**defaults, **(json.loads(row["payload"]) if row else {}), "provider": "openai", "externalEnabled": True,
+                    "baseUrl": payload["baseUrl"], "model": model, "fallbackOllama": False,
+                    "externalProviderId": ident, "externalProviderRevision": revision}
+            db.execute("INSERT OR REPLACE INTO runtime_settings VALUES(?,?,?,?,?,?)",
+                       (SECTION_CHAT, actual + 1, json.dumps(chat, ensure_ascii=False), profile["secret_ref"], "runtime_settings", now))
+            return self._profile(db.execute("SELECT * FROM external_provider_profiles WHERE id=?", (ident,)).fetchone())
+
+    def delete_external_profile(self, ident, expected_revision):
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            old = self._profile(db.execute("SELECT * FROM external_provider_profiles WHERE id=?", (ident,)).fetchone())
+            if not old:
+                raise KeyError("供应商不存在")
+            if old["revision"] != expected_revision:
+                raise RevisionConflictError(old)
+            chat = db.execute("SELECT payload FROM runtime_settings WHERE section=?", (SECTION_CHAT,)).fetchone()
+            if chat and json.loads(chat[0]).get("externalProviderId") == ident:
+                raise ActiveProviderError("当前使用的供应商不能删除，请先切换到其他服务或本地模型")
+            db.execute("DELETE FROM external_provider_profiles WHERE id=?", (ident,))
+            return old
+
+    def referenced_secret_refs(self):
+        with self._connect() as db:
+            return {row[0] for row in db.execute("SELECT secret_ref FROM runtime_settings UNION SELECT secret_ref FROM external_provider_profiles") if row[0]}
 
     def put_section(
         self,

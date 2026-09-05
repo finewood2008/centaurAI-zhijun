@@ -86,6 +86,23 @@ class ValidateTests(unittest.TestCase):
             self.assertIn(claim["quote"], USER_TEXT)
         self.assertEqual(fake_extract("远川项目下一步怎么办")["claims"], [])
 
+    def test_onboarding_answers_are_constrained_to_the_promised_profile_section(self) -> None:
+        valid = extract.validate(
+            {"claims": [_raw(content="我希望两年后有稳定收入", quote="我希望两年后有稳定收入")]},
+            user_text="我希望两年后有稳定收入",
+            prev_assistant="如果看向一两年后呢？",
+        )
+        constrained = extract.constrain_onboarding(valid, 6)
+        self.assertEqual((constrained[0].section, constrained[0].layer, constrained[0].predicate), ("direction", "aspirational", "wants_to"))
+
+    def test_onboarding_decision_answer_does_not_become_a_personality_claim(self) -> None:
+        valid = extract.validate(
+            {"claims": [_raw()]},
+            user_text=USER_TEXT,
+            prev_assistant="最近一次需要认真拿主意的事情是什么？",
+        )
+        self.assertEqual(extract.constrain_onboarding(valid, 4), [])
+
 
 class PersistTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -96,14 +113,13 @@ class PersistTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self, text: str, message_id: str, prev: str | None = None) -> dict:
-        return extract.run_extraction(
-            provider=FakeProvider(),
-            store=self.store,
-            conversation_id="conv_1",
-            message_id=message_id,
-            user_text=text,
-            prev_assistant=prev,
-        )
+        # These tests cover the preserved low-level legacy API. The live
+        # run_extraction path now applies sparse admission and never auto-confirms.
+        raw = fake_extract(text)
+        valid = extract.validate(raw, user_text=text, prev_assistant=prev)
+        result = extract.persist(valid, raw["entities"], store=self.store,
+                                 conversation_id="conv_1", message_id=message_id)
+        return {**result, "state": "done"}
 
     def test_utterance_is_confirmed_and_aspiration_stays_working(self) -> None:
         result = self._run(USER_TEXT, "msg_1")
@@ -149,8 +165,15 @@ class PersistTests(unittest.TestCase):
         self.assertEqual(self.store.get_claim(third["created"][0])["supersedesId"], restated["created"][0])
 
     def test_skipped_inputs_do_not_call_model(self) -> None:
-        result = self._run("好的", "msg_7")
+        result = extract.run_extraction(provider=FakeProvider(), store=self.store,
+            conversation_id="conv_1", message_id="msg_7", user_text="好的", prev_assistant=None)
         self.assertEqual(result["state"], "skipped")
+        self.assertEqual(self.store.stats()["claims"], {"working": 0, "confirmed": 0, "retracted": 0, "superseded": 0})
+
+    def test_extraction_without_a_real_source_message_cannot_persist(self) -> None:
+        result = extract.run_extraction(provider=FakeProvider(), store=self.store,
+            conversation_id="conv_missing", message_id="msg_missing", user_text="我是产品经理", prev_assistant=None)
+        self.assertEqual(result["created"], [])
         self.assertEqual(self.store.stats()["claims"], {"working": 0, "confirmed": 0, "retracted": 0, "superseded": 0})
 
     def test_entities_from_extraction_are_upserted(self) -> None:

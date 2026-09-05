@@ -3,7 +3,7 @@ set -euo pipefail
 umask 027
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PYTHON_BIN="${PYTHON_BIN:-$(command -v python)}"
+PYTHON_BIN="${PYTHON_BIN:-$PROJECT_ROOT/backend/.venv/bin/python}"
 DATA_ROOT="${CENTAURAI_DATABASE_DATA_ROOT:-/var/lib/centauros/centaurai-database}"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then

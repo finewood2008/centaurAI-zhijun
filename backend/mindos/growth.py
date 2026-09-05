@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .stores.growth_store import (
@@ -47,28 +48,91 @@ def _clean_string_list(values: list[str], label: str) -> list[str]:
     return result
 
 
+def _clean_evidence_refs(values: list[str]) -> list[str]:
+    """Allow bounded provenance receipts without truncating their permission chain."""
+    kinds = {"material", "claim", "message", "draft", "charter", "charter_draft", "charter_document",
+             "charter_clause", "charter_workspace", "reply_assist", "decision", "episode"}
+    helper_keys = {"kind", "routingSources", "conversationId", "task", "revision", "charterBasis",
+                   "possibleAssistance", "draftId", "sourceRevisions"}
+    result, seen, total_bytes, total_refs = [], set(), 0, 0
+    for raw in values:
+        item = raw.strip()
+        if not item:
+            raise ValueError("evidenceRefs 不能包含空项")
+        if item in seen:
+            continue
+        size = len(item.encode("utf-8"))
+        if size > 128 * 1024:
+            raise ValueError("结构化来源单项不能超过 128 KiB；请保留完整来源而非截断")
+        try:
+            data = json.loads(item) if item.startswith("{") else None
+        except (ValueError, RecursionError):
+            data = None
+        structured = isinstance(data, dict) and data.get("kind") in ("routing", "helper_lineage")
+        if not structured:
+            if len(item) > 500:
+                raise ValueError("普通 evidenceRefs 单项不能超过 500 字符")
+        else:
+            allowed = {"kind", "routingSources"} if data["kind"] == "routing" else helper_keys
+            refs = data.get("routingSources")
+            if set(data) - allowed or not isinstance(refs, list) or len(refs) > 1024:
+                raise ValueError("结构化来源格式不正确，最多保留 1024 个来源引用")
+            for ref in refs:
+                if not isinstance(ref, dict) or set(ref) - {"kind", "id", "version", "materialVersion"} or ref.get("kind") not in kinds:
+                    raise ValueError("来源引用格式或类型不正确")
+                if not isinstance(ref.get("id"), str) or not ref["id"] or len(ref["id"]) > 256:
+                    raise ValueError("来源标识不正确")
+                if "version" in ref and (not isinstance(ref["version"], str) or not ref["version"] or len(ref["version"]) > 128):
+                    raise ValueError("来源版本不正确")
+                if "materialVersion" in ref and (type(ref["materialVersion"]) is not int or ref["materialVersion"] < 1):
+                    raise ValueError("资料版本不正确")
+            for key in ("conversationId", "task", "draftId"):
+                if key in data and (not isinstance(data[key], str) or not data[key] or len(data[key]) > 256):
+                    raise ValueError("辅助来源标识不正确")
+            if data.get("revision") is not None and (type(data["revision"]) is not int or data["revision"] < 0):
+                raise ValueError("辅助来源修订不正确")
+            if "possibleAssistance" in data and type(data["possibleAssistance"]) is not bool:
+                raise ValueError("辅助来源标记不正确")
+            if data.get("charterBasis") is not None:
+                if not isinstance(data["charterBasis"], dict):
+                    raise ValueError("章程依据格式不正确")
+                DecisionCreate._charter_basis(data["charterBasis"])
+            revisions = data.get("sourceRevisions", [])
+            if not isinstance(revisions, list) or len(revisions) > 1024 or any(type(r) is not int or r < 0 for r in revisions):
+                raise ValueError("辅助来源修订列表不正确")
+            total_refs += len(refs)
+        total_bytes += size
+        if total_bytes > 256 * 1024 or total_refs > 1024:
+            raise ValueError("来源总量超出核对范围；请保留完整来源，不要删减或截断")
+        seen.add(item)
+        result.append(item)
+    return result
+
+
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class CharterCreate(_StrictModel):
-    vision: str = Field(min_length=1, max_length=2000)
-    roles: list[str] = Field(max_length=30)
-    principles: list[str] = Field(max_length=50)
-    boundaries: list[str] = Field(max_length=50)
-    goals: list[str] = Field(max_length=50)
-    challengeStyle: str = Field(min_length=1, max_length=1000)
-    quietDomains: list[str] = Field(max_length=50)
+    vision: str = Field(default="", max_length=2000)
+    roles: list[str] = Field(default_factory=list, max_length=30)
+    principles: list[str] = Field(default_factory=list, max_length=50)
+    boundaries: list[str] = Field(default_factory=list, max_length=50)
+    goals: list[str] = Field(default_factory=list, max_length=50)
+    challengeStyle: str = Field(default="", max_length=1000)
+    quietDomains: list[str] = Field(default_factory=list, max_length=50)
+    expectedVersion: int | None = Field(default=None, ge=0)
+    requestId: str | None = Field(default=None, min_length=8, max_length=100)
 
     @field_validator("vision")
     @classmethod
     def _vision(cls, value: str) -> str:
-        return _clean_text(value, "愿景")
+        return value.strip()
 
     @field_validator("challengeStyle")
     @classmethod
     def _challenge_style(cls, value: str) -> str:
-        return _clean_text(value, "挑战方式")
+        return value.strip()
 
     @field_validator(
         "roles", "principles", "boundaries", "goals", "quietDomains"
@@ -89,6 +153,25 @@ class DecisionCreate(_StrictModel):
     reviewAt: datetime | None
     relatedEntityIds: list[str] = Field(max_length=100)
     evidenceRefs: list[str] = Field(max_length=100)
+    charterBasis: dict | None = None
+
+    @field_validator("charterBasis")
+    @classmethod
+    def _charter_basis(cls, value):
+        if value is None:
+            return value
+        if set(value) - {"charterId", "version", "scope", "clauseIds"}:
+            raise ValueError("章程依据包含未知字段")
+        if "charterId" not in value or type(value.get("version")) is not int or value["version"] < 0:
+            raise ValueError("章程依据需要明确的标识和版本")
+        if value["charterId"] is not None and (not isinstance(value["charterId"], str) or not value["charterId"] or len(value["charterId"]) > 100):
+            raise ValueError("章程标识不正确")
+        if "scope" in value and (not isinstance(value["scope"], str) or len(value["scope"]) > 200):
+            raise ValueError("设备范围不正确")
+        ids = value.get("clauseIds", [])
+        if not isinstance(ids, list) or len(ids) > 80 or any(not isinstance(i, str) or len(i) > 100 for i in ids):
+            raise ValueError("章程条款引用不正确")
+        return value
 
     @field_validator("title", "context", "choice", "rationale", "expectedOutcome")
     @classmethod
@@ -98,6 +181,8 @@ class DecisionCreate(_StrictModel):
     @field_validator("options", "relatedEntityIds", "evidenceRefs")
     @classmethod
     def _decision_lists(cls, value: list[str], info) -> list[str]:
+        if info.field_name == "evidenceRefs":
+            return _clean_evidence_refs(value)
         return _clean_string_list(value, info.field_name)
 
     @field_validator("reviewAt")
@@ -161,12 +246,28 @@ def _utc_iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def get_charter():
-    return GrowthStore.instance().charter_history()
+def get_charter(request: Request = None):
+    from .uploads import _device_scope_of
+    from .stores.charter_draft_store import CharterDraftStore
+    scope = _device_scope_of(request)
+    history = GrowthStore.instance().charter_history(scope)
+    return {**history, "workspace": CharterDraftStore().latest_workspace(scope)}
 
 
-def create_charter(req: CharterCreate):
-    return GrowthStore.instance().create_charter(req.model_dump())
+def create_charter(req: CharterCreate, request: Request = None):
+    try:
+        from .uploads import _device_scope_of
+        current = GrowthStore.instance().current_charter(_device_scope_of(request))
+        from .stores.charter_draft_store import FIELDS
+        payload = req.model_dump()
+        prior = (current or {}).get("metadata", {}).get("fields", {})
+        payload["metadata"] = {"scope": _device_scope_of(request), "origin": "manual", "fields": {
+            f: {"state": "confirmed" if payload.get(f) else "pending", "sources": prior.get(f, {}).get("sources", [])} for f in FIELDS}}
+        return GrowthStore.instance().create_charter(payload)
+    except GrowthConflictError as exc:
+        raise HTTPException(409, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
 
 
 def list_decisions(status: str = ""):
@@ -180,10 +281,26 @@ def list_decisions(status: str = ""):
     return {"items": items, "total": len(items)}
 
 
-def create_decision(req: DecisionCreate):
+_UNSPECIFIED_CHARTER = object()
+
+
+def create_decision(req: DecisionCreate, *, charter_basis=_UNSPECIFIED_CHARTER, scope="global"):
     payload = req.model_dump()
     payload["reviewAt"] = _utc_iso(req.reviewAt)
-    return GrowthStore.instance().create_decision(payload)
+    payload["scope"] = scope
+    if charter_basis is not _UNSPECIFIED_CHARTER:
+        payload["charterBasis"] = charter_basis
+    elif "charterBasis" not in req.model_fields_set:
+        payload.pop("charterBasis", None)
+    try:
+        return GrowthStore.instance().create_decision(payload)
+    except GrowthConflictError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+def create_decision_endpoint(req: DecisionCreate, request: Request):
+    from .uploads import _device_scope_of
+    return create_decision(req, scope=_device_scope_of(request))
 
 
 def record_outcome(decision_id: str, req: OutcomeCreate):
@@ -233,7 +350,7 @@ def _build_router(write_guard=None) -> APIRouter:
     built.add_api_route("/decisions", list_decisions, methods=["GET"])
     built.add_api_route(
         "/decisions",
-        create_decision,
+        create_decision_endpoint,
         methods=["POST"],
         dependencies=write_dependencies,
     )

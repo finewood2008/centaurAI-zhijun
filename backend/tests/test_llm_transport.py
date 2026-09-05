@@ -7,11 +7,26 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mindos import llm_transport
 from mindos.stores.runtime_settings_store import reset_for_tests
+
+
+class DestinationTest(unittest.TestCase):
+    def test_forbidden_hosts_are_rejected_before_any_network_access(self):
+        for host in ("claude.ai", "anthropic.com", "api.anthropic.com.",
+                     "anthropic。com", "ａｎｔｈｒｏｐｉｃ.com", "claude．ai", "API.CLAUDE.AI"):
+            with self.subTest(host=host), patch.object(llm_transport.urllib.request, "urlopen") as network:
+                with self.assertRaises(ValueError):
+                    llm_transport.allowed_urlopen("https://" + host + "/models", channel="material")
+                network.assert_not_called()
+
+    def test_allowed_hosts_are_not_blocked_by_substring(self):
+        llm_transport._check_destination("https://api.example.com/v1/models")
+        llm_transport._check_destination("https://not-anthropic.com/models")
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):

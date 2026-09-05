@@ -1,7 +1,7 @@
 // 判断草稿纯逻辑回归：合并不覆盖已有值、缺失项、意图提示。
 // 运行：node --experimental-strip-types tests/decision-draft.test.mjs
 import assert from 'node:assert/strict'
-import { draftMissingFields, intentHint, mergeDraftFields, reviewDateToIso, defaultReviewDate } from '../src/shared/decisionDraft.ts'
+import { draftMissingFields, intentHint, mergeDraftFields, reviewDateToIso, defaultReviewDate, directionPatch } from '../src/shared/decisionDraft.ts'
 
 // 1) 合并：null/空数组不覆盖，已有值保留，新值覆盖
 {
@@ -46,4 +46,14 @@ import { draftMissingFields, intentHint, mergeDraftFields, reviewDateToIso, defa
   assert.ok(iso && iso.endsWith('Z'))
 }
 
-console.log('decision-draft: 4 groups OK')
+// 5) Explicit candidate adoption: never overwrite without approval, never grade confidence.
+{
+  const current = { choice: '我已写的选择', rationale: '', expectedOutcome: '已有预期', confidence: 0 }
+  const candidate = { choice: '候选选择', rationale: '候选理由', expectedOutcome: '候选预期', confidence: 99 }
+  assert.deepEqual(directionPatch(current, candidate, true), { rationale: '候选理由' })
+  assert.deepEqual(directionPatch(current, candidate, false), { choice: '候选选择', rationale: '候选理由', expectedOutcome: '候选预期' })
+  assert.equal(current.choice, '我已写的选择')
+  assert.equal(current.confidence, 0)
+}
+
+console.log('decision-draft: 5 groups OK')

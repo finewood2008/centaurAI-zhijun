@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .stores.ontology_store import (
@@ -17,7 +17,11 @@ from .stores.ontology_store import (
     OntologyError,
     OntologyNotFoundError,
     OntologyStore,
+    utc_now,
 )
+from .stores.conversation_store import ConversationStore
+from .uploads import _device_scope_of
+from .zhijun.alignment import visible
 from .zhijun import projection
 from .zhijun.confirm import review_claim as _review_claim
 from .zhijun.jobs import enqueue_projection
@@ -70,13 +74,93 @@ def _store() -> OntologyStore:
     return OntologyStore.instance()
 
 
-def get_stats():
-    stats = _store().stats()
-    stats["proposals"] = len(_store().list_merge_proposals()) + len(_store().list_conflicts())
-    return stats
+def _scope(request):
+    return _device_scope_of(request) if request is not None else "global"
+
+
+def _global_only(request):
+    if _scope(request) != "global":
+        raise _error(403, "GLOBAL_OPERATION", "此操作涉及主机全局记忆，请在本机管理端操作")
+
+
+def _claims(request, *, limit=-1, **kwargs):
+    scope, convs = _scope(request), ConversationStore.instance()
+    # Scope/lifecycle checks precede the result cap; another device cannot crowd
+    # a user's records out of the first page. No model or export grant is involved.
+    items = [c for c in _store().list_claims(limit=-1, **kwargs) if visible(c, convs, scope)]
+    with _store()._connect() as db:
+        owners = {r[0]: r[1] for r in db.execute("SELECT id,device_scope FROM entities")}
+    for item in items:
+        # Legacy entities were shared. Their names/aliases are not device-local
+        # evidence and must not leak through an otherwise local claim.
+        for key, name_key in (("subjectEntityId", "subjectName"), ("objectEntityId", "objectName")):
+            if item.get(key) != ME_ENTITY_ID and owners.get(item.get(key)) != scope:
+                item[name_key] = None
+    return items if limit < 0 else items[:limit]
+
+
+def _require_claim(claim_id, request):
+    claim = _store().get_claim(claim_id)
+    if claim is None or not visible(claim, ConversationStore.instance(), _scope(request)):
+        raise _error(404, "NOT_FOUND", "理解不存在")
+    return claim
+
+
+def _entities(request, claims=None):
+    scope = _scope(request)
+    claims = claims if claims is not None else _claims(request, trust_states=TRUST_STATES)
+    counts = {}
+    for c in claims:
+        for eid in {c.get("subjectEntityId"), c.get("objectEntityId")} - {None}:
+            if c["trustState"] in ("working", "confirmed"):
+                counts[eid] = counts.get(eid, 0) + 1
+    with _store()._connect() as db:
+        owned = {r[0] for r in db.execute("SELECT id FROM entities WHERE device_scope=?", (scope,))}
+    foreign_links = set()
+    for claim in _store().list_claims(trust_states=TRUST_STATES, limit=-1):
+        if not visible(claim, ConversationStore.instance(), scope):
+            foreign_links.update({claim.get("subjectEntityId"), claim.get("objectEntityId")} - {None, ME_ENTITY_ID})
+    # Non-global names created before scope-aware entity writes are deliberately
+    # not relabelled. Their original text is still retained inside the claim.
+    return [{**e, "claimCount": counts.get(e["id"], 0)} for e in _store().list_entities(limit=-1)
+            if e["id"] == ME_ENTITY_ID or (e["id"] in owned and e["id"] not in foreign_links
+                                          and (scope == "global" or e["id"] in counts))]
+
+
+def _merge_visible(item, request):
+    if not item:
+        return False
+    wanted = {item["fromEntityId"], item["intoEntityId"]}
+    scope, convs = _scope(request), ConversationStore.instance()
+    with _store()._connect() as db:
+        owners = {r[0]: r[1] for r in db.execute("SELECT id,device_scope FROM entities")}
+    if any(owners.get(eid) != scope for eid in wanted):
+        return False
+    return all(visible(c, convs, scope) for c in _store().list_claims(trust_states=TRUST_STATES, limit=-1)
+               if wanted.intersection({c.get("subjectEntityId"), c.get("objectEntityId")}))
+
+
+def _conflicts(request):
+    allowed = {c["id"] for c in _claims(request, trust_states=TRUST_STATES)}
+    return [item for item in _store().list_conflicts(limit=-1)
+            if (item.get("claimA") or {}).get("id") in allowed and (item.get("claimB") or {}).get("id") in allowed]
+
+
+def get_stats(request: Request = None):
+    import hashlib
+    claims = _claims(request, trust_states=TRUST_STATES)
+    counts = {state: sum(c["trustState"] == state for c in claims) for state in TRUST_STATES}
+    section_counts = {s: {state: sum(c["section"] == s and c["trustState"] == state for c in claims)
+                          for state in ("working", "confirmed")} for s in SECTIONS}
+    revision = hashlib.sha256(repr([(c["id"], c["updatedAt"], c["trustState"]) for c in claims]).encode()).hexdigest()[:12]
+    return {"hasOntology": counts["confirmed"] > 0, "claims": counts, "bySection": section_counts,
+            "entities": sum(e["id"] != ME_ENTITY_ID for e in _entities(request, claims)),
+            "inbox": len(_claims(request, trust_states=("working",), include_hidden=False)),
+            "revision": int(revision, 16), "proposals": list_proposals(request)["total"]}
 
 
 def list_claims(
+    request: Request,
     section: str | None = Query(None),
     trust: str = Query("confirmed"),
     limit: int = Query(200, ge=1, le=2000),
@@ -88,20 +172,21 @@ def list_claims(
     if section is not None and section not in SECTIONS:
         raise _error(400, "BAD_REQUEST", f"section 不合法：{section}")
     try:
-        items = _store().list_claims(section=section, trust_states=states or ("confirmed",), limit=limit)
+        items = _claims(request, section=section, trust_states=states or ("confirmed",), limit=limit)
     except OntologyError as exc:
         raise _map(exc) from None
     return {"items": items, "total": len(items)}
 
 
-def get_claim(claim_id: str):
-    claim = _store().get_claim(claim_id)
-    if claim is None:
+def get_claim(claim_id: str, request: Request = None):
+    claim = _require_claim(claim_id, request)
+    result = next((c for c in _claims(request, trust_states=(claim["trustState"],)) if c["id"] == claim_id), None)
+    if result is None:
         raise _error(404, "NOT_FOUND", "理解不存在")
-    return claim
+    return result
 
 
-def create_claim(req: ClaimCreate):
+def create_claim(req: ClaimCreate, request: Request = None):
     store = _store()
     object_id = None
     section, layer, predicate = req.section, req.layer, req.predicate
@@ -114,7 +199,7 @@ def create_claim(req: ClaimCreate):
         predicate = predicate or (guessed_predicate if section == guessed_section else None)
     try:
         if req.objectName:
-            object_id = store.upsert_entity(req.objectName, req.objectType, alias_source="user")["id"]
+            object_id = store.upsert_entity(req.objectName, req.objectType, alias_source="user", device_scope=_scope(request))["id"]
         claim = store.create_claim(
             {
                 "subject_entity_id": ME_ENTITY_ID,
@@ -126,6 +211,7 @@ def create_claim(req: ClaimCreate):
                 "confidence": 1.0,
                 "privacy_level": req.privacyLevel,
                 "export_allowed": req.exportAllowed,
+                "device_scope": _scope(request),
             },
             [{"kind": "user_edit", "quote": req.content}],
             trust_state="confirmed",
@@ -142,34 +228,40 @@ def create_claim(req: ClaimCreate):
     return claim
 
 
-def review(claim_id: str, req: ReviewRequest):
+def review(claim_id: str, req: ReviewRequest, request: Request = None):
     try:
-        return _review_claim(
-            claim_id,
-            action=req.action,
-            surface=req.surface,
-            edited_content=req.editedContent,
-            context_ref=req.contextRef,
-            note=req.note,
-            conversation_id=req.conversationId,
-            message_id=req.messageId,
-        )
+        with _store()._lock:
+            _require_claim(claim_id, request)
+            if req.conversationId:
+                from .chat_imports import require_conversation
+                require_conversation(req.conversationId, _scope(request))
+            if req.messageId:
+                message = ConversationStore.instance().get_message(req.messageId)
+                if not req.conversationId or not message or message["conversationId"] != req.conversationId:
+                    raise _error(404, "NOT_FOUND", "来源消息不存在")
+            if req.contextRef and req.contextRef.startswith("conv_"):
+                from .chat_imports import require_conversation
+                require_conversation(req.contextRef, _scope(request))
+            result = _review_claim(claim_id, action=req.action, surface=req.surface, edited_content=req.editedContent,
+                context_ref=req.contextRef, note=req.note, conversation_id=req.conversationId, message_id=req.messageId)
+            return {key: get_claim(value["id"], request) if value else value for key, value in result.items()}
     except OntologyError as exc:
         raise _map(exc) from None
 
 
-def inbox(limit: int = Query(20, ge=1, le=100)):
-    items = _store().inbox(limit=limit)
+def inbox(request: Request, limit: int = Query(20, ge=1, le=100)):
+    items = _claims(request, trust_states=("working",), include_hidden=False, limit=limit)
     return {"items": items, "total": len(items)}
 
 
-def list_entities(entity_type: str | None = Query(None, alias="type")):
-    items = _store().list_entities(entity_type)
+def list_entities(request: Request, entity_type: str | None = Query(None, alias="type")):
+    items = [e for e in _entities(request) if not entity_type or e["type"] == entity_type]
     return {"items": items, "total": len(items)}
 
 
-def get_projection():
-    return projection.projection_payload(_store())
+def get_projection(request: Request = None):
+    markdown, exportable = projection.render(_store(), scope=_scope(request))
+    return {"markdown": markdown, "exportableMarkdown": exportable, "generatedAt": utc_now()}
 
 
 # ---------------------------------------------------------------- P3：裁决 / 整合 / 导出 / 全量删除
@@ -185,19 +277,22 @@ class ExportToggle(_StrictModel):
     allowed: bool
 
 
-def set_export(claim_id: str, req: ExportToggle):
+def set_export(claim_id: str, req: ExportToggle, request: Request = None):
     try:
-        claim = _store().set_export_allowed(claim_id, req.allowed)
+        with _store()._lock:
+            _require_claim(claim_id, request)
+            claim = _store().set_export_allowed(claim_id, req.allowed)
     except OntologyError as exc:
         raise _map(exc) from None
     try:
         enqueue_projection(store=_store())
     except Exception:  # noqa: BLE001
         pass
-    return claim
+    return get_claim(claim["id"], request)
 
 
-def context_pack_status():
+def context_pack_status(request: Request = None):
+    _global_only(request)
     from .zhijun import context_pack
 
     store = _store()
@@ -213,16 +308,22 @@ class PurgeRequest(_StrictModel):
 PURGE_PHRASE = "删除全部记忆"
 
 
-def list_proposals():
+def list_proposals(request: Request = None):
     store = _store()
-    merges = store.list_merge_proposals()
-    conflicts = store.list_conflicts()
+    # Entity merging is a global legacy operation. Device users can resolve only
+    # conflicts where both complete claim sources belong to their own scope.
+    merges = [item for item in store.list_merge_proposals(limit=-1) if _merge_visible(item, request)] if _scope(request) == "global" else []
+    conflicts = _conflicts(request)
     return {"merges": merges, "conflicts": conflicts, "total": len(merges) + len(conflicts)}
 
 
-def resolve_merge(proposal_id: str, req: MergeResolve):
+def resolve_merge(proposal_id: str, req: MergeResolve, request: Request = None):
+    _global_only(request)
     try:
-        result = _store().resolve_merge_proposal(proposal_id, accept=req.accept)
+        with _store()._lock:
+            if not _merge_visible(_store().get_merge_proposal(proposal_id), request):
+                raise _error(404, "NOT_FOUND", "合并候选不存在")
+            result = _store().resolve_merge_proposal(proposal_id, accept=req.accept)
     except OntologyError as exc:
         raise _map(exc) from None
     try:
@@ -232,9 +333,15 @@ def resolve_merge(proposal_id: str, req: MergeResolve):
     return result
 
 
-def resolve_conflict(conflict_id: str, req: ConflictResolve):
+def resolve_conflict(conflict_id: str, req: ConflictResolve, request: Request = None):
     try:
-        result = _store().resolve_conflict(conflict_id, keep=req.keep)
+        with _store()._lock:
+            if conflict_id not in {item["id"] for item in _conflicts(request)}:
+                existing = _store().get_conflict(conflict_id)
+                if existing and all((existing.get(k) or {}).get("id") in {c["id"] for c in _claims(request, trust_states=TRUST_STATES)} for k in ("claimA", "claimB")):
+                    raise OntologyConflictError("矛盾对已处理")
+                raise _error(404, "NOT_FOUND", "矛盾对不存在")
+            result = _store().resolve_conflict(conflict_id, keep=req.keep)
     except OntologyError as exc:
         raise _map(exc) from None
     try:
@@ -244,7 +351,8 @@ def resolve_conflict(conflict_id: str, req: ConflictResolve):
     return result
 
 
-def consolidate_now():
+def consolidate_now(request: Request = None):
+    _global_only(request)
     from .zhijun import consolidate
     from .zhijun.provider import ProviderError, build_provider
 
@@ -255,15 +363,21 @@ def consolidate_now():
     return consolidate.run(store=_store(), provider=provider)
 
 
-def export_ontology(sections: str | None = Query(None), includeWorking: bool = Query(False)):
+def export_ontology(request: Request, sections: str | None = Query(None), includeWorking: bool = Query(False)):
     wanted = tuple(s.strip() for s in (sections or "").split(",") if s.strip())
     bad = [s for s in wanted if s not in SECTIONS]
     if bad:
         raise _error(400, "BAD_REQUEST", f"section 不合法：{','.join(bad)}")
-    return _store().export_payload(sections=wanted or None, include_working=includeWorking)
+    claims = _claims(request, trust_states=("confirmed", "working") if includeWorking else ("confirmed",))
+    claims = [c for c in claims if not wanted or c["section"] in wanted]
+    allowed = {c["id"] for c in claims}
+    events = [e for e in _store().review_events(limit=-1) if e["targetType"] == "claim" and e["targetId"] in allowed]
+    return {"exportedAt": utc_now(), "schemaVersion": _store().meta_get("schema_version", "1"),
+            "entities": _entities(request, claims), "claims": claims, "reviewEvents": events}
 
 
-def purge_all(req: PurgeRequest):
+def purge_all(req: PurgeRequest, request: Request = None):
+    _global_only(request)
     if req.confirm.strip() != PURGE_PHRASE:
         raise _error(400, "CONFIRM_MISMATCH", f"请输入「{PURGE_PHRASE}」以确认")
     result = {"ontology": _store().purge_all()}
@@ -283,6 +397,8 @@ def purge_all(req: PurgeRequest):
 def _build_router(write_guard=None) -> APIRouter:
     built = APIRouter(prefix=_PREFIX, tags=_TAGS)
     write_dependencies = [Depends(write_guard)] if write_guard is not None else []
+    from .alignment_routes import register
+    register(built, write_dependencies)
     built.add_api_route("/proposals", list_proposals, methods=["GET"])
     built.add_api_route("/proposals/merges/{proposal_id}/resolve", resolve_merge, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/proposals/conflicts/{conflict_id}/resolve", resolve_conflict, methods=["POST"], dependencies=write_dependencies)

@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mindos import search
+from fastapi import Request
 
 
 def _clip_vector() -> list[float]:
@@ -72,7 +73,7 @@ class VisualMaterialResultsTests(unittest.TestCase):
         ), patch.object(search, "IMAGE_SIM_THRESHOLD", 0.28), patch.object(
             search.ingestion, "recycled_material_ids", return_value=set(archived),
         ), patch.object(
-            search.ingestion, "material_for_source", side_effect=lambda s: records.get(s),
+            search.ingestion, "material_for_source", side_effect=lambda s, device_scope="global": records.get(s) if device_scope == "global" else None,
         ), patch.object(search.ingestion, "status_of", return_value={"status": "available"}
         ), patch("mindos.stage_d_admin.legacy_read_enabled", return_value=True
         ), patch.object(
@@ -179,7 +180,7 @@ class VisualMaterialResultsTests(unittest.TestCase):
         ), patch.object(search, "IMAGE_SIM_THRESHOLD", 0.28), patch.object(
             search.ingestion, "recycled_material_ids", return_value=set(),
         ), patch.object(
-            search.ingestion, "material_for_source", side_effect=lambda s: records.get(s),
+            search.ingestion, "material_for_source", side_effect=lambda s, device_scope="global": records.get(s) if device_scope == "global" else None,
         ), patch.object(search.ingestion, "status_of", return_value={"status": "available"}), patch("mindos.stage_d_admin.legacy_read_enabled", return_value=True), patch.object(search, "get_source_chunks", return_value=[]):
             items, ok = search._visual_material_results("一只在草地上的狗", limit=5)
 
@@ -197,7 +198,7 @@ class UnifiedSearchContractTests(unittest.TestCase):
         ), patch.object(
             search, "_visual_material_results", return_value=(list(visual_items), visual_ok)
         ):
-            return search.unified_search(q="测试查询", limit=12)
+            return search.unified_search(Request({"type": "http"}), q="测试查询", limit=12)
 
     def test_response_has_visual_group_and_capabilities(self):
         resp = self._call(

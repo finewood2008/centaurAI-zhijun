@@ -270,7 +270,7 @@ def list_memory_files() -> list[dict]:
 
 def read_memory_file(rel_path: str) -> Optional[dict]:
     """读取记忆文件内容"""
-    root = Path(MEMORY_DIR)
+    root = Path(MEMORY_DIR).resolve()
     fpath = (root / rel_path).resolve()
     if not fpath.is_relative_to(root) or not fpath.exists():
         return None
@@ -287,7 +287,7 @@ def read_memory_file(rel_path: str) -> Optional[dict]:
 def write_memory_file(rel_path: str, content: str, source_agent: str = "manual", *, skip_index: bool = False) -> dict:
     """写入记忆文件并自动向量化"""
     _ensure_memory_dirs()
-    root = Path(MEMORY_DIR)
+    root = Path(MEMORY_DIR).resolve()
     fpath = (root / rel_path).resolve()
     if not fpath.is_relative_to(root):
         raise ValueError(f"非法路径: {rel_path}")
@@ -309,7 +309,7 @@ def write_memory_file(rel_path: str, content: str, source_agent: str = "manual",
 
 def delete_memory_file(rel_path: str) -> bool:
     """删除记忆文件及其向量"""
-    root = Path(MEMORY_DIR)
+    root = Path(MEMORY_DIR).resolve()
     fpath = (root / rel_path).resolve()
     if not fpath.is_relative_to(root) or not fpath.exists():
         return False

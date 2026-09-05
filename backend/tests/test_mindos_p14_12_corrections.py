@@ -220,7 +220,7 @@ class QaCorrectionTests(unittest.TestCase):
         }
         captured = {}
 
-        def _fake_model(question, evidence, system_prompt=None):
+        def _fake_model(question, evidence, system_prompt=None, snap=None, budget_deadline=None):
             captured["system_prompt"] = system_prompt
             return "项目交付时间为 2026 年 9 月。"
 

@@ -22,11 +22,14 @@ def _now() -> str:
 
 
 def exportable_claims(store: OntologyStore, *, sections: tuple[str, ...] | None = None, limit: int = DEFAULT_MAX_CLAIMS) -> list[dict]:
-    claims = store.list_claims(trust_states=("confirmed",), limit=5000)
+    from .projection import _visible_claims
+    claims = _visible_claims(store, "global")
     allowed = set(sections or SECTIONS)
+    from .source_policy import SourcePolicy
+    policy = SourcePolicy(store)
     picked = [
         c for c in claims
-        if c.get("exportAllowed") and c.get("privacyLevel") in EXPORTABLE_PRIVACY and c["section"] in allowed and c.get("scope") != "context_only"
+        if c.get("exportAllowed") and c.get("privacyLevel") in EXPORTABLE_PRIVACY and c["section"] in allowed and c.get("scope") != "context_only" and not policy.claim_local(c)
     ]
     return picked[: max(1, min(int(limit), HARD_MAX_CLAIMS))]
 
@@ -76,7 +79,8 @@ def build_pack(*, purpose: str, sections: list[str] | None = None, max_claims: i
 
 
 def _count_not_exportable(store: OntologyStore, sections: tuple[str, ...] | None) -> int:
-    claims = store.list_claims(trust_states=("confirmed",), limit=5000)
+    from .projection import _visible_claims
+    claims = _visible_claims(store, "global")
     allowed = set(sections or SECTIONS)
     return sum(1 for c in claims if c["section"] in allowed and not (c.get("exportAllowed") and c.get("privacyLevel") in EXPORTABLE_PRIVACY))
 

@@ -326,6 +326,24 @@ def build_evidence(
         result.append(ev)
         total_chars += snippet_len
 
+    # Chat-imported files require explicit version/service consent. Generic RAG
+    # has no such consent context: exclude both originals and derivative cards.
+    # They remain searchable in the UI and usable via explicit chat references.
+    from .stores.chat_import_store import ChatImportStore
+    protected = ChatImportStore().protected_ids()
+    if protected:
+        def allowed(ev):
+            if ev.material_id in protected:
+                return False
+            if ev.knowledge_id:
+                try:
+                    page = knowledge._find(ev.knowledge_id)
+                    refs = knowledge._source_refs(page)
+                    return not any(r.get("id") in protected for r in refs)
+                except Exception:
+                    return False  # unknown provenance must not bypass consent
+            return True
+        result = [ev for ev in result if allowed(ev)]
     return result[:limit]
 
 

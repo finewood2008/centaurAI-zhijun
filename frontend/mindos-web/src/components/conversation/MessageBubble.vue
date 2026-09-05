@@ -11,6 +11,7 @@ const props = defineProps<{
   content: string
   status?: MessageStatus
   streaming?: boolean
+  pendingLabel?: string
 }>()
 
 const emit = defineEmits<{ (e: 'cite', index: number): void }>()
@@ -39,6 +40,7 @@ function onClick(e: MouseEvent) {
     <div class="zj-msg__meta">
       <span class="zj-msg__who">{{ role === 'user' ? '你' : '知君' }}</span>
       <span v-if="streaming" class="zj-msg__state">正在回复…</span>
+      <span v-else-if="pendingLabel" class="zj-msg__state">{{ pendingLabel }}</span>
       <span v-else-if="status === 'aborted'" class="zj-msg__state">已停止</span>
       <span v-else-if="status === 'error'" class="zj-msg__state is-error">出错了</span>
     </div>

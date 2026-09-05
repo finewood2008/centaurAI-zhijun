@@ -33,7 +33,7 @@ export const EMPTY_DRAFT_FIELDS: Required<DraftFieldsLike> = {
   userQuotes: [],
 }
 
-/** 用户必须亲自填写的四项（后端同样校验；知君的看法永远不算）。 */
+/** 必须由用户填写或明确选用的四项；未选用的模型候选不算。 */
 export const USER_REQUIRED_FIELDS = ['choice', 'rationale', 'confidence', 'expectedOutcome'] as const
 export type UserRequiredField = (typeof USER_REQUIRED_FIELDS)[number]
 
@@ -42,6 +42,14 @@ export const FIELD_LABELS: Record<UserRequiredField, string> = {
   rationale: '理由',
   confidence: '把握',
   expectedOutcome: '预期结果',
+}
+
+export const ASSISTABLE_FIELDS = ['choice', 'rationale', 'expectedOutcome'] as const
+export type AssistableField = (typeof ASSISTABLE_FIELDS)[number]
+
+/** Called only after a user's explicit selection. Confidence is never model-filled. */
+export function directionPatch(current: Record<AssistableField, string>, candidate: Record<AssistableField, string>, onlyEmpty: boolean): Partial<Record<AssistableField, string>> {
+  return Object.fromEntries(ASSISTABLE_FIELDS.filter(key => !onlyEmpty || !current[key].trim()).map(key => [key, candidate[key]]))
 }
 
 /**

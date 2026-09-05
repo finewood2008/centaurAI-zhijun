@@ -15,7 +15,7 @@ from mindos import conversations, growth, nudges, ontology
 from mindos.stores import conversation_store as conversation_store_module
 from mindos.stores import growth_store as growth_store_module
 from mindos.stores import ontology_store as ontology_store_module
-from mindos.zhijun import deliberate
+from mindos.zhijun import deliberate, jobs
 from mindos.zhijun.provider import fake_draft
 
 USER_TEXTS = [
@@ -133,6 +133,9 @@ class DeliberateApiTests(unittest.TestCase):
         self.assertLess(names.index("decision_draft"), names.index("extraction"))
         draft = next(d for n, d in events if n == "decision_draft")
         self.assertEqual(draft["status"], "draft")
+        self.assertEqual(draft["state"], "queued")
+        jobs.drain(store=self.onto, conv_store=self.convs, max_jobs=30)
+        draft = self.client.get(f"/api/mindos/conversations/{conv['id']}/decision-draft").json()
         self.assertEqual(len(draft["fields"]["options"]), 2)
         reply = "".join(d["t"] for n, d in events if n == "token")
         self.assertIn("你面前的选项", reply)
@@ -140,10 +143,13 @@ class DeliberateApiTests(unittest.TestCase):
 
         events = self._send(conv["id"], USER_TEXTS[1], mode="deliberate")
         draft2 = next(d for n, d in events if n == "decision_draft")
-        self.assertEqual(draft2["draftId"], draft["draftId"])
+        self.assertEqual(draft2["state"], "queued")
+        jobs.drain(store=self.onto, conv_store=self.convs, max_jobs=30)
+        draft2 = self.client.get(f"/api/mindos/conversations/{conv['id']}/decision-draft").json()
+        self.assertEqual(draft2["id"], draft["id"])
         self.assertEqual(draft2["revision"], 2)
         self.assertEqual(draft2["fields"]["confidence"], 70)
-        self.assertIn("confidence", draft2["changedFields"])
+        self.assertNotEqual(draft2["fields"]["confidence"], draft["fields"]["confidence"])
         got = self.client.get(f"/api/mindos/conversations/{conv['id']}/decision-draft").json()
         self.assertEqual(got["revision"], 2)
 
@@ -175,7 +181,10 @@ class DeliberateApiTests(unittest.TestCase):
         self.assertEqual(again.status_code, 400)
         events = self._send(conv["id"], "还有一件事我在纠结要不要涨价", mode="deliberate")
         draft3 = next(d for n, d in events if n == "decision_draft")
-        self.assertNotEqual(draft3["draftId"], draft["draftId"])
+        self.assertEqual(draft3["state"], "queued")
+        jobs.drain(store=self.onto, conv_store=self.convs, max_jobs=30)
+        draft3 = self.client.get(f"/api/mindos/conversations/{conv['id']}/decision-draft").json()
+        self.assertNotEqual(draft3["id"], draft["id"])
         self.assertEqual(draft3["revision"], 1)
 
     def test_discard_and_missing_draft(self) -> None:

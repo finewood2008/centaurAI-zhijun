@@ -1,7 +1,7 @@
 """知君提醒路由：今日提醒、立即扫描、稍后 / 永久静默、策略。契约见 zhijun-api-contract.md §7。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .stores.conversation_store import ConversationError, ConversationStore
@@ -25,8 +25,9 @@ def _error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status, {"code": code, "detail": message})
 
 
-def get_today():
-    return nudge_service.today()
+def get_today(request: Request = None):
+    from .uploads import _device_scope_of
+    return nudge_service.today(scope=_device_scope_of(request))
 
 
 def scan_now():

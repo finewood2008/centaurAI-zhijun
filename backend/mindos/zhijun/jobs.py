@@ -48,11 +48,19 @@ def enqueue_summary(conversation_id: str, *, store: OntologyStore | None = None)
     return store.enqueue_job("summarize_conversation", conversation_id, payload={"conversationId": conversation_id}, priority=1)
 
 
+def enqueue_alignment(conversation_id: str, message_id: str, query: str, *, store=None):
+    store = store or OntologyStore.instance()
+    return store.enqueue_job("alignment", message_id, payload={"conversationId": conversation_id,
+        "messageId": message_id, "query": query}, priority=3)
+
+
 def _extractive_summary(messages: list[dict], max_chars: int = 400) -> tuple[str, list[str]]:
     """无模型的抽取式摘要：取用户消息要点，供本地简版上下文使用。"""
     points: list[str] = []
     for message in messages:
         if message.get("role") != "user":
+            continue
+        if (message.get("meta") or {}).get("replyAssistance"):
             continue
         text = (message.get("content") or "").strip().replace("\n", " ")
         if len(text) >= 6:
@@ -74,11 +82,11 @@ _SUMMARY_SCHEMA = {
 _SUMMARY_SYSTEM = """你是知君的对话整理助手。把这段对话整理成：summary（≤ 200 字，只记事实、决定、偏好、待办）、themes（用户反复提到或在意的主题，≤ 6 条短语）、open_loops（用户说要做还没做的事，≤ 4 条）。不要编造。只输出 JSON。"""
 
 
-def _model_summary(messages: list[dict]) -> tuple[str, list[str], str]:
+def _model_summary(messages: list[dict], provider=None) -> tuple[str, list[str], str]:
     """有真实模型时用模型出主题与待办；否则抽取式。返回 (summary, key_points, generated_by)。"""
     user_texts = [m["content"] for m in messages if m.get("role") == "user" and (m.get("content") or "").strip()]
     try:
-        provider = build_provider()
+        provider = provider or build_provider()
     except ProviderError:
         provider = None
     if provider is None or provider.name == "fake":
@@ -86,17 +94,16 @@ def _model_summary(messages: list[dict]) -> tuple[str, list[str], str]:
         return summary, points, "extractive"
     from .provider import ChatRequest
 
-    transcript = "\n".join(f"{'用户' if m['role'] == 'user' else '知君'}：{(m.get('content') or '').strip()[:300]}" for m in messages[-24:] if m.get("role") in ("user", "assistant"))
+    transcript = "\n".join(f"{'用户（AI 辅助表达，不作为独立人格证据）' if (m.get('meta') or {}).get('replyAssistance') else '用户' if m['role'] == 'user' else '知君'}：{(m.get('content') or '').strip()[:300]}" for m in messages[-24:] if m.get("role") in ("user", "assistant") and (m.get("meta") or {}).get("replyAssistance", {}).get("kind") != "control")
+    from .routing import GuardedProvider
+    if isinstance(provider, GuardedProvider):
+        provider.refs = [provider.router.ref("message", m["id"]) for m in messages[-24:] if m.get("role") in ("user", "assistant")]
     request = ChatRequest(system=_SUMMARY_SYSTEM, messages=[{"role": "user", "content": transcript}], max_tokens=800, temperature=0.0, json_schema=_SUMMARY_SCHEMA, effort="low", debug={"task": "summary", "userTexts": user_texts})
     channel = "external" if provider.external else "local"
-    if not provider_gate.acquire(channel, timeout=60.0):
-        summary, points = _extractive_summary(messages)
-        return summary, points, "extractive"
+    if not provider_gate.acquire(channel, timeout=60.0, background=True):
+        raise ProviderError("模型通道繁忙，摘要已暂停", code="PROVIDER_BUSY")
     try:
         raw = provider.complete_json(request)
-    except (ProviderError, ValueError):
-        summary, points = _extractive_summary(messages)
-        return summary, points, "extractive"
     finally:
         provider_gate.release(channel)
     themes = [str(t).strip()[:40] for t in (raw.get("themes") or []) if str(t).strip()][:6]
@@ -114,21 +121,95 @@ def enqueue_first_observation(conversation_id: str, message_id: str | None, *, s
     return store.enqueue_job("first_observation", conversation_id, payload={"conversationId": conversation_id, "messageId": message_id}, priority=4)
 
 
-def enqueue_home_brief(source_hash: str, *, store: OntologyStore | None = None) -> str | None:
+def enqueue_home_brief(source_hash: str, *, store: OntologyStore | None = None, scope="global") -> str | None:
     store = store or OntologyStore.instance()
-    return store.enqueue_job("home_brief", "today", payload={"sourceHash": source_hash}, priority=2, input_hash=source_hash)
+    return store.enqueue_job("home_brief", "today" if scope == "global" else "today:" + scope, payload={"sourceHash": source_hash, "scope": scope}, priority=2, input_hash=source_hash)
+
+
+def _routing_pause(exc):
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    preview = detail.get("preview") or {}
+    code = detail.get("code", "")
+    if preview or code in {"SOURCE_UNAVAILABLE", "SOURCE_CHANGED", "SOURCE_LIMIT", "ROUTE_CHANGED", "ONLINE_SERVICE_CHANGED",
+                           "CHARTER_CHANGED", "CHARTER_POLICY_CONFLICT", "CHARTER_CONTEXT_TOO_LARGE"}:
+        reason = "source_unavailable" if preview.get("blocked") else "consent_required" if preview.get("missing") else code.lower() or "consent_required"
+        return {"state": "paused", "reason": reason,
+                "detail": "相关来源已失效或无法核验，请重新核对；不会绕过来源限制" if preview.get("blocked") else detail.get("detail", "后台任务等待核对"),
+                **({"previewId": preview["revision"]} if preview.get("revision") else {})}
+    return None
 
 
 def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -> dict:
+    from fastapi import HTTPException
+    from .routing import Router, GuardedProvider
+    cid = (job.get("payload") or {}).get("conversationId")
+    if cid:
+        router = Router(store, conv_store, cid)
+        def choose():
+            return GuardedProvider(router, router.provider(bool(job.get("payload", {}).get("localOnly"))),
+                                   job["kind"], router.history_refs(), background=True)
+        try:
+            from .charter_policy import scope_policy
+            managed = bool(scope_policy(router.scope)["charterId"]) or router.mode["mode"] != "legacy" or any("routingSources" in (m.get("meta") or {}) for m in conv_store.list_messages(cid))
+            result = _run_job(job, store=store, conv_store=conv_store, choose_provider=choose, managed=managed)
+            if result.get("state") != "paused" and not router.store.paused_jobs(cid, job["kind"]):
+                router.store.pending(cid, job["kind"], None)
+            return result
+        except HTTPException as exc:
+            paused = _routing_pause(exc)
+            if paused:
+                return paused
+            raise
+    try:
+        return _run_job(job, store=store, conv_store=conv_store)
+    except HTTPException as exc:
+        paused = _routing_pause(exc)
+        if paused:
+            return paused
+        raise
+
+
+def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, choose_provider=build_provider, managed=False) -> dict:
     kind = job["kind"]
     payload = job.get("payload") or {}
+    if kind == "charter_draft":
+        from .charter import run_job as run_charter_job
+        return run_charter_job(payload, store, conv_store)
+    from . import alignment, memory
+    if kind in ("alignment", "first_observation") and not memory.automatic_allowed(store, conv_store, payload.get("conversationId")):
+        return {"state": "skipped", "reason": "memory_policy"}
+    if kind == "alignment":
+        return alignment.run_job(payload, store, conv_store)
+    if not managed and payload.get("conversationId") and alignment.protected(payload["conversationId"], conv_store, store):
+        return {"state": "skipped", "reason": "private_profile_requires_explicit_action"}
+    from ..stores.chat_import_store import ChatImportStore
+    imports = ChatImportStore(conv_store)
+    if not managed and payload.get("conversationId") and imports.has_imports(payload["conversationId"]):
+        return {"state": "skipped", "reason": "file_discussion_requires_explicit_action"}
+    if kind == "extract_material" and job["ownerId"] in imports.protected_ids():
+        return {"state": "skipped", "reason": "file_is_not_personal_assertion"}
     if kind == "extract_turn":
         conversation_id = payload.get("conversationId")
         message_id = payload.get("messageId")
         message = conv_store.get_message(message_id) if message_id else None
         if message is None:
             return {"state": "skipped", "reason": "message_missing"}
-        conversation = conv_store.get_conversation(conversation_id) or {}
+        if message.get("conversationId") != conversation_id:
+            return {"state": "skipped", "reason": "message_conversation_mismatch"}
+        if message.get("role") != "user" or message.get("status") != "complete":
+            return {"state": "skipped", "reason": "not_completed_user_message"}
+        input_origin = (message.get("meta") or {}).get("replyAssistance")
+        if input_origin and input_origin.get("kind") == "control":
+            return {"state": "skipped", "reason": "conversation_control"}
+        if (message.get("meta") or {}).get("materialRefs"):
+            return {"state": "skipped", "reason": "file_is_not_personal_assertion"}
+        conversation = conv_store.get_conversation(conversation_id)
+        if conversation is None:
+            return {"state": "skipped", "reason": "conversation_missing"}
+        # A queued task does not retain permission to create memories after the
+        # user changes their preference. Check before provider selection or gate.
+        if not memory.extraction_allowed(store, conv_store, conversation_id, message["content"]):
+            return {"state": "skipped", "reason": "memory_policy"}
         history = conv_store.list_messages(conversation_id)
         prev_assistant = None
         for item in history:
@@ -136,9 +217,9 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
                 break
             if item["role"] == "assistant":
                 prev_assistant = item["content"]
-        provider = build_provider()
+        provider = choose_provider()
         channel = "external" if provider.external else "local"
-        if not provider_gate.acquire(channel, timeout=30.0):
+        if not provider_gate.acquire(channel, timeout=30.0, background=True):
             raise ProviderError("模型通道繁忙", status_code=429, code="PROVIDER_BUSY", retryable=True)
         try:
             result = extract.run_extraction(
@@ -149,6 +230,7 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
                 user_text=message["content"],
                 prev_assistant=prev_assistant,
                 debug={"mode": conversation.get("mode")},
+                input_origin=input_origin,
             )
         finally:
             provider_gate.release(channel)
@@ -161,6 +243,14 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
                     enqueue_consolidate(store=store)
             except Exception:  # noqa: BLE001
                 pass
+            # Only a newly admitted memory can trigger automatic calibration.
+            # Duplicate/suppressed/context-only drafts do not create extra work;
+            # also honor a mode change while extraction was running.
+            if memory.automatic_allowed(store, conv_store, conversation_id):
+                assistants = [m for m in conv_store.list_messages(conversation_id)
+                              if m["role"] == "assistant" and m["status"] == "complete" and m["seq"] > message["seq"]]
+                if assistants:
+                    enqueue_alignment(conversation_id, assistants[0]["id"], message["content"], store=store)
         user_turns = conv_store.count_messages(conversation_id, role="user")
         if user_turns and user_turns % _SUMMARY_EVERY_TURNS == 0:
             enqueue_summary(conversation_id, store=store)
@@ -170,21 +260,34 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
         messages = conv_store.list_messages(conversation_id)
         if not messages:
             return {"state": "skipped", "reason": "empty"}
-        summary, points, generated_by = _model_summary(messages)
+        from .charter_policy import scope_policy, assert_current, check_action, basis
+        from .alignment import scope_for
+        policy = scope_policy(scope_for(conversation_id, conv_store))
+        if not check_action(policy, "memory_auto")["allowed"]:
+            return {"state": "skipped", "reason": "charter_memory_manual"}
+        provider = choose_provider()
+        summary, points, generated_by = _model_summary(messages, provider)
+        from .routing import GuardedProvider
+        refs = [{"kind": "message", "id": m["id"]} for m in messages]
+        if isinstance(provider, GuardedProvider) and provider.last_preview:
+            provider.assert_current()
+            refs = [s["ref"] for s in provider.last_preview["sources"]]
+        assert_current(policy)
         saved = conv_store.save_summary(
             conversation_id,
             up_to_seq=messages[-1]["seq"],
             summary=summary,
             key_points=points,
             generated_by=generated_by,
+            meta={"routingSources": refs, "charterBasis": basis(policy)},
         )
         return {"state": "done", "revision": saved["revision"]}
     if kind == "draft_turn":
         from . import deliberate
 
-        provider = build_provider()
+        provider = choose_provider()
         channel = "external" if provider.external else "local"
-        if not provider_gate.acquire(channel, timeout=60.0):
+        if not provider_gate.acquire(channel, timeout=60.0, background=True):
             raise ProviderError("模型通道繁忙", status_code=429, code="PROVIDER_BUSY", retryable=True)
         try:
             draft, changed = deliberate.run_draft(provider=provider, conv_store=conv_store, conversation_id=payload.get("conversationId"), message_id=payload.get("messageId"))
@@ -192,9 +295,9 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
             provider_gate.release(channel)
         return {"state": "done", "draftId": draft["id"], "revision": draft["revision"], "changed": changed}
     if kind == "first_observation":
-        provider = build_provider()
+        provider = choose_provider()
         channel = "external" if provider.external else "local"
-        if not provider_gate.acquire(channel, timeout=60.0):
+        if not provider_gate.acquire(channel, timeout=60.0, background=True):
             raise ProviderError("模型通道繁忙", status_code=429, code="PROVIDER_BUSY", retryable=True)
         try:
             result = extract.first_observation(provider=provider, store=store, conversation_id=payload.get("conversationId"), message_id=payload.get("messageId"))
@@ -204,7 +307,7 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
     if kind == "home_brief":
         from .. import zhijun_home
 
-        return zhijun_home.generate_home_brief(str(payload.get("sourceHash") or job.get("inputHash") or ""), store=store, conv_store=conv_store)
+        return zhijun_home.generate_home_brief(str(payload.get("sourceHash") or job.get("inputHash") or ""), store=store, conv_store=conv_store, local_only=bool(payload.get("localOnly")), scope=payload.get("scope", "global"))
     if kind == "project":
         return projection.write_projection(store)
     if kind == "nudge_scan":
@@ -213,12 +316,14 @@ def run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore) -
         return nudges.scan(conv_store=conv_store)
     if kind == "consolidate":
         from . import consolidate
+        from .routing import Router
+        routing = Router(store, conv_store, "scope:global")
 
         try:
-            provider = build_provider()
+            provider = routing.provider(bool(payload.get("localOnly")))
         except ProviderError:
             provider = None
-        return consolidate.run(store=store, conv_store=conv_store, provider=provider)
+        return consolidate.run(store=store, conv_store=conv_store, provider=provider, router=routing)
     if kind == "extract_material":
         from . import materials
 

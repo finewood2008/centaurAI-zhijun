@@ -27,13 +27,15 @@ export class ApiError extends Error {
   readonly status: number
   readonly code?: string
   readonly details?: string[]
+  readonly preview?: import('./taskRouting').RoutePreview
 
-  constructor(message: string, status: number, code?: string, details?: string[]) {
+  constructor(message: string, status: number, code?: string, details?: string[], preview?: import('./taskRouting').RoutePreview) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.details = details
+    this.preview = preview
   }
 }
 
@@ -67,6 +69,7 @@ export async function throwApiError(res: Response): Promise<never> {
   let message = `请求失败（${res.status}）`
   let code: string | undefined
   let details: string[] | undefined
+  let preview: import('./taskRouting').RoutePreview | undefined
   try {
     const body = await res.json()
     if (body && typeof body.detail === 'string') message = body.detail
@@ -74,6 +77,7 @@ export async function throwApiError(res: Response): Promise<never> {
       if (typeof body.detail.detail === 'string') message = body.detail.detail
       else if (typeof body.detail.message === 'string') message = body.detail.message
       code = typeof body.detail.code === 'string' ? body.detail.code : undefined
+      if (body.detail.preview && typeof body.detail.preview === 'object') preview = body.detail.preview
       const parsedDetails = Array.isArray(body.detail.details)
         ? body.detail.details.filter((item: unknown): item is string => typeof item === 'string')
         : []
@@ -92,7 +96,7 @@ export async function throwApiError(res: Response): Promise<never> {
   } catch {
     // 忽略非 JSON 响应体
   }
-  throw new ApiError(message, res.status, code, details)
+  throw new ApiError(message, res.status, code, details, preview)
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -562,6 +566,8 @@ export interface HomeOverview {
 // =====================================================================
 
 export interface GrowthCharterPayload {
+  expectedVersion?: number
+  requestId?: string
   vision: string
   roles: string[]
   principles: string[]
@@ -572,6 +578,9 @@ export interface GrowthCharterPayload {
 }
 
 export interface GrowthCharter extends GrowthCharterPayload {
+  document?: string
+  clauses?: CharterClause[]
+  metadata?: { fields?: Record<string, { state: string; sources: unknown[] }> }
   id: string
   version: number
   createdAt: string
@@ -580,6 +589,40 @@ export interface GrowthCharter extends GrowthCharterPayload {
 export interface GrowthCharterHistory {
   currentCharter: GrowthCharter | null
   versions: GrowthCharter[]
+  workspace?: CharterWorkspace | null
+}
+
+export interface CharterClause {
+  id: string
+  section: string
+  text: string
+  kind: 'principle' | 'aspiration' | 'preference' | 'boundary'
+  scope: 'global' | 'contextual'
+  context?: string
+  control?: 'memory_manual' | 'no_proactive' | 'local_only' | 'confirm_decisions' | null
+  sources: Array<{ kind: string; id: string; version: string; [key: string]: unknown }>
+  quote?: string
+  clarification?: string | null
+  origin?: 'manual' | 'ai_draft'
+}
+export interface CharterWorkspace {
+  id: string
+  conversationId: string
+  scope: string
+  status: 'active' | 'paused' | 'published'
+  revision: number
+  generation: number
+  baseVersion: number
+  baseClauseIds?: string[]
+  deletedClauseIds?: string[]
+  sourceText: string
+  document: string
+  documentFormat?: 'markdown'
+  controlChanges?: Array<{ id: string; text: string; control: string }>
+  clauses: CharterClause[]
+  suggestions: Array<{ id: string; document?: string; clauses: CharterClause[]; sourceRevision: number; createdAt: string; status: 'pending' | 'merged' }>
+  createdAt: string
+  updatedAt: string
 }
 
 export type GrowthDecisionStatus = 'open' | 'outcome_recorded' | 'reviewed'
@@ -966,6 +1009,28 @@ export interface ChatProviderConfig {
   effectiveProvider: 'ollama' | 'openai'
 }
 
+export interface ExternalProviderProfile {
+  id: string
+  name: string
+  revision: number
+  baseUrl: string
+  model: string
+  apiKeyConfigured: boolean
+  active: boolean
+  pendingActivation?: boolean
+}
+export interface ExternalProvidersResponse {
+  providers: ExternalProviderProfile[]
+  activeProviderId: string | null
+  chatRevision: number
+}
+export interface ExternalProviderDraft {
+  name: string
+  baseUrl: string
+  apiKey?: string
+  model?: string
+}
+
 export interface ChatProviderPutPayload {
   provider: 'ollama' | 'openai'
   externalEnabled: boolean
@@ -1322,6 +1387,12 @@ export const api = {
   testMaterialRuntimeInference: (payload: MaterialRuntimeTestPayload) =>
     postJson<RuntimeTestResult>('/system/models/material-runtime/test-inference', payload),
   getChatProvider: () => request<ChatProviderConfig>('/system/models/chat-provider'),
+  getExternalProviders: (signal?: AbortSignal) => request<ExternalProvidersResponse>('/system/models/external-providers', { signal }),
+  createExternalProvider: (payload: ExternalProviderDraft) => postJson<ExternalProviderProfile>('/system/models/external-providers', payload),
+  updateExternalProvider: (id: string, payload: ExternalProviderDraft & { revision: number }) => putJson<ExternalProviderProfile>(`/system/models/external-providers/${encodeURIComponent(id)}`, payload),
+  getExternalProviderModels: (id: string, revision: number, signal?: AbortSignal) => request<{ models: string[]; providerId: string; revision: number }>(`/system/models/external-providers/${encodeURIComponent(id)}/models`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision }), signal }),
+  activateExternalProvider: (id: string, payload: { revision: number; model: string; chatRevision: number }) => postJson<{ provider: ExternalProviderProfile; chat: ChatProviderConfig }>(`/system/models/external-providers/${encodeURIComponent(id)}/activate`, payload),
+  deleteExternalProvider: (id: string, revision: number) => request<{ deleted: boolean }>(`/system/models/external-providers/${encodeURIComponent(id)}?revision=${revision}`, { method: 'DELETE' }),
   putChatProvider: (payload: ChatProviderPutPayload) =>
     putJson<ChatProviderConfig>('/system/models/chat-provider', payload),
   testChatProvider: (payload: ChatProviderTestPayload) =>
@@ -1431,6 +1502,9 @@ export interface Conversation {
   title: string
   mode: ConversationMode
   status: 'active' | 'archived'
+  pinnedAt: string | null
+  metadataRevision: number
+  searchMatch?: { field: 'title' | 'message'; messageId: string | null; snippet: string }
   decisionId: string | null
   messageCount: number
   createdAt: string
@@ -1478,6 +1552,40 @@ export interface ConversationDetail {
   decision?: GrowthDecision | null
 }
 
+export interface ChatMaterialRef { materialId: string; version: number }
+export interface ChatImportFile {
+  id: string; name: string; size: number; materialId: string | null; version: number | null
+  state: 'pending' | 'uploading' | 'saved' | 'reading' | 'ready' | 'failed' | 'paused' | 'empty' | 'unavailable'
+  error: string | null
+}
+export interface ChatImportBatch {
+  id: string; conversationId: string; messageId: string; state: string; error: string | null
+  localOnly: boolean; files: ChatImportFile[]
+}
+export interface ChatFileService { id: string; name: string; model: string; external: boolean }
+export interface ChatImportListing {
+  items: ChatImportBatch[]; selection: { refs: ChatMaterialRef[]; localOnly: boolean }; service: ChatFileService | null
+}
+export interface ChatFilePreview { name: string; text: string; offset: number; totalChars: number; hasMore: boolean }
+const chatPath = (id: string) => `/mindos/conversations/${encodeURIComponent(id)}`
+export const chatImports = {
+  list: (id: string) => request<ChatImportListing>(`${chatPath(id)}/imports`),
+  create: (id: string, payload: { requestId: string; content: string; localOnly: boolean; replyAssistance?: import('@/shared/replyAssistance').ReplyAssistanceInput; files: Array<{ id: string; name: string; size: number; materialId?: string; version?: number }> }) =>
+    postJson<ChatImportBatch>(`${chatPath(id)}/imports`, payload),
+  upload: (id: string, batch: string, fileId: string, file: File) => {
+    const body = new FormData()
+    body.append('file', file)
+    return request<ChatImportFile>(`${chatPath(id)}/imports/${batch}/files/${fileId}`, { method: 'POST', body })
+  },
+  fail: (id: string, batch: string, fileId: string, detail: string) => postJson(`${chatPath(id)}/imports/${batch}/files/${fileId}/failed`, { detail }),
+  retryFile: (id: string, batch: string, fileId: string) => postJson(`${chatPath(id)}/imports/${batch}/files/${fileId}/retry`, {}),
+  seal: (id: string, batch: string) => postJson<ChatImportBatch>(`${chatPath(id)}/imports/${batch}/seal`, {}),
+  retry: (id: string, batch: string) => postJson<ChatImportBatch>(`${chatPath(id)}/imports/${batch}/retry`, {}),
+  select: (id: string, refs: ChatMaterialRef[], localOnly: boolean) => putJson(`${chatPath(id)}/references`, { refs, localOnly }),
+  consent: (id: string, refs: ChatMaterialRef[], localOnly: boolean, serviceId?: string) => postJson(`${chatPath(id)}/file-consent`, { refs, localOnly, serviceId }),
+  preview: (id: string, ref: ChatMaterialRef, offset = 0) => request<ChatFilePreview>(`${chatPath(id)}/files/${encodeURIComponent(ref.materialId)}/preview?version=${ref.version}&offset=${offset}`),
+}
+
 // ---- P2：判断草稿 / 提醒（契约 §6–§8）----
 export interface DecisionDraftFields {
   title: string
@@ -1496,6 +1604,23 @@ export interface DecisionDraftFields {
   relatedDecisionIds?: string[]
   evidenceRefs: string[]
   userQuotes: string[]
+  assistedFields?: Array<'choice' | 'rationale' | 'expectedOutcome'>
+}
+
+export interface DecisionDirection {
+  title: string
+  choice: string
+  rationale: string
+  expectedOutcome: string
+}
+
+export interface DecisionDirections {
+  draftId: string
+  revision: number
+  candidates: DecisionDirection[]
+  provider: string
+  model: string
+  external: false
 }
 
 export interface DecisionDraft {
@@ -1529,6 +1654,7 @@ export interface DecisionDraftConfirmPayload {
   reviewAt?: string
   title?: string
   options?: string[]
+  assistedFields?: Array<'choice' | 'rationale' | 'expectedOutcome'>
 }
 
 export interface Nudge {
@@ -1547,6 +1673,35 @@ export interface NudgePolicy {
   enabled: boolean
   maxPerDay: number
   silencedRefs: string[]
+}
+
+export interface MemoryPolicy {
+  mode: 'important' | 'manual'
+  revision: number
+}
+
+export interface ConversationMemoryDraft {
+  id: string
+  revision: number
+  topicId: string
+  summary: string
+  savedContent: string
+  entries: Array<{ content: string; quote: string; messageId: string }>
+  status: 'draft' | 'saved' | 'dismissed'
+}
+
+export interface ConversationMemoryAttention {
+  topicId: string
+  candidate: Claim | null
+  alignment: Claim | null
+  draft: ConversationMemoryDraft | null
+  pendingCount: number
+  policy: MemoryPolicy
+}
+
+export interface ConversationMemoryPending {
+  items: Array<{ topicId: string; claim: Claim }>
+  total: number
 }
 
 export interface TurnReceipt {
@@ -1590,7 +1745,74 @@ export interface ClaimEvidence {
   createdAt: string
 }
 
+export type AlignmentFraming = 'long_term' | 'context_only' | 'aspirational'
+export interface AlignmentProposal {
+  id: string
+  level: number
+  framing: AlignmentFraming
+  reason: string
+  evidenceIds: string[]
+  evidenceVersion: string
+  conversationId: string
+  messageId: string
+  createdAt: string
+}
+export interface SelfAlignment {
+  level: number | null
+  framing: AlignmentFraming
+  reason: string
+  evidenceIds: string[]
+  revision: number
+  claimVersion: string
+  evidenceVersion: string
+  calibratedAt: string | null
+  proposal: AlignmentProposal | null
+  needsRecalibration: boolean
+  history: Array<{ at: string; action: string; actor: string; level: number | null; framing?: string; note: string }>
+}
+export interface AlignmentSource {
+  historical?: boolean
+  proposal?: AlignmentProposal | null
+  claimId: string
+  fingerprint: string
+  revision: number
+  level: number | null
+  framing: AlignmentFraming
+  content: string
+  reason: string
+  evidence: Array<{ id: string; quote: string; materialRef?: { materialId: string; version: number; snapshotId: string } | null }>
+  blocked?: boolean
+  allowed?: boolean
+}
+export interface AlignmentState {
+  proposals: Claim[]
+  sources: AlignmentSource[]
+  service: { id: string; name: string; model: string; external: boolean } | null
+  state: { local_only: boolean; status: string; detail: string }
+}
+
+export function getAlignmentState(conversationId: string) {
+  return request<AlignmentState>(`/mindos/ontology/alignment/conversations/${encodeURIComponent(conversationId)}`)
+}
+export function calibrateAlignment(claim: Claim, payload: { action: 'calibrate' | 'defer' | 'clear'; level?: number | null; framing?: AlignmentFraming; note?: string; conversationId?: string; requestId: string; proposalId?: string }) {
+  const a = claim.selfAlignment!
+  return postJson<Claim>(`/mindos/ontology/claims/${encodeURIComponent(claim.id)}/alignment`, {
+    ...payload, expectedRevision: a.revision, claimVersion: a.claimVersion, evidenceVersion: a.evidenceVersion,
+  })
+}
+export function requestAlignmentProposal(claimId: string, conversationId: string, messageId: string, feedback = '') {
+  return postJson<{ state: string }>(`/mindos/ontology/claims/${encodeURIComponent(claimId)}/alignment/proposals`, { conversationId, messageId, feedback })
+}
+export function grantAlignmentConsent(conversationId: string, payload: { serviceId?: string; refs?: Array<{ claimId: string; fingerprint: string }>; localOnly: boolean }) {
+  return postJson<AlignmentState>(`/mindos/ontology/alignment/conversations/${encodeURIComponent(conversationId)}/consent`, payload)
+}
+export function revokeAlignmentConsent(claimId: string) {
+  return postJson<{ revoked: boolean }>(`/mindos/ontology/claims/${encodeURIComponent(claimId)}/alignment/revoke`, {})
+}
+
 export interface Claim {
+  contextual?: { situation: string; framing: string; exceptions: string; episodeId: string; decisionId: string; calibratedAt: string } | null
+  selfAlignment?: SelfAlignment | null
   id: string
   subjectEntityId: string
   subjectName: string
@@ -1735,6 +1957,41 @@ export interface ZhijunStatus {
 }
 
 export type ZhijunHomeState = 'first_meet' | 'building' | 'established'
+
+export type OnboardingState =
+  | 'welcome'
+  | 'profile_building'
+  | 'profile_review'
+  | 'starter_import'
+  | 'source_connect'
+  | 'first_result'
+  | 'ready'
+
+export type OnboardingAction =
+  | 'start'
+  | 'skip'
+  | 'profile_ready'
+  | 'profile_confirmed'
+  | 'import_completed'
+  | 'skip_import'
+  | 'sources_completed'
+  | 'skip_sources'
+  | 'finish'
+  | 'restart'
+
+export interface OnboardingProgress {
+  topics?: Array<{ id: string; label: string; state: string; messageIds: string[] }>
+  canStart?: boolean
+  state: OnboardingState
+  conversationId: string | null
+  profileReviewed: boolean
+  starterImport: 'pending' | 'completed' | 'skipped'
+  sourceConnect: 'pending' | 'completed' | 'skipped'
+  startedAt: string | null
+  updatedAt: string
+  completedAt: string | null
+  migrated: boolean
+}
 export type HomeRing = 'remembered' | 'tracking' | 'uncertain'
 export type HomeSourceType = 'claim' | 'decision' | 'commitment'
 
@@ -1824,7 +2081,50 @@ export interface ProvenancePastDecision {
   createdAt?: string | null
 }
 
+export interface ContextItem {
+  citationId: string
+  kind: string
+  id: string
+  version: string
+  title: string
+  text: string
+  ref: { kind: string; id: string; version: string; [key: string]: unknown }
+  category: string
+  claim?: ClaimBrief & { trustState?: string }
+  material?: ProvenanceMaterial
+  decision?: ProvenancePastDecision
+}
+export interface ContextPlan {
+  revision: string
+  focus?: Record<string, unknown>
+  background: ContextItem[]
+  evidence: ContextItem[]
+  providedRefs: string[]
+  citedRefs: string[]
+  excluded: Array<{ id?: string; title?: string; reason: string }>
+  stage: 'initial' | 'supplemented' | 'lookup_unavailable'
+  delivery?: 'prepared' | 'provided' | 'awaiting_authorization' | 'paused'
+  lookupNotice?: string
+  lookupAttempts?: number
+  citationAudit?: { invalidRefs: string[] }
+}
+
 export interface ProvenanceEvent {
+  contextPlan?: ContextPlan
+  charterBasis?: { scope: string; charterId: string | null; version: number; clauseIds: string[] }
+  routing?: { revision: string; service: { name: string; model: string; external: boolean }; purposeLabel: string; excluded: Array<{ id: string; reason: string }>; reason: string; handlingNotice?: string; defaultAuthorization?: { sourceCount: number; revision: number } }
+  // 本轮实际带入的记忆：直接读取与经聊天历史继承分开，不用授权状态推断实际使用。
+  memoryContext?: {
+    intent: 'charter' | 'self_overview' | 'conversation'
+    directCount: number
+    inheritedCount: number
+    excludedCount: number
+    status: 'direct' | 'inherited' | 'restricted' | 'none'
+    searched?: boolean
+    charterChecked?: boolean
+    charterComplete?: boolean
+  }
+  alignmentSources?: AlignmentSource[]
   confirmedClaims: ClaimBrief[]
   workingClaims: ClaimBrief[]
   materials: ProvenanceMaterial[]
@@ -1856,14 +2156,29 @@ export interface StreamErrorEvent {
   code: string
   message: string
   retryable: boolean
+  preview?: import('./taskRouting').RoutePreview
+  requestId?: string
+  userMessageId?: string
+  messageId?: string
+  stage?: 'initial' | 'supplemented'
 }
 
-export function createConversation(payload: { mode?: ConversationMode; title?: string; decisionId?: string } = {}) {
+export function createConversation(payload: { mode?: ConversationMode; title?: string; decisionId?: string; taskContext?: 'charter' } = {}) {
   return postJson<Conversation>('/mindos/conversations', payload)
 }
 
 export function getDecisionDraft(conversationId: string) {
   return request<DecisionDraft>(`/mindos/conversations/${encodeURIComponent(conversationId)}/decision-draft`)
+}
+
+export async function suggestDecisionDirections(conversationId: string, payload: {
+  draftId: string
+  expectedRevision: number
+  current: Pick<DecisionDirection, 'choice' | 'rationale' | 'expectedOutcome'>
+  avoidChoices: string[]
+}, signal?: AbortSignal) {
+  const { routedTask } = await import('./taskRouting')
+  return routedTask<DecisionDirections>(conversationId, `/mindos/conversations/${encodeURIComponent(conversationId)}/decision-draft/suggestions`, payload, signal)
 }
 
 export function confirmDecisionDraft(conversationId: string, payload: DecisionDraftConfirmPayload) {
@@ -1908,8 +2223,54 @@ export function putNudgePolicy(payload: Partial<NudgePolicy>) {
   return putJson<NudgePolicy>('/mindos/nudges/policy', payload)
 }
 
-export function listConversations(limit = 50) {
-  return request<{ items: Conversation[] }>(`/mindos/conversations?limit=${limit}`)
+export function getMemoryPolicy() {
+  return request<MemoryPolicy>('/mindos/memory-policy')
+}
+
+export function putMemoryPolicy(payload: { mode: MemoryPolicy['mode']; expectedRevision: number }) {
+  return putJson<MemoryPolicy>('/mindos/memory-policy', payload)
+}
+
+export function getConversationMemoryAttention(conversationId: string) {
+  return postJson<ConversationMemoryAttention>(`/mindos/conversations/${encodeURIComponent(conversationId)}/memory/attention`, {})
+}
+
+export function getConversationMemoryPending(conversationId: string) {
+  return request<ConversationMemoryPending>(`/mindos/conversations/${encodeURIComponent(conversationId)}/memory/pending`)
+}
+
+export function dismissConversationMemoryPending(conversationId: string, claimId: string) {
+  return postJson<unknown>(`/mindos/conversations/${encodeURIComponent(conversationId)}/memory/pending-dismiss`, { claimId })
+}
+
+export function dismissConversationMemory(conversationId: string, payload: { topicId: string; kind: 'claim' | 'alignment'; id: string; discard?: boolean }) {
+  return postJson<unknown>(`/mindos/conversations/${encodeURIComponent(conversationId)}/memory/dismiss`, payload)
+}
+
+export function reviewConversationMemoryDraft(conversationId: string, payload: { draftId: string; expectedRevision: number; action: 'save' | 'dismiss' }) {
+  return postJson<{ draft: ConversationMemoryDraft; claim?: Claim }>(`/mindos/conversations/${encodeURIComponent(conversationId)}/memory/draft-review`, payload)
+}
+
+export interface ConversationListOptions {
+  status?: 'active' | 'archived' | 'all'
+  q?: string
+  offset?: number
+  limit?: number
+}
+
+export function listConversations(options: number | ConversationListOptions = 50, signal?: AbortSignal) {
+  const params = typeof options === 'number' ? { limit: options } : options
+  const query = new URLSearchParams({ limit: String(params.limit ?? 50) })
+  if (params.status) query.set('status', params.status)
+  if (params.q) query.set('q', params.q)
+  if (params.offset) query.set('offset', String(params.offset))
+  return request<{ items: Conversation[]; total: number; hasMore: boolean }>(`/mindos/conversations?${query}`, { signal })
+}
+
+export function updateConversation(conversationId: string, payload: { expectedRevision: number; title?: string; status?: 'active' | 'archived'; pinned?: boolean }) {
+  return request<Conversation>(`/mindos/conversations/${encodeURIComponent(conversationId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  })
 }
 
 export function getConversation(conversationId: string) {
@@ -1979,6 +2340,17 @@ export function getZhijunHome() {
   return request<ZhijunHomeOverview>('/mindos/zhijun/home')
 }
 
+export function getOnboardingProgress() {
+  return request<OnboardingProgress>('/mindos/zhijun/onboarding')
+}
+
+export function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
+  return postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
+    action,
+    ...(conversationId ? { conversationId } : {}),
+  })
+}
+
 // ---- P3：整合与裁决、导出 / 全量删除
 export function getProposals() {
   return request<{ merges: MergeProposal[]; conflicts: Conflict[]; total: number }>('/mindos/ontology/proposals')
@@ -2026,3 +2398,40 @@ export async function setClaimExport(claimId: string, allowed: boolean): Promise
 export async function getContextPackStatus(): Promise<ContextPackStatus> {
   return request<ContextPackStatus>('/mindos/ontology/context-pack')
 }
+
+export interface LearningExpectation { situation: string; expected: string; alternative: string }
+export type LearningFraming = 'context_only' | 'current' | 'long_term' | 'aspirational'
+export interface LearningComparison {
+  comparison: 'matched' | 'different' | 'mixed' | 'unclear'
+  reflection: string
+  content: string
+  exceptions: string
+  framing: LearningFraming
+}
+export interface LearningEpisode {
+  id: string; decisionId: string; conversationId: string; claimId: string
+  snapshot: { content: string; layer: string; scope: string }
+  expectation: LearningExpectation
+  proposal: (LearningComparison & { outcome: string; origin: string }) | null
+  resolution: { action: string; replacementId?: string; content?: string; note?: string } | null
+  status: 'watching' | 'proposed' | 'applied' | 'kept' | 'deferred'
+  revision: number; createdAt: string; updatedAt: string
+}
+export interface LearningState {
+  episode: LearningEpisode | null
+  candidates: Array<{ id: string; content: string; updatedAt: string }>
+  localOnly: boolean
+}
+const learningPath = (id: string) => `/mindos/conversations/${encodeURIComponent(id)}/learning`
+function learningPost<T>(id: string, action: string, data: unknown) {
+  return request<T>(`${learningPath(id)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data), signal: AbortSignal.timeout(65000) })
+}
+export const getLearningState = (id: string) => request<LearningState>(learningPath(id), { signal: AbortSignal.timeout(15000) })
+export const startLearning = (id: string, data: LearningExpectation & { claimId: string; claimUpdatedAt: string }) => learningPost<LearningEpisode>(id, 'start', data)
+export const suggestLearning = async (id: string, data: { claimId?: string; expectedRevision?: number }) => {
+  const { routedTask } = await import('./taskRouting')
+  return routedTask<{ candidate: LearningExpectation | LearningComparison; provider: string; model: string; external: boolean }>(id, `${learningPath(id)}/suggest`, data, AbortSignal.timeout(180000))
+}
+export const proposeLearning = (id: string, data: LearningComparison & { expectedRevision: number }) => learningPost<LearningEpisode>(id, 'propose', data)
+export const resolveLearning = (id: string, data: { expectedRevision: number; action: 'apply' | 'keep' | 'defer'; content?: string; framing?: LearningFraming; exceptions?: string; note?: string }) => learningPost<LearningEpisode>(id, 'resolve', data)

@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from mindos.stores import job_store
 from mindos.stores.job_store import (
@@ -388,7 +388,8 @@ class FolderIngestionTests(unittest.TestCase):
         self.assertIsNone(public_uncat["folderId"])
 
     def test_list_materials_subtree_filter(self):
-        def fake_status(material_id):
+        def fake_status(material_id, device_scope="global"):
+            self.assertEqual(device_scope, "global")
             return {
                 "materialId": material_id,
                 "status": "available",
@@ -407,7 +408,7 @@ class FolderIngestionTests(unittest.TestCase):
             self.assertEqual(ingestion.list_materials(folder_id=99999), [])
 
     def test_start_ingestion_with_folder_id(self):
-        with patch("mindos.services.ingestion.submit_index", return_value=True):
+        with patch("mindos.services.ingestion._submit_material_job", return_value=True):
             ingestion.start_ingestion(
                 "mindos_s4", "p4.pdf", "document", "/tmp/p4.pdf",
                 folder_id=self.a["id"],
@@ -463,14 +464,14 @@ class FolderApiHandlerTests(unittest.TestCase):
     def test_material_move_handler_uses_folder_id(self):
         _store().register("mindos_hm1", "p.pdf", "document", "/tmp/p.pdf")
         node = uploads.mindos_folder_create(uploads.FolderCreateRequest(name="目标"))
-        res = uploads.mindos_material_move("mindos_hm1", uploads.MaterialMoveRequest(folderId=node["id"]))
+        res = uploads.mindos_material_move("mindos_hm1", uploads.MaterialMoveRequest(folderId=node["id"]), Request({"type": "http"}))
         self.assertEqual(res["folderId"], node["id"])
         # 无效 folderId → 404
         with self.assertRaises(HTTPException) as ctx:
-            uploads.mindos_material_move("mindos_hm1", uploads.MaterialMoveRequest(folderId=99999))
+            uploads.mindos_material_move("mindos_hm1", uploads.MaterialMoveRequest(folderId=99999), Request({"type": "http"}))
         self.assertEqual(ctx.exception.status_code, 404)
         # 移回未分类
-        res = uploads.mindos_material_move("mindos_hm1", uploads.MaterialMoveRequest(folderId=None))
+        res = uploads.mindos_material_move("mindos_hm1", uploads.MaterialMoveRequest(folderId=None), Request({"type": "http"}))
         self.assertIsNone(res["folderId"])
         self.assertEqual(res["folder"], "未分类")  # 兼容字段同步，避免旧调用方读到历史目录名
 

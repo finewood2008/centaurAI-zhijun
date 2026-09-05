@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Request
 
 from .stores.conversation_store import ConversationStore
 from .stores.growth_store import GrowthStore
@@ -201,12 +201,11 @@ def _template_brief(state: str, nodes: list[dict]) -> dict:
     return {"status": "ready", "headline": _clip(headline, 28), "message": _clip(message + "。", 120), "generatedBy": "template", "sourceRefs": refs}
 
 
-def _next_action(state: str, onboarding: dict | None, tracking: list[dict], uncertain: list[dict], conversations: ConversationStore, now: datetime) -> dict:
+def _next_action(state: str, onboarding: dict | None, tracking: list[dict], uncertain: list[dict], conversations: ConversationStore, now: datetime, scope="global") -> dict:
     if state == "first_meet":
-        return {"kind": "onboarding", "title": "从第一次认识开始", "description": "用七个问题，让这张共同地图开始亮起来", "targetId": None, "say": None}
+        return {"kind": "onboarding", "title": "从第一次认识开始", "description": "聊聊眼下在意的事，也可以跳过、直接开始使用", "targetId": None, "say": None}
     if state == "building" and onboarding:
-        remaining = max(1, 8 - ((int(onboarding.get("messageCount") or 0) + 1) // 2))
-        return {"kind": "resume_onboarding", "title": "继续上次的认识", "description": f"还差大约 {remaining} 问，这张地图就会更完整", "targetId": onboarding["id"], "say": None}
+        return {"kind": "resume_onboarding", "title": "继续上次的认识", "description": "想到什么就接着聊，也可以先使用、以后再完善", "targetId": onboarding["id"], "say": None}
     for node in tracking:
         if node["sourceType"] == "decision":
             decision = node["decision"] or {}
@@ -224,7 +223,9 @@ def _next_action(state: str, onboarding: dict | None, tracking: list[dict], unce
                 return {"kind": "commitment", "title": f"说说「{_clip(node['title'], 30)}」的进展", "description": "你给自己的承诺到了回看的时候", "targetId": claim.get("id"), "say": f"关于「{node['title']}」，说说进展："}
     if uncertain:
         return {"kind": "confirm", "title": "看看我有没有理解对", "description": _clip(uncertain[0]["title"], 54), "targetId": (uncertain[0]["claim"] or {}).get("id"), "say": None}
-    nudges = [item for item in conversations.list_nudges(statuses=("pending", "shown"), limit=10) if (_parse_time(item.get("scheduledFor")) or now) <= now]
+    nudges = [item for item in conversations.list_nudges(statuses=("pending", "shown"), limit=10)
+              if (_parse_time(item.get("scheduledFor")) or now) <= now
+              and ((item.get("triggerRef") or {}).get("charterBasis") or {}).get("scope", "global") == scope]
     if nudges:
         item = nudges[0]
         return {"kind": "nudge", "title": _clip(item.get("message") or "有件事想和你聊聊", 38), "description": _clip(item.get("whyNow") or "", 64), "targetId": item.get("id"), "say": item.get("message")}
@@ -238,9 +239,13 @@ def _source_hash(now: datetime, stats: dict, conversations: list[dict], decision
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
-def _load_cache(store: OntologyStore) -> dict | None:
+def _cache_key(scope):
+    return _CACHE_KEY if scope == "global" else _CACHE_KEY + ":" + scope
+
+
+def _load_cache(store: OntologyStore, scope="global") -> dict | None:
     try:
-        value = json.loads(store.meta_get(_CACHE_KEY, "") or "")
+        value = json.loads(store.meta_get(_cache_key(scope), "") or "")
     except (TypeError, ValueError):
         return None
     return value if isinstance(value, dict) else None
@@ -256,13 +261,25 @@ def _valid_cached_brief(cache: dict | None, nodes: list[dict]) -> dict | None:
     return dict(cache["brief"])
 
 
-def _base_overview(*, now: datetime, ontology: OntologyStore, conversations: ConversationStore, growth: GrowthStore) -> dict:
+def _base_overview(*, now: datetime, ontology: OntologyStore, conversations: ConversationStore, growth: GrowthStore, scope="global") -> dict:
     stats = ontology.stats()
-    conversation_items = conversations.list_conversations(limit=50)
-    decisions = growth.list_decisions()
+    # Archiving only organizes the conversation list; it does not erase the
+    # relationship, reset first-meeting progress, or invalidate a cached brief.
+    conversation_items = conversations.list_conversations(limit=50, status="all", device_scope=scope)
+    if not any(item.get("mode") == "onboarding" for item in conversation_items):
+        conversation_items.extend(conversations.list_conversations(limit=1, status="all", mode="onboarding", device_scope=scope))
+    from .zhijun.charter_policy import record_in_scope
+    from .zhijun.alignment import visible
+    decisions = [d for d in growth.list_decisions() if record_in_scope(d, conversations, scope, growth=growth)]
     state, onboarding = _state(stats, conversation_items)
-    confirmed = ontology.list_claims(trust_states=("confirmed",), limit=50, include_hidden=False)
-    working = ontology.inbox(limit=3)
+    confirmed = [c for c in ontology.list_claims(trust_states=("confirmed",), limit=500, include_hidden=False) if visible(c, conversations, scope)][:50]
+    working = [c for c in ontology.inbox(limit=500) if visible(c, conversations, scope)][:3]
+    from .zhijun_onboarding import _read
+    progress = _read(ontology)
+    if progress and progress.get("state") == "ready" and (scope == "global" or progress.get("conversationId") in {c["id"] for c in conversation_items}):
+        state = "established"
+    elif not onboarding:
+        state = "established" if confirmed or working else "first_meet"
     commitments = [item for item in confirmed if item.get("predicate") == "committed_to"]
     tracking = _tracking_nodes(decisions, commitments, now)
     tracking_claim_ids = {(node.get("claim") or {}).get("id") for node in tracking}
@@ -270,26 +287,33 @@ def _base_overview(*, now: datetime, ontology: OntologyStore, conversations: Con
     uncertain = [_claim_node(item, "uncertain") for item in working][:3]
     nodes = [*remembered, *tracking, *uncertain]
     source_hash = _source_hash(now, stats, conversation_items, decisions)
+    from .zhijun.charter_policy import scope_policy, check_action, basis
+    from .stores.alignment_store import digest
+    policy = scope_policy(scope, growth=growth)
+    if policy["charterId"]:
+        source_hash = digest([source_hash, basis(policy)])
+    proactive = check_action(policy, "proactive")["allowed"]
     return {
         "state": state,
-        "brief": _template_brief(state, nodes),
+        "brief": _template_brief(state, nodes) if proactive else {"status": "ready", "headline": "按你的节奏", "message": "章程已关闭主动提醒；需要时可以主动开始对话。", "sourceRefs": [], "generatedBy": "template"},
+        "proactiveAllowed": proactive,
         "map": {"relationshipDays": _relationship_days(conversation_items, [*confirmed, *working], decisions, now), "nodes": nodes},
-        "nextAction": _next_action(state, onboarding, tracking, uncertain, conversations, now),
+        "nextAction": _next_action(state, onboarding, tracking, uncertain, conversations, now, scope) if proactive else {"kind": "chat", "title": "开始对话", "description": "由你决定何时开始", "targetId": None},
         "timeline": _timeline(confirmed, decisions),
         "generatedAt": _iso_now(now),
         "sourceHash": source_hash,
     }
 
 
-def build_home_overview(*, now: datetime | None = None, enqueue: bool = True, ontology: OntologyStore | None = None, conversations: ConversationStore | None = None, growth: GrowthStore | None = None) -> dict:
+def build_home_overview(*, now: datetime | None = None, enqueue: bool = True, ontology: OntologyStore | None = None, conversations: ConversationStore | None = None, growth: GrowthStore | None = None, scope="global") -> dict:
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     onto = ontology or OntologyStore.instance()
     convs = conversations or ConversationStore.instance()
     growth_store = growth or GrowthStore.instance()
-    overview = _base_overview(now=current, ontology=onto, conversations=convs, growth=growth_store)
-    if overview["state"] != "established":
+    overview = _base_overview(now=current, ontology=onto, conversations=convs, growth=growth_store, scope=scope)
+    if overview["state"] != "established" or not overview["proactiveAllowed"]:
         return overview
-    cache = _load_cache(onto)
+    cache = _load_cache(onto, scope)
     cached_brief = _valid_cached_brief(cache, overview["map"]["nodes"])
     if cache and cache.get("sourceHash") == overview["sourceHash"] and cached_brief:
         cached_brief["status"] = "ready"
@@ -303,7 +327,7 @@ def build_home_overview(*, now: datetime | None = None, enqueue: bool = True, on
     if enqueue:
         from .zhijun.jobs import enqueue_home_brief
 
-        enqueue_home_brief(overview["sourceHash"], store=onto)
+        enqueue_home_brief(overview["sourceHash"], store=onto, scope=scope)
     return overview
 
 
@@ -323,10 +347,14 @@ _BRIEF_SYSTEM = """你是知君，一位有记忆边界、可核对、不会替�
 headline 不超过 28 个汉字，message 不超过 120 个汉字，focusIds 只能从候选 id 中选，最多 3 个。只输出 JSON。"""
 
 
-def generate_home_brief(expected_hash: str, *, store: OntologyStore | None = None, conv_store: ConversationStore | None = None) -> dict:
+def generate_home_brief(expected_hash: str, *, store: OntologyStore | None = None, conv_store: ConversationStore | None = None, local_only=False, scope="global") -> dict:
     onto = store or OntologyStore.instance()
     convs = conv_store or ConversationStore.instance()
-    overview = _base_overview(now=datetime.now(timezone.utc), ontology=onto, conversations=convs, growth=GrowthStore.instance())
+    overview = _base_overview(now=datetime.now(timezone.utc), ontology=onto, conversations=convs, growth=GrowthStore.instance(), scope=scope)
+    from .zhijun.charter_policy import scope_policy, assert_current, basis
+    policy = scope_policy(scope)
+    if not overview["proactiveAllowed"]:
+        return {"state": "skipped", "reason": "charter_no_proactive"}
     if overview["sourceHash"] != expected_hash or overview["state"] != "established":
         return {"state": "skipped", "reason": "source_changed"}
     fallback = dict(overview["brief"])
@@ -334,24 +362,29 @@ def generate_home_brief(expected_hash: str, *, store: OntologyStore | None = Non
     brief = fallback
     generated_by = "template"
     try:
-        from .zhijun.context import EXTERNAL_PRIVACY_ALLOWED
         from .zhijun.gate import provider_gate
-        from .zhijun.provider import ChatRequest, ProviderError, build_provider
+        from .zhijun.provider import ChatRequest, ProviderError
 
-        provider = build_provider()
+        from .zhijun.routing import Router, GuardedProvider
+        routing = Router(onto, convs, "scope:" + scope)
+        provider = routing.provider(local_only)
         candidates = []
+        refs = []
         for node in overview["map"]["nodes"]:
             claim = node.get("claim") or {}
-            if provider.external and claim and claim.get("privacyLevel") not in EXTERNAL_PRIVACY_ALLOWED:
-                continue
+            if claim:
+                refs.append(routing.ref("claim", claim["id"]))
+            elif node.get("decision"):
+                refs.append(routing.ref("decision", node["decision"]["id"]))
             item = {"id": node["id"], "relation": node["ring"], "text": node["title"]}
             if node["sourceType"] == "decision":
                 decision = node.get("decision") or {}
                 item.update({"choice": decision.get("choice"), "status": decision.get("status"), "reviewAt": decision.get("reviewAt")})
             candidates.append(item)
         if provider.name != "fake" and candidates:
+            provider = GuardedProvider(routing, provider, "home_brief", refs, background=True)
             channel = "external" if provider.external else "local"
-            if not provider_gate.acquire(channel, timeout=30.0):
+            if not provider_gate.acquire(channel, timeout=30.0, background=True):
                 raise ProviderError("模型通道繁忙", status_code=429, code="PROVIDER_BUSY", retryable=True)
             try:
                 raw = provider.complete_json(ChatRequest(system=_BRIEF_SYSTEM, messages=[{"role": "user", "content": json.dumps(candidates, ensure_ascii=False)}], max_tokens=500, temperature=0.2, json_schema=_BRIEF_SCHEMA, effort="low", debug={"task": "home_brief"}))
@@ -362,18 +395,28 @@ def generate_home_brief(expected_hash: str, *, store: OntologyStore | None = Non
             headline = _clip(str(raw.get("headline") or ""), 28)
             message = _clip(str(raw.get("message") or ""), 120)
             if headline and message and focus_ids and all(item in allowed for item in focus_ids):
+                provider.assert_current()
                 node_by_id = {node["id"]: node for node in overview["map"]["nodes"]}
                 brief = {"status": "ready", "headline": headline, "message": message, "generatedBy": provider.name, "sourceRefs": [_source_ref(node_by_id[item]) for item in focus_ids]}
                 generated_by = provider.name
+                brief["routingSources"] = [s["ref"] for s in provider.last_preview["sources"]]
+    except HTTPException as exc:
+        if isinstance(exc.detail, dict) and exc.detail.get("preview"):
+            return {"state": "paused", "reason": "consent_required"}
+        raise
     except Exception:
         brief = fallback
+        brief["notice"] = "模型整理暂不可用；当前展示本地记录模板，未切换模型。"
         generated_by = "template"
-    onto.meta_set(_CACHE_KEY, json.dumps({"sourceHash": expected_hash, "brief": brief, "generatedAt": _iso_now()}, ensure_ascii=False, separators=(",", ":")))
+    assert_current(policy)
+    brief["charterBasis"] = basis(policy)
+    onto.meta_set(_cache_key(scope), json.dumps({"sourceHash": expected_hash, "brief": brief, "generatedAt": _iso_now()}, ensure_ascii=False, separators=(",", ":")))
     return {"state": "done", "generatedBy": generated_by, "sourceHash": expected_hash}
 
 
-def home_overview():
-    return build_home_overview()
+def home_overview(request: Request = None):
+    from .uploads import _device_scope_of
+    return build_home_overview(scope=_device_scope_of(request))
 
 
 router = APIRouter(prefix=_PREFIX, tags=["zhijun-home"])

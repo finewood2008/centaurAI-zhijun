@@ -9,6 +9,8 @@
 - 外部响应不把 API Key 透出到对外错误信息。
 """
 import json
+from contextlib import contextmanager
+from dataclasses import replace
 import importlib
 import os
 import sys
@@ -20,7 +22,10 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config
 from mindos import derived, qa, tag_suggest
+from mindos.runtime_config_provider import ChatProviderSnapshot, LocalOllamaSnapshot
+from mindos.zhijun.routing import EGRESS_PERMIT
 
 
 def _ollama_response(content: str) -> MagicMock:
@@ -49,19 +54,47 @@ def _http_error(code: int) -> urllib.error.HTTPError:
     )
 
 
-def _enable_external(testcase: unittest.TestCase) -> None:
-    """把 QA 配置切到「已显式外发授权且配置完整」并登记自动还原。"""
-    patches = [
-        patch.object(qa.config, "QA_AI_EXTERNAL_ENABLED", True),
-        patch.object(qa.config, "QA_AI_PROVIDER", "openai"),
-        patch.object(qa.config, "QA_AI_BASE_URL", "https://ext.example.com/v1"),
-        patch.object(qa.config, "QA_AI_API_KEY", "sk-test-key"),
-        patch.object(qa.config, "QA_AI_MODEL", "ext-qa-model"),
-        patch.object(qa.config, "QA_AI_FALLBACK_OLLAMA", True),
-    ]
-    for item in patches:
-        item.start()
-    testcase.addCleanup(lambda: [item.stop() for item in patches])
+@contextmanager
+def _network(**kwargs):
+    """Keep the real destination/egress checks; replace only network I/O."""
+    with patch("urllib.request.urlopen", **kwargs) as opened, patch(
+        "urllib.request.build_opener", return_value=SimpleNamespace(open=opened),
+    ):
+        yield opened
+
+
+class _SnapshotCase(unittest.TestCase):
+    def setUp(self):
+        self.snap = ChatProviderSnapshot(
+            provider="ollama", external_enabled=False, base_url=None,
+            model="local-qa", api_key_configured=False, secret_ref=None,
+            timeout_seconds=60, total_budget_seconds=90, fallback_ollama=True,
+            local=LocalOllamaSnapshot("http://127.0.0.1:11434", "local-qa", 60, 0, 4096),
+        )
+        self.key = "sk-test-key"
+        runtime = SimpleNamespace(
+            store=None, get_chat_snapshot=lambda: self.snap,
+            resolve_api_key=lambda snap: self.key if snap.api_key_configured else None,
+        )
+        stub = patch.object(qa, "get_provider", return_value=runtime)
+        stub.start()
+        self.addCleanup(stub.stop)
+        token = EGRESS_PERMIT.set(None)
+        self.addCleanup(EGRESS_PERMIT.reset, token)
+
+    def _call(self, question, evidence):
+        return qa.call_local_qa_model(question, evidence, snap=self.snap)
+
+
+def _enable_external(testcase):
+    """A synthetic explicitly authorized request, never real settings/secrets."""
+    testcase.snap = replace(
+        testcase.snap, provider="openai", external_enabled=True,
+        base_url="https://ext.example.com/v1", model="ext-qa-model",
+        api_key_configured=True, secret_ref="synthetic-only",
+    )
+    token = EGRESS_PERMIT.set(lambda: None)
+    testcase.addCleanup(EGRESS_PERMIT.reset, token)
 
 
 class DualChannelMaterialTests(unittest.TestCase):
@@ -79,19 +112,19 @@ class DualChannelMaterialTests(unittest.TestCase):
                 },
                 clear=False,
             ):
-                importlib.reload(qa.config)
-                self.assertEqual(qa.config.WIKI_AI_OLLAMA_URL, "http://192.168.10.20:11434")
+                importlib.reload(config)
+                self.assertEqual(config.WIKI_AI_OLLAMA_URL, "http://192.168.10.20:11434")
                 self.assertEqual(
-                    qa.config.RECOGNITION_AI_OLLAMA_URL,
-                    qa.config.WIKI_AI_OLLAMA_URL,
+                    config.RECOGNITION_AI_OLLAMA_URL,
+                    config.WIKI_AI_OLLAMA_URL,
                 )
-                self.assertEqual(qa.config.WIKI_AI_MODEL, "qwen3:4b")
+                self.assertEqual(config.WIKI_AI_MODEL, "qwen3:4b")
                 self.assertEqual(
-                    qa.config.RECOGNITION_AI_MODEL,
-                    qa.config.WIKI_AI_MODEL,
+                    config.RECOGNITION_AI_MODEL,
+                    config.WIKI_AI_MODEL,
                 )
         finally:
-            importlib.reload(qa.config)
+            importlib.reload(config)
 
     def test_derived_call_llm_always_local_url(self):
         with patch("mindos.llm_transport.allowed_urlopen", return_value=_ollama_response("关系")) as urlopen:
@@ -139,17 +172,15 @@ class DualChannelMaterialTests(unittest.TestCase):
         )
 
 
-class DualChannelExternalGateTests(unittest.TestCase):
+class DualChannelExternalGateTests(_SnapshotCase):
     """QA 外部通道的配置门控与降级行为。"""
 
     def test_external_success_hits_openai_compatible_endpoint(self):
         _enable_external(self)
-        with patch(
-            "urllib.request.urlopen", return_value=_openai_response("外部回答")
-        ) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+        with _network(return_value=_openai_response("外部回答")) as urlopen:
+            result = self._call("问题", [])
         self.assertEqual(result["answer"], "外部回答")
-        self.assertEqual(result["model"], qa.config.QA_AI_MODEL)
+        self.assertEqual(result["model"], self.snap.model)
         self.assertEqual(result["provider"], "openai")
         self.assertIs(result["fallbackUsed"], False)
         urlopen.assert_called_once()
@@ -157,10 +188,10 @@ class DualChannelExternalGateTests(unittest.TestCase):
         self.assertEqual(req.full_url, "https://ext.example.com/v1/chat/completions")
         self.assertEqual(req.get_header("Authorization"), "Bearer sk-test-key")
         body = json.loads(req.data.decode("utf-8"))
-        self.assertEqual(body["model"], qa.config.QA_AI_MODEL)
+        self.assertEqual(body["model"], self.snap.model)
 
     def test_external_request_contains_all_retrieved_evidence(self):
-        """当前策略不做卡片/材料级过滤，外部模型接收完整检索证据。"""
+        """已由请求路由授权的完整证据沿调用链传入；未授权请求单独拒绝。"""
         _enable_external(self)
         evidence = [
             qa.Evidence(
@@ -174,10 +205,8 @@ class DualChannelExternalGateTests(unittest.TestCase):
                 score=0.8, priority_bucket="knowledge",
             ),
         ]
-        with patch(
-            "urllib.request.urlopen", return_value=_openai_response("外部回答")
-        ) as urlopen:
-            result = qa.call_local_qa_model("问题", evidence)
+        with _network(return_value=_openai_response("外部回答")) as urlopen:
+            result = self._call("问题", evidence)
 
         self.assertEqual(result["provider"], "openai")
         request_body = json.loads(urlopen.call_args[0][0].data.decode("utf-8"))
@@ -187,60 +216,55 @@ class DualChannelExternalGateTests(unittest.TestCase):
 
     def test_external_5xx_falls_back_to_local_ollama(self):
         _enable_external(self)
-        with patch(
-            "urllib.request.urlopen",
+        with _network(
             side_effect=[_http_error(502), _ollama_response("本地兜底回答")],
         ) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+            result = self._call("问题", [])
         self.assertEqual(urlopen.call_count, 2)
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], True)
-        self.assertEqual(result["model"], qa.config.RECOGNITION_AI_MODEL)
+        self.assertEqual(result["model"], self.snap.local.model)
         local_req = urlopen.call_args_list[1][0][0]
         self.assertTrue(local_req.full_url.endswith("/api/chat"))
         body = json.loads(local_req.data.decode("utf-8"))
-        self.assertEqual(body["model"], qa.config.RECOGNITION_AI_MODEL)
+        self.assertEqual(body["model"], self.snap.local.model)
 
     def test_external_429_falls_back(self):
         _enable_external(self)
-        with patch(
-            "urllib.request.urlopen",
+        with _network(
             side_effect=[_http_error(429), _ollama_response("兜底")],
         ) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+            result = self._call("问题", [])
         self.assertEqual(urlopen.call_count, 2)
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], True)
 
     def test_external_network_error_falls_back(self):
         _enable_external(self)
-        with patch(
-            "urllib.request.urlopen",
+        with _network(
             side_effect=[urllib.error.URLError("refused"), _ollama_response("兜底")],
         ) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+            result = self._call("问题", [])
         self.assertEqual(urlopen.call_count, 2)
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], True)
 
     def test_external_timeout_falls_back(self):
         _enable_external(self)
-        with patch(
-            "urllib.request.urlopen",
+        with _network(
             side_effect=[TimeoutError("timed out"), _ollama_response("兜底")],
         ) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+            result = self._call("问题", [])
         self.assertEqual(urlopen.call_count, 2)
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], True)
 
     def test_external_empty_answer_falls_back(self):
         _enable_external(self)
-        with patch(
-            "urllib.request.urlopen",
+        with _network(
             side_effect=[_openai_response(""), _ollama_response("兜底")],
         ) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+            result = self._call("问题", [])
         self.assertEqual(urlopen.call_count, 2)
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], True)
@@ -249,9 +273,9 @@ class DualChannelExternalGateTests(unittest.TestCase):
         from fastapi import HTTPException
 
         _enable_external(self)
-        with patch("urllib.request.urlopen", side_effect=_http_error(401)) as urlopen:
+        with _network(side_effect=_http_error(401)) as urlopen:
             with self.assertRaises(HTTPException) as ctx:
-                qa.call_local_qa_model("问题", [])
+                self._call("问题", [])
         self.assertEqual(ctx.exception.status_code, 401)
         urlopen.assert_called_once()
         self.assertNotIn("sk-test-key", str(ctx.exception.detail))
@@ -262,83 +286,99 @@ class DualChannelExternalGateTests(unittest.TestCase):
         for code in (400, 403, 404):
             with self.subTest(code=code):
                 _enable_external(self)
-                with patch(
-                    "urllib.request.urlopen", side_effect=_http_error(code)
-                ) as urlopen:
+                with _network(side_effect=_http_error(code)) as urlopen:
                     with self.assertRaises(HTTPException) as ctx:
-                        qa.call_local_qa_model("问题", [])
+                        self._call("问题", [])
                 self.assertEqual(ctx.exception.status_code, code)
                 urlopen.assert_called_once()
 
     def test_external_enabled_but_config_missing_returns_503(self):
         from fastapi import HTTPException
 
-        with patch.object(qa.config, "QA_AI_EXTERNAL_ENABLED", True), patch.object(
-            qa.config, "QA_AI_PROVIDER", "openai"
-        ), patch.object(qa.config, "QA_AI_BASE_URL", ""), patch.object(
-            qa.config, "QA_AI_API_KEY", ""
-        ), patch.object(qa.config, "QA_AI_MODEL", ""), patch(
-            "urllib.request.urlopen"
-        ) as urlopen:
+        self.snap = replace(self.snap, external_enabled=True, provider="openai",
+                            base_url="", model="", api_key_configured=False)
+        with _network() as urlopen:
             with self.assertRaises(HTTPException) as ctx:
-                qa.call_local_qa_model("问题", [])
+                self._call("问题", [])
         self.assertEqual(ctx.exception.status_code, 503)
         urlopen.assert_not_called()
 
     def test_no_external_enable_never_leaves_device(self):
-        with patch.object(qa.config, "QA_AI_EXTERNAL_ENABLED", False), patch.object(
-            qa.config, "QA_AI_PROVIDER", "openai"
-        ), patch.object(qa.config, "QA_AI_BASE_URL", "https://ext.example.com/v1"), patch.object(
-            qa.config, "QA_AI_API_KEY", "sk-test-key"
-        ), patch("urllib.request.urlopen", return_value=_ollama_response("本地回答")) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+        self.snap = replace(self.snap, provider="openai", external_enabled=False,
+                            base_url="https://ext.example.com/v1", model="ext-model",
+                            api_key_configured=True)
+        with _network(return_value=_ollama_response("本地回答")) as urlopen:
+            result = self._call("问题", [])
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], False)
         urlopen.assert_called_once()
         req = urlopen.call_args[0][0]
         self.assertTrue(req.full_url.endswith("/api/chat"))
+        self.assertIsNone(req.get_header("Authorization"))
         body = json.loads(req.data.decode("utf-8"))
-        self.assertEqual(body["model"], qa.config.QA_AI_MODEL)
+        self.assertEqual(body["model"], self.snap.local.model)
 
     def test_invalid_provider_rejected_when_external_enabled(self):
-        """非 openai/ollama 的 provider 在显式开启外部后必须报配置错误，不得静默本地。"""
+        """非法提供商不能静默降级。"""
         from fastapi import HTTPException
 
-        with patch.object(qa.config, "QA_AI_EXTERNAL_ENABLED", True), patch.object(
-            qa.config, "QA_AI_PROVIDER", "azure"
-        ), patch("urllib.request.urlopen") as urlopen:
+        self.snap = replace(self.snap, external_enabled=True, provider="azure")
+        with _network() as urlopen:
             with self.assertRaises(HTTPException) as ctx:
-                qa.call_local_qa_model("问题", [])
+                self._call("问题", [])
         self.assertEqual(ctx.exception.status_code, 503)
         self.assertIn("provider", ctx.exception.detail.lower())
         urlopen.assert_not_called()
 
     def test_default_provider_ollama_external_enabled_stays_local(self):
-        """provider=ollama 且显式开启时是合法的本地直连（非外发），不报错。"""
-        with patch.object(qa.config, "QA_AI_EXTERNAL_ENABLED", True), patch.object(
-            qa.config, "QA_AI_PROVIDER", "ollama"
-        ), patch("urllib.request.urlopen", return_value=_ollama_response("本地")) as urlopen:
-            result = qa.call_local_qa_model("问题", [])
+        self.snap = replace(self.snap, external_enabled=True, provider="ollama")
+        with _network(return_value=_ollama_response("本地")) as urlopen:
+            result = self._call("问题", [])
         self.assertEqual(result["provider"], "ollama")
         self.assertIs(result["fallbackUsed"], False)
         urlopen.assert_called_once()
+
+    def test_external_without_request_authorization_never_sends_or_falls_back(self):
+        from fastapi import HTTPException
+
+        _enable_external(self)
+        EGRESS_PERMIT.set(None)
+        with _network() as urlopen:
+            with self.assertRaises(HTTPException) as ctx:
+                self._call("问题", [])
+        self.assertEqual(ctx.exception.status_code, 409)
+        self.assertEqual(ctx.exception.detail["code"], "EGRESS_NOT_AUTHORIZED")
+        urlopen.assert_not_called()
+
+    def test_revoked_request_authorization_is_rechecked_before_network(self):
+        from fastapi import HTTPException
+
+        _enable_external(self)
+        def revoked():
+            raise HTTPException(409, {"code": "SOURCE_REVOKED"})
+        EGRESS_PERMIT.set(revoked)
+        with _network() as urlopen:
+            with self.assertRaises(HTTPException) as ctx:
+                self._call("问题", [])
+        self.assertEqual(ctx.exception.detail["code"], "SOURCE_REVOKED")
+        urlopen.assert_not_called()
 
     def test_external_path_still_holds_semaphore(self):
         from fastapi import HTTPException
 
         _enable_external(self)
-        with patch("urllib.request.urlopen") as urlopen:
+        with _network() as urlopen:
             qa._qa_semaphore.acquire(blocking=False)
             try:
                 with self.assertRaises(HTTPException) as ctx:
-                    qa.call_local_qa_model("问题", [])
+                    self._call("问题", [])
                 self.assertEqual(ctx.exception.status_code, 429)
             finally:
                 qa._qa_semaphore.release()
         urlopen.assert_not_called()
 
 
-class DualChannelMetaContractTests(unittest.TestCase):
+class DualChannelMetaContractTests(_SnapshotCase):
     """meta.model / provider / fallbackUsed 契约（§8）。"""
 
     @staticmethod
@@ -442,7 +482,7 @@ class DualChannelMetaContractTests(unittest.TestCase):
             qa.corrections, "match_corrections", return_value=[]
         ), patch.object(qa, "call_local_qa_model", return_value="字符串回答"):
             result = qa.answer_question(qa.QaRequest(question="开发排期"))
-        self.assertEqual(result["meta"]["model"], qa.config.QA_AI_MODEL)
+        self.assertEqual(result["meta"]["model"], self.snap.model)
         self.assertEqual(result["meta"]["provider"], "ollama")
         self.assertIs(result["meta"]["fallbackUsed"], False)
 
@@ -456,7 +496,7 @@ class DualChannelMetaContractTests(unittest.TestCase):
         self.assertEqual(result["status"], "PARTIAL_ANSWER")
         self.assertEqual(result["meta"]["provider"], "ollama")
         self.assertFalse(result["meta"]["fallbackUsed"])
-        self.assertEqual(result["meta"]["model"], qa.config.QA_AI_MODEL)
+        self.assertEqual(result["meta"]["model"], self.snap.model)
 
     def test_partial_answer_uses_final_retry_metadata_and_audit(self):
         with patch.object(qa, "build_evidence", return_value=self._evidence()), patch.object(

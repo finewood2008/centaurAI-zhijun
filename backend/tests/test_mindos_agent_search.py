@@ -30,6 +30,8 @@ from mindos.agent import evidence as agent_evidence
 from mindos.agent import router as agent_router
 from mindos.agent import store as agent_store
 from mindos.services import search_service as shared_search
+from mindos import knowledge
+from mindos.stores import card_ledger_store as ledger
 
 
 def _make_app() -> FastAPI:
@@ -353,6 +355,22 @@ class SharedSearchServiceTests(unittest.TestCase):
     - source_ids 作为检索范围在排序/截断前过滤（指定但排名低的材料仍能命中）。
     """
 
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        previous_path = ledger._PATH
+        ledger.reset_for_tests(Path(self.temp.name) / "cards.db")
+        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(ledger.reset_for_tests, previous_path)
+
+    def _confirmed_card(self, page, scope="global"):
+        kid = knowledge._knowledge_id(page["path"])
+        revision = knowledge._content_revision(page["content"])
+        ledger.ensure(kid, page["path"], revision, device_scope=scope)
+        result = ledger.confirm_and_enqueue(kid, page["path"], revision, "synthetic-confirm", {})
+        self.assertTrue(ledger.activate_vector(kid, result["job"]["vector_version"]))
+        self.assertTrue(ledger.is_rag_eligible(ledger.get(kid, device_scope=scope), revision))
+        return kid
+
     def _records(self):
         return {
             "ok.docx": {"material_id": "mindos_ok", "file_name": "ok.docx", "file_type": "document"},
@@ -478,7 +496,7 @@ class SharedSearchServiceTests(unittest.TestCase):
             "title": "语义卡片",
             "content": "---\nmindos_card: true\n---\n# 语义卡片\n这里讨论的是某个特定主题的详细实施步骤与注意事项",
         }
-        kid = "knowledge_semantic"
+        kid = self._confirmed_card(page)
         with patch("mindos.knowledge._find", return_value=page), \
              patch("mindos.knowledge_index.search_cards", return_value=[
                  {"knowledgeId": kid, "title": "语义卡片",
@@ -495,15 +513,81 @@ class SharedSearchServiceTests(unittest.TestCase):
         page = {
             "path": "/wiki/archived.md",
             "title": "已归档卡片",
-            "content": "---\nmindos_card: true\nmindos_archived: true\n---\n# 已归档卡片\n正文内容",
+            "content": '---\nmindos_card: true\nmindos_merged_into: "knowledge_successor"\n---\n# 已归档卡片\n被合并的旧卡片即使正文足够长，也不能继续作为检索证据。',
         }
-        kid = "knowledge_archived"
+        kid = self._confirmed_card(page)
         with patch("mindos.knowledge._find", return_value=page), \
              patch("mindos.knowledge_index.search_cards", return_value=[
                  {"knowledgeId": kid, "title": "已归档卡片", "snippet": "正文内容", "score": 0.9},
              ]):
             hits = shared_search.search_knowledge("语义描述", limit=5, source_ids={kid})
         self.assertEqual(hits, [])
+
+    def test_semantic_hit_requires_confirmed_matching_revision(self):
+        page = {"path": "/wiki/draft.md", "title": "未确认", "content":
+                "---\nmindos_card: true\n---\n# 未确认\n这里是尚未确认的实质正文，不能作为检索证据。"}
+        kid = knowledge._knowledge_id(page["path"])
+        with patch.object(knowledge, "_find", return_value=page), patch(
+            "mindos.knowledge_index.search_cards",
+            return_value=[{"knowledgeId": kid, "score": 0.9}],
+        ):
+            self.assertEqual(knowledge.search_cards_by_ids({kid}, "语义查询"), [])
+            self._confirmed_card(page)
+            self.assertEqual(len(knowledge.search_cards_by_ids({kid}, "语义查询")), 1)
+            page["content"] += "\n确认之后发生的修改。"
+            self.assertEqual(knowledge.search_cards_by_ids({kid}, "语义查询"), [])
+
+    def test_scoped_vector_hits_are_revalidated_even_if_index_returns_other_device(self):
+        page = {"path": "/wiki/scoped.md", "title": "合成项目", "content":
+                "---\nmindos_card: true\n---\n# 合成项目\n这里是只属于设备甲的计划和具体执行步骤。"}
+        kid = self._confirmed_card(page, "device-a")
+        vector_hits = [{"knowledgeId": kid, "score": 0.9}]
+        with patch.object(knowledge, "_find", return_value=page), patch(
+            "mindos.knowledge_index.search_cards", return_value=vector_hits,
+        ) as search, patch.object(knowledge.wiki_store, "list_pages", return_value={"items": []}), patch.object(
+            knowledge.wiki_store, "search_wiki", return_value=[],
+        ):
+            for scope, expected in (("device-a", [kid]), ("device-b", []), ("global", [])):
+                with self.subTest(scope=scope):
+                    exact = knowledge.search_cards_by_ids({kid}, "不相同的查询", device_scope=scope)
+                    self.assertEqual([item["knowledgeId"] for item in exact], expected)
+                    self.assertEqual(search.call_args.kwargs["device_scope"], scope)
+                    broad = knowledge.search_cards("不相同的查询", device_scope=scope)
+                    self.assertEqual([item["knowledgeId"] for item in broad], expected)
+
+    def test_material_dependency_impact_is_scoped_but_keeps_unindexed_and_inactive_cards(self):
+        pages = []
+        expected = []
+        for name, scope, flag in (
+            ("draft", "device-a", ""),
+            ("archived", "device-a", 'mindos_merged_into: "knowledge_successor"\n'),
+            ("recycled", "device-a", "mindos_recycled: true\n"),
+            ("other", "device-b", ""),
+            ("global", "global", ""),
+            ("unknown", None, ""),
+        ):
+            page = {"path": f"/wiki/{name}.md", "title": name, "content":
+                    '---\nmindos_card: true\nmindos_source_material_ids: ["mindos_versioned"]\n'
+                    + flag + "---\n# 依赖卡片\n合成资料的引用内容。"}
+            kid = knowledge._knowledge_id(page["path"])
+            if scope:
+                ledger.ensure(kid, page["path"], knowledge._content_revision(page["content"]), device_scope=scope)
+            if scope == "device-a":
+                expected.append(kid)
+            pages.append(page)
+        by_path = {page["path"]: page for page in pages}
+        with patch.object(knowledge, "_iter_wiki_pages", return_value=pages), patch.object(
+            knowledge.wiki_store, "read_page", side_effect=by_path.get,
+        ) as read:
+            impact = knowledge.cards_referencing_material("mindos_versioned", device_scope="device-a")
+            self.assertEqual([item["knowledgeId"] for item in impact], expected)
+            self.assertEqual(read.call_count, 3)
+            self.assertTrue(impact[1]["archived"])
+            self.assertTrue(impact[2]["recycled"])
+            self.assertEqual(knowledge.cards_referencing_material("another", device_scope="device-a"), [])
+            # Internal destructive-operation checks must still discover unknown
+            # legacy and other-device dependencies instead of declaring none.
+            self.assertEqual(len(knowledge.cards_referencing_material("mindos_versioned")), 6)
 
 
 if __name__ == "__main__":

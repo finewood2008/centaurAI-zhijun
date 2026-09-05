@@ -4,7 +4,7 @@
 - ``leaning / choice / rationale / expectedOutcome`` 只能来自用户原话：草稿抽取结果必须能在用户消息里找到对应文本，否则置空。
 - ``confidence`` 只接受用户给出的 0–100 整数；模型不得替用户估把握。
 - ``zhijunView`` 是知君自己的看法，只进草稿的看法栏，永远不写进 choice / rationale。
-- 确认时用户可在面板里改这几项；写入判断簿走现有 ``growth.DecisionCreate`` 校验并绑定当前章程版本。
+- 确认时用户可亲自填写或明确选用候选（仍可修改）；候选不当成用户原话，写入仍需用户确认。
 """
 from __future__ import annotations
 
@@ -76,6 +76,7 @@ def default_fields() -> dict:
         "relatedDecisionIds": [],
         "evidenceRefs": [],
         "userQuotes": [],
+        "assistedFields": [],
     }
 
 
@@ -204,8 +205,21 @@ def run_draft(*, provider: ChatProvider, conv_store: ConversationStore, conversa
     assistant_texts = [m["content"] for m in messages if m["role"] == "assistant" and m["content"].strip()]
     prev = conv_store.get_draft(conversation_id)
     prev_fields = prev["fields"] if prev and prev["status"] == "draft" else None
+    from .routing import GuardedProvider
+    if isinstance(provider, GuardedProvider):
+        selected = [m for m in messages if m["role"] == "user" and m["content"].strip()][-8:]
+        selected += [m for m in messages if m["role"] == "assistant" and m["content"].strip()][-1:]
+        provider.refs = [provider.router.ref("message", m["id"]) for m in selected]
+        if prev_fields:
+            provider.refs.append(provider.router.ref("draft", conversation_id))
     raw = provider.complete_json(build_draft_request(user_texts, assistant_texts, prev_fields))
     fields, changed = validate_draft(raw, user_texts=user_texts, prev_fields=prev_fields)
+    if isinstance(provider, GuardedProvider):
+        sources = [s["ref"] for s in provider.last_preview["sources"] if s["key"] != "draft:" + conversation_id]
+        fields["evidenceRefs"].append(json.dumps({"kind": "routing", "routingSources": sources}, ensure_ascii=False))
+        fields["charterBasis"] = provider.last_preview.get("charterBasis")
+    else:
+        fields["charterBasis"] = None
     if message_id:
         ref = json.dumps({"kind": "message", "conversationId": conversation_id, "messageId": message_id}, ensure_ascii=False)
         if ref not in fields["evidenceRefs"]:
@@ -213,8 +227,12 @@ def run_draft(*, provider: ChatProvider, conv_store: ConversationStore, conversa
     # 相似的历史判断：只引用用户自己记下的判断 id，进证据引用；不加评价。
     try:
         from .history import similar_decisions
+        from .alignment import scope_for
+        from .charter_policy import record_in_scope
 
-        related = similar_decisions("\n".join(user_texts), k=3)
+        scope = scope_for(conversation_id, conv_store)
+        related = [d for d in similar_decisions("\n".join(user_texts), k=12)
+                   if record_in_scope(d, conv_store, scope)][:3]
         fields["relatedDecisionIds"] = [d["id"] for d in related]
         for d in related:
             ref = json.dumps({"kind": "decision", "id": d["id"]}, ensure_ascii=False)
@@ -222,6 +240,31 @@ def run_draft(*, provider: ChatProvider, conv_store: ConversationStore, conversa
                 fields["evidenceRefs"] = (fields["evidenceRefs"] + [ref])[-20:]
     except Exception:  # noqa: BLE001
         fields.setdefault("relatedDecisionIds", [])
+    if isinstance(provider, GuardedProvider):
+        provider.assert_current()
+    draft = conv_store.upsert_draft(conversation_id, fields, message_id=message_id)
+    return draft, changed
+
+
+def run_onboarding_draft(
+    *, provider: ChatProvider, conv_store: ConversationStore, conversation_id: str, message_id: str
+) -> tuple[dict, list[str]]:
+    """只用建档第 4 问的答案建立判断草稿，避免姓名与项目答案混入标题。"""
+    message = conv_store.get_message(message_id)
+    if message is None or message.get("role") != "user":
+        raise ConversationNotFoundError("判断答案不存在")
+    history = conv_store.list_messages(conversation_id)
+    previous = [item["content"] for item in history if item["role"] == "assistant" and item["seq"] < message["seq"]]
+    raw = provider.complete_json(build_draft_request([message["content"]], previous[-1:], None))
+    fields, changed = validate_draft(raw, user_texts=[message["content"]], prev_fields=None)
+    ref = json.dumps({"kind": "message", "conversationId": conversation_id, "messageId": message_id}, ensure_ascii=False)
+    fields["evidenceRefs"] = [ref]
+    from .routing import GuardedProvider
+    fields["charterBasis"] = None
+    if isinstance(provider, GuardedProvider):
+        provider.assert_current()
+        fields["charterBasis"] = provider.last_preview.get("charterBasis")
+        fields["evidenceRefs"].append(json.dumps({"kind": "routing", "routingSources": [s["ref"] for s in provider.last_preview["sources"]]}, ensure_ascii=False))
     draft = conv_store.upsert_draft(conversation_id, fields, message_id=message_id)
     return draft, changed
 
@@ -242,13 +285,26 @@ def confirm_draft(conversation_id: str, overrides: dict, *, conv_store: Conversa
     if confidence is None:
         missing.append("confidence")
     if missing:
-        raise ConversationError("确认前需要你亲自填写：" + "、".join({"choice": "选择", "rationale": "理由", "confidence": "把握（0–100）", "expectedOutcome": "预期结果"}[m] for m in missing))
+        raise ConversationError("确认前需要你填写或选择：" + "、".join({"choice": "选择", "rationale": "理由", "confidence": "把握（0–100）", "expectedOutcome": "预期结果"}[m] for m in missing))
     review_at = parse_review_at(fields.get("reviewAt")) or (_now() + timedelta(days=DEFAULT_REVIEW_DAYS))
     options = [str(o).strip() for o in (fields.get("options") or []) if str(o).strip()] or [str(fields["choice"]).strip()]
     if str(fields["choice"]).strip() not in options:
         options.append(str(fields["choice"]).strip())
 
     from .. import growth as growth_api  # 复用现有校验与章程绑定
+
+    from ..chat_imports import protected_conversation
+    from ..stores.ontology_store import OntologyStore
+    from . import alignment
+    from .charter_artifacts import recall_lineage
+    receipt = recall_lineage(OntologyStore.instance(), conversation_id, "decision_suggestions")
+    if receipt:
+        fields["evidenceRefs"].append(json.dumps({"kind": "helper_lineage", **receipt}, ensure_ascii=False))
+    # Confirming wording is not consent to export profile/file-derived content.
+    if protected_conversation(conversation_id, conv_store) or alignment.protected(conversation_id, conv_store, OntologyStore.instance()):
+        marker = json.dumps({"kind": "local_only_decision", "conversationId": conversation_id})
+        if marker not in fields["evidenceRefs"]:
+            fields["evidenceRefs"] = [*fields["evidenceRefs"], marker]
 
     try:
         req = growth_api.DecisionCreate(
@@ -265,7 +321,11 @@ def confirm_draft(conversation_id: str, overrides: dict, *, conv_store: Conversa
         )
     except ValidationError as exc:
         raise ConversationError("判断字段不合法：" + "；".join(str(e.get("msg")) for e in exc.errors())[:300]) from exc
-    decision = growth_api.create_decision(req)
+    from .alignment import scope_for
+    # The decision retains the version used to generate this draft, even if a
+    # newer charter was published while the user was reviewing it.
+    decision = growth_api.create_decision(req, charter_basis=fields.get("charterBasis"),
+                                         scope=scope_for(conversation_id, conv_store))
     fields["confidence"] = confidence
     fields["reviewAt"] = _iso(review_at)
     fields["options"] = options
@@ -275,7 +335,8 @@ def confirm_draft(conversation_id: str, overrides: dict, *, conv_store: Conversa
             conversation_id,
             "system",
             f"你记下了一个判断：{decision['title']}（选了「{decision['choice']}」，把握 {decision['confidence']}%）。{review_at.date().isoformat()} 知君会来回访。",
-            meta={"kind": "decision_confirmed", "decisionId": decision["id"], "draftId": draft["id"], "reviewAt": _iso(review_at)},
+            meta={"kind": "decision_confirmed", "decisionId": decision["id"], "draftId": draft["id"], "reviewAt": _iso(review_at),
+                  "assistedFields": fields.get("assistedFields", [])},
         )
     except Exception as exc:  # noqa: BLE001
         logger.debug("追加判断备注失败：%s", type(exc).__name__)

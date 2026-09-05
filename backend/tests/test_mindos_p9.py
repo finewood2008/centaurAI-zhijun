@@ -39,8 +39,9 @@ class _FakeJobStore:
     def get(self, material_id):
         return self._records.get(material_id)
 
-    def list(self):
-        return list(self._records.values())
+    def list(self, device_scope="global"):
+        return [record for record in self._records.values()
+                if record.get("device_scope", "global") == device_scope]
 
 
 def _setup_materials():
@@ -99,7 +100,7 @@ class TestMaterialTags(unittest.TestCase):
         }
         with patch("mindos.services.ingestion._ann_get", side_effect=lambda sp: ann_map.get(sp, {"tags": []})), \
              patch("mindos.services.ingestion.status_of") as mock_status:
-            mock_status.side_effect = lambda mid: {"materialId": mid, "status": "available", "createdAt": "2024-01-01T00:00:00+00:00", "fileName": mid, "fileType": "document", "jobId": "j", "errorMessage": None, "folder": "f"}
+            mock_status.side_effect = lambda mid, device_scope="global": {"materialId": mid, "status": "available", "createdAt": "2024-01-01T00:00:00+00:00", "fileName": mid, "fileType": "document", "jobId": "j", "errorMessage": None, "folder": "f"} if device_scope == "global" else None
             results = ingestion.list_materials(tag="项目")
             ids = [r["materialId"] for r in results]
             self.assertIn("mindos_tag1", ids)

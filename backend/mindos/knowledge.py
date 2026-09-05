@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
 import wiki_store
@@ -488,11 +488,11 @@ def _public(page: dict) -> dict:
     }
 
 
-def _is_rag_eligible_page(page: dict) -> bool:
+def _is_rag_eligible_page(page: dict, *, device_scope: str = "global") -> bool:
     """Whether this exact Wiki revision may be exposed to RAG consumers."""
     knowledge_id = _knowledge_id(str(page.get("path") or ""))
     return card_ledger_store.is_rag_eligible(
-        card_ledger_store.get(knowledge_id),
+        card_ledger_store.get(knowledge_id, device_scope=device_scope),
         _content_revision(str(page.get("content") or "")),
     )
 
@@ -574,10 +574,17 @@ def find_card_by_confirmation_session(session_id: str) -> dict | None:
     return None
 
 
-def cards_referencing_material(material_id: str) -> list[dict]:
-    """返回直接引用某原材料的卡片（活跃/归档/回收），用于归档与版本更新影响预览。"""
+def cards_referencing_material(material_id: str, *, device_scope: str | None = None) -> list[dict]:
+    """显式 scope 只返回已知归属的依赖；内部删除检查不传 scope 时保留全量依赖。
+
+    依赖包括草稿/归档/回收，不能以 RAG 准入判断是否存在。旧草稿可能尚无
+    归属账本：前台不曝光，内部也不能因此断言资料可安全删除。
+    """
     results: list[dict] = []
     for item in _iter_wiki_pages():
+        knowledge_id = _knowledge_id(str(item.get("path") or ""))
+        if device_scope is not None and not card_ledger_store.get(knowledge_id, device_scope=device_scope):
+            continue
         page = wiki_store.read_page(str(item["path"])) or item
         if not _is_mindos_card(page):
             continue
@@ -1069,7 +1076,7 @@ def search_cards(query: str, limit: int = 20, for_qa: bool = False, device_scope
 
     for page in wiki_store.list_pages(limit=500).get("items", []):
         detail = wiki_store.read_page(str(page["path"])) or page
-        if not _is_active_mindos_card(detail) or not _is_rag_eligible_page(detail):
+        if not _is_active_mindos_card(detail) or not _is_rag_eligible_page(detail, device_scope=device_scope):
             continue
         if not in_scope(_knowledge_id(str(detail.get("path") or ""))):
             continue
@@ -1095,7 +1102,9 @@ def search_cards(query: str, limit: int = 20, for_qa: bool = False, device_scope
         except HTTPException:
             continue
         body = _card_body(detail)
-        if (not _is_active_mindos_card(detail) or not _is_rag_eligible_page(detail)
+        if not in_scope(_knowledge_id(str(detail.get("path") or ""))):
+            continue
+        if (not _is_active_mindos_card(detail) or not _is_rag_eligible_page(detail, device_scope=device_scope)
                 or not _is_substantive_card_body(body)):
             continue
         score = float(hit.get("score") or 0.0)
@@ -1110,7 +1119,7 @@ def search_cards(query: str, limit: int = 20, for_qa: bool = False, device_scope
             # 阶段 2：Wiki fallback 命中同样复核设备作用域，跨设备/账号卡片不得回显。
             if not in_scope(_knowledge_id(str(detail.get("path") or ""))):
                 continue
-            if (_is_active_mindos_card(detail) and _is_rag_eligible_page(detail)
+            if (_is_active_mindos_card(detail) and _is_rag_eligible_page(detail, device_scope=device_scope)
                     and (not for_qa or _is_substantive_card_body(_card_body(detail)))):
                 score = float(hit.get("score") or 0.0)
                 if path not in candidates or score > candidates[path][0]:
@@ -1172,7 +1181,7 @@ def search_cards_by_ids(ids, query: str, for_qa: bool = False, device_scope: str
             continue
         if not in_scope(_knowledge_id(str(page.get("path") or ""))):
             continue
-        if not _is_active_mindos_card(page) or not _is_rag_eligible_page(page):
+        if not _is_active_mindos_card(page) or not _is_rag_eligible_page(page, device_scope=device_scope):
             continue
         body = _card_body(page)
         if for_qa and not _is_substantive_card_body(body):
@@ -1191,7 +1200,9 @@ def search_cards_by_ids(ids, query: str, for_qa: bool = False, device_scope: str
 
     # 向量命中（仅目标卡片）：语义相关但无相同关键词的卡片由此召回。
     try:
-        for hit in knowledge_index.search_cards(query, limit=max(len(ids) * 5, 20)):
+        for hit in knowledge_index.search_cards(
+            query, limit=max(len(ids) * 5, 20), device_scope=device_scope,
+        ):
             card_id = str(hit.get("knowledgeId") or "")
             if card_id not in target:
                 continue
@@ -1199,7 +1210,9 @@ def search_cards_by_ids(ids, query: str, for_qa: bool = False, device_scope: str
                 page = _find(card_id)
             except HTTPException:
                 continue
-            if not _is_active_mindos_card(page) or not _is_rag_eligible_page(page):
+            if not in_scope(_knowledge_id(str(page.get("path") or ""))):
+                continue
+            if not _is_active_mindos_card(page) or not _is_rag_eligible_page(page, device_scope=device_scope):
                 continue
             body = _card_body(page)
             if for_qa and not _is_substantive_card_body(body):
@@ -1451,7 +1464,20 @@ def knowledge_update_sources_for_lifecycle(knowledge_id: str, source_refs: list[
             "revision": _content_revision(str(updated.get("content") or ""))}
 
 
-def knowledge_create(req: KnowledgeCreate):
+def _register_created_draft(page: dict, device_scope: str) -> None:
+    """Only creation writes establish ownership; reads never infer old-card scope."""
+    path = str(page["path"])
+    knowledge_id = _knowledge_id(path)
+    revision = _content_revision(str(page.get("content") or ""))
+    card_ledger_store.ensure(knowledge_id, path, revision, device_scope=device_scope)
+    card_ledger_store.update_draft_revision(knowledge_id, path, revision)
+
+
+def knowledge_create(req: KnowledgeCreate, request: Request = None):
+    from .device_context import scope_for_device
+
+    context = getattr(getattr(request, "state", None), "mindos_device_context", None)
+    scope = scope_for_device(getattr(context, "device_id", None))
     title = req.title.strip()
     if not title:
         raise HTTPException(400, "标题不能为空")
@@ -1478,13 +1504,16 @@ def knowledge_create(req: KnowledgeCreate):
         page = wiki_store.write_page(str(page["path"]), body, source_agent="mindos")
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    _register_created_draft(page, scope)
     _sync_card_index(page)
     return {"item": _public(page)}
 
 
-def knowledge_create_from_material(material_id: str, req: KnowledgeFromMaterialCreate | None = None):
+def knowledge_create_from_material(
+    material_id: str, req: KnowledgeFromMaterialCreate | None = None, *, device_scope: str = "global",
+):
     """创建引用原材料的可编辑卡片，可选以已生成摘要预填「待编辑草稿」。"""
-    material = ingestion.detail_of(material_id)
+    material = ingestion.detail_of(material_id, device_scope=device_scope)
     if material is None:
         raise HTTPException(404, "资料不存在")
     req = req or KnowledgeFromMaterialCreate()
@@ -1525,6 +1554,7 @@ def knowledge_create_from_material(material_id: str, req: KnowledgeFromMaterialC
         page = wiki_store.write_page(str(page["path"]), body, source_agent="mindos")
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    _register_created_draft(page, device_scope)
     _sync_card_index(page)
     return {"item": _public(page), "prefilled": bool(draft)}
 
@@ -1536,6 +1566,8 @@ def create_card_with_sources(
     source_refs: list[dict] | None = None,
     folder_id: int | None = None,
     confirmation_session_id: str | None = None,
+    *,
+    device_scope: str = "global",
 ) -> dict:
     """创建正式知识卡片并写入带类型来源引用（P14-10 草稿「另存为知识卡片」复用）。
 
@@ -1583,6 +1615,7 @@ def create_card_with_sources(
         page = wiki_store.write_page(str(page["path"]), body, source_agent="mindos")
     except ValueError as exc:
         raise HTTPException(400, str(exc))
+    _register_created_draft(page, device_scope)
     _sync_card_index(page)
     return _public(page)
 

@@ -762,6 +762,9 @@ def _start_background_services() -> None:
     except Exception as e:  # noqa: BLE001
         logger.warning(f"知君本体 worker 启动失败: {e}")
 
+    from mindos.chat_imports import start_worker as start_chat_import_worker
+    start_chat_import_worker()
+
     # 阶段 2：连接票据 nonce 墓碑与活动会话周期清理。撤销后 5 秒内断开依赖
     # 每轮扫描把过期/epoch 失效会话置为关闭；新请求的撤销/重放校验在验签期即时生效。
     threading.Thread(
@@ -840,6 +843,8 @@ def _stop_background_services() -> None:
     except Exception:  # noqa: BLE001
         pass
     # 所有写入生产者停止后，等最后一段 Chroma 读写离开句柄再关闭 PersistentClient。
+    from mindos.chat_imports import stop_worker as stop_chat_import_worker
+    stop_chat_import_worker()
     # 不设置强制超时：超时后继续退出会重新引入 HNSW 写入中断风险。
     try:
         from vector_store import active_operations, release_chroma
@@ -1266,6 +1271,12 @@ app.include_router(mindos_growth.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import conversations as mindos_conversations
 mindos_conversations.configure_write_guard(require_local)
 app.include_router(mindos_conversations.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos.memory_routes import build_router as build_memory_router
+app.include_router(build_memory_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos.chat_import_routes import build_router as build_chat_import_router
+app.include_router(build_chat_import_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos.zhijun.charter import build_router as build_charter_router
+app.include_router(build_charter_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import ontology as mindos_ontology
 mindos_ontology.configure_write_guard(require_local)
 app.include_router(mindos_ontology.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
@@ -1273,6 +1284,9 @@ from mindos import zhijun_status as mindos_zhijun_status
 app.include_router(mindos_zhijun_status.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import zhijun_home as mindos_zhijun_home
 app.include_router(mindos_zhijun_home.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos import zhijun_onboarding as mindos_zhijun_onboarding
+mindos_zhijun_onboarding.configure_write_guard(require_local)
+app.include_router(mindos_zhijun_onboarding.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import nudges as mindos_nudges
 mindos_nudges.configure_write_guard(require_local)
 app.include_router(mindos_nudges.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
@@ -3070,14 +3084,21 @@ def _require_in_watch(source_path: str) -> str:
 def get_annotations(source_path: Optional[str] = Query(default=None)):
     """全部标注（{source_path: ann}）或单文件标注（?source_path=...）。"""
     if source_path:
-        return {"source_path": source_path, "annotation": annotations.get(source_path)}
+        canonical = _require_in_watch(source_path)
+        rows = annotations.get_map_for({source_path, canonical})
+        return {"source_path": canonical, "annotation":
+                rows.get(canonical) or rows.get(source_path) or annotations.get(canonical)}
     return {"annotations": annotations.get_all()}
 
 
 @app.post("/api/annotations", dependencies=[Depends(require_local)])
 def set_annotation(req: AnnotationRequest):
     """写/改某文件标注。caption 变化时对该文件 force 重索引（让说明进/出文本向量空间）。"""
-    _require_in_watch(req.source_path)
+    source_path = _require_in_watch(req.source_path)
+    # Older callers could store an OS/symlink alias. Migrate only this validated
+    # target; an existing canonical record remains authoritative.
+    if source_path != req.source_path:
+        annotations.rename(req.source_path, source_path)
     patch = {
         "tags": req.tags,
         "importance": req.importance,
@@ -3086,13 +3107,13 @@ def set_annotation(req: AnnotationRequest):
         "caption": req.caption,
         "group": req.group,
     }
-    ann, caption_changed = annotations.set_annotation(req.source_path, patch, merge=req.merge)
+    ann, caption_changed = annotations.set_annotation(source_path, patch, merge=req.merge)
 
     reindex_queued = False
     if caption_changed:
         # 仅当文件仍存在于磁盘时才重索引（删除后残留标注会在 GET 中可见，但无文件可嵌）
-        if Path(req.source_path).is_file():
-            submit_index(req.source_path, force=True)
+        if Path(source_path).is_file():
+            submit_index(source_path, force=True)
             reindex_queued = True
 
     return {"success": True, "annotation": ann, "caption_changed": caption_changed,
@@ -3549,7 +3570,10 @@ def batch_reindex_documents(req: BatchReindexRequest):
 
 
 def _recycle_document(source_path: str) -> dict:
+    supplied_path = source_path
     source_path = _require_in_watch(source_path)
+    if supplied_path != source_path:
+        annotations.rename(supplied_path, source_path)
     source = Path(source_path)
     if not source.is_file():
         # 磁盘已丢失时只清理孤立索引，审计仍保留。
@@ -3564,7 +3588,8 @@ def _recycle_document(source_path: str) -> dict:
     annotation = annotations.get(source_path)
     stat = source.stat()
     metadata = {
-        "rag_strategy": annotations.get_rag_override(source_path),
+        "rag_strategy": (annotations.get_rag_override(source_path)
+                         or annotations.get_rag_override(supplied_path)),
         "modified_time": stat.st_mtime,
     }
     try:

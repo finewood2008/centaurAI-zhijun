@@ -28,7 +28,7 @@ from pydantic import ValidationError
 from mindos import generations
 from mindos import knowledge
 from mindos.derived import KIND_GENERATED_DRAFT
-from mindos.stores import derived_store, governance_store
+from mindos.stores import derived_store, governance_store, card_ledger_store
 
 from mindos.generations import (
     CreateKnowledgeFromDraftRequest,
@@ -82,7 +82,7 @@ class GenerationValidationTests(unittest.TestCase):
         # 来源已归档：material 存在但在归档集合中 → 404
         req = GenerationRequest(type="study_note", sourceIds=["m_archived"], instruction="")
         with patch.object(generations.ingestion, "source_path_of", return_value="src://a.pdf"), patch.object(
-            generations, "_archived_material_ids", return_value={"m_archived"}
+            generations, "_excluded_material_ids", return_value={"m_archived"}
         ):
             with self.assertRaises(HTTPException) as ctx:
                 generations.create_generation(req)
@@ -156,6 +156,13 @@ class GenerationCreateTests(unittest.TestCase):
     def test_generate_knowledge_source(self):
         # 知识卡片来源解析（source_path_of 无 → 走 knowledge 分支）
         page = {"path": "/wiki/a.md", "title": "卡片A", "content": "---\ntags: []\n---\n卡片正文"}
+        card_ledger_store.reset_for_tests(self._tmp / "cards.db")
+        self.addCleanup(card_ledger_store.reset_for_tests)
+        kid = knowledge._knowledge_id(page["path"])
+        revision = knowledge._content_revision(page["content"])
+        card_ledger_store.confirm_and_enqueue(kid, page["path"], revision, kid, {"body": "卡片正文"})
+        self.assertFalse(knowledge._is_rag_eligible_page(page))
+        card_ledger_store.activate_vector(kid, 1)
         with patch.object(generations.ingestion, "source_path_of", return_value=None), patch.object(
             generations.knowledge, "_find", return_value=page
         ), patch.object(
@@ -171,7 +178,7 @@ class GenerationCreateTests(unittest.TestCase):
     def test_material_source_resolution(self):
         # 原材料来源解析
         with patch.object(generations.ingestion, "source_path_of", return_value="src://a.pdf"), patch.object(
-            generations, "_archived_material_ids", return_value=set()
+            generations, "_excluded_material_ids", return_value=set()
         ), patch.object(
             generations.ingestion.JobStore, "instance",
             return_value=MagicMock(get=lambda _m: {"material_id": "m1", "file_name": "a.pdf"}),

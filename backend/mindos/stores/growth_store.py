@@ -158,6 +158,14 @@ class GrowthStore:
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript(_SCHEMA)
+                if "metadata_json" not in {r[1] for r in conn.execute("PRAGMA table_info(growth_charters)")}:
+                    conn.execute("ALTER TABLE growth_charters ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'")
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(growth_charters)")}
+                if "document" not in columns:
+                    conn.execute("ALTER TABLE growth_charters ADD COLUMN document TEXT NOT NULL DEFAULT ''")
+                if "clauses_json" not in columns:
+                    conn.execute("ALTER TABLE growth_charters ADD COLUMN clauses_json TEXT NOT NULL DEFAULT '[]'")
+                conn.execute("CREATE TABLE IF NOT EXISTS charter_writes (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, charter_id TEXT NOT NULL)")
                 conn.commit()
             finally:
                 conn.close()
@@ -165,7 +173,8 @@ class GrowthStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._ensure()
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        from .sqlite_connection import ClosingConnection
+        conn = sqlite3.connect(str(self._db_path), timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -187,6 +196,9 @@ class GrowthStore:
             "challengeStyle": row["challenge_style"],
             "quietDomains": _load_list(row["quiet_domains_json"]),
             "createdAt": row["created_at"],
+            "metadata": json.loads(row["metadata_json"] or "{}"),
+            "document": row["document"],
+            "clauses": json.loads(row["clauses_json"] or "[]"),
         }
 
     @staticmethod
@@ -253,48 +265,76 @@ class GrowthStore:
     # ---- 人生章程 -------------------------------------------------
 
     def create_charter(self, payload: dict) -> dict:
-        charter_id = f"charter_{uuid.uuid4().hex}"
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
-                now = utc_now()
-                row = conn.execute(
-                    "SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM growth_charters"
-                ).fetchone()
-                version = int(row["next_version"])
-                conn.execute(
-                    """INSERT INTO growth_charters
-                       (id, version, vision, roles_json, principles_json, boundaries_json,
-                        goals_json, challenge_style, quiet_domains_json, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        charter_id,
-                        version,
-                        payload["vision"],
-                        _json_list(payload["roles"]),
-                        _json_list(payload["principles"]),
-                        _json_list(payload["boundaries"]),
-                        _json_list(payload["goals"]),
-                        payload["challengeStyle"],
-                        _json_list(payload["quietDomains"]),
-                        now,
-                    ),
-                )
-                saved = conn.execute(
-                    "SELECT * FROM growth_charters WHERE id=?", (charter_id,)
-                ).fetchone()
+                saved = self._insert_charter(conn, payload)
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
-        return self._charter(saved) or {}
+        return saved
 
-    def current_charter(self) -> dict | None:
+    def _insert_charter(self, conn, payload):
+        """Caller holds one write transaction, including draft acceptance/idempotency."""
+        from .alignment_store import digest
+        request_id = payload.get("requestId")
+        fingerprint = digest(payload)
+        if request_id:
+            previous = conn.execute("SELECT * FROM charter_writes WHERE request_id=?", (request_id,)).fetchone()
+            if previous:
+                if previous["fingerprint"] != fingerprint:
+                    raise GrowthConflictError("重复请求的内容不同，请重新核对")
+                return self._charter(conn.execute("SELECT * FROM growth_charters WHERE id=?", (previous["charter_id"],)).fetchone())
+        latest_version = conn.execute("SELECT COALESCE(MAX(version),0) FROM growth_charters").fetchone()[0]
+        scope = (payload.get("metadata") or {}).get("scope", "global")
+        previous = self._current_charter(conn, scope)
+        current = (previous or {}).get("version", 0)
+        if payload.get("expectedVersion") is not None and payload["expectedVersion"] != current:
+            raise GrowthConflictError("章程已更新，请基于最新版本重新核对；你的修改仍保留")
+        clauses = payload.get("clauses", [])
+        document = payload.get("document", "")
+        if (previous or {}).get("document") and not payload.get("workspaceId"):
+            raise GrowthConflictError("请主动打开章程工作稿修改并确认，旧版表单不能覆盖全文章程")
+        if document or clauses:
+            from .charter_draft_store import validate_clauses, render_document
+            markdown = (payload.get("metadata") or {}).get("documentFormat") == "markdown"
+            clauses = validate_clauses(clauses, limit=128 if markdown else 80)
+            if (not payload.get("workspaceId") or not clauses or not isinstance(document, str)
+                    or not document.strip() or len(document) > 30000
+                    or (not markdown and document != render_document(clauses))):
+                raise ValueError("全文章程必须通过工作稿确认，正文必须与选中的条款一致")
+        fields = ("vision", "roles", "principles", "boundaries", "goals", "challengeStyle", "quietDomains")
+        if not clauses and not any(payload.get(f) for f in fields):
+            raise ValueError("至少确认一项内容，未填写的部分可以留空")
+        ident = f"charter_{uuid.uuid4().hex}"
+        previous_meta = (previous or {}).get("metadata") or {}
+        # Editing a derived charter in a form must not launder its ancestry.
+        metadata = payload.get("metadata") or {"origin": "manual", "scope": previous_meta.get("scope", "global"), "fields": {
+            f: {"state": "confirmed" if payload.get(f) else "pending", "sources": previous_meta.get("fields", {}).get(f, {}).get("sources", [])} for f in fields}}
+        conn.execute("""INSERT INTO growth_charters
+            (id,version,vision,roles_json,principles_json,boundaries_json,goals_json,challenge_style,quiet_domains_json,created_at,metadata_json,document,clauses_json)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""", (ident, latest_version + 1, payload.get("vision", ""),
+            _json_list(payload.get("roles", [])), _json_list(payload.get("principles", [])),
+            _json_list(payload.get("boundaries", [])), _json_list(payload.get("goals", [])),
+            payload.get("challengeStyle", ""), _json_list(payload.get("quietDomains", [])), utc_now(), json.dumps(metadata, ensure_ascii=False),
+            document, json.dumps(clauses, ensure_ascii=False)))
+        if request_id:
+            conn.execute("INSERT INTO charter_writes VALUES (?,?,?)", (request_id, fingerprint, ident))
+        return self._charter(conn.execute("SELECT * FROM growth_charters WHERE id=?", (ident,)).fetchone())
+
+    def get_charter(self, ident):
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM growth_charters ORDER BY version DESC LIMIT 1"
-            ).fetchone()
-        return self._charter(row)
+            return self._charter(conn.execute("SELECT * FROM growth_charters WHERE id=?", (ident,)).fetchone())
+
+    def _current_charter(self, conn, scope=None):
+        where = " WHERE COALESCE(json_extract(metadata_json,'$.scope'),'global')=?" if scope is not None else ""
+        return self._charter(conn.execute("SELECT * FROM growth_charters" + where + " ORDER BY version DESC LIMIT 1",
+                                         (scope,) if scope is not None else ()).fetchone())
+
+    def current_charter(self, scope=None) -> dict | None:
+        with self._connect() as conn:
+            return self._current_charter(conn, scope)
 
     def list_charters(self) -> list[dict]:
         with self._connect() as conn:
@@ -303,13 +343,13 @@ class GrowthStore:
             ).fetchall()
         return [item for row in rows if (item := self._charter(row)) is not None]
 
-    def charter_history(self) -> dict:
+    def charter_history(self, scope=None) -> dict:
         """在同一只读快照中返回当前章程与完整版本历史。"""
         with self._connect() as conn:
             conn.execute("BEGIN")
-            rows = conn.execute(
-                "SELECT * FROM growth_charters ORDER BY version DESC"
-            ).fetchall()
+            where = " WHERE COALESCE(json_extract(metadata_json,'$.scope'),'global')=?" if scope is not None else ""
+            rows = conn.execute("SELECT * FROM growth_charters" + where + " ORDER BY version DESC",
+                                (scope,) if scope is not None else ()).fetchall()
             conn.commit()
         versions = [
             item for row in rows if (item := self._charter(row)) is not None
@@ -328,9 +368,24 @@ class GrowthStore:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 now = utc_now()
-                charter_row = conn.execute(
-                    "SELECT id, version FROM growth_charters ORDER BY version DESC LIMIT 1"
-                ).fetchone()
+                scope = payload.get("scope", "global")
+                if "charterBasis" in payload:
+                    basis = payload["charterBasis"]
+                    if basis is not None and (not isinstance(basis, dict) or "charterId" not in basis or
+                            type(basis.get("version")) is not int or basis["version"] < 0 or
+                            (basis["charterId"] is not None and not isinstance(basis["charterId"], str))):
+                        raise GrowthConflictError("判断章程依据格式不正确")
+                    if basis and basis.get("scope", scope) != scope:
+                        raise GrowthConflictError("判断使用的章程不属于当前设备")
+                    if basis and basis.get("charterId") is None and basis.get("version", 0) == 0:
+                        basis = None
+                    charter_row = conn.execute("SELECT * FROM growth_charters WHERE id=?", ((basis or {}).get("charterId"),)).fetchone() if basis else None
+                    if basis and (not charter_row or int(charter_row["version"]) != basis.get("version") or
+                                  json.loads(charter_row["metadata_json"] or "{}").get("scope", "global") != scope or
+                                  basis.get("scope", scope) != scope):
+                        raise GrowthConflictError("判断使用的章程版本不存在或不属于当前设备")
+                else:
+                    charter_row = self._current_charter(conn, scope)
                 charter_id = charter_row["id"] if charter_row else None
                 charter_version = int(charter_row["version"]) if charter_row else None
                 conn.execute(

@@ -145,7 +145,7 @@ function submitReview() {
         </ul>
       </div>
       <p class="zj-review__done-next"><span class="zj-review__label">下一步</span>{{ decision.review.nextAction }}</p>
-      <p class="zj-review__hint">经验会变成你原则的候选，等你在「我的本体」里点头。</p>
+      <p class="zj-review__hint">经验先保留为这次情境的候选理解，不自动变成长期原则。新的经历，可以帮我们核对旧理解。</p>
     </section>
   </aside>
 </template>

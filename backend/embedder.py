@@ -26,6 +26,7 @@ from config import (
 logger = logging.getLogger(__name__)
 
 _text_model = None
+_local_text_failure = None
 _image_model = None
 _image_processor = None
 _reranker = None
@@ -74,6 +75,40 @@ def get_text_embedder():
                     device=_get_device(),
                 )
     return _text_model
+
+
+def get_local_text_embedder():
+    """Reuse the shared encoder, or load an installed local directory, never a hub ID.
+
+    A failed path is not retried for every chat turn. Restart after installing or
+    repairing that model; a changed configured path may be tried independently.
+    This does not change the general-purpose loader or initiate a model download.
+    """
+    global _text_model, _local_text_failure
+    with _LOAD_LOCK:
+        if _text_model is not None:
+            return _text_model
+        configured = str(TEXT_MODEL_ACTIVE or "")
+        if _local_text_failure and _local_text_failure[0] == configured:
+            return None
+        try:
+            path = Path(configured).expanduser()
+            if not configured or not path.is_absolute() or not path.is_dir():
+                raise ValueError("installed local model directory required")
+            if not any((path / name).is_file() for name in ("config.json", "modules.json")):
+                raise ValueError("local model configuration missing")
+            from sentence_transformers import SentenceTransformer
+            model = SentenceTransformer(
+                str(path.resolve()), device=_get_device(),
+                local_files_only=True, trust_remote_code=False,
+            )
+        except Exception as error:
+            _local_text_failure = (configured, type(error).__name__)
+            logger.warning("本地本体检索模型未就绪（%s），使用关键词检索；未下载或改用在线模型。修复后重启可再试。", type(error).__name__)
+            return None
+        _text_model = model
+        _local_text_failure = None
+        return _text_model
 
 
 def get_image_embedder():

@@ -63,6 +63,8 @@ class MentorCoreTests(unittest.TestCase):
 
     def test_persona_uses_bounded_partner_identity(self) -> None:
         self.assertIn("有记忆边界、可核对、不会替用户决定的 AI 长期思考伙伴", persona.PERSONA_CORE)
+        self.assertIn("普通对话里的理解、复述和回复不会自动成为正式记录", persona.PERSONA_CORE)
+        self.assertIn("不得声称已永久记住、已更新本体、已保存或已作废", persona.PERSONA_CORE)
         self.assertNotIn("AI 良师益友", persona.PERSONA_CORE)
 
     # ---- 历史判断进商量
@@ -84,9 +86,9 @@ class MentorCoreTests(unittest.TestCase):
         self.assertIn("你过去类似的判断", assembled.system)
         self.assertEqual(assembled.debug["pastDecisions"][0]["id"], reviewed["id"])
 
-    def test_principles_always_anchor_deliberation(self) -> None:
+    def test_only_relevant_principles_anchor_deliberation(self) -> None:
         self.onto.create_claim({"content": "我坚持先看数据再拍板", "section": "principles", "layer": "self_declared"}, [], trust_state="confirmed", trust_origin="utterance")
-        # 再塞 13 条更近的已确认理解，把原则挤出词面检索的前 12 名——商量时仍要被带上。
+        # 自我校准：不再无条件注入不相关原则，相关事实优先。
         for i in range(13):
             self.onto.create_claim({"content": f"我第{i}件近况是在忙远川项目", "section": "who", "layer": "self_declared"}, [], trust_state="confirmed", trust_origin="utterance")
         conv = self.convs.create_conversation(mode="chat")
@@ -94,15 +96,22 @@ class MentorCoreTests(unittest.TestCase):
             conversation=conv, user_text="要不要给老客户涨价", depth="brief", provider=FakeProvider(), ontology=self.onto,
             recent_messages=[{"role": "user", "content": "要不要给老客户涨价"}], user_turns=1, turn_mode="deliberate",
         )
-        self.assertIn("先看数据再拍板", assembled.system)
+        self.assertNotIn("先看数据再拍板", assembled.system)
+        self.assertEqual(assembled.provenance["anchorClaimIds"], [])
         plain = context_module.assemble(
             conversation=conv, user_text="要不要给老客户涨价", depth="brief", provider=FakeProvider(), ontology=self.onto,
             recent_messages=[{"role": "user", "content": "要不要给老客户涨价"}], user_turns=1, turn_mode="chat",
         )
         self.assertNotIn("先看数据再拍板", plain.system)
+        relevant = context_module.assemble(
+            conversation=conv, user_text="先看什么数据再给老客户涨价", depth="brief", provider=FakeProvider(), ontology=self.onto,
+            recent_messages=[], user_turns=1, turn_mode="deliberate",
+        )
+        self.assertIn("先看数据再拍板", relevant.system)
+        self.assertTrue(relevant.provenance["anchorClaimIds"])
 
     # ---- 复盘经验 → 原则候选
-    def test_review_lessons_become_principle_candidates(self) -> None:
+    def test_review_lessons_stay_contextual_not_lifetime_principles(self) -> None:
         decision = self.growth.create_decision(_decision("要不要涨价"))
         self.growth.record_outcome(decision["id"], {"result": "涨了一成没流失", "notes": "", "evidenceRefs": []})
         res = self.client.post("/api/mindos/growth/reviews", json={"decisionId": decision["id"], "reflection": "低估了客户接受度", "lessons": ["先小范围试再全量", "定价前先问三个老客户"], "nextAction": "下次先试点"})
@@ -111,14 +120,18 @@ class MentorCoreTests(unittest.TestCase):
         contents = {c["content"] for c in inbox}
         self.assertIn("先小范围试再全量", contents)
         cand = next(c for c in inbox if c["content"] == "先小范围试再全量")
-        self.assertEqual((cand["section"], cand["layer"], cand["trustState"]), ("principles", "aspirational", "working"))
+        self.assertEqual((cand["section"], cand["layer"], cand["trustState"]), ("ways", "hypothesis", "working"))
+        self.assertEqual(cand["scope"], "context_only")
+        self.assertEqual(cand["contextRef"], decision["id"])
         self.assertEqual(cand["evidence"][0]["kind"], "review")
         second = self.growth.create_decision(_decision("要不要换供应商"))
         self.growth.record_outcome(second["id"], {"result": "换了", "notes": "", "evidenceRefs": []})
         growth_hooks.on_review({"decisionId": second["id"], "lessons": ["先小范围试一下再全量推"]}, second, store=self.onto)
         refreshed = self.onto.get_claim(cand["id"])
-        self.assertEqual(len(refreshed["evidence"]), 2)
-        self.assertTrue(refreshed["promotionReady"])
+        self.assertEqual(len(refreshed["evidence"]), 1)
+        self.assertFalse(refreshed["promotionReady"])
+        separate = next(c for c in self.onto.inbox() if c["content"] == "先小范围试一下再全量推")
+        self.assertEqual(separate["contextRef"], second["id"])
 
     # ---- 抽取：merge_into 与期限
     def test_extraction_merge_into_and_commitment_date(self) -> None:
@@ -157,19 +170,22 @@ class MentorCoreTests(unittest.TestCase):
         self.assertEqual(len(kept), 1)
 
     # ---- 建档收尾：第一次观察
-    def test_onboarding_wrap_up_queues_first_observation(self) -> None:
+    def test_light_onboarding_does_not_start_charter_or_personality_observation(self) -> None:
         conv = self.client.post("/api/mindos/conversations", json={"mode": "onboarding"}).json()
         answers = ["你好，我们开始吧", "叫我阿远，我是一家小公司的创始人", "我在带远川项目", "我最在意我太太和合伙人老周", "最近我拒了一个大客户", "我坚持先看数据再拍板", "我想明年做到盈亏平衡", "健康话题不用主动提"]
         for a in answers:
-            res = self.client.post(f"/api/mindos/conversations/{conv['id']}/messages", json={"content": a})
+            res = self.client.post(f"/api/mindos/conversations/{conv['id']}/messages", json={"content": a, "requestId": "onboarding-" + str(answers.index(a))})
             self.assertEqual(res.status_code, 200)
+            jobs.drain(store=self.onto, conv_store=self.convs, max_jobs=60)
+            # The user must explicitly accept facts; model extraction is not consent.
+            for candidate in self.onto.list_claims(trust_states=("working",), limit=100):
+                if candidate["layer"] == "self_declared":
+                    self.onto.transition(candidate["id"], "confirm", surface="conversation")
         jobs.drain(store=self.onto, conv_store=self.convs, max_jobs=60)
         hypotheses = [c for c in self.onto.list_claims(trust_states=("working",), limit=100) if c["layer"] == "hypothesis"]
-        self.assertEqual(len(hypotheses), 1)
-        self.assertIn("我猜你", hypotheses[0]["content"])
-        self.assertEqual(hypotheses[0]["evidence"][0]["kind"], "conversation_turn")
-        events = self.onto.review_events(hypotheses[0]["id"])
-        self.assertEqual(events[-1]["surface"], "onboarding")
+        self.assertEqual(len(hypotheses), 0)
+        with self.onto._connect() as db:
+            self.assertIsNone(db.execute("SELECT 1 FROM ontology_jobs WHERE kind='charter_draft'").fetchone())
 
     # ---- 摘要带主题
     def test_summary_keeps_themes_and_open_loops(self) -> None:
@@ -224,7 +240,7 @@ class MentorCoreTests(unittest.TestCase):
     def test_provenance_carries_past_decisions_and_anchors(self) -> None:
         reviewed = self.growth.create_decision(_decision("远川项目测试要不要外包"))
         self.growth.record_outcome(reviewed["id"], {"result": "自己做，慢了两周但质量稳", "notes": "", "evidenceRefs": []})
-        principle = self.onto.create_claim({"content": "我坚持先看数据再拍板", "section": "principles", "layer": "self_declared"}, [], trust_state="confirmed", trust_origin="utterance")
+        principle = self.onto.create_claim({"content": "我坚持远川项目测试先看数据再决定外包", "section": "principles", "layer": "self_declared"}, [], trust_state="confirmed", trust_origin="utterance")
         conv = self.client.post("/api/mindos/conversations", json={}).json()
         # 商量：过去判断与原则锚点都在出处里，且锚点 id 也出现在 confirmedClaims 中
         res = self.client.post(f"/api/mindos/conversations/{conv['id']}/messages", json={"content": "远川项目的测试是外包还是自己做", "mode": "deliberate"})

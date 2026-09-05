@@ -1,62 +1,99 @@
 <script setup lang="ts">
 // 会话列表：新建 + 按最近活动排序的会话项；当前项高亮并标注 aria-current。
 // 每条带模式方印（建档 / 商量 / 回访 / 对话），下面一行灰字是这段对话留下了什么（全零不显示）。
-import { Plus, Trash2 } from 'lucide-vue-next'
+import { Pin, Plus, Search, X } from 'lucide-vue-next'
 import type { Conversation } from '@/services/api'
+import MoreMenu from '@/components/ui/MoreMenu.vue'
+import { conversationActions } from '@/shared/conversationManagement'
 import { formatDate } from '@/shared/format'
-import { ONBOARDING_TOTAL_TURNS, conversationModeLabel, onboardingUserTurns, outcomesLine } from '@/shared/labels'
+import { conversationModeLabel, outcomesLine } from '@/shared/labels'
 
 function sealText(c: Conversation): string {
-  if (c.mode === 'onboarding') {
-    const turns = onboardingUserTurns(c.messageCount)
-    if (turns > 0 && turns < ONBOARDING_TOTAL_TURNS) return `建档 · 第 ${Math.min(turns, ONBOARDING_TOTAL_TURNS - 1)} 问`
-    return '建档'
-  }
   return conversationModeLabel(c.mode, !!c.outcomes?.decision)
 }
 
-defineProps<{
+withDefaults(defineProps<{
   items: Conversation[]
   currentId: string | null
   loading?: boolean
-}>()
+  loadingMore?: boolean
+  total?: number
+  hasMore?: boolean
+  error?: string
+  query?: string
+  tab?: 'active' | 'archived'
+  searchScope?: 'all' | 'active' | 'archived'
+  busyIds?: Record<string, boolean>
+  createLabel?: string
+  allowRemove?: boolean
+}>(), {
+  createLabel: '新对话',
+  allowRemove: true,
+  query: '',
+  tab: 'active',
+  searchScope: 'all',
+})
 
 const emit = defineEmits<{
-  (e: 'select', id: string): void
+  (e: 'select', id: string, messageId?: string): void
   (e: 'create'): void
   (e: 'remove', id: string): void
+  (e: 'manage', conversation: Conversation, action: string): void
+  (e: 'query', value: string): void
+  (e: 'tab', value: 'active' | 'archived'): void
+  (e: 'scope', value: 'all' | 'active' | 'archived'): void
+  (e: 'more'): void
+  (e: 'retry'): void
 }>()
 </script>
 
 <template>
   <nav class="zj-convs" aria-label="会话列表">
     <button type="button" class="zj-convs__new" @click="emit('create')">
-      <Plus :size="15" aria-hidden="true" />新对话
+      <Plus :size="15" aria-hidden="true" />{{ createLabel }}
     </button>
+    <div class="zj-convs__search">
+      <Search :size="14" aria-hidden="true" />
+      <input :value="query" type="search" maxlength="100" aria-label="搜索对话标题和正文" placeholder="搜索对话" @input="emit('query', ($event.target as HTMLInputElement).value)">
+      <button v-if="query" type="button" aria-label="清除搜索" @click="emit('query', '')"><X :size="14" aria-hidden="true" /></button>
+    </div>
+    <div v-if="query.trim()" class="zj-convs__tabs" role="group" aria-label="搜索范围">
+      <button v-for="option in [{ value: 'all', label: '全部' }, { value: 'active', label: '最近' }, { value: 'archived', label: '已归档' }] as const" :key="option.value" type="button" :aria-pressed="searchScope === option.value" @click="emit('scope', option.value)">{{ option.label }}</button>
+    </div>
+    <div v-else class="zj-convs__tabs" role="group" aria-label="对话分组">
+      <button type="button" :aria-pressed="tab === 'active'" @click="emit('tab', 'active')">最近</button>
+      <button type="button" :aria-pressed="tab === 'archived'" @click="emit('tab', 'archived')">已归档</button>
+    </div>
+    <slot name="feedback" />
+    <p v-if="error" class="zj-convs__hint" role="alert">{{ error }} <button type="button" class="zj-convs__text" @click="emit('retry')">重试</button></p>
     <p v-if="loading" class="zj-convs__hint">正在加载…</p>
-    <p v-else-if="!items.length" class="zj-convs__hint">还没有对话</p>
-    <ul v-else class="zj-convs__list">
+    <p v-else-if="!items.length && !error" class="zj-convs__hint">{{ query.trim() ? '没有找到匹配的对话' : tab === 'archived' ? '还没有归档的对话' : '还没有对话' }}</p>
+    <div v-if="!loading && items.length" class="zj-convs__results">
+    <p class="zj-convs__hint">{{ query.trim() ? '找到' : '共' }} {{ total ?? items.length }} 段对话</p>
+    <ul class="zj-convs__list">
       <li v-for="c in items" :key="c.id">
         <div class="zj-convs__row" :class="{ 'is-active': c.id === currentId }">
           <button
             type="button"
             class="zj-convs__item"
             :aria-current="c.id === currentId ? 'true' : undefined"
-            @click="emit('select', c.id)"
+            @click="emit('select', c.id, c.searchMatch?.messageId || undefined)"
           >
             <span class="zj-convs__line">
               <span class="zj-seal zj-seal--muted zj-convs__seal">{{ sealText(c) }}</span>
               <span class="zj-convs__title">{{ c.title || (c.mode === 'onboarding' ? '第一次对话' : '未命名对话') }}</span>
             </span>
+            <span v-if="c.pinnedAt || c.status === 'archived'" class="zj-convs__markers"><span v-if="c.pinnedAt"><Pin :size="11" aria-hidden="true" />置顶</span><span v-if="c.status === 'archived'">已归档</span></span>
+            <span v-if="query.trim() && c.searchMatch" class="zj-convs__match">{{ c.searchMatch.field === 'message' ? '正文：' : '标题：' }}{{ c.searchMatch.snippet }}</span>
             <span v-if="outcomesLine(c.outcomes)" class="zj-convs__outcomes">{{ outcomesLine(c.outcomes) }}</span>
             <span class="zj-convs__time">{{ formatDate(c.lastMessageAt || c.updatedAt) }}</span>
           </button>
-          <button type="button" class="zj-convs__remove" :aria-label="`删除会话 ${c.title || ''}`" title="删除会话" @click="emit('remove', c.id)">
-            <Trash2 :size="14" aria-hidden="true" />
-          </button>
+          <MoreMenu class="zj-convs__more" boundary="viewport" :items="conversationActions(c, allowRemove)" :disabled="busyIds?.[c.id]" :label="`管理对话 ${c.title || '未命名对话'}`" @select="action => action === 'delete' ? emit('remove', c.id) : emit('manage', c, action)" />
         </div>
       </li>
     </ul>
+    <button v-if="hasMore" type="button" class="zj-convs__load" :disabled="loadingMore" @click="emit('more')">{{ loadingMore ? '正在加载…' : '加载更多' }}</button>
+    </div>
   </nav>
 </template>
 
@@ -89,6 +126,21 @@ const emit = defineEmits<{
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
 }
+.zj-convs__search { display:flex; align-items:center; gap:6px; padding:7px 8px; border:1px solid var(--ws-border-color-3,#ebe7de); border-radius:6px; color:var(--ws-text-secondary-color,#686b66); }
+.zj-convs__search input { min-width:0; width:100%; padding:0; border:0; outline:none; background:transparent; color:inherit; font:inherit; font-size:13px; }
+.zj-convs__search:focus-within { border-color:var(--ws-primary-color,#a6452e); }
+.zj-convs__search input::-webkit-search-cancel-button { display:none; }
+.zj-convs__search button { display:grid; place-items:center; padding:0; border:0; background:none; color:inherit; cursor:pointer; }
+.zj-convs__tabs { display:flex; gap:4px; }
+.zj-convs__tabs button { flex:1; border:0; padding:6px 4px; border-radius:5px; background:transparent; color:var(--ws-text-secondary-color,#686b66); font:inherit; font-size:12px; cursor:pointer; }
+.zj-convs__tabs button[aria-pressed=true] { color:var(--ws-primary-color,#a6452e); background:var(--ws-surface-2,#fbf8f1); }
+.zj-convs__results { min-height:0; overflow-y:auto; }
+.zj-convs__load, .zj-convs__text { border:0; background:transparent; color:var(--ws-primary-color,#a6452e); font:inherit; font-size:12px; cursor:pointer; }
+.zj-convs__load { width:100%; padding:10px; }.zj-convs__load:disabled { opacity:.6; }
+.zj-convs__markers { display:flex; gap:7px; font-size:11px; color:var(--ws-text-secondary-color,#686b66); }
+.zj-convs__markers span { display:inline-flex; align-items:center; gap:3px; }
+.zj-convs__match { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; font-size:12px; line-height:1.5; color:var(--ws-text-secondary-color,#686b66); }
+.zj-convs__more { align-self:flex-start; margin:7px 3px 0 0; flex:none; }
 .zj-convs__list {
   list-style: none;
   margin: 0;
@@ -96,7 +148,6 @@ const emit = defineEmits<{
   display: flex;
   flex-direction: column;
   gap: 2px;
-  overflow-y: auto;
 }
 .zj-convs__row {
   display: flex;
@@ -156,22 +207,5 @@ const emit = defineEmits<{
 .zj-convs__time {
   font-size: 12px;
   color: var(--ws-text-placeholder-color, #a3a69f);
-}
-.zj-convs__remove {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 8px;
-  border: none;
-  background: transparent;
-  color: var(--ws-text-placeholder-color, #a3a69f);
-  cursor: pointer;
-  opacity: 0;
-}
-.zj-convs__row:hover .zj-convs__remove,
-.zj-convs__remove:focus-visible {
-  opacity: 1;
-}
-.zj-convs__remove:hover {
-  color: var(--ws-danger-color, #a6452e);
 }
 </style>

@@ -8,6 +8,8 @@ const sidebar = await readFile(new URL('../src/layouts/AppSidebar.vue', import.m
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 const sse = await readFile(new URL('../src/services/sse.ts', import.meta.url), 'utf8')
 const conversation = await readFile(new URL('../src/pages/ConversationPage.vue', import.meta.url), 'utf8')
+const conversationList = await readFile(new URL('../src/components/conversation/ConversationList.vue', import.meta.url), 'utf8')
+const onboarding = await readFile(new URL('../src/pages/OnboardingPage.vue', import.meta.url), 'utf8')
 const relationshipMap = await readFile(new URL('../src/components/today/RelationshipMap.vue', import.meta.url), 'utf8')
 const relationshipTimeline = await readFile(new URL('../src/components/today/RelationshipTimeline.vue', import.meta.url), 'utf8')
 const homeNodePanel = await readFile(new URL('../src/components/today/HomeNodePanel.vue', import.meta.url), 'utf8')
@@ -17,9 +19,14 @@ const ontologyLabels = await readFile(new URL('../src/shared/ontology.ts', impor
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
 // 路由：今日首屏 + 四入口 + 会话详情；旧问答/生成/治理/纠错页不再存在
-for (const path of ["path: '/'", "path: '/chat'", "path: '/c/:conversationId'", "path: '/me'", "path: '/me/inbox'", "path: '/judgments'", "path: '/data'"]) {
+for (const path of ["path: '/onboarding'", "path: '/onboarding/chat'", "path: '/onboarding/c/:conversationId'", "path: '/'", "path: '/chat'", "path: '/c/:conversationId'", "path: '/me'", "path: '/me/inbox'", "path: '/judgments'", "path: '/data'"]) {
   assert.ok(router.includes(path), `router 缺少 ${path}`)
 }
+assert.match(router, /router\.beforeEach/)
+assert.match(router, /progress\.state !== 'ready'/)
+assert.match(router, /progress\.conversationId \? `\/c\//)
+assert.match(router, /'\/onboarding\/chat'/)
+assert.doesNotMatch(router, /immersive: true/)
 assert.match(router, /path: '\/', name: 'today', component: \(\) => import\('@\/pages\/TodayPage\.vue'\), meta: \{ title: '今日来信' \}/)
 assert.match(router, /path: '\/chat', name: 'conversation', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\), meta: \{ title: '对话' \}/)
 assert.match(router, /path: '\/c\/:conversationId', name: 'conversation-detail'/)
@@ -32,7 +39,9 @@ for (const part of ['RelationshipMap', 'RelationshipTimeline', 'HomeNodePanel'])
 assert.match(today, /getZhijunHome\(\)/)
 assert.match(today, /1500/)
 assert.match(today, /brief\.status !== 'refreshing'/)
-assert.match(today, /path: '\/chat', query: \{ onboarding: '1' \}/)
+assert.match(today, /updateOnboarding\('restart'\)/)
+assert.match(today, /router\.push\('\/onboarding\/chat'\)/)
+assert.match(today, /\/onboarding\/c\/\$\{encodeURIComponent\(action\.targetId\)\}/)
 assert.match(today, /createConversation\(\{ mode: 'review', decisionId: action\.targetId \}\)/)
 assert.match(today, /这封来信的依据/)
 assert.match(today, /知君写给你的今日来信/)
@@ -52,13 +61,27 @@ assert.match(homeNodePanel, /createConversation\(\{ mode: 'review', decisionId: 
 assert.match(conversation, /route\.query\.say/)
 assert.match(conversation, /route\.query\.deliberate/)
 assert.match(conversation, /route\.query\.onboarding/)
+assert.match(conversation, /updateOnboarding\('profile_ready'/)
+assert.match(conversation, /updateOnboarding\('skip'/)
+assert.match(conversation, /暂时跳过，先随便聊聊/)
+assert.match(conversation, /跳过引导，开始新对话/)
+assert.match(conversation, /:allow-remove="!guidedOnboarding"/)
+assert.match(conversation, /guidedOnboarding\.value \|\| forceOnboarding\.value/)
+assert.doesNotMatch(conversation, /!onboardingConversation\.value && \(stats\.value === null/)
+assert.match(conversation, /err\.status === 409 && err\.code === 'TURN_IN_FLIGHT'/)
+assert.match(conversationList, /createLabel\?: string/)
+assert.match(conversationList, /allowRemove\?: boolean/)
+assert.match(conversationList, /conversationActions\(c, allowRemove\)/)
+assert.match(conversation, /\/onboarding\/c\/\$\{encodeURIComponent\(conv\.id\)\}/)
+assert.doesNotMatch(conversation, /streamTurn\(conv, '你好，我们开始吧'/)
 assert.doesNotMatch(conversation, /import (NudgeStrip|NextStepsPanel) from/)
 assert.doesNotMatch(conversation, /router\.(push|replace)\('\/'\)/)
 // 成果回执能跨页面重开；本体边界说明移出图内，避免顶端碰撞。
 assert.match(conversation, /turnOutcomes\.value = null[\s\S]*refreshOutcomes\(id, true\)/)
 assert.match(selfMap, /v-if="compact"[\s\S]*zj-map__ring-label--boundary/)
 assert.match(selfMap, /class="zj-map__boundary-note"/)
-assert.match(selfMap, /我确认过的/)
+assert.match(selfMap, /已确认且已校准/)
+assert.match(selfMap, /越近越能代表我/)
 assert.match(selfMap, /知君的推测/)
 assert.match(ontologyPage, /属于你的自我理解档案。知君可以提出理解，由你决定什么留下。/)
 for (const label of ['亲口陈述', '资料观察', '知君推测', '理想方向']) assert.match(ontologyLabels, new RegExp(label))
@@ -81,6 +104,9 @@ for (const label of ["label: '今日来信'", "label: '对话'", "label: '我的
 }
 assert.doesNotMatch(sidebar, /问知君|本体治理|logo\.jpg/)
 assert.match(sidebar, /ws-sidebar__seal/)
+// 导航只保留单个语义图标，确认比例留在本体页，避免窄侧栏出现第二个无标签圆圈。
+assert.doesNotMatch(sidebar, /RingGlyph|ws-sidebar__ring|getOntologyStats/)
+assert.match(sidebar, /label: '我的本体', icon: UserRound/)
 assert.ok(sidebar.indexOf("label: '今日来信'") < sidebar.indexOf("label: '对话'"), '侧栏「今日来信」应在「对话」上方')
 
 // 今日页的纯函数：问候行 / 汇总句 / 称呼 / 最近留下的 / 相对时间
@@ -129,6 +155,7 @@ for (const endpoint of [
   '/mindos/ontology/projection',
   '/mindos/zhijun/status',
   '/mindos/zhijun/home',
+  '/mindos/zhijun/onboarding',
 ]) {
   assert.ok(api.includes(endpoint), `api 缺少 ${endpoint}`)
 }
@@ -136,6 +163,13 @@ assert.match(api, /export function buildHeaders/)
 assert.match(api, /export async function throwApiError/)
 assert.match(api, /export function reviewClaim/)
 assert.match(api, /export type ReviewSurface = 'conversation' \| 'ontology_page' \| 'onboarding' \| 'today'/)
+
+// 轻量初始化：先使用，导入和来源不是关卡。
+for (const copy of ['先使用，稍后核对', '以后按需要补充', '模型配置和资料授权仍由你决定']) {
+  assert.match(onboarding, new RegExp(copy))
+}
+assert.doesNotMatch(onboarding, /api\.uploadFile\(file\)/)
+assert.doesNotMatch(onboarding, /连接 Google|连接 Dropbox/)
 
 // SSE 客户端：fetch + ReadableStream，复用统一头部；不用 EventSource
 assert.match(sse, /export async function streamPost/)

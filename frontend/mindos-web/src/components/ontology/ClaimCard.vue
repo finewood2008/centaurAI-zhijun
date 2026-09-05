@@ -8,6 +8,7 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import MoreMenu from '@/components/ui/MoreMenu.vue'
+import AlignmentCard from '@/components/ontology/AlignmentCard.vue'
 import { formatDay, layerMeta, predicateLabel, sectionLabel, sourceLine, trustMeta, REVIEW_MORE, REVIEW_PRIMARY } from '@/shared/ontology'
 
 const props = defineProps<{
@@ -16,7 +17,7 @@ const props = defineProps<{
   showSection?: boolean
 }>()
 
-const emit = defineEmits<{ (e: 'review', action: ReviewAction, editedContent?: string): void }>()
+const emit = defineEmits<{ (e: 'review', action: ReviewAction, editedContent?: string): void; (e: 'updated', claim: Claim): void }>()
 
 const editing = ref(false)
 const edited = ref('')
@@ -119,12 +120,19 @@ function evidenceKindLabel(kind: string): string {
     </div>
 
     <p class="zj-claim__source">{{ sourceLine(claim) }}</p>
+    <div v-if="claim.contextual" class="zj-claim__details">
+      <strong>来自真实经历的修订 · 仅本机</strong>
+      <p>适用情境：{{ claim.contextual.situation }}</p>
+      <p v-if="claim.contextual.exceptions">例外与未知：{{ claim.contextual.exceptions }}</p>
+      <p>这不是潜意识真实性评分；一次经历不证明长期规律。</p>
+    </div>
+    <AlignmentCard v-if="claim.trustState === 'confirmed'" :claim="claim" @updated="emit('updated', $event)" @refreshed="emit('updated', $event)" />
 
     <div v-if="detailOpen" class="zj-claim__details">
       <p class="zj-claim__meta">
         <StatusBadge :meta="trustMeta(claim.trustState)" />
         <span v-if="claim.promotionReady" class="zj-seal zj-seal--green" title="至少两个独立来源提到过">多处提到</span>
-        <span class="zj-claim__conf" :title="`置信度 ${Math.round(claim.confidence * 100)}%`">置信 {{ Math.round(claim.confidence * 100) }}%</span>
+        <span class="zj-claim__conf" title="系统对抽取这条记录的把握，不代表内心真实性">记录置信 {{ Math.round(claim.confidence * 100) }}%</span>
       </p>
       <p class="zj-claim__names">
         <span>{{ claim.subjectName }}</span>

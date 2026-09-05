@@ -125,6 +125,16 @@ def _http_error(exc: urllib.error.HTTPError, provider: str) -> ProviderError:
 
 
 def _open(url: str, body: dict, *, timeout: float, headers: dict, provider: str, channel: str):
+    from urllib.parse import urlsplit
+    host = (urlsplit(url).hostname or "").lower().rstrip(".")
+    if any(host == h or host.endswith("." + h) for h in ("anthropic.com", "claude.ai")):
+        raise ProviderError("本机禁止访问此服务", code="SERVICE_FORBIDDEN", retryable=False)
+    if channel == "chat":
+        from .routing import EGRESS_PERMIT
+        permit = EGRESS_PERMIT.get()
+        if not callable(permit):
+            raise ProviderError("在线任务尚未通过来源授权检查，已暂停", code="EGRESS_NOT_AUTHORIZED", retryable=False)
+        permit()  # Revalidate at the actual HTTP boundary, after queueing/serialization.
     data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     try:
         return llm_transport.allowed_urlopen(
@@ -215,6 +225,14 @@ def fake_extract(user_text: str) -> dict:
                 "confidence": 0.9 if layer == "self_declared" else 0.7,
                 "scope_hint": "long_term",
                 "privacy_hint": "private",
+                "why_it_matters": {
+                    "who": "以后讨论工作时可以结合用户明确的角色和背景",
+                    "people": "以后讨论关系选择时可以区分用户提到的重要关系",
+                    "matters": "继续讨论这件事时可以保留用户已经说明的事项和约束",
+                    "principles": "以后比较选择时可以参考用户亲口说明的原则与边界",
+                    "ways": "继续讨论选择时可以核对用户自己说明的做法和偏好",
+                    "direction": "以后讨论行动方案时可以区分用户的愿望与当前经历",
+                }.get(section, ""),
             }
         )
         if len(claims) >= 4:
@@ -319,6 +337,10 @@ class FakeProvider:
                 "你说出选择、理由和把握有几成，我就把它记进判断簿，到期再来回访。"
             )
         if debug.get("mode") == "onboarding":
+            if debug.get("lightOnboarding"):
+                from .charter import TOPICS
+                question = next((t[2] for t in TOPICS if t[0] == debug.get("onboardingTopic")), "")
+                return "我先把这些作为待核对的理解。" + (question or "我们可以先从这里开始。查看第一次认识小结，或直接开始使用，以后还可以继续完善。")
             n = int(debug.get("userTurns") or 1)
             if n <= len(ONBOARDING_QUESTIONS):
                 prefix = "" if n == 1 else "记下了。"
@@ -346,6 +368,8 @@ class FakeProvider:
 
     def complete_json(self, req: ChatRequest) -> dict:
         debug = req.debug or {}
+        if debug.get("task") == "charter_draft":
+            return {"proposals": []}  # Demo mode does not invent personal directions.
         if debug.get("task") == "decision_draft":
             return fake_draft(list(debug.get("userTexts") or []), str(debug.get("assistantText") or ""))
         if debug.get("task") == "summary":
@@ -422,6 +446,7 @@ class OllamaProvider:
     def complete_json(self, req: ChatRequest) -> dict:
         resp = _open(self._base_url + "/api/chat", self._body(req, stream=False), timeout=self._timeout, headers={}, provider="本地模型", channel="material")
         payload = json.loads(resp.read().decode("utf-8"))
+        self.last_usage = {"input_tokens": payload.get("prompt_eval_count"), "output_tokens": payload.get("eval_count")}
         if payload.get("error"):
             raise ProviderError(f"本地模型错误：{str(payload['error'])[:120]}", status_code=502, code="PROVIDER_REJECTED", retryable=False)
         return parse_json_object((payload.get("message") or {}).get("content") or "")
@@ -497,22 +522,29 @@ class OpenAICompatibleProvider:
         yield Done(finish or "stop")
 
     def complete_json(self, req: ChatRequest) -> dict:
+        lookup = (req.debug or {}).get("task") == "context_lookup"
+        self.last_usage = None
         body = {
-            "model": self.task_model,
+            "model": self.model if lookup else self.task_model,
             "messages": [{"role": "system", "content": req.system}, *req.messages],
             "temperature": req.temperature,
-            "max_tokens": max(int(req.max_tokens), JSON_TASK_MIN_TOKENS),
+            "max_tokens": int(req.max_tokens) if lookup else max(int(req.max_tokens), JSON_TASK_MIN_TOKENS),
             "stream": False,
             "response_format": {"type": "json_object"},
         }
         self._apply_thinking(body, req)
         resp = _open(self._base_url + "/chat/completions", body, timeout=self._timeout, headers=self._headers(), provider="外部模型", channel="chat")
         payload = json.loads(resp.read().decode("utf-8"))
+        raw_usage = payload.get("usage") or {}
+        self.last_usage = {"input_tokens": raw_usage.get("prompt_tokens"), "output_tokens": raw_usage.get("completion_tokens")}
         try:
             choice = payload["choices"][0]
             content = choice["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError("外部模型返回异常", status_code=502, code="PROVIDER_REJECTED", retryable=True) from exc
+        if content is not None and not isinstance(content, str):
+            raise ProviderError("外部模型返回的 JSON 正文格式无效", status_code=502,
+                                code="INVALID_JSON_REPLY", retryable=True)
         if not (content or "").strip():
             if choice.get("finish_reason") == "length":
                 raise ProviderError(
@@ -522,7 +554,11 @@ class OpenAICompatibleProvider:
                     retryable=False,
                 )
             raise ProviderError("外部模型返回空内容", status_code=502, code="EMPTY_REPLY", retryable=True)
-        return parse_json_object(content)
+        try:
+            return parse_json_object(content)
+        except ValueError as exc:
+            raise ProviderError("外部模型返回的 JSON 正文无效", status_code=502,
+                                code="INVALID_JSON_REPLY", retryable=True) from exc
 
 
 # ---------------------------------------------------------------- Anthropic
@@ -616,7 +652,7 @@ def build_provider(snapshot=None) -> ChatProvider:
     """按环境变量与设置页快照选择模型通道。
 
     - ``ZHIJUN_PROVIDER=fake``：演示模型（生产环境拒绝）。
-    - ``ZHIJUN_PROVIDER=anthropic``：官方 SDK，密钥取 ``ANTHROPIC_API_KEY`` 或 secret store。
+    - ``ZHIJUN_PROVIDER=anthropic``：本机网络边界禁止，明确报错。
     - ``ZHIJUN_PROVIDER=openai`` 或设置页「外部问答」已开启且 provider=openai：OpenAI 兼容通道。
     - 其余：本地 Ollama（沿用材料通道快照的地址与模型）。
     """
@@ -627,18 +663,16 @@ def build_provider(snapshot=None) -> ChatProvider:
         return FakeProvider()
     snap = snapshot or get_provider().get_chat_snapshot()
     if override == "anthropic":
-        key = os.environ.get("ANTHROPIC_API_KEY", "").strip() or get_provider().resolve_api_key(snap)
-        if not key:
-            raise ProviderError("未配置 Anthropic API Key", status_code=503, code="PROVIDER_MISCONFIGURED", retryable=False)
-        model = os.environ.get("ZHIJUN_ANTHROPIC_MODEL", "").strip() or DEFAULT_ANTHROPIC_MODEL
-        fallbacks = os.environ.get("ZHIJUN_ANTHROPIC_FALLBACKS", "1").strip().lower() not in ("0", "false", "no")
-        return AnthropicProvider(model=model, api_key=key, timeout=float(snap.timeout_seconds), fallbacks=fallbacks)
-    use_openai = override == "openai" or (not override and snap.provider == "openai" and snap.external_enabled)
+        raise ProviderError("本机禁止访问 Anthropic；请使用已配置的允许通道", code="SERVICE_FORBIDDEN", retryable=False)
+    selected = bool(getattr(snap, "external_provider_id", None))
+    use_openai = ((snap.provider == "openai" and snap.external_enabled) if selected
+                  else (override == "openai" or (not override and snap.provider == "openai" and snap.external_enabled)))
     if use_openai:
-        # 环境变量优先（联调 / 评测用；密钥只在进程环境里，不落库不写日志），否则用设置页快照 + secret store。
-        base_url = os.environ.get("ZHIJUN_OPENAI_BASE_URL", "").strip() or snap.base_url
-        model = os.environ.get("ZHIJUN_OPENAI_MODEL", "").strip() or snap.model
-        key = os.environ.get("ZHIJUN_OPENAI_API_KEY", "").strip() or get_provider().resolve_api_key(snap)
+        # 用户已选定的供应商必须整体生效，不能把新端点与旧环境变量密钥混用。
+        # 没有已保存供应商时，仍保留联调 / 评测的环境变量兼容路径。
+        base_url = snap.base_url if selected else (os.environ.get("ZHIJUN_OPENAI_BASE_URL", "").strip() or snap.base_url)
+        model = snap.model if selected else (os.environ.get("ZHIJUN_OPENAI_MODEL", "").strip() or snap.model)
+        key = get_provider().resolve_api_key(snap) if selected else (os.environ.get("ZHIJUN_OPENAI_API_KEY", "").strip() or get_provider().resolve_api_key(snap))
         if not base_url or not model or not key:
             raise ProviderError(
                 "外部模型配置不完整：请在设置里填写 BaseURL、API Key 与 Model",
@@ -650,9 +684,13 @@ def build_provider(snapshot=None) -> ChatProvider:
             timeout = float(os.environ.get("ZHIJUN_OPENAI_TIMEOUT", "") or snap.timeout_seconds)
         except ValueError:
             timeout = float(snap.timeout_seconds)
-        task_model = os.environ.get("ZHIJUN_OPENAI_TASK_MODEL", "").strip() or None
+        task_model = None if selected else (os.environ.get("ZHIJUN_OPENAI_TASK_MODEL", "").strip() or None)
         thinking = os.environ.get("ZHIJUN_OPENAI_THINKING", "").strip() or None
-        return OpenAICompatibleProvider(base_url, model, key, timeout=timeout, task_model=task_model, thinking=thinking)
+        result = OpenAICompatibleProvider(base_url, model, key, timeout=timeout, task_model=task_model, thinking=thinking)
+        # Internal-only identity lets the dispatch guard notice a saved account
+        # change even when the endpoint and model stay identical. Never a token.
+        result.configuration_revision = (snap.external_provider_id, snap.secret_ref) if selected else None
+        return result
     local = snap.local
     try:
         num_ctx = int(os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX)

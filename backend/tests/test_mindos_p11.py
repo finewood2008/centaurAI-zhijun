@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 import wiki_store
 from mindos import governance
-from mindos.stores import governance_store
+from mindos.stores import governance_store, job_store
 
 _real_parse_fm = wiki_store._parse_frontmatter
 
@@ -21,6 +21,8 @@ def _new_store(self) -> Path:
     tmp = tempfile.mkdtemp(prefix="govtest_")
     path = Path(tmp) / "governance.db"
     governance_store.reset_for_tests(path)
+    job_store.reset_for_tests(Path(tmp) / "jobs.db")
+    self.addCleanup(job_store.reset_for_tests)
     return path
 
 
@@ -72,11 +74,13 @@ class TestGovernanceStore(unittest.TestCase):
         self.assertEqual(resolved["status"], "ignored")
         self.assertEqual(resolved["note"], "no change")
 
-    def test_archive_material(self):
-        self.store.archive_material("mindos_x")
-        self.assertIn("mindos_x", self.store.archived_material_ids())
-        self.store.unarchive_material("mindos_x")
-        self.assertNotIn("mindos_x", self.store.archived_material_ids())
+    def test_recycle_material(self):
+        store = job_store.JobStore.instance()
+        store.register("mindos_x", "x.md", "document", "/synthetic/x.md")
+        store.set_recycled("mindos_x", True)
+        self.assertIn("mindos_x", store.recycled_ids())
+        store.set_recycled("mindos_x", False)
+        self.assertNotIn("mindos_x", store.recycled_ids())
 
     def test_recover_processing(self):
         """仅恢复租约过期的 processing 中间态，不触碰仍在执行的仲裁。"""
@@ -229,7 +233,9 @@ class TestScan(unittest.TestCase):
 
     def test_scan_relation_excludes_archived(self):
         """已归档原材料不再生成"待确认关联"候选。"""
-        self.store.archive_material("mindos_archived")
+        store = job_store.JobStore.instance()
+        store.register("mindos_archived", "a.md", "document", "/synthetic/a.md")
+        store.set_recycled("mindos_archived", True)
         page = {"path": "/wiki/d.md", "title": "D",
                 "content": "---\ntitle: \"D\"\nmindos_card: true\n---\n# D\nbody"}
         with patch.object(governance.knowledge, "knowledge_list",
@@ -249,15 +255,11 @@ class TestScan(unittest.TestCase):
 
     def test_related_layer_excludes_archived(self):
         """related 召回层也排除已归档原材料（P9/P10 相关内容、图谱同样生效）。"""
-        self.store.archive_material("mindos_a")
-        with patch.object(governance.related.ingestion.JobStore, "instance",
-                          return_value=MagicMock(list=lambda: [
-                              {"material_id": "mindos_a", "file_name": "A.pdf", "file_type": "document",
-                               "source_path": "/w/a.pdf"},
-                              {"material_id": "mindos_b", "file_name": "B.pdf", "file_type": "document",
-                               "source_path": "/w/b.pdf"},
-                          ])), \
-             patch.object(governance.related, "_ann_get", return_value={"tags": ["x"]}):
+        store = job_store.JobStore.instance()
+        store.register("mindos_a", "A.pdf", "document", "/w/a.pdf")
+        store.register("mindos_b", "B.pdf", "document", "/w/b.pdf")
+        store.set_recycled("mindos_a", True)
+        with patch.object(governance.related, "_ann_get", return_value={"tags": ["x"]}):
             results = governance.related._shared_tag_materials(["x"], "")
         ids = {r["id"] for r in results}  # P14-09：related 统一 items 结构使用 id
         self.assertNotIn("mindos_a", ids)  # 已归档材料被排除
@@ -495,13 +497,15 @@ class TestResolve(unittest.TestCase):
 
 class TestKnowledgeArchiveFilter(unittest.TestCase):
 
-    def test_is_active_filters_archived(self):
+    def test_is_active_filters_recycled_but_ignores_retired_archive_flag(self):
         from mindos import knowledge
         archived = {"path": "/wiki/a.md",
                     "content": '---\ntitle: "A"\nmindos_card: true\nmindos_archived: true\n---\n# A\nbody'}
         active = {"path": "/wiki/b.md",
                   "content": '---\ntitle: "B"\nmindos_card: true\n---\n# B\nbody'}
-        self.assertFalse(knowledge._is_active_mindos_card(archived))
+        self.assertTrue(knowledge._is_active_mindos_card(archived))
+        recycled = {**archived, "content": archived["content"].replace("mindos_archived", "mindos_recycled")}
+        self.assertFalse(knowledge._is_active_mindos_card(recycled))
         self.assertTrue(knowledge._is_active_mindos_card(active))
 
 

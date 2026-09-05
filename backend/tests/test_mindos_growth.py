@@ -1,6 +1,7 @@
 """知君成长闭环 MVP：持久化、状态机、今日聚合与 HTTP 合同。"""
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import time
@@ -97,7 +98,7 @@ class GrowthStoreTests(unittest.TestCase):
         ), patch.object(
             self.store, "list_charters", side_effect=AssertionError("separate read")
         ):
-            self.assertEqual(growth.get_charter(), expected)
+            self.assertEqual(growth.get_charter(), {**expected, "workspace": None})
 
     def test_concurrent_charter_versions_do_not_reverse_timestamps(self) -> None:
         older_entered = threading.Event()
@@ -416,6 +417,54 @@ class GrowthApiTests(unittest.TestCase):
         self.assertEqual(body["currentCharter"]["version"], 1)
         self.assertEqual(body["latestReview"]["decisionId"], decision["id"])
         self.assertEqual(body["stats"]["reviewedDecisions"], 1)
+
+
+class GrowthEvidenceReceiptTests(unittest.TestCase):
+    def refs(self, count=8):
+        return [{"kind": "charter_clause", "id": "charter_synthetic:clause_" + str(i), "version": "a" * 64} for i in range(count)]
+
+    def validate(self, value):
+        return growth.DecisionCreate(**{**_decision(), "evidenceRefs": [value]}).evidenceRefs
+
+    def test_structured_lineage_over_500_chars_is_preserved_exactly(self):
+        value = json.dumps({"kind": "routing", "routingSources": self.refs()}, ensure_ascii=False)
+        self.assertGreater(len(value), 500)
+        self.assertEqual(self.validate(value), [value])
+
+    def test_helper_receipt_preserves_sources_and_basis(self):
+        value = json.dumps({"kind": "helper_lineage", "conversationId": "conversation-synthetic",
+            "task": "decision_suggestions", "revision": 3, "possibleAssistance": True,
+            "charterBasis": {"charterId": "charter_synthetic", "version": 2, "scope": "global", "clauseIds": ["guidance"]},
+            "routingSources": self.refs()}, ensure_ascii=False)
+        self.assertEqual(self.validate(value), [value])
+
+    def test_plain_evidence_still_has_500_character_limit(self):
+        self.assertEqual(self.validate("x" * 500), ["x" * 500])
+        with self.assertRaises(ValueError): self.validate("x" * 501)
+        with self.assertRaises(ValueError): self.validate(json.dumps({"kind": "not-routing", "data": "x" * 501}))
+
+    def test_structured_shape_cannot_smuggle_free_text_or_malformed_refs(self):
+        invalid = [
+            {"kind": "routing", "routingSources": self.refs(), "hiddenBody": "x" * 600},
+            {"kind": "routing", "routingSources": "not-a-list"},
+            {"kind": "routing", "routingSources": [{"kind": "unknown", "id": "x"}]},
+            {"kind": "routing", "routingSources": [{"kind": "message", "id": "x", "version": ["bad"]}]},
+            {"kind": "routing", "routingSources": [{"kind": "material", "id": "x", "materialVersion": False}]},
+            {"kind": "helper_lineage", "routingSources": [], "charterBasis": [{}]},
+        ]
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.validate(json.dumps(value))
+
+    def test_per_receipt_and_aggregate_limits_reject_without_truncation(self):
+        with self.assertRaises(ValueError):
+            self.validate(json.dumps({"kind": "routing", "routingSources": self.refs(1025)}))
+        large = [{"kind": "message", "id": "x" * 250 + str(i), "version": "a" * 128} for i in range(400)]
+        with self.assertRaises(ValueError):
+            self.validate(json.dumps({"kind": "routing", "routingSources": large}))
+        receipts = [json.dumps({"kind": "routing", "routingSources": [{"kind": "message", "id": str(offset + i)} for i in range(600)]}) for offset in (0, 600)]
+        with self.assertRaises(ValueError):
+            growth.DecisionCreate(**{**_decision(), "evidenceRefs": receipts})
 
 
 class GrowthServerWiringTests(unittest.TestCase):

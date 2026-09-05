@@ -14,17 +14,17 @@ import time
 from datetime import datetime, timezone
 
 import config
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import (
     http_exception_handler as _fastapi_http_handler,
     request_validation_exception_handler as _fastapi_validation_handler,
 )
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from . import llm_transport, ollama_client, runtime_config_provider as rcp
-from .stores.runtime_settings_store import RevisionConflictError
+from .stores.runtime_settings_store import ActiveProviderError, RevisionConflictError
 
 # 固定脱敏测试文本（绝不携带真实材料/证据）。
 _TEST_PROMPT = "ping"
@@ -102,6 +102,29 @@ class ModelActionBody(BaseModel):
     model: str
 
 
+class ExternalProviderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=80)
+    baseUrl: str = Field(min_length=1, max_length=2048)
+    apiKey: str = Field(min_length=1, max_length=8192)
+    model: str | None = Field(default=None, max_length=128)
+
+
+class ExternalProviderUpdate(ExternalProviderCreate):
+    revision: StrictInt = Field(ge=1)
+    apiKey: str | None = Field(default=None, max_length=8192)
+
+
+class ExternalProviderRevision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: StrictInt = Field(ge=1)
+
+
+class ExternalProviderActivate(ExternalProviderRevision):
+    model: str = Field(min_length=1, max_length=128)
+    chatRevision: StrictInt = Field(ge=0)
+
+
 # =====================================================================
 # 错误映射
 # =====================================================================
@@ -109,6 +132,13 @@ class ModelActionBody(BaseModel):
 
 def _reject(exc: Exception) -> HTTPException:
     """把保存/测试校验异常映射为统一错误体 {code, message, details?} 的 HTTPException。"""
+    from .external_model_discovery import DiscoveryError
+    if isinstance(exc, KeyError):
+        return HTTPException(404, {"code": "not_found", "message": "供应商不存在"})
+    if isinstance(exc, ActiveProviderError):
+        return HTTPException(409, {"code": "active_provider", "message": str(exc)})
+    if isinstance(exc, DiscoveryError):
+        return HTTPException(502, {"code": exc.code, "message": str(exc)})
     if isinstance(exc, RevisionConflictError):
         latest = exc.latest
         return HTTPException(
@@ -376,7 +406,51 @@ def get_chat_provider() -> dict:
         "fallbackOllama": snap.fallback_ollama,
         "source": status.get("source", "defaults"),
         "effectiveProvider": effective,
+        "externalProviderId": snap.external_provider_id,
     }
+
+
+def get_external_providers():
+    return get_runtime_provider().list_external_providers()
+
+
+def create_external_provider(body: ExternalProviderCreate):
+    try:
+        return get_runtime_provider().save_external_provider(name=body.name, base_url=body.baseUrl,
+            api_key=body.apiKey, model=body.model)
+    except Exception as exc:
+        raise _reject(exc) from None
+
+
+def update_external_provider(provider_id: str, body: ExternalProviderUpdate):
+    try:
+        return get_runtime_provider().save_external_provider(ident=provider_id, expected_revision=body.revision,
+            name=body.name, base_url=body.baseUrl, api_key=body.apiKey, model=body.model)
+    except Exception as exc:
+        raise _reject(exc) from None
+
+
+def discover_external_provider_models(provider_id: str, body: ExternalProviderRevision):
+    try:
+        return get_runtime_provider().discover_external_models(provider_id, body.revision)
+    except Exception as exc:
+        raise _reject(exc) from None
+
+
+def activate_external_provider(provider_id: str, body: ExternalProviderActivate):
+    try:
+        profile = get_runtime_provider().activate_external_provider(provider_id, expected_revision=body.revision,
+            model=body.model, chat_revision=body.chatRevision)
+        return {"provider": profile, "chat": get_chat_provider()}
+    except Exception as exc:
+        raise _reject(exc) from None
+
+
+def delete_external_provider(provider_id: str, revision: int = Query(ge=1)):
+    try:
+        return get_runtime_provider().delete_external_provider(provider_id, revision)
+    except Exception as exc:
+        raise _reject(exc) from None
 
 
 def put_chat_provider(body: ChatProviderPut) -> dict:
@@ -435,7 +509,7 @@ def test_chat_provider(body: ChatProviderTest) -> dict:
         headers["Authorization"] = f"Bearer {key}"
         url = (cand.base_url or "").rstrip("/") + "/chat/completions"
         model = cand.model
-        channel = "chat"
+        channel = "diagnostic"
     else:
         url = cand.local.base_url.rstrip("/") + "/api/chat"
         model = cand.local.model
@@ -681,6 +755,15 @@ def configure_guards(guard) -> None:
     """注册管理路由；guard 统一为 server.require_local（loopback + CSRF，GET 不放松）。"""
     global router
     router = APIRouter(prefix="/api/system/models", tags=["system-models"])
+    for path, function, methods in (
+        ("/external-providers", get_external_providers, ["GET"]),
+        ("/external-providers", create_external_provider, ["POST"]),
+        ("/external-providers/{provider_id}", update_external_provider, ["PUT"]),
+        ("/external-providers/{provider_id}", delete_external_provider, ["DELETE"]),
+        ("/external-providers/{provider_id}/models", discover_external_provider_models, ["POST"]),
+        ("/external-providers/{provider_id}/activate", activate_external_provider, ["POST"]),
+    ):
+        router.add_api_route(path, function, methods=methods, dependencies=[Depends(guard)])
     router.add_api_route(
         "/material-runtime", get_material_runtime, methods=["GET"],
         dependencies=[Depends(guard)],

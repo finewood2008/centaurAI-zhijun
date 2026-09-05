@@ -3,6 +3,8 @@
 // 复用双通道划分：材料处理固定本地 Ollama；对话问答可显式配置并授权的外部 OpenAI 兼容 API。
 // 契约：/api/system/models/*（require_local + revision 乐观锁）；test 提交表单暂存值不持久化。
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import RoutingPanel from '@/components/conversation/RoutingPanel.vue'
+import ExternalProvidersPanel from '@/components/conversation/ExternalProvidersPanel.vue'
 import {
   Activity,
   Check,
@@ -26,6 +28,8 @@ import {
   ApiError,
   getNudgePolicy,
   putNudgePolicy,
+  getMemoryPolicy,
+  putMemoryPolicy,
   type ChatProviderConfig,
   type ChatProviderTestResult,
   type ListModelJobsResponse,
@@ -35,6 +39,7 @@ import {
   type ModelJob,
   type ModelJobType,
   type MonitorResponse,
+  type MemoryPolicy,
   type RuntimeTestResult,
 } from '@/services/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -76,6 +81,40 @@ async function saveNudgePolicy() {
   }
 }
 
+// 记忆整理偏好独立于主动回访和外发授权；只影响之后的新理解。
+const memoryPolicy = ref<MemoryPolicy | null>(null)
+const memoryMode = ref<MemoryPolicy['mode']>('important')
+const memorySaving = ref(false)
+const memoryError = ref('')
+
+async function loadMemoryPolicy() {
+  try {
+    memoryPolicy.value = await getMemoryPolicy()
+    memoryMode.value = memoryPolicy.value.mode
+    memoryError.value = ''
+  } catch {
+    memoryError.value = '记忆整理偏好暂时无法读取，请重试。'
+  }
+}
+
+async function saveMemoryPolicy() {
+  if (!memoryPolicy.value || memorySaving.value) return
+  memorySaving.value = true
+  memoryError.value = ''
+  try {
+    memoryPolicy.value = await putMemoryPolicy({ mode: memoryMode.value, expectedRevision: memoryPolicy.value.revision })
+    memoryMode.value = memoryPolicy.value.mode
+    toast({ type: 'success', message: '记忆整理偏好已保存，现有记忆不受影响' })
+  } catch (err) {
+    await loadMemoryPolicy()
+    memoryError.value = err instanceof ApiError && err.status === 409
+      ? '偏好已在别处更新，已读取最新状态；如需更改，请重新选择。'
+      : '偏好未保存，请重试；原设置继续生效。'
+  } finally {
+    memorySaving.value = false
+  }
+}
+
 const loading = ref(true)
 const loadError = ref('')
 const loadingSection = ref<'' | 'material' | 'chat'>('')
@@ -103,21 +142,14 @@ const cProvider = ref<'ollama' | 'openai'>('ollama')
 const cExternal = ref(false)
 const cBaseUrl = ref('')
 const cModel = ref('')
-const cApiKey = ref('') // 留空 = 保持原密钥
-const cApiKeyConfigured = ref(false)
-const cApiKeyHint = ref<string | null>(null)
-// 清除已配置密钥的受控意图：勾选后保存时发送 clearApiKey=true，撤销后端保存的密钥。
-const cClearApiKey = ref(false)
-const cFallback = ref(true)
+const cFallback = ref(false)
 const cTimeout = ref<number>(60)
 const cBudget = ref<number>(90)
 const cEffective = ref<'ollama' | 'openai'>('ollama')
 const cTesting = ref(false)
 const cSaving = ref(false)
 const cTest = ref<ChatProviderTestResult | null>(null)
-
-// 外部通道开启且 provider=openai 时，外部字段才可编辑
-const cExternalEditable = computed(() => cProvider.value === 'openai' && cExternal.value)
+const cProviderBusy = ref(false)
 
 const healthReachable = computed(() =>
   mHealth.value ? mHealth.value.reachable : false,
@@ -167,20 +199,18 @@ function applyMaterial(cfg: MaterialRuntimeConfig) {
   mAvailableModels.value = []
 }
 
-function applyChat(cfg: ChatProviderConfig) {
+function applyChat(cfg: ChatProviderConfig, preserveTiming = false) {
   cRevision.value = cfg.revision
   cSource.value = cfg.source
   cProvider.value = cfg.provider
   cExternal.value = cfg.externalEnabled
   cBaseUrl.value = cfg.baseUrl ?? ''
   cModel.value = cfg.model ?? ''
-  cApiKey.value = ''
-  cApiKeyConfigured.value = cfg.apiKeyConfigured
-  cApiKeyHint.value = cfg.apiKeyHint
-  cClearApiKey.value = false // 载入最新配置后复位“清除”意图
-  cFallback.value = cfg.fallbackOllama
-  cTimeout.value = cfg.timeoutSeconds
-  cBudget.value = cfg.totalBudgetSeconds
+  cFallback.value = false // Interactive routing never silently downgrades.
+  if (!preserveTiming) {
+    cTimeout.value = cfg.timeoutSeconds
+    cBudget.value = cfg.totalBudgetSeconds
+  }
   cEffective.value = cfg.effectiveProvider
   cTest.value = null
 }
@@ -286,7 +316,7 @@ function refreshMaterial() {
 async function disableExternalChatImmediately() {
   // 关闭外发是安全动作，不能要求用户再点击一次“保存”。先读取服务端当前值，
   // 仅变更 externalEnabled，避免把页面里尚未确认的 URL/模型草稿一并持久化。
-  if (cExternal.value || cSaving.value) return
+  if (cSaving.value) return
   cSaving.value = true
   try {
     const current = await api.getChatProvider()
@@ -316,62 +346,21 @@ async function disableExternalChatImmediately() {
 }
 
 async function saveChat() {
-  if (cProvider.value === 'ollama') {
-    // 归一化：provider=ollama → 强制 externalEnabled=false，不外发外部字段
-    cSaving.value = true
-    try {
-      // ollama 分支：PUT 响应仅含已保存字段，重拉完整 GET（含 source/effectiveProvider 等）。
-      await api.putChatProvider({
-        provider: 'ollama',
-        externalEnabled: false,
-        timeoutSeconds: cTimeout.value,
-        totalBudgetSeconds: cBudget.value,
-        fallbackOllama: cFallback.value,
-        revision: cRevision.value,
-      })
-      applyChat(await api.getChatProvider())
-      toast({ type: 'success', message: '对话问答配置已保存（本地 Ollama）' })
-    } catch (e) {
-      if (isConflictError(e)) {
-        conflictFor.value = 'chat'
-        conflictPrompt.value = true
-        return // 保留当前草稿，交由确认对话框决定是否加载最新
-      }
-      toast({ type: 'error', message: e instanceof Error ? e.message : '保存失败' })
-    } finally {
-      cSaving.value = false
-    }
-    return
-  }
-
-  // provider=openai
-  if (cExternal.value && (!cBaseUrl.value.trim() || !cModel.value.trim())) {
-    toast({ type: 'error', message: '开启外部问答需填写 API Base URL 与模型名' })
-    return
-  }
-  // 已标记清除时无需密钥输入；否则外发必须提供密钥（新输入或既有已配置）
-  if (cExternal.value && !cClearApiKey.value && !cApiKey.value.trim() && !cApiKeyConfigured.value) {
-    toast({ type: 'error', message: '开启外部问答需提供 API Key' })
-    return
-  }
+  // Credentials and selected models are managed only by ExternalProvidersPanel.
   cSaving.value = true
   try {
-    // PUT 响应缺 apiKeyHint/effectiveProvider 等只读展示项；保存后重拉完整 GET 状态。
     await api.putChatProvider({
-      provider: 'openai',
+      provider: cProvider.value,
       externalEnabled: cExternal.value,
       baseUrl: cBaseUrl.value.trim() || null,
       model: cModel.value.trim() || null,
       timeoutSeconds: cTimeout.value,
       totalBudgetSeconds: cBudget.value,
       fallbackOllama: cFallback.value,
-      // 清除密钥意图：不发 apiKey，发送 clearApiKey=true 撤销已保存密钥。
-      apiKey: cClearApiKey.value ? undefined : (cApiKey.value.trim() || undefined),
-      clearApiKey: cClearApiKey.value ? true : undefined,
       revision: cRevision.value,
     })
     applyChat(await api.getChatProvider())
-    toast({ type: 'success', message: cExternal.value ? '对话问答配置已保存（外部 API）' : '对话问答配置已保存（本地 Ollama）' })
+    toast({ type: 'success', message: '请求超时设置已保存' })
   } catch (e) {
     if (isConflictError(e)) {
       conflictFor.value = 'chat'
@@ -400,14 +389,13 @@ async function testChat() {
           totalBudgetSeconds?: number
           fallbackOllama?: boolean
         } =
-      cProvider.value === 'ollama'
+      !cExternal.value || cProvider.value === 'ollama'
         ? { provider: 'ollama', externalEnabled: false }
         : {
             provider: 'openai',
             externalEnabled: cExternal.value,
             baseUrl: cBaseUrl.value.trim() || undefined,
             model: cModel.value.trim() || undefined,
-            apiKey: cApiKey.value.trim() || undefined,
             timeoutSeconds: cTimeout.value,
             totalBudgetSeconds: cBudget.value,
             fallbackOllama: cFallback.value,
@@ -594,6 +582,7 @@ let m2TimerHandle: number | null = null
 
 onMounted(() => {
   void loadNudgePolicy()
+  void loadMemoryPolicy()
   loadAll()
   void m2LoadModels()
   void m2RefreshAll()
@@ -647,7 +636,29 @@ onUnmounted(() => {
             <option :value="5">5 条</option>
           </select>
         </label>
-        <p class="rt-note">哪些话题不想让知君主动提、AI 不该替你决定什么，写在<RouterLink to="/judgments" class="rt-link">「判断 · 我的方向」</RouterLink>里。</p>
+        <p class="rt-note">哪些话题不想让知君主动提、AI 不该替你决定什么，写在<RouterLink to="/me/charter" class="rt-link">「人生章程」</RouterLink>里。</p>
+      </div>
+    </section>
+
+    <section class="rt-section" data-testid="memory-policy">
+      <header class="rt-section__head">
+        <div class="rt-section__title">
+          <span class="rt-section__icon"><MemoryStick :size="16" aria-hidden="true" /></span>
+          <h2>记忆整理</h2>
+        </div>
+      </header>
+      <div class="rt-form">
+        <label class="rt-field">
+          什么时候提出新的理解
+          <select v-model="memoryMode" :disabled="!memoryPolicy || memorySaving" @change="saveMemoryPolicy">
+            <option value="important">仅重要内容提醒</option>
+            <option value="manual">仅在我要求时整理</option>
+          </select>
+          <span v-if="memoryMode === 'important'" class="rt-hint">只挑值得长期保留的内容请你核对，每次只提醒一条。继续聊出新的重要信息后才再次提醒；其余候选可随时在对话的「待核对」里查看，事件细节合并到可选小结中。</span>
+          <span v-else class="rt-hint">平常只保留对话，不自动整理新的本体理解；说“请记住……”时再整理。</span>
+        </label>
+        <p class="rt-note">不删除或改写已有记忆，也不改变自我贴合度。这个设置不授予在线模型任何新的资料权限。</p>
+        <p v-if="memoryError" role="alert" class="rt-note">{{ memoryError }} <button type="button" class="rt-link" :disabled="memorySaving" @click="loadMemoryPolicy">重新读取</button></p>
       </div>
     </section>
 
@@ -660,7 +671,7 @@ onUnmounted(() => {
         <header class="rt-section__head">
           <div class="rt-section__title">
             <span class="rt-section__icon"><MessageSquare :size="16" aria-hidden="true" /></span>
-            <h2>模型与隐私</h2>
+            <h2>日常对话与理解</h2>
           </div>
           <span class="rt-section__source" :class="cSource === 'defaults' ? 'is-default' : 'is-custom'">
             {{ cSource === 'defaults' ? '部署默认值' : '运行时设置' }}
@@ -668,66 +679,16 @@ onUnmounted(() => {
         </header>
 
         <div class="rt-form">
-          <label class="rt-field is-switch">
-            <span class="rt-field__line">
-              <span>用外部模型跟知君对话</span>
-              <span class="rt-toggle">
-                <input v-model="cExternal" type="checkbox" role="switch" :disabled="cSaving" @change="disableExternalChatImmediately" />
-                <span class="rt-toggle__track" aria-hidden="true" />
-              </span>
-            </span>
-            <span class="rt-hint">
-              {{ cExternal ? '开启中：你的问题和完成这一轮所必需的理解、资料片段会发到下面配置的外部服务；原件不出设备，标为敏感的理解不外发。' : '关闭时一切都在本机；本机模型慢一些，但数据不出设备。' }}
-            </span>
-          </label>
-
-          <label class="rt-field">
-            提供商
-            <select v-model="cProvider">
-              <option value="ollama">本机模型（Ollama）</option>
-              <option value="openai">外部模型（OpenAI 兼容，如 DeepSeek）</option>
-            </select>
-          </label>
-
-          <template v-if="cProvider === 'openai'">
-            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable }">
-              服务地址
-              <input v-model="cBaseUrl" type="url" placeholder="https://api.deepseek.com/v1" :disabled="!cExternalEditable" />
-            </label>
-            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable }">
-              模型名
-              <input v-model="cModel" type="text" placeholder="deepseek-v4-flash" :disabled="!cExternalEditable" />
-            </label>
-            <label class="rt-field" :class="{ 'is-disabled': !cExternalEditable && !(cApiKeyConfigured && !cExternal) }">
-              API Key
-              <input v-model="cApiKey" type="password" placeholder="留空表示保持原密钥" :disabled="!cExternalEditable" autocomplete="off" />
-              <span class="rt-hint">
-                {{ cApiKeyConfigured ? `已配置${cApiKeyHint ? `（${cApiKeyHint}）` : ''}` : '未配置'
-                }}；密钥仅下发脱敏提示，不会回显。
-              </span>
-              <span v-if="cProvider === 'openai' && !cExternal && cApiKeyConfigured" class="rt-clear-key">
-                <label :class="{ 'is-marked': cClearApiKey }">
-                  <input v-model="cClearApiKey" type="checkbox" />
-                  <span>清除已配置密钥{{ cClearApiKey ? '（保存后生效）' : '（请保持外部问答关闭）' }}</span>
-                </label>
-              </span>
-            </label>
-          </template>
+          <RoutingPanel />
+          <ExternalProvidersPanel :chat-revision="cRevision" :disabled="cSaving || cTesting" @activated="applyChat($event, true)" @busy="cProviderBusy = $event" />
+          <p class="rt-note">{{ cExternal ? '在线通道已启用；仅在对话选择在线理解后使用。' : '在线通道已暂停；本地处理仍可用。' }}<button v-if="cExternal" type="button" class="rt-link" :disabled="cSaving || cProviderBusy" @click="disableExternalChatImmediately">暂停在线通道，使用本地</button></p>
           <div class="rt-field is-none-label">
             <span class="rt-hint">外部关闭时，对话用本机模型 <code>{{ chatLocalModel }}</code>。</span>
           </div>
 
           <details class="rt-more">
             <summary>更多</summary>
-            <label class="rt-field is-switch">
-              <span class="rt-field__line">
-                <span>外部失败时回退本机模型</span>
-                <span class="rt-toggle">
-                  <input v-model="cFallback" type="checkbox" role="switch" />
-                  <span class="rt-toggle__track" aria-hidden="true" />
-                </span>
-              </span>
-            </label>
+            <p>在线失败时保留消息，提供重试在线或改用本地；不自动回退、不切换服务。</p>
             <div class="rt-form__row">
               <label class="rt-field is-narrow">
                 请求超时（秒）
@@ -742,12 +703,12 @@ onUnmounted(() => {
         </div>
 
         <div class="rt-actions">
-          <BaseButton variant="secondary" size="sm" @click="testChat" :loading="cTesting">
-            <template v-if="!cTesting">测试连通性</template>
+          <BaseButton variant="secondary" size="sm" @click="testChat" :loading="cTesting" :disabled="cProviderBusy || cSaving">
+            <template v-if="!cTesting">测试当前通道</template>
             <template v-else>测试中…</template>
           </BaseButton>
-          <BaseButton variant="primary" @click="saveChat" :loading="cSaving" :disabled="cTesting">
-            保存
+          <BaseButton variant="primary" @click="saveChat" :loading="cSaving" :disabled="cTesting || cProviderBusy">
+            保存超时设置
           </BaseButton>
           <button type="button" class="rt-refresh" title="重新读取" aria-label="刷新对话问答配置" @click="refreshChat">
             <RefreshCw :size="14" aria-hidden="true" />
@@ -773,7 +734,7 @@ onUnmounted(() => {
         <header class="rt-section__head">
           <div class="rt-section__title">
             <span class="rt-section__icon is-local"><Server :size="16" aria-hidden="true" /></span>
-            <h2>材料处理（本地 Ollama）</h2>
+            <h2>本地文件处理（Ollama）</h2>
           </div>
           <span class="rt-section__source" :class="mSource === 'defaults' ? 'is-default' : 'is-custom'">
             {{ mSource === 'defaults' ? '部署默认值' : '运行时设置' }}

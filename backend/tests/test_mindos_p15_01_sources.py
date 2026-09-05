@@ -80,7 +80,9 @@ class KnowledgeSourcesTestCase(unittest.TestCase):
         self.store.register(mid, name, "document", f"/tmp/{mid}.pdf")
         return mid
 
-    def _status_of(self, material_id: str) -> dict | None:
+    def _status_of(self, material_id: str, device_scope="global") -> dict | None:
+        if device_scope != "global":
+            return None
         record = self.store.get(material_id)
         if record is None:
             return None

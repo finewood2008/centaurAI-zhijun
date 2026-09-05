@@ -19,8 +19,10 @@ CHROMA_DATA_DIR = str(CHROMA_DATA_PATH)
 WATCH_FOLDER = str(WATCH_FOLDER_PATH)
 MODELS_CACHE = str(Path(__file__).parent / "models_cache")
 
-# 嵌入模型（本地路径，通过 modelscope/HuggingFace 下载）
-TEXT_MODEL_PATH = str(Path(__file__).parent / "models_cache" / "BAAI" / "bge-small-zh-v1.5")
+# 嵌入模型（本地路径，通过 modelscope/HuggingFace 下载）。
+# 开发工作树可通过环境变量复用宿主机已有缓存，避免每个 worktree 复制约 190MB 权重。
+_DEFAULT_TEXT_MODEL_PATH = Path(__file__).parent / "models_cache" / "BAAI" / "bge-small-zh-v1.5"
+TEXT_MODEL_PATH = os.getenv("CENTAUR_TEXT_MODEL_PATH", "").strip() or str(_DEFAULT_TEXT_MODEL_PATH)
 IMAGE_MODEL_PATH = str(Path(__file__).parent / "models_cache" / "models--openai--clip-vit-base-patch32" / "snapshots" / "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
 
 # 服务器

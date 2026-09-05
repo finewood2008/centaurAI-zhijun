@@ -29,6 +29,7 @@ from .secret_store import (
 from .stores.runtime_settings_store import (
     SECTION_CHAT,
     SECTION_MATERIAL,
+    ActiveProviderError,
     RevisionConflictError,
     RuntimeSettingsStore,
 )
@@ -82,6 +83,7 @@ class ChatProviderSnapshot:
     total_budget_seconds: int
     fallback_ollama: bool
     local: LocalOllamaSnapshot
+    external_provider_id: str | None = None
 
 
 # =====================================================================
@@ -147,6 +149,20 @@ def validate_qa_base_url(url: str) -> str:
     host_part = f"[{host}]" if ":" in host and not host.startswith("[") else host
     netloc = host_part if port is None else f"{host_part}:{port}"
     return f"{scheme}://{netloc}{normalized_path}"
+
+
+def validate_external_base_url(url: str) -> str:
+    from .llm_transport import _check_destination
+    if not isinstance(url, str) or any(ord(c) <= 32 for c in url) or "%" in url:
+        raise ValidationError("服务地址包含不支持的字符")
+    try:
+        value = validate_qa_base_url(url.rstrip("/"))
+        _check_destination(value)
+    except ValidationError:
+        raise
+    except (ValueError, UnicodeError):
+        raise ValidationError("服务地址无效或本机禁止访问此模型服务") from None
+    return value
 
 
 def validate_model_name(model: str) -> str:
@@ -224,6 +240,7 @@ def _chat_from_payload(
         ),
         fallback_ollama=bool(payload.get("fallbackOllama", True)),
         local=local,  # 材料通道快照（问答本地回退复用同一份，随材料配置联动）
+        external_provider_id=payload.get("externalProviderId"),
     )
 
 
@@ -268,6 +285,7 @@ class RuntimeConfigProvider:
             total_budget_seconds=self._chat.total_budget_seconds,
             fallback_ollama=self._chat.fallback_ollama,
             local=local,
+            external_provider_id=self._chat.external_provider_id,
         )
 
     # ---- 快照获取（请求/任务边界调用一次，沿调用链下传） ----
@@ -303,6 +321,113 @@ class RuntimeConfigProvider:
             return {"section": section, "revision": 0, "source": "defaults"}
         return row
 
+    def external_profile_projection(self, row):
+        current = self._store.get_section(SECTION_CHAT) or {}
+        active = (current.get("payload") or {}).get("externalProviderId") == row["id"]
+        return {"id": row["id"], "revision": row["revision"], **row["payload"],
+                "apiKeyConfigured": bool(row["secret_ref"]), "active": active,
+                "pendingActivation": active and (current["payload"].get("externalProviderRevision") != row["revision"])}
+
+    def list_external_providers(self):
+        current = self._store.get_section(SECTION_CHAT) or {}
+        return {"providers": [self.external_profile_projection(r) for r in self._store.list_external_profiles()],
+                "activeProviderId": (current.get("payload") or {}).get("externalProviderId"),
+                "chatRevision": current.get("revision", 0)}
+
+    def save_external_provider(self, *, name, base_url, api_key=None, model=None, ident=None, expected_revision=None):
+        name = (name or "").strip()
+        if not name or len(name) > 80 or any(ord(c) < 32 for c in name):
+            raise ValidationError("供应商名称长度应为 1-80 字符")
+        base_url = validate_external_base_url(base_url)
+        model = validate_model_name(model) if model else None
+        old = self._store.get_external_profile(ident) if ident else None
+        if ident and not old:
+            raise KeyError("供应商不存在")
+        if old and old["revision"] != expected_revision:
+            raise RevisionConflictError(old)
+        if old and model is None:
+            model = old["payload"].get("model")
+        if api_key and (len(api_key) > 8192 or any(ord(c) < 32 for c in api_key)):
+            raise ValidationError("API Key 为空、过长或包含控制字符")
+        supplied_key = (api_key or "").strip()
+        if not supplied_key and (not old or old["payload"]["baseUrl"] != base_url):
+            raise ValidationError("新增服务或更改地址时请重新输入该服务的 API Key")
+        old_ref = old["secret_ref"] if old else None
+        new_ref = old_ref
+        if supplied_key:
+            if not self._secret_store_available:
+                raise RuntimeConfigError("密钥存储不可用")
+            new_ref = new_secret_ref()
+            self._store.add_secret_ref(new_ref)
+            try:
+                self._secret_store.set_secret(new_ref, supplied_key)
+            except Exception:
+                self._compensate_secret(new_ref)
+                raise RuntimeConfigError("密钥保存失败") from None
+        try:
+            row = self._store.put_external_profile(ident, expected_revision,
+                {"name": name, "baseUrl": base_url, "model": model}, new_ref)
+        except Exception:
+            if new_ref and new_ref != old_ref:
+                self._compensate_secret(new_ref)
+            raise
+        if old_ref and old_ref != new_ref:
+            self._schedule_secret_cleanup(old_ref)
+        return self.external_profile_projection(row)
+
+    def _compensate_secret(self, ref):
+        try:
+            if ref not in self._store.referenced_secret_refs():
+                self._secret_store.delete_secret(ref)
+                self._store.remove_secret_ref(ref)
+        except Exception:
+            pass
+
+    def activate_external_provider(self, ident, *, expected_revision, model, chat_revision):
+        model = validate_model_name(model)
+        row = self._store.get_external_profile(ident)
+        if not row:
+            raise KeyError("供应商不存在")
+        validate_external_base_url(row["payload"]["baseUrl"])
+        if not row["secret_ref"] or not self._secret_store.get_secret(row["secret_ref"]):
+            raise ValidationError("API Key 不可用，请重新保存")
+        before = self._store.get_section(SECTION_CHAT) or {}
+        defaults = {"timeoutSeconds": self._chat.timeout_seconds, "totalBudgetSeconds": self._chat.total_budget_seconds}
+        with self._lock:
+            result = self._store.activate_external_profile(ident, expected_revision, model, chat_revision, defaults)
+            self._reload()
+        old_ref = before.get("secret_ref")
+        if old_ref and old_ref != result["secret_ref"]:
+            self._schedule_secret_cleanup(old_ref)
+        return self.external_profile_projection(result)
+
+    def delete_external_provider(self, ident, expected_revision):
+        try:
+            row = self._store.delete_external_profile(ident, expected_revision)
+        except ValueError as exc:
+            if isinstance(exc, (RevisionConflictError, ActiveProviderError)):
+                raise
+            raise ValidationError(str(exc)) from None
+        if row["secret_ref"]:
+            self._schedule_secret_cleanup(row["secret_ref"])
+        return {"deleted": True, "providerId": ident}
+
+    def discover_external_models(self, ident, expected_revision):
+        from .external_model_discovery import discover_models
+        row = self._store.get_external_profile(ident)
+        if not row:
+            raise KeyError("供应商不存在")
+        if row["revision"] != expected_revision:
+            raise RevisionConflictError(row)
+        key = self._secret_store.get_secret(row["secret_ref"]) if row["secret_ref"] else None
+        if not key:
+            raise ValidationError("API Key 不可用，请重新保存")
+        result = discover_models(row["payload"]["baseUrl"], key)
+        fresh = self._store.get_external_profile(ident)
+        if not fresh or fresh["revision"] != row["revision"]:
+            raise RevisionConflictError(fresh or {"revision": None})
+        return {"models": result, "providerId": ident, "revision": row["revision"]}
+
     # ---- 保存（PUT；含 secret saga §5.2.1） ----
 
     def save_material_runtime(
@@ -321,8 +446,7 @@ class RuntimeConfigProvider:
             SECTION_MATERIAL, expected_revision, payload, secret_ref=None
         )
         with self._lock:
-            self._local = _local_from_payload(row["payload"])
-            # 问答本地回退复用同一材料快照：材料变更后同步重建 chat.local。
+            self._reload()
             self._chat = self._chat_with_local(self._local)
         return row
 
@@ -345,7 +469,7 @@ class RuntimeConfigProvider:
             raise ValidationError("仅支持 ollama / openai 提供商")
         external_enabled = bool(external_enabled)
         if provider == "openai":
-            base_url = validate_qa_base_url(base_url or "")
+            base_url = validate_external_base_url(base_url or "")
             model = validate_model_name(model or "")
         else:
             # provider=ollama 时外部开关无意义：强制关闭，避免「ollama 却开启外发」的矛盾态。
@@ -357,6 +481,8 @@ class RuntimeConfigProvider:
 
         current = self._store.get_section(SECTION_CHAT)
         old_ref = current["secret_ref"] if current else None
+        if provider == "openai" and old_ref and current["payload"].get("baseUrl") != base_url and not (api_key or "").strip() and not clear_api_key:
+            raise ValidationError("更改服务地址时请重新输入该服务的 API Key")
         # 先做矛盾状态校验（在写密钥之前），避免「启用外部但没有密钥」被保存。
         if clear_api_key:
             effective_ref = None
@@ -387,6 +513,13 @@ class RuntimeConfigProvider:
             "totalBudgetSeconds": int(total_budget_seconds),
             "fallbackOllama": bool(fallback_ollama),
         }
+        previous_payload = (current or {}).get("payload") or {}
+        if (previous_payload.get("externalProviderId") and provider == previous_payload.get("provider")
+                and base_url == previous_payload.get("baseUrl") and model == previous_payload.get("model")
+                and new_ref == old_ref):
+            # Timeout/online toggles are not a request to abandon the selected
+            # profile, including when that profile has not-yet-activated edits.
+            payload.update({key: previous_payload[key] for key in ("externalProviderId", "externalProviderRevision") if key in previous_payload})
         try:
             row = self._store.put_section(
                 SECTION_CHAT, expected_revision, payload, secret_ref=new_ref
@@ -402,7 +535,7 @@ class RuntimeConfigProvider:
                     pass
             raise
         with self._lock:
-            self._chat = _chat_from_payload(row["payload"], row.get("secret_ref"), self._local)
+            self._reload()
         if old_ref and old_ref != new_ref:
             self._schedule_secret_cleanup(old_ref)
         return row
@@ -413,6 +546,8 @@ class RuntimeConfigProvider:
         def _worker() -> None:
             time.sleep(delay)
             try:
+                if ref in self._store.referenced_secret_refs():
+                    return
                 self._secret_store.delete_secret(ref)
                 self._store.remove_secret_ref(ref)
             except Exception:
@@ -458,7 +593,9 @@ class RuntimeConfigProvider:
             raise ValidationError("仅支持 ollama / openai 提供商")
         enabled = current.external_enabled if external_enabled is None else bool(external_enabled)
         if provider == "openai":
-            base = validate_qa_base_url(base_url or current.base_url or "")
+            base = validate_external_base_url(base_url or current.base_url or "")
+            if base != current.base_url and not (api_key or "").strip():
+                raise ValidationError("测试其他服务地址时请重新输入该服务的 API Key")
             mdl = validate_model_name(model or current.model or "")
             if enabled and not (bool(api_key) or current.api_key_configured):
                 raise ValidationError("启用外部问答时必须配置 API Key")
@@ -512,7 +649,7 @@ def _cleanup_ledger_orphans(
     retention_seconds: float,
 ) -> list[str]:
     """按台账回收孤儿 secret_ref：只清理本应用创建、无 section 引用且超过保留期的引用。"""
-    valid_refs = {r["secret_ref"] for r in store.list_sections() if r.get("secret_ref")}
+    valid_refs = store.referenced_secret_refs()
     removed: list[str] = []
     now = time.time()
     for item in store.list_ledger_refs():
@@ -522,6 +659,8 @@ def _cleanup_ledger_orphans(
         if now - item["created_at"] < retention_seconds:
             continue
         try:
+            if ref in store.referenced_secret_refs():
+                continue
             secret_store.delete_secret(ref)
             store.remove_secret_ref(ref)
             removed.append(ref)

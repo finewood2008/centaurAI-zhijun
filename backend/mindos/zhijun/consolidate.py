@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 from datetime import datetime, timedelta, timezone
 
@@ -72,11 +73,20 @@ def heuristic_verdict(a: str, b: str) -> str:
 
 
 def judge_pair(provider: ChatProvider | None, a: dict, b: dict) -> tuple[str, str]:
+    # A temporary state, aspiration and a stable preference are not interchangeable.
+    # Avoid both false contradictions and equivalence merges across conditions.
+    if (a.get("layer") == "aspirational") != (b.get("layer") == "aspirational"):
+        return "unrelated", "aspiration_is_not_observed_behavior"
+    for key in ("scope", "contextRef", "validFrom", "validTo", "contextual"):
+        if a.get(key) != b.get(key):
+            return "unrelated", "different_contexts"
     if provider is None or provider.name == "fake":
         return heuristic_verdict(a["content"], b["content"]), "heuristic"
     request = ChatRequest(
         system=_CONFLICT_SYSTEM,
-        messages=[{"role": "user", "content": f"理解一：{a['content']}\n理解二：{b['content']}"}],
+        messages=[{"role": "user", "content": json.dumps([
+            {k: c.get(k) for k in ("content", "scope", "contextRef", "layer", "validFrom", "validTo", "contextual", "evidence")}
+            for c in (a, b)], ensure_ascii=False)}],
         max_tokens=200,
         temperature=0.0,
         json_schema=CONFLICT_SCHEMA,
@@ -84,18 +94,29 @@ def judge_pair(provider: ChatProvider | None, a: dict, b: dict) -> tuple[str, st
         debug={"task": "conflict_judge"},
     )
     try:
-        raw = provider.complete_json(request)
+        from .gate import provider_gate
+        channel = "external" if provider.external else "local"
+        if not provider_gate.acquire(channel, timeout=30, background=True):
+            raise ProviderError("整理暂停，优先处理交互请求", code="PROVIDER_BUSY")
+        try:
+            raw = provider.complete_json(request)
+        finally:
+            provider_gate.release(channel)
     except (ProviderError, ValueError):
         return "unrelated", "model_unavailable"
     verdict = str(raw.get("verdict") or "unrelated")
     return (verdict if verdict in ("contradict", "equivalent", "unrelated") else "unrelated"), str(raw.get("reason") or "")[:200]
 
 
-def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | None = None, provider: ChatProvider | None = None, now: datetime | None = None) -> dict:
+def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | None = None, provider: ChatProvider | None = None, now: datetime | None = None, router=None) -> dict:
     store = store or OntologyStore.instance()
     conv_store = conv_store or ConversationStore.instance()
     current = (now or _now()).astimezone(timezone.utc)
     report = {"mergeProposals": 0, "challenged": 0, "conflicts": 0, "merged": 0, "tensions": 0, "promoted": 0, "decayed": 0, "deferred": 0, "pairsJudged": 0}
+    from .charter_policy import scope_policy, check_action, assert_current
+    charter = scope_policy(router.scope if router else "global")
+    if not check_action(charter, "memory_auto")["allowed"]:
+        return {**report, "reason": "charter_memory_manual"}
 
     # 1. 实体去重候选
     entities = [e for e in store.list_entities(limit=2000) if e["type"] != "me"]
@@ -118,6 +139,13 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
 
     # 2/3. 矛盾与张力
     active = store.list_claims(trust_states=("working", "confirmed"), limit=5000, include_hidden=True)
+    if router:
+        from .alignment import visible
+        active = [c for c in active if visible(c, conv_store, router.scope)]
+    if provider and provider.external and not router:
+        from .source_policy import SourcePolicy
+        policy = SourcePolicy(store, conv_store)
+        active = [c for c in active if not policy.claim_local(c)]
     by_key: dict[tuple[str, str], list[dict]] = {}
     for claim in active:
         by_key.setdefault((claim["subjectEntityId"], claim["section"]), []).append(claim)
@@ -138,7 +166,14 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
             if lexical_similarity(tokenize(p["content"]), tokenize(act["content"])) >= 0.3:
                 candidates.append((p, act, "tension"))
     for a, b, kind in candidates[:MAX_PAIRS_PER_RUN]:
-        verdict, note = judge_pair(provider, a, b)
+        pair_provider = provider
+        if router and provider:
+            from .routing import GuardedProvider
+            pair_provider = GuardedProvider(router, provider, "consolidate", [router.ref("claim", c["id"]) for c in (a, b)], background=True)
+        verdict, note = judge_pair(pair_provider, a, b)
+        assert_current(charter)
+        if router and provider:
+            pair_provider.assert_current()
         report["pairsJudged"] += 1
         if verdict == "unrelated":
             continue
@@ -146,6 +181,8 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
             if verdict == "contradict":
                 if store.create_conflict(a["id"], b["id"], kind="tension", verdict_by=note or "model", note="原则与最近做法之间可能有张力"):
                     report["tensions"] += 1
+                    if not check_action(charter, "proactive")["allowed"]:
+                        continue
                     conv_store.create_nudge(
                         kind="principle_tension",
                         trigger_key=f"tension:{a['id']}:{b['id']}",
@@ -158,6 +195,11 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
                     )
             continue
         if verdict == "equivalent":
+            if router:
+                # Managed models suggest equivalence; only the user may merge records.
+                if store.create_conflict(a["id"], b["id"], kind="tension", verdict_by=note or "model", note="两条理解可能等价，等待用户核对；尚未合并"):
+                    report["mergeProposals"] += 1
+                continue
             newer, older = (a, b) if (a["createdAt"] > b["createdAt"]) else (b, a)
             if newer["trustState"] == "working":
                 store.add_evidence(older["id"], [ev for ev in newer.get("evidence", [])] or [], reaffirm=True) if newer.get("evidence") else None
@@ -180,6 +222,8 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
 
     # 4/5. 晋升 / 衰减 / 推迟
     for claim in store.list_claims(trust_states=("working",), limit=5000, include_hidden=True):
+        if router:
+            continue  # No automatic retraction/defer of managed interpretations.
         if claim["challenged"]:
             challenged_since = _parse(claim["updatedAt"]) or current
             if current - challenged_since >= timedelta(days=CHALLENGE_DECAY_DAYS):

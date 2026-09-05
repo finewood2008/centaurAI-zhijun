@@ -18,7 +18,15 @@ from mindos.zhijun import consolidate
 
 
 def _ev(conv: str, msg: str = "m") -> list[dict]:
-    return [{"kind": "conversation_turn", "conversation_id": conv, "message_id": msg, "quote": "x"}]
+    # Real disposable origins are required by device-scoped API reads. Unknown
+    # origin IDs represent deleted/unavailable sources, not legacy global data.
+    store = conversation_store_module.ConversationStore.instance()
+    title = "synthetic-origin-" + conv
+    origin = next((c for c in store.list_conversations(status="all") if c["title"] == title), None)
+    origin = origin or store.create_conversation(title=title)
+    message = next((m for m in store.list_messages(origin["id"]) if m.get("meta", {}).get("fixtureMessage") == msg), None)
+    message = message or store.append_message(origin["id"], "user", "x", meta={"fixtureMessage": msg})
+    return [{"kind": "conversation_turn", "conversation_id": origin["id"], "message_id": message["id"], "quote": "x"}]
 
 
 class ConsolidateTests(unittest.TestCase):
@@ -157,7 +165,7 @@ class ConsolidateTests(unittest.TestCase):
         self.assertEqual(ok.status_code, 200, ok.text)
         body = ok.json()
         self.assertEqual(body["ontology"]["claims"], 2)
-        self.assertEqual(body["conversations"]["conversations"], 1)
+        self.assertEqual(body["conversations"]["conversations"], 3)  # two evidence origins plus the explicit conversation
         self.assertEqual(self.onto.stats()["claims"]["confirmed"], 0)
         self.assertIsNotNone(self.onto.get_entity("ent_me"))
         self.assertEqual(self.convs.list_conversations(), [])

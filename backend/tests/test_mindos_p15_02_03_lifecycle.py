@@ -11,12 +11,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import gbrain_store
 import wiki_store
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from mindos import knowledge, uploads
 from mindos import derived as derived_svc
 from mindos.services import ingestion
-from mindos.stores import derived_store, governance_store, job_store
+from mindos.stores import derived_store, governance_store, job_store, card_ledger_store
 
 
 class LifecycleTestCase(unittest.TestCase):
@@ -26,6 +26,7 @@ class LifecycleTestCase(unittest.TestCase):
         job_store.reset_for_tests(root / "jobs.db")
         governance_store.reset_for_tests(root / "governance.db")
         derived_store.reset_for_tests(root / "derived.db")
+        card_ledger_store.reset_for_tests(root / "cards.db")
         self.old_wiki_dir, self.old_wiki_db = wiki_store.WIKI_DIR, wiki_store.WIKI_DB_PATH
         wiki_store.WIKI_DIR = str(root / "wiki")
         wiki_store.WIKI_DB_PATH = str(root / "wiki" / "wiki.sqlite3")
@@ -44,10 +45,13 @@ class LifecycleTestCase(unittest.TestCase):
         wiki_store.WIKI_DIR, wiki_store.WIKI_DB_PATH = self.old_wiki_dir, self.old_wiki_db
         wiki_store._SCHEMA_READY = False
         job_store.reset_for_tests()
+        card_ledger_store.reset_for_tests()
         derived_store.reset_for_tests()
         self.tmp.cleanup()
 
-    def _status_of(self, material_id: str):
+    def _status_of(self, material_id: str, device_scope="global"):
+        if device_scope != "global":
+            return None
         record = self.store.get(material_id)
         if record is None:
             return None
@@ -72,27 +76,35 @@ class LifecycleTestCase(unittest.TestCase):
         return card_id
 
 
-class ArchiveImpactTests(LifecycleTestCase):
-    def test_archive_keeps_card_and_marks_existing_source_archived(self):
+class RecycledSourceImpactTests(LifecycleTestCase):
+    def test_recycled_source_record_keeps_card_and_restores_source_availability(self):
         self._material("mindos_v1")
         card_id = self._card_with_source("mindos_v1")
-        before = uploads.mindos_material_impact("mindos_v1")
+        # A real manual create must register ownership without confirming the
+        # draft or allowing it into retrieval merely to make dependencies visible.
+        state = card_ledger_store.get(card_id, device_scope="global")
+        self.assertIsNotNone(state)
+        self.assertEqual(state["approval_state"], "draft")
+        self.assertFalse(card_ledger_store.is_rag_eligible(state))
+        before = uploads.mindos_material_impact("mindos_v1", Request({"type": "http"}))
         self.assertEqual(before["activeKnowledgeCardCount"], 1)
         self.assertEqual(before["activeKnowledgeCards"][0]["knowledgeId"], card_id)
 
-        uploads.mindos_material_archive("mindos_v1")
+        # Simulate an existing recycled source record; actual deletion tokens and
+        # dependency handling are verified in test_mindos_p15_03_04_05.py.
+        self.store.set_recycled("mindos_v1", True)
         card = knowledge.knowledge_detail(card_id)
         self.assertFalse(card["isArchived"])
-        self.assertTrue(card["sources"][0]["archived"])
+        self.assertTrue(card["sources"][0]["recycled"])
 
-        uploads.mindos_material_unarchive("mindos_v1")
-        self.assertFalse(knowledge.knowledge_detail(card_id)["sources"][0]["archived"])
+        self.store.set_recycled("mindos_v1", False)
+        self.assertFalse(knowledge.knowledge_detail(card_id)["sources"][0]["recycled"])
 
-    def test_archived_existing_source_can_be_replaced(self):
+    def test_recycled_existing_source_can_be_replaced(self):
         self._material("mindos_v1")
         self._material("mindos_v2", family="mindos_v1", supersedes="mindos_v1")
         card_id = self._card_with_source("mindos_v1")
-        uploads.mindos_material_archive("mindos_v1")
+        self.store.set_recycled("mindos_v1", True)
         result = knowledge.knowledge_update_sources(
             card_id,
             knowledge.KnowledgeSourcesUpdate(
@@ -129,16 +141,16 @@ class MaterialVersionTests(LifecycleTestCase):
         card_id = self._card_with_source("mindos_v1")
         with patch.object(
             uploads, "_receive_upload", new=AsyncMock(return_value=("v2.md", "document", Path("/tmp/v2.md")))
-        ), patch.object(ingestion, "submit_index", return_value=True):
+        ), patch.object(ingestion, "_submit_material_job", return_value=True):
             response = asyncio.run(
-                uploads.mindos_material_version_upload("mindos_v1", object(), "补充数据", None)
+                uploads.mindos_material_version_upload("mindos_v1", Request({"type": "http"}), file=object(), versionNote="补充数据", targetFolderId=None)
             )
         new_id = response["newMaterialId"]
         self.assertEqual(response["versionNumber"], 2)
         self.assertEqual(response["materialFamilyId"], "mindos_v1")
         self.assertEqual(knowledge.knowledge_detail(card_id)["sources"][0]["id"], "mindos_v1")
 
-        versions = uploads.mindos_material_versions(new_id)["items"]
+        versions = uploads.mindos_material_versions(new_id, Request({"type": "http"}))["items"]
         self.assertEqual([item["versionNumber"] for item in versions], [2, 1])
         self.assertEqual(self.store.get(new_id)["supersedes_material_id"], "mindos_v1")
 
@@ -147,17 +159,17 @@ class MaterialVersionTests(LifecycleTestCase):
         self._material("mindos_v2", family="mindos_v1", supersedes="mindos_v1")
         card_id = self._card_with_source("mindos_v1")
         self.states["mindos_v2"] = "failed"
-        impact = uploads.mindos_material_version_impact("mindos_v2")
+        impact = uploads.mindos_material_version_impact("mindos_v2", Request({"type": "http"}))
         self.assertFalse(impact["ready"])
         self.assertEqual(impact["status"], "failed")
         self.assertEqual(knowledge.knowledge_detail(card_id)["sources"][0]["id"], "mindos_v1")
         self.assertIsNone(self.store.get("mindos_v1")["superseded_by_material_id"])
 
-    def test_user_can_explicitly_keep_both_old_archived_and_new_versions(self):
+    def test_user_can_explicitly_keep_both_existing_recycled_and_new_versions(self):
         self._material("mindos_v1")
         self._material("mindos_v2", family="mindos_v1", supersedes="mindos_v1")
         card_id = self._card_with_source("mindos_v1")
-        uploads.mindos_material_archive("mindos_v1")
+        self.store.set_recycled("mindos_v1", True)
         result = knowledge.knowledge_update_sources(
             card_id,
             knowledge.KnowledgeSourcesUpdate(sourceRefs=[
@@ -178,7 +190,7 @@ class MaterialVersionTests(LifecycleTestCase):
             {"type": "study_note", "sourceRefs": [{"sourceType": "material", "id": "mindos_v1"}]},
             "hash", "test",
         )
-        impact = uploads.mindos_material_version_impact("mindos_v2")
+        impact = uploads.mindos_material_version_impact("mindos_v2", Request({"type": "http"}))
         self.assertTrue(impact["ready"])
         self.assertEqual(impact["oldMaterialId"], "mindos_v1")
         self.assertEqual(impact["activeKnowledgeCards"][0]["knowledgeId"], card_id)

@@ -29,9 +29,15 @@ def _records(material_id: str) -> tuple[dict | None, dict | None]:
 
 def run(material_id: str, *, store: OntologyStore | None = None, entity_record: dict | None = None, relation_record: dict | None = None) -> dict:
     store = store or OntologyStore.instance()
+    from ..stores.job_store import JobStore
+    jobs = JobStore.instance()
+    report = {"materialId": material_id, "entities": 0, "created": [], "reaffirmed": 0, "skipped": 0}
+    material = jobs.get(material_id)
+    if not material or material.get("recycled") or material.get("canceled") or not material.get("device_scope"):
+        return {**report, "state": "skipped", "reason": "material_unavailable"}
+    scope = material["device_scope"]
     if entity_record is None and relation_record is None:
         entity_record, relation_record = _records(material_id)
-    report = {"materialId": material_id, "entities": 0, "created": [], "reaffirmed": 0, "skipped": 0}
     entity_types: dict[str, str] = {}
     for item in (entity_record or {}).get("content", {}).get("items", []) if entity_record and entity_record.get("status") == "ok" else []:
         name = str(item.get("name") or "").strip()
@@ -40,13 +46,16 @@ def run(material_id: str, *, store: OntologyStore | None = None, entity_record: 
         etype = _TYPE_MAP.get(str(item.get("type") or "term"), "topic")
         entity_types[name] = etype
         try:
-            store.upsert_entity(name, etype)
+            store.upsert_entity(name, etype, device_scope=scope)
             report["entities"] += 1
         except OntologyError:
             continue
     if not relation_record or relation_record.get("status") != "ok":
         return report
     for rel in (relation_record.get("content") or {}).get("items", [])[:MAX_CLAIMS_PER_MATERIAL]:
+        current = jobs.get(material_id)
+        if (not current or current.get("device_scope") != scope or current.get("recycled") or current.get("canceled")):
+            return {**report, "state": "skipped", "reason": "material_unavailable"}
         sub = (rel.get("subject") or {}).get("name")
         obj = (rel.get("object") or {}).get("name")
         predicate = str(rel.get("predicate") or "").strip()
@@ -56,15 +65,15 @@ def run(material_id: str, *, store: OntologyStore | None = None, entity_record: 
         sub_type = entity_types.get(sub) or _TYPE_MAP.get(str((rel.get("subject") or {}).get("type") or "term"), "topic")
         obj_type = entity_types.get(obj) or _TYPE_MAP.get(str((rel.get("object") or {}).get("type") or "term"), "topic")
         try:
-            subject = store.upsert_entity(sub, sub_type)
-            target = store.upsert_entity(obj, obj_type)
+            subject = store.upsert_entity(sub, sub_type, device_scope=scope)
+            target = store.upsert_entity(obj, obj_type, device_scope=scope)
         except OntologyError:
             report["skipped"] += 1
             continue
         people = "person" in (sub_type, obj_type)
         content = f"{sub} {predicate} {obj}"[:120]
         evidence = [{"kind": "material_span", "material_id": material_id, "quote": str(rel.get("evidence") or "")[:300]}]
-        existing = store.find_active_by_hash(subject["id"], "relationship" if people else "happened", content)
+        existing = store.find_active_by_hash(subject["id"], "relationship" if people else "happened", content, device_scope=scope)
         if existing:
             if not any(ev.get("materialId") == material_id for ev in existing["evidence"]):
                 store.add_evidence(existing["id"], evidence, reaffirm=True)
@@ -80,6 +89,7 @@ def run(material_id: str, *, store: OntologyStore | None = None, entity_record: 
                     "section": "people" if people else "matters",
                     "layer": "observed",
                     "confidence": float(rel.get("confidence") or 0.5),
+                    "device_scope": scope,
                 },
                 evidence,
                 trust_state="working",

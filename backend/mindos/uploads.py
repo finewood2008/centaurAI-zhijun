@@ -498,6 +498,7 @@ def mindos_material_draft_card_confirm(
             tags=ingestion.material_tags(material_id),
             source_refs=[{"sourceType": "material", "id": material_id}],
             confirmation_session_id=session["session_id"],
+            device_scope=scope,
         )
         knowledge_id = card["knowledgeId"]
         page = knowledge._find(knowledge_id)
@@ -693,6 +694,11 @@ async def mindos_material_version_upload(
     folder_id = previous.get("folder_id") if targetFolderId is None else targetFolderId
     safe_name, file_type, destination = await _receive_upload(file, folder_id)
     new_material_id = ingestion.new_material_id()
+    from .stores.chat_import_store import ChatImportStore
+    chat_privacy = ChatImportStore()
+    if material_id in chat_privacy.protected_ids():
+        # A new version inherits the privacy boundary, not its predecessor's grant.
+        chat_privacy.protect(new_material_id, scope)
     record = ingestion.start_ingestion(
         new_material_id, safe_name, file_type, str(destination), folder_id=folder_id,
         material_family_id=previous["material_family_id"],

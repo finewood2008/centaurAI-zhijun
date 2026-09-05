@@ -1,12 +1,12 @@
 <script setup lang="ts">
 // 本体全景：一眼看懂「知君眼中的我」。
-// 中心是「我」，六个扇区是六个分区；离中心越近越可信：实线环内是我确认过的，点线环是很久没再提的，
+// 已校准点越靠近中心越代表我，不是事实真假或潜意识分数。
 // 朱砂虚线是信任边界——边界外面的空心点是知君的推测，等我确认才进来。所有含义都同时用文字表达。
 import { computed, ref } from 'vue'
 import type { Claim, Layer, OntologyStats, Section } from '@/services/api'
 import { LAYER_META, SECTIONS, layerMeta, trustMeta } from '@/shared/ontology'
+import { alignmentLabel, alignmentFrame } from '@/shared/alignment'
 import {
-  BANDS,
   CENTER,
   RINGS,
   SECTOR_DEG,
@@ -18,6 +18,7 @@ import {
   nodeBand,
   nodeRadius,
   nodeSize,
+  isStale,
   polar,
   sectorCenterDeg,
   sectorStartDeg,
@@ -193,11 +194,11 @@ const legendOpen = ref(false)
           :key="n.claim.id"
           class="zj-map__node"
           data-testid="selfmap-node"
-          :class="[layerClass(n.claim.layer), `zj-map__node--${n.band}`, { 'is-selected': selectedId === n.claim.id, 'is-dimmed': isDimmed(n.claim.section), 'is-new': isNew(n.claim.id) }]"
+          :class="[layerClass(n.claim.selfAlignment?.framing === 'aspirational' ? 'aspirational' : n.claim.layer), `zj-map__node--${n.band}`, { 'is-selected': selectedId === n.claim.id, 'is-dimmed': isDimmed(n.claim.section), 'is-new': isNew(n.claim.id) }]"
           :style="{ '--i': i }"
           role="button"
           tabindex="0"
-          :aria-label="`${n.claim.content} · ${layerMeta(n.claim.layer).label} · ${trustMeta(n.claim.trustState).label}`"
+          :aria-label="`${n.claim.content} · ${layerMeta(n.claim.layer).label} · ${trustMeta(n.claim.trustState).label} · 自我贴合度：${alignmentLabel(n.claim)} · ${alignmentFrame(n.claim)}${isStale(n.claim, now) ? ' · 久未核对' : ''}`"
           @mouseenter="showTip(n)"
           @mouseleave="hideTip(n)"
           @focus="showTip(n)"
@@ -210,6 +211,7 @@ const legendOpen = ref(false)
           <circle v-if="n.claim.promotionReady" :cx="n.x" :cy="n.y" :r="n.size + 5" class="zj-map__halo" />
           <circle v-if="selectedId === n.claim.id" :cx="n.x" :cy="n.y" :r="n.size + 4" class="zj-map__selected" />
           <circle :cx="n.x" :cy="n.y" :r="n.size" class="zj-map__dot" />
+          <text v-if="isStale(n.claim, now)" :x="n.x + n.size + 1" :y="n.y - n.size" class="zj-map__obj">◷</text>
           <line
             v-if="n.claim.exportAllowed && n.claim.trustState === 'confirmed'"
             :x1="polar(n.angle, n.radius + n.size + 1).x"
@@ -233,8 +235,8 @@ const legendOpen = ref(false)
       <!-- 空状态解释 -->
       <g v-if="isEmpty" class="zj-map__empty" aria-hidden="true">
         <text :x="CENTER" :y="CENTER + 80" text-anchor="middle" class="zj-map__empty-title">这是属于我的本体。</text>
-        <text :x="CENTER" :y="CENTER + RINGS.core - 14" text-anchor="middle" class="zj-map__empty-line">靠近中心：我确认过的</text>
-        <text :x="CENTER" :y="CENTER + RINGS.reaffirm - 14" text-anchor="middle" class="zj-map__empty-line">点线环：很久没再提，可能变了</text>
+        <text :x="CENTER" :y="CENTER + RINGS.core - 14" text-anchor="middle" class="zj-map__empty-line">圈内越近：越能代表我</text>
+        <text :x="CENTER" :y="CENTER + RINGS.reaffirm - 14" text-anchor="middle" class="zj-map__empty-line">中间区域：待校准，不等于不像我</text>
         <text :x="CENTER" :y="CENTER + RINGS.boundary + 22" text-anchor="middle" class="zj-map__empty-line zj-map__empty-line--cinnabar">朱砂线外：知君的推测，等我确认</text>
       </g>
     </svg>
@@ -249,7 +251,8 @@ const legendOpen = ref(false)
       <p class="zj-map__tip-badges">
         <StatusBadge :meta="layerMeta(tip.claim.layer)" />
         <StatusBadge :meta="trustMeta(tip.claim.trustState)" />
-        <span v-if="tip.band === 'stale'" class="zj-map__tip-note">很久没再提</span>
+        <span class="zj-map__tip-note">自我贴合度：{{ alignmentLabel(tip.claim) }} · {{ alignmentFrame(tip.claim) }}</span>
+        <span v-if="isStale(tip.claim, now)" class="zj-map__tip-note">久未核对，不自动降低贴合度</span>
         <span v-if="tip.band === 'challenged'" class="zj-map__tip-note">与另一条矛盾</span>
       </p>
     </div>
@@ -270,11 +273,11 @@ const legendOpen = ref(false)
       </div>
       <div class="zj-map__legend-item zj-map__legend-item--ring">
         <dt><span class="zj-map__swatch-ring zj-map__swatch-ring--core" aria-hidden="true" /></dt>
-        <dd>实线环内：我确认过的</dd>
+        <dd>实线环内：已确认且已校准；越近越能代表我，不代表记录真假</dd>
       </div>
       <div class="zj-map__legend-item zj-map__legend-item--ring">
         <dt><span class="zj-map__swatch-ring zj-map__swatch-ring--reaffirm" aria-hidden="true" /></dt>
-        <dd>点线环：超过 60 天没再提</dd>
+        <dd>中间区域：尚未校准；点线环外侧：仅当时情境。◷ 表示久未核对</dd>
       </div>
       <div class="zj-map__legend-item zj-map__legend-item--ring">
         <dt><span class="zj-map__swatch-ring zj-map__swatch-ring--boundary" aria-hidden="true" /></dt>
@@ -284,7 +287,7 @@ const legendOpen = ref(false)
 
     <!-- 读屏器：逐条列出 -->
     <ul class="zj-map__sr">
-      <li v-for="n in nodes" :key="`sr-${n.claim.id}`">{{ n.claim.content }} · {{ layerMeta(n.claim.layer).label }} · {{ trustMeta(n.claim.trustState).label }}</li>
+      <li v-for="n in nodes" :key="`sr-${n.claim.id}`">{{ n.claim.content }} · {{ layerMeta(n.claim.layer).label }} · {{ trustMeta(n.claim.trustState).label }} · {{ alignmentLabel(n.claim) }} · {{ alignmentFrame(n.claim) }}</li>
     </ul>
   </div>
 </template>
@@ -429,6 +432,8 @@ const legendOpen = ref(false)
   stroke: #a6452e;
   stroke-width: 2;
 }
+.zj-map__node--uncalibrated .zj-map__dot { fill: #fffaf2; stroke: #85897e; stroke-width: 1.5; }
+.zj-map__node--contextual .zj-map__dot { fill: #ece6d9; stroke: #85897e; stroke-dasharray: 2 2; stroke-width: 1.5; }
 .zj-map__tick {
   stroke: #4a7c59;
   stroke-width: 1.5;

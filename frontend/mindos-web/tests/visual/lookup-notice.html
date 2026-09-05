@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>补查轻提示 · 仅合成资料</title>
+    <script>
+      // Fail closed: this fixture never reads or writes any real API.
+      window.fetch = () => Promise.reject(new Error('合成预览禁止接口请求'))
+      XMLHttpRequest.prototype.send = function () { throw new Error('合成预览禁止接口请求') }
+      navigator.sendBeacon = () => false
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module">
+      import { createApp } from 'vue'
+      import { createRouter, createMemoryHistory } from 'vue-router'
+      import Fixture from './LookupNoticeFixture.vue'
+      import '../../src/styles/tokens.css'
+      import '../../src/styles/base.css'
+      const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/:pathMatch(.*)*', component: { template: '<div />' } }] })
+      createApp(Fixture).use(router).mount('#app')
+    </script>
+  </body>
+</html>

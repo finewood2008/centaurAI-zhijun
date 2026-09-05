@@ -5,6 +5,7 @@ import { ArrowRight } from 'lucide-vue-next'
 import {
   createConversation,
   getZhijunHome,
+  updateOnboarding,
   type HomeMapNode,
   type HomeSourceRef,
   type ZhijunHomeOverview,
@@ -89,11 +90,19 @@ async function runPrimaryAction() {
   const action = overview.value?.nextAction
   if (!action || actionBusy.value) return
   if (action.kind === 'onboarding') {
-    router.push({ path: '/chat', query: { onboarding: '1' } })
+    actionBusy.value = true
+    try {
+      await updateOnboarding('restart')
+      await router.push('/onboarding/chat')
+    } catch (err) {
+      toast({ type: 'error', message: err instanceof Error ? err.message : '暂时无法开始第一次认识' })
+    } finally {
+      actionBusy.value = false
+    }
     return
   }
   if (action.kind === 'resume_onboarding' && action.targetId) {
-    router.push(`/c/${encodeURIComponent(action.targetId)}`)
+    router.push(`/onboarding/c/${encodeURIComponent(action.targetId)}`)
     return
   }
   if (action.kind === 'confirm') {
@@ -102,11 +111,7 @@ async function runPrimaryAction() {
     else router.push('/me/inbox')
     return
   }
-  if (action.kind === 'reflect') {
-    router.push({ path: '/judgments', query: action.targetId ? { decisionId: action.targetId } : undefined })
-    return
-  }
-  if (action.kind === 'review' && action.targetId) {
+  if ((action.kind === 'review' || action.kind === 'reflect') && action.targetId) {
     actionBusy.value = true
     try {
       const conversation = await createConversation({ mode: 'review', decisionId: action.targetId })
@@ -117,7 +122,8 @@ async function runPrimaryAction() {
     }
     return
   }
-  router.push({ path: '/chat', query: action.say ? { say: action.say } : undefined })
+  // System-generated prompts may quote protected decisions, summaries or claims.
+  router.push({ path: '/chat', query: action.say ? { say: action.say, localOnly: '1' } : undefined })
 }
 
 async function handleNodeChanged() {

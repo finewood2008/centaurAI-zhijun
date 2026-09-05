@@ -54,7 +54,7 @@ REVIEW_ACTIONS = (
     "create",
 )
 SURFACES = ("conversation", "ontology_page", "onboarding", "today", "decision_panel", "import", "system")
-JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief")
+JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft")
 JOB_STATES = ("queued", "running", "done", "failed")
 
 # 受控谓词词表：抽取器只能在分区对应的词表内选，越界整条丢弃。
@@ -286,8 +286,10 @@ def normalize_text(text: str) -> str:
     return _PUNCT_RE.sub("", "".join(out))
 
 
-def content_hash(subject_entity_id: str, predicate: str, content: str) -> str:
+def content_hash(subject_entity_id: str, predicate: str, content: str, device_scope: str = "global") -> str:
     raw = f"{subject_entity_id}|{predicate}|{normalize_text(content)}"
+    if device_scope != "global":
+        raw = device_scope + "\0" + raw
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -412,6 +414,17 @@ class OntologyStore:
                 columns = {row[1] for row in conn.execute("PRAGMA table_info(claims)")}
                 if "promotion_ready" not in columns:
                     conn.execute("ALTER TABLE claims ADD COLUMN promotion_ready INTEGER NOT NULL DEFAULT 0")
+                if "self_alignment_json" not in columns:
+                    conn.execute("ALTER TABLE claims ADD COLUMN self_alignment_json TEXT")
+                if "context_json" not in columns:
+                    conn.execute("ALTER TABLE claims ADD COLUMN context_json TEXT")
+                from .learning_store import SCHEMA as learning_schema
+                conn.executescript(learning_schema)
+                from .alignment_store import SCHEMA as alignment_schema
+                conn.executescript(alignment_schema)
+                if "current_token" not in {r[1] for r in conn.execute("PRAGMA table_info(alignment_grants)")}:
+                    conn.execute("ALTER TABLE alignment_grants ADD COLUMN current_token TEXT NOT NULL DEFAULT ''")
+                conn.execute("UPDATE alignment_conversations SET status='paused', detail='服务已重启，自动提议暂停；可手动校准或重试' WHERE status='queued'")
                 conn.commit()
             finally:
                 conn.close()
@@ -419,7 +432,8 @@ class OntologyStore:
 
     def _connect(self) -> sqlite3.Connection:
         self._ensure()
-        conn = sqlite3.connect(str(self._db_path), timeout=30)
+        from .sqlite_connection import ClosingConnection
+        conn = sqlite3.connect(str(self._db_path), timeout=30, factory=ClosingConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -512,6 +526,7 @@ class OntologyStore:
         aliases: list[str] | tuple[str, ...] = (),
         description: str = "",
         alias_source: str = "extracted",
+        device_scope: str = "global",
     ) -> dict:
         name = (name or "").strip()
         if not name:
@@ -529,18 +544,18 @@ class OntologyStore:
             try:
                 row = conn.execute(
                     "SELECT e.* FROM entities e LEFT JOIN entity_aliases a ON a.entity_id = e.id "
-                    "WHERE e.status = 'active' AND (e.name_norm = ? OR a.alias_norm = ?) LIMIT 1",
-                    (norm, norm),
+                    "WHERE e.status = 'active' AND e.device_scope = ? AND (e.name_norm = ? OR a.alias_norm = ?) LIMIT 1",
+                    (device_scope, norm, norm),
                 ).fetchone()
                 if row is None:
                     entity_id = f"ent_{uuid.uuid4().hex[:12]}"
                     conn.execute(
                         """
                         INSERT INTO entities
-                            (id, type, canonical_name, name_norm, description, status, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+                            (id, type, canonical_name, name_norm, description, status, created_at, updated_at, device_scope)
+                        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
                         """,
-                        (entity_id, entity_type, name, norm, description or "", now, now),
+                        (entity_id, entity_type, name, norm, description or "", now, now, device_scope),
                     )
                     conn.execute(
                         "INSERT OR IGNORE INTO entity_aliases (entity_id, alias, alias_norm, source, created_at) "
@@ -696,7 +711,7 @@ class OntologyStore:
         if row is None:
             return None
         keys = set(row.keys())
-        return {
+        claim = {
             "id": row["id"],
             "subjectEntityId": row["subject_entity_id"],
             "subjectName": row["subject_name"] if "subject_name" in keys else None,
@@ -710,6 +725,7 @@ class OntologyStore:
             "trustOrigin": row["trust_origin"],
             "confidence": float(row["confidence"]),
             "scope": row["scope"],
+            "deviceScope": row["device_scope"] if "device_scope" in keys else "global",
             "contextRef": row["context_ref"],
             "privacyLevel": row["privacy_level"],
             "exportAllowed": bool(row["export_allowed"]),
@@ -728,7 +744,11 @@ class OntologyStore:
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
             "evidence": evidence or [],
+            "contextual": _load(row["context_json"], None) if "context_json" in keys else None,
         }
+        from .alignment_store import view
+        claim["selfAlignment"] = view(claim, _load(row["self_alignment_json"], None) if "self_alignment_json" in keys else None)
+        return claim
 
     def _evidence_for(self, conn: sqlite3.Connection, claim_id: str) -> list[dict]:
         rows = conn.execute(
@@ -912,7 +932,7 @@ class OntologyStore:
             raise OntologyError("推测（hypothesis）不能直接写为已确认")
         claim_id = f"clm_{uuid.uuid4().hex[:12]}"
         now = utc_now()
-        digest = content_hash(fields["subject_entity_id"], fields["predicate"], fields["content"])
+        digest = content_hash(fields["subject_entity_id"], fields["predicate"], fields["content"], fields["device_scope"])
         with self._lock, self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -998,23 +1018,24 @@ class OntologyStore:
                 raise
             return self._fetch_claim(conn, claim_id)  # type: ignore[return-value]
 
-    def find_active_by_hash(self, subject_entity_id: str, predicate: str, content: str) -> dict | None:
-        digest = content_hash(subject_entity_id, predicate, content)
+    def find_active_by_hash(self, subject_entity_id: str, predicate: str, content: str, *, device_scope: str = "global") -> dict | None:
+        digest = content_hash(subject_entity_id, predicate, content, device_scope)
+        legacy_digest = content_hash(subject_entity_id, predicate, content)
         with self._connect() as conn:
             row = conn.execute(
-                _CLAIM_SELECT + " WHERE c.content_hash = ? AND c.trust_state IN ('working','confirmed') LIMIT 1",
-                (digest,),
+                _CLAIM_SELECT + " WHERE c.content_hash IN (?,?) AND c.device_scope=? AND c.trust_state IN ('working','confirmed') LIMIT 1",
+                (digest, legacy_digest, device_scope),
             ).fetchone()
             return self._claim(row, self._evidence_for(conn, row["id"])) if row else None
 
-    def find_tombstone_by_hash(self, subject_entity_id: str, predicate: str, content: str) -> dict | None:
-        digest = content_hash(subject_entity_id, predicate, content)
+    def find_tombstone_by_hash(self, subject_entity_id: str, predicate: str, content: str, *, device_scope: str = "global") -> dict | None:
+        digest = content_hash(subject_entity_id, predicate, content, device_scope)
         with self._connect() as conn:
             row = conn.execute(
                 _CLAIM_SELECT
-                + " WHERE c.content_hash = ? AND c.trust_state IN ('retracted','superseded') "
+                + " WHERE c.content_hash IN (?,?) AND c.device_scope=? AND c.trust_state IN ('retracted','superseded') "
                 "ORDER BY c.updated_at DESC LIMIT 1",
-                (digest,),
+                (digest, content_hash(subject_entity_id, predicate, content), device_scope),
             ).fetchone()
             return self._claim(row, []) if row else None
 
@@ -1026,6 +1047,7 @@ class OntologyStore:
         limit: int = 200,
         include_hidden: bool = True,
         subject_entity_id: str | None = None,
+        device_scope: str | None = None,
     ) -> list[dict]:
         states = [s for s in trust_states if s in TRUST_STATES]
         if not states:
@@ -1035,6 +1057,9 @@ class OntologyStore:
         with self._connect() as conn:
             query = _CLAIM_SELECT + " WHERE c.trust_state IN (%s)" % ",".join("?" for _ in states)
             params: list = list(states)
+            if device_scope is not None:
+                query += " AND c.device_scope = ?"
+                params.append(device_scope)
             if section:
                 query += " AND c.section = ?"
                 params.append(section)
@@ -1087,12 +1112,12 @@ class OntologyStore:
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [item for _, item in scored[: max(0, int(k))]]
 
-    def find_similar_active(self, content: str, *, threshold: float = 0.9, section: str | None = None) -> dict | None:
+    def find_similar_active(self, content: str, *, threshold: float = 0.9, section: str | None = None, device_scope: str = "global") -> dict | None:
         """近似重复（词面余弦 ≥ threshold）的活跃理解，供抽取去重。"""
         q_tokens = tokenize(content)
         if not q_tokens:
             return None
-        for claim in self.list_claims(section=section, trust_states=("working", "confirmed"), limit=2000):
+        for claim in self.list_claims(section=section, trust_states=("working", "confirmed"), limit=2000, device_scope=device_scope):
             if lexical_similarity(q_tokens, tokenize(claim["content"])) >= threshold:
                 return claim
         return None
@@ -1110,6 +1135,7 @@ class OntologyStore:
         context_ref: str | None = None,
         note: str = "",
         actor: str = "user",
+        learning_resolution: dict | None = None,
     ) -> dict:
         """信任状态机唯一入口。返回 ``{"claim": 变更后的理解, "replacedBy": 新理解或 None}``。"""
         if action not in REVIEW_ACTIONS or action == "create":
@@ -1124,6 +1150,15 @@ class OntologyStore:
                 if row is None:
                     raise OntologyNotFoundError("理解不存在")
                 state = row["trust_state"]
+                if learning_resolution:
+                    lr = learning_resolution
+                    from .learning_store import claim_token
+                    episode = conn.execute("SELECT status,revision,claim_id FROM learning_episodes WHERE id=?", (lr["episodeId"],)).fetchone()
+                    if (action != "partial" or not episode or episode["status"] != "proposed"
+                        or episode["revision"] != lr["revision"] or episode["claim_id"] != claim_id
+                        or row["updated_at"] != lr["expectedUpdatedAt"]
+                        or claim_token(self._fetch_claim(conn, claim_id)) != lr["expectedToken"]):
+                        raise OntologyConflictError("理解或提议已变化，请重新核对；不会覆盖更新后的理解")
                 before = {"trustState": state, "content": row["content"], "scope": row["scope"]}
                 replaced_id: str | None = None
 
@@ -1188,7 +1223,7 @@ class OntologyStore:
                     if normalize_text(edited) == normalize_text(row["content"]):
                         raise OntologyError("修改后的内容与原文相同，请直接确认")
                     replaced_id = f"clm_{uuid.uuid4().hex[:12]}"
-                    digest = content_hash(row["subject_entity_id"], row["predicate"], edited)
+                    digest = content_hash(row["subject_entity_id"], row["predicate"], edited, row["device_scope"])
                     try:
                         conn.execute(
                             """
@@ -1264,6 +1299,21 @@ class OntologyStore:
                             }
                         ],
                     )
+                    if row["context_json"]:
+                        conn.execute("UPDATE claims SET context_json=? WHERE id=?", (row["context_json"], replaced_id))
+                    if learning_resolution:
+                        lr = learning_resolution
+                        contextual = {"situation": lr["situation"], "framing": lr["framing"], "exceptions": lr["exceptions"],
+                                      "episodeId": lr["episodeId"], "decisionId": lr["decisionId"], "calibratedAt": now}
+                        conn.execute("UPDATE claims SET context_json=?,scope=?,self_model_layer=?,privacy_level='restricted',export_allowed=0 WHERE id=?",
+                            (_json(contextual), "context_only" if lr["framing"] in ("context_only", "current") else "long_term",
+                             "aspirational" if lr["framing"] == "aspirational" else "self_declared", replaced_id))
+                        self._insert_evidence(conn, replaced_id, [{"kind": "review", "decision_id": lr["decisionId"],
+                            "conversation_id": conversation_id, "quote": lr["outcome"][:300],
+                            "locator": {"localOnly": True, "episodeId": lr["episodeId"]}}])
+                        conn.execute("UPDATE learning_episodes SET status='applied',revision=revision+1,resolution_json=?,updated_at=? WHERE id=?",
+                                     (_json({"token": lr["token"], "action": "apply", "replacementId": replaced_id,
+                                             "content": edited, "framing": lr["framing"], "exceptions": lr["exceptions"]}), now, lr["episodeId"]))
                     conn.execute(
                         "UPDATE claims SET trust_state = 'superseded', superseded_by_id = ?, updated_at = ? WHERE id = ?",
                         (replaced_id, now, claim_id),
@@ -1783,10 +1833,16 @@ class OntologyStore:
             }
             conn.execute("BEGIN IMMEDIATE")
             try:
-                for table in ("claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
+                for table in ("alignment_conversations", "claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
                     conn.execute(f"DELETE FROM {table}")
                 conn.execute("DELETE FROM entity_aliases WHERE entity_id != ?", (ME_ENTITY_ID,))
                 conn.execute("DELETE FROM entities WHERE id != ?", (ME_ENTITY_ID,))
+                # 这些快照只对被删除的本体/对话有效。若保留，空库会被误判为已完成首次引导，
+                # 今日页也可能短暂引用已经不存在的理解。
+                conn.execute(
+                    "DELETE FROM ontology_meta WHERE key IN (?, ?)",
+                    ("zhijun_onboarding_state_v1", "zhijun_home_snapshot_v1"),
+                )
                 conn.execute("INSERT INTO ontology_meta (key, value) VALUES ('purged_at', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (utc_now(),))
                 self._bump_revision(conn)
                 conn.execute("COMMIT")

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import wiki_store as real_wiki_store
 from mindos import home, uploads, knowledge, governance
 from mindos.services import ingestion
-from mindos.stores import governance_store
+from mindos.stores import governance_store, card_ledger_store
 
 _real_parse_fm = real_wiki_store._parse_frontmatter
 
@@ -56,6 +56,10 @@ class TestKnowledgeLegacyArchiveVisibility(unittest.TestCase):
 
     def setUp(self):
         _new_store(self)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        card_ledger_store.reset_for_tests(Path(self.tmp.name) / "cards.db")
+        self.addCleanup(card_ledger_store.reset_for_tests)
 
     def _start(self, patchers):
         for p in patchers:
@@ -71,23 +75,27 @@ class TestKnowledgeLegacyArchiveVisibility(unittest.TestCase):
         return {"path": "/wiki/card.md",
                 "content": f'---\ntitle: "Card"\nmindos_card: true\n{extra}---\n# Card\nbody'}
 
-    def test_knowledge_list_hides_legacy_archived_cards(self):
-        """已移除归档入口后，历史归档/合并卡片仍不应在普通列表中出现。"""
+    def test_knowledge_list_hides_recycled_and_merged_cards(self):
+        """明确确认的卡片按当前回收/合并规则过滤，不能靠缺失账本误隐藏。"""
         active = {"path": "/wiki/active.md",
                   "content": '---\ntitle: "Active"\nmindos_card: true\n---\n# Active\nbody'}
         archived = {"path": "/wiki/archived.md",
-                    "content": '---\ntitle: "Archived"\nmindos_card: true\nmindos_archived: true\n---\n# Archived\nbody'}
+                    "content": '---\ntitle: "Archived"\nmindos_card: true\nmindos_recycled: true\n---\n# Archived\nbody'}
         merged = {"path": "/wiki/merged.md",
                   "content": '---\ntitle: "Merged"\nmindos_card: true\nmindos_merged_into: "x"\n---\n# Merged\nbody'}
 
         def read_page(path):
             return {"/wiki/active.md": active, "/wiki/archived.md": archived, "/wiki/merged.md": merged}[path]
 
+        for page in (active, archived, merged):
+            kid = knowledge._knowledge_id(page["path"])
+            revision = knowledge._content_revision(page["content"])
+            card_ledger_store.confirm_and_enqueue(kid, page["path"], revision, kid, {"body": page["content"]})
+
         self._start([
             patch.object(knowledge.wiki_store, "list_pages",
                          return_value={"items": [{"path": "/wiki/active.md"}, {"path": "/wiki/archived.md"}, {"path": "/wiki/merged.md"}]}),
             patch.object(knowledge.wiki_store, "read_page", side_effect=read_page),
-            patch.object(knowledge, "_is_rag_eligible_page", return_value=True),
         ])
         active_view = knowledge.knowledge_list()["items"]
         self.assertEqual(len(active_view), 1)  # 仅活跃卡片

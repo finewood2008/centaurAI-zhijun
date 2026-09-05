@@ -385,7 +385,9 @@ class IndexCleanupRegressionTests(unittest.TestCase):
     def _patch_index_deps(self):
         """屏蔽模型/向量/标注依赖，仅验证解析 → parts 持久化 → chunk 元数据链路。"""
         add_calls: list[tuple] = []
-        with patch.object(watcher, "get_source_hash", return_value=None), patch.object(
+        with patch.object(watcher, "_submit_material_summary"), patch.object(
+            watcher, "_submit_material_analysis"
+        ), patch.object(watcher, "get_source_hash", return_value=None), patch.object(
             watcher, "_index_fingerprint", return_value="hash-v1"
         ), patch.object(
             watcher.derived_store, "material_id_for_source", return_value=self.material_id

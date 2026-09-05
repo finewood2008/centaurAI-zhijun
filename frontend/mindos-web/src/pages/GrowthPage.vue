@@ -1,13 +1,12 @@
 <script setup lang="ts">
-// 知君成长闭环 MVP：人生章程 → 判断 → 结果 → 复盘。
+// 判断 → 结果 → 复盘；人生章程由「我的本体」管理，这里只引用当时版本。
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { createConversation } from '@/services/api'
-import { BookOpenCheck, ChevronUp, Plus, RotateCcw, Sprout, Target } from 'lucide-vue-next'
+import { BookOpenCheck, ChevronUp, Plus, RotateCcw, Target } from 'lucide-vue-next'
 import {
   api,
   ApiError,
-  type GrowthCharter,
   type GrowthDecision,
   type GrowthDecisionStatus,
 } from '@/services/api'
@@ -21,20 +20,6 @@ import { useToast } from '@/composables/useToast'
 
 const route = useRoute()
 const toast = useToast()
-
-const charter = ref<GrowthCharter | null>(null)
-const charterVersionCount = ref(0)
-const charterLoading = ref(true)
-const charterError = ref('')
-const charterSaving = ref(false)
-const showCharterForm = ref(true)
-const charterVision = ref('')
-const charterRoles = ref('')
-const charterPrinciples = ref('')
-const charterBoundaries = ref('')
-const charterGoals = ref('')
-const charterChallengeStyle = ref('')
-const charterQuietDomains = ref('')
 
 const decisions = ref<GrowthDecision[]>([])
 const decisionsLoading = ref(true)
@@ -72,82 +57,8 @@ function parseLines(value: string): string[] {
   return value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)
 }
 
-function joinLines(values: string[]): string {
-  return values.join('\n')
-}
-
 function isConflict(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409
-}
-
-function applyCharter(value: GrowthCharter | null) {
-  charter.value = value
-  charterVision.value = value?.vision ?? ''
-  charterRoles.value = joinLines(value?.roles ?? [])
-  charterPrinciples.value = joinLines(value?.principles ?? [])
-  charterBoundaries.value = joinLines(value?.boundaries ?? [])
-  charterGoals.value = joinLines(value?.goals ?? [])
-  charterChallengeStyle.value = value?.challengeStyle ?? ''
-  charterQuietDomains.value = joinLines(value?.quietDomains ?? [])
-}
-
-async function loadCharter() {
-  charterLoading.value = true
-  charterError.value = ''
-  try {
-    const response = await api.getGrowthCharter()
-    charterVersionCount.value = response.versions.length
-    applyCharter(response.currentCharter)
-    showCharterForm.value = response.currentCharter === null
-  } catch (error) {
-    charterError.value = error instanceof Error ? error.message : '人生章程加载失败'
-  } finally {
-    charterLoading.value = false
-  }
-}
-
-function startCharterEdit() {
-  applyCharter(charter.value)
-  showCharterForm.value = true
-}
-
-function cancelCharterEdit() {
-  applyCharter(charter.value)
-  showCharterForm.value = charter.value === null
-}
-
-async function saveCharter() {
-  const vision = charterVision.value.trim()
-  const challengeStyle = charterChallengeStyle.value.trim()
-  if (!vision || !challengeStyle) {
-    toast({ type: 'error', message: '请填写人生愿景和知君挑战你的方式' })
-    return
-  }
-  charterSaving.value = true
-  try {
-    const saved = await api.saveGrowthCharter({
-      vision,
-      roles: parseLines(charterRoles.value),
-      principles: parseLines(charterPrinciples.value),
-      boundaries: parseLines(charterBoundaries.value),
-      goals: parseLines(charterGoals.value),
-      challengeStyle,
-      quietDomains: parseLines(charterQuietDomains.value),
-    })
-    applyCharter(saved)
-    charterVersionCount.value = Math.max(charterVersionCount.value + 1, saved.version)
-    showCharterForm.value = false
-    toast({ type: 'success', message: saved.version === 1 ? '人生章程已创建' : '人生章程已生成新版本' })
-  } catch (error) {
-    if (isConflict(error)) {
-      toast({ type: 'info', message: '章程已在其他位置更新，已为你加载最新版本' })
-      await loadCharter()
-    } else {
-      toast({ type: 'error', message: error instanceof Error ? error.message : '章程保存失败' })
-    }
-  } finally {
-    charterSaving.value = false
-  }
 }
 
 async function loadDecisions() {
@@ -417,7 +328,7 @@ async function applyRouteIntent() {
 }
 
 onMounted(async () => {
-  await Promise.allSettled([loadCharter(), loadDecisions()])
+  await loadDecisions()
   await applyRouteIntent()
 })
 </script>
@@ -469,7 +380,7 @@ onMounted(async () => {
               <span class="chip"><small>把握</small>{{ decision.confidence }}%</span>
               <span v-if="decision.status === 'open'" class="chip"><small>回访</small>{{ decision.reviewAt ? formatDate(decision.reviewAt) : '未定' }}</span>
             </div>
-            <details class="decision-details"><summary>当时的完整记录</summary><dl><dt>背景</dt><dd>{{ decision.context }}</dd><dt>考虑过的选项</dt><dd><ul><li v-for="option in decision.options" :key="option">{{ option }}</li></ul></dd><dt>理由与假设</dt><dd>{{ decision.rationale }}</dd><dt>预期结果</dt><dd>{{ decision.expectedOutcome }}</dd><dt>记录时间</dt><dd>{{ formatDate(decision.createdAt) }}<template v-if="decision.charterVersion"> · 基于章程第 {{ decision.charterVersion }} 版</template></dd></dl></details>
+            <details class="decision-details"><summary>当时的完整记录</summary><dl><dt>背景</dt><dd>{{ decision.context }}</dd><dt>考虑过的选项</dt><dd><ul><li v-for="option in decision.options" :key="option">{{ option }}</li></ul></dd><dt>理由与假设</dt><dd>{{ decision.rationale }}</dd><dt>预期结果</dt><dd>{{ decision.expectedOutcome }}</dd><dt>记录时间</dt><dd>{{ formatDate(decision.createdAt) }}<template v-if="decision.charterVersion"> · <RouterLink :to="{ path: '/me/charter', query: { version: decision.charterVersion } }">参考人生章程第 {{ decision.charterVersion }} 版</RouterLink></template></dd></dl></details>
 
             <section v-if="decision.outcome" class="outcome-block"><div class="outcome-block__title"><BookOpenCheck :size="16" aria-hidden="true" />真实结果 <small>{{ formatDate(decision.outcome.recordedAt) }}</small></div><p>{{ decision.outcome.result }}</p><p v-if="decision.outcome.notes" class="muted">补充：{{ decision.outcome.notes }}</p></section>
             <section v-if="decision.review" class="review-block">
@@ -498,42 +409,6 @@ onMounted(async () => {
       <JudgmentTimeline :decisions="decisions" :selected-id="highlightedId || null" @select="focusDecision" />
     </details>
 
-    <section class="growth-panel charter-panel" aria-labelledby="charter-heading">
-      <div class="growth-panel__head">
-        <div class="growth-panel__title"><span class="panel-icon"><Sprout :size="19" aria-hidden="true" /></span><div><h2 id="charter-heading">我的方向（人生章程）</h2><p>知君挑战你、提醒你时的依据；改动会生成新版本，不改写历史。</p></div></div>
-        <div class="charter-panel__meta"><span v-if="charter" class="version-badge">第 {{ charter.version }} 版 · {{ formatDate(charter.createdAt) }}</span><BaseButton v-if="charter && !showCharterForm" variant="secondary" size="sm" @click="startCharterEdit">修改</BaseButton></div>
-      </div>
-      <div v-if="charterLoading" class="loading-state" aria-live="polite">正在加载人生章程…</div>
-      <ErrorState v-else-if="charterError" :message="charterError" @retry="loadCharter" />
-      <div v-else-if="charter && !showCharterForm" class="charter-summary">
-        <p class="charter-summary__vision"><small>我想成为</small>{{ charter.vision }}</p>
-        <div class="charter-summary__rows">
-          <div><small>角色</small><span v-if="!charter.roles.length" class="muted">未填写</span><span v-for="item in charter.roles" :key="item" class="chip chip--plain">{{ item }}</span></div>
-          <div><small>原则</small><span v-if="!charter.principles.length" class="muted">未填写</span><span v-for="item in charter.principles" :key="item" class="chip chip--plain">{{ item }}</span></div>
-          <div><small>目标</small><span v-if="!charter.goals.length" class="muted">未填写</span><span v-for="item in charter.goals" :key="item" class="chip chip--plain">{{ item }}</span></div>
-          <div><small>不该由 AI 决定</small><span v-if="!charter.boundaries.length" class="muted">未填写</span><span v-for="item in charter.boundaries" :key="item" class="chip chip--plain">{{ item }}</span></div>
-          <div><small>知君可以如何挑战我</small><span class="charter-line">{{ charter.challengeStyle }}</span></div>
-          <div><small>不要主动提起</small><span v-if="!charter.quietDomains.length" class="muted">无</span><span v-for="item in charter.quietDomains" :key="item" class="chip chip--plain">{{ item }}</span></div>
-        </div>
-      </div>
-      <form v-else-if="showCharterForm" class="growth-form" @submit.prevent="saveCharter">
-        <p v-if="!charter" class="form-intro">先写下你想成为谁，知君才有依据挑战你。</p>
-        <label for="charter-vision">我想成为怎样的人 <span aria-hidden="true">*</span></label>
-        <textarea id="charter-vision" v-model="charterVision" rows="3" maxlength="2000" :disabled="charterSaving" placeholder="用你自己的语言描述人生愿景" required />
-        <div class="form-grid">
-          <div class="field"><label for="charter-roles">当前重要角色 <small>每行一项</small></label><textarea id="charter-roles" v-model="charterRoles" rows="4" :disabled="charterSaving" placeholder="创业者&#10;父亲&#10;投资人" /></div>
-          <div class="field"><label for="charter-goals">当前阶段目标 <small>每行一项</small></label><textarea id="charter-goals" v-model="charterGoals" rows="4" :disabled="charterSaving" placeholder="今年完成一项最重要的事" /></div>
-          <div class="field"><label for="charter-principles">我确认的长期原则 <small>每行一项</small></label><textarea id="charter-principles" v-model="charterPrinciples" rows="4" :disabled="charterSaving" placeholder="诚实面对不确定性" /></div>
-          <div class="field"><label for="charter-boundaries">AI 不应替我决定的事 <small>每行一项</small></label><textarea id="charter-boundaries" v-model="charterBoundaries" rows="4" :disabled="charterSaving" placeholder="重大人事决策" /></div>
-        </div>
-        <label for="charter-challenge">知君可以如何挑战我 <span aria-hidden="true">*</span></label>
-        <textarea id="charter-challenge" v-model="charterChallengeStyle" rows="2" maxlength="1000" :disabled="charterSaving" placeholder="例如：直接指出我的理由与过往事实不一致，但先问我一个反向问题" required />
-        <label for="charter-quiet">禁止主动提醒的领域 <small>每行一项，可留空</small></label>
-        <textarea id="charter-quiet" v-model="charterQuietDomains" rows="2" :disabled="charterSaving" placeholder="例如：家庭关系" />
-        <div class="form-actions"><span v-if="charter" class="form-note">更新会生成新版本，不改写历史。</span><BaseButton v-if="charter" variant="secondary" :disabled="charterSaving" @click="cancelCharterEdit">取消</BaseButton><BaseButton type="submit" variant="primary" :loading="charterSaving">{{ charter ? '保存为新版本' : '创建章程' }}</BaseButton></div>
-      </form>
-    </section>
-
     <section v-if="latestReviewed && latestReviewed.review" class="growth-panel" aria-labelledby="latest-review-heading">
       <div class="growth-panel__head"><div class="growth-panel__title"><span class="panel-icon"><BookOpenCheck :size="19" aria-hidden="true" /></span><div><h2 id="latest-review-heading">最近复盘</h2><p>{{ latestReviewed.title }} · {{ formatDate(latestReviewed.review.createdAt) }}</p></div></div></div>
       <div class="latest-review"><p>{{ latestReviewed.review.reflection }}</p><div class="review-lessons"><strong>留下的经验</strong><ul><li v-for="lesson in latestReviewed.review.lessons" :key="lesson">{{ lesson }}</li></ul></div><p class="review-next"><strong>下一步</strong>{{ latestReviewed.review.nextAction }}</p></div>
@@ -543,14 +418,14 @@ onMounted(async () => {
 
 <style scoped>
 .growth-page{max-width:1180px}
-.growth-head,.section-head,.growth-panel__head,.growth-panel__title,.decision-card__head,.decision-actions,.form-actions,.subform-head,.outcome-block__title,.charter-panel__meta{display:flex;align-items:center}
+.growth-head,.section-head,.growth-panel__head,.growth-panel__title,.decision-card__head,.decision-actions,.form-actions,.subform-head,.outcome-block__title{display:flex;align-items:center}
 .growth-head,.section-head,.growth-panel__head,.decision-card__head,.form-actions,.subform-head{justify-content:space-between}
 .growth-head{gap:16px}.growth-head h1,.growth-panel__title h2,.board__column-head h3,.decision-card__head h4{font-family:var(--ws-font-display)}
 .section-head{gap:12px;margin:6px 0 12px}
 .growth-panel{margin-bottom:18px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg);overflow:hidden}
 .growth-panel__head{gap:12px;padding:15px 17px;border-bottom:1px solid var(--ws-border-color-3)}.growth-panel__title{gap:11px}.growth-panel__title h2{margin:0;font-size:17px}.growth-panel__title p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size:12px}
 .panel-icon{display:grid;width:36px;height:36px;place-items:center;border-radius:9px;background:var(--ws-edit-color);color:var(--ws-primary-color)}
-.version-badge,.decision-counts span{padding:2px 8px;border-radius:3px;border:1px solid var(--ws-border-color);background:transparent;color:var(--ws-text-secondary-color);font-size: 12px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.charter-panel__meta{gap:10px}
+.decision-counts span{padding:2px 8px;border-radius:3px;border:1px solid var(--ws-border-color);background:transparent;color:var(--ws-text-secondary-color);font-size: 12px}.decision-counts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}
 .growth-trend{margin:0 0 18px}.growth-trend>summary{display:inline-flex;align-items:center;gap:6px;margin-bottom:8px;color:var(--ws-text-secondary-color);font-size:12px;cursor:pointer;list-style:none}.growth-trend>summary::-webkit-details-marker{display:none}.growth-trend>summary::before{content:'';width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s}.growth-trend[open]>summary::before{transform:rotate(90deg)}.growth-trend>summary:hover{color:var(--ws-primary-color)}
 .board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-bottom:18px}.board--1{grid-template-columns:minmax(0,560px)}.board--2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .board__column{display:grid;align-content:start;gap:10px;padding:12px;border:1px solid var(--ws-border-color-3);border-radius:var(--ws-radius-lg);background:var(--ws-surface-2)}
@@ -568,7 +443,6 @@ onMounted(async () => {
 .growth-form{display:grid;gap:8px;padding:17px}.form-intro{margin:0 0 4px;color:var(--ws-text-color);font-size:13px}.growth-form label,.field label,.inline-form label{color:var(--ws-text-color);font-size:12px;font-weight:600}.growth-form label small,.field label small,.inline-form label small{color:var(--ws-text-secondary-color);font-weight:400}.growth-form input,.growth-form textarea,.inline-form textarea{width:100%;padding:9px 11px;border:1px solid var(--ws-border-color);border-radius:var(--ws-radius);background:var(--ws-body-bg);color:var(--ws-text-primary-color);font:inherit;font-size:13px;line-height:1.55}.growth-form input:focus,.growth-form textarea:focus,.inline-form textarea:focus{outline:0;border-color:var(--ws-primary-color);box-shadow:0 0 0 3px rgba(166,69,46,.15)}.growth-form textarea,.inline-form textarea{resize:vertical}.growth-form input:disabled,.growth-form textarea:disabled,.inline-form textarea:disabled{opacity:.6}.form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:grid;gap:8px}.compact-grid{align-items:end}.form-actions{justify-content:flex-end;gap:8px;margin-top:7px}.form-note{flex:1;color:var(--ws-text-secondary-color);font-size: 12px}
 .decision-create{margin:0 0 18px;border:1px solid rgba(166,69,46,.35);border-radius:var(--ws-radius-lg);background:var(--ws-card-bg)}.subform-head{gap:12px;margin-bottom:3px}.subform-head h3{margin:0;font-size:14px}.subform-head p{margin:3px 0 0;color:var(--ws-text-secondary-color);font-size: 12px}.collapse-button{display:grid;width:30px;height:30px;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--ws-text-secondary-color)}.collapse-button:hover{background:var(--ws-surface-2)}
 .inline-form{display:grid;gap:7px;padding:12px;border:1px solid rgba(166,69,46,.3);border-radius:var(--ws-radius);background:var(--ws-body-bg)}.inline-form h5{margin:0 0 3px;font-size:12px}.inline-form .form-actions{margin-top:3px}
-.charter-summary{padding:15px 17px}.charter-summary__vision{margin:0 0 12px;padding-bottom:12px;border-bottom:1px solid var(--ws-border-color-3);font-size:15px;line-height:1.55;overflow-wrap:anywhere}.charter-summary__vision small,.charter-summary__rows small{display:block;margin-bottom:4px;color:var(--ws-text-secondary-color);font-size: 12px}.charter-summary__rows{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.charter-summary__rows>div{min-width:0}.charter-line{color:var(--ws-text-color);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
-@media(max-width:1023px){.board{grid-template-columns:1fr}.charter-summary__rows{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:760px){.growth-head,.section-head,.growth-panel__head{align-items:stretch;flex-direction:column}.growth-panel__head{gap:10px}.charter-panel__meta{justify-content:space-between}.decision-counts{justify-content:flex-start}.charter-summary__rows{grid-template-columns:1fr}.form-grid{grid-template-columns:1fr}.form-actions{align-items:stretch;flex-wrap:wrap}.form-note{flex-basis:100%}.decision-details dl{grid-template-columns:1fr}.decision-details dt{margin-top:5px}}
+@media(max-width:1023px){.board{grid-template-columns:1fr}}
+@media(max-width:760px){.growth-head,.section-head,.growth-panel__head{align-items:stretch;flex-direction:column}.growth-panel__head{gap:10px}.decision-counts{justify-content:flex-start}.form-grid{grid-template-columns:1fr}.form-actions{align-items:stretch;flex-wrap:wrap}.form-note{flex-basis:100%}.decision-details dl{grid-template-columns:1fr}.decision-details dt{margin-top:5px}}
 </style>

@@ -28,11 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import wiki_store
 import runtime_paths
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 from mindos import derived, graph, knowledge, knowledge_index, lifecycle, related, uploads
 from mindos.services import ingestion
-from mindos.stores import derived_store, governance_store, job_store
+from mindos.stores import derived_store, governance_store, job_store, card_ledger_store
 from mindos.stores.job_store import JobStore
 
 
@@ -44,6 +44,7 @@ class LifecycleTestCase(unittest.TestCase):
         job_store.reset_for_tests(Path(self._tmp.name) / "jobs.db")
         governance_store.reset_for_tests(Path(self._tmp.name) / "gov.db")
         derived_store.reset_for_tests(Path(self._tmp.name) / "derived.db")
+        card_ledger_store.reset_for_tests(Path(self._tmp.name) / "cards.db")
         self._old_dir = wiki_store.WIKI_DIR
         self._old_db = wiki_store.WIKI_DB_PATH
         wiki_store.WIKI_DIR = str(Path(self._tmp.name) / "wiki")
@@ -56,7 +57,7 @@ class LifecycleTestCase(unittest.TestCase):
         self._gbrain.start()
         self._status = patch.object(ingestion, "status_of", side_effect=self._status_of)
         self._status.start()
-        self._submit_ing = patch.object(ingestion, "submit_index", return_value=True)
+        self._submit_ing = patch.object(ingestion, "_submit_material_job", return_value=True)
         self._submit_ing.start()
 
         # 受控回收目录：把 lifecycle 的监控目录 / 回收目录指向临时目录。
@@ -86,6 +87,7 @@ class LifecycleTestCase(unittest.TestCase):
         self.derived = derived_store.DerivedStore.instance()
 
     def tearDown(self):
+        card_ledger_store.reset_for_tests()
         for p in (
             self._ann_del, self._submit_watcher, self._chunks, self._list_docs,
             self._del_doc, self._audit_p, self._trash_p, self._watch_p,
@@ -103,7 +105,9 @@ class LifecycleTestCase(unittest.TestCase):
 
     # ---- 辅助方法 ----------------------------------------------------
 
-    def _status_of(self, material_id: str) -> dict | None:
+    def _status_of(self, material_id: str, device_scope="global") -> dict | None:
+        if device_scope != "global":
+            return None
         record = self.store.get(material_id)
         if record is None:
             return None
@@ -152,13 +156,14 @@ class LifecycleTestCase(unittest.TestCase):
                 return_value=("new.pdf", "document", "/tmp/new.pdf"),
             ):
                 return await uploads.mindos_material_version_upload(
-                    material_id, file=None, versionNote=note, targetFolderId=None,
+                    material_id, Request({"type": "http"}), file=None, versionNote=note, targetFolderId=None,
                 )
         return asyncio.run(_run())
 
     def _materials(self, recycled: bool = False) -> list[dict]:
         """直接调用列表接口（显式传参，绕开 FastAPI Query 默认值）。"""
         resp = uploads.mindos_materials(
+            request=Request({"type": "http"}),
             file_type=None, status=None, keyword=None,
             folder=None, folderId=None, tag=None,
             recycled=recycled,
@@ -193,7 +198,7 @@ class MaterialVersionChainTests(LifecycleTestCase):
         corr_id = self._correction(m1)
         draft_id = self._draft(m1)
         v2 = self._version_upload(m1)
-        impact = uploads.mindos_material_version_impact(v2["newMaterialId"])
+        impact = uploads.mindos_material_version_impact(v2["newMaterialId"], Request({"type": "http"}))
         self.assertTrue(impact["ready"])
         self.assertEqual(impact["oldMaterialId"], m1)
         self.assertEqual([c["correctionId"] for c in impact["corrections"]], [corr_id])
@@ -259,7 +264,7 @@ class DeletionImpactTests(LifecycleTestCase):
         self.assertEqual(impact["knowledgeCards"]["activeCount"], 1)
         deps = impact["blockingDependencies"]
         self.assertTrue(any(d["type"] == "knowledge" and d["id"] == kid for d in deps))
-        self.assertEqual(deps[0]["allowedActions"], ["archive", "replaceSource", "detachSource"])
+        self.assertEqual(deps[0]["allowedActions"], ["recycle", "replaceSource", "detachSource"])
 
     def test_material_impact_includes_correction_draft_governance(self):
         m1 = self._material("mindos_imp3", "imp3.md")
@@ -491,6 +496,10 @@ class RecyclePurgeTests(LifecycleTestCase):
 
     def test_knowledge_recycle_unrecycle_purge(self):
         kid = self._card("卡片")
+        page = knowledge._find(kid)
+        revision = knowledge._content_revision(page["content"])
+        card_ledger_store.confirm_and_enqueue(kid, page["path"], revision, kid, {"body": page["content"]})
+        card_ledger_store.activate_vector(kid, 1)
         impact = lifecycle.deletion_impact_knowledge(kid)
         lifecycle.recycle_knowledge(
             kid, lifecycle.DeletionExecuteRequest(confirmToken=impact["confirmToken"])

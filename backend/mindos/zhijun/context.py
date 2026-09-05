@@ -42,11 +42,17 @@ def _brief(claim: dict) -> dict:
 
 
 def _claim_line(claim: dict) -> str:
+    from .alignment import description
     section = SECTION_TITLES.get(claim["section"], claim["section"])
     layer = LAYER_TITLES.get(claim["layer"], claim["layer"])
     obj = f"（涉及：{claim['objectName']}）" if claim.get("objectName") else ""
     scope = "（只适用于当时那件事）" if claim.get("scope") == "context_only" else ""
-    return f"- [{section}] {claim['content']}{obj}（{layer}）{scope}"
+    details = claim.get("contextual") or {}
+    situation = (" 情境：" + details["situation"][:250]) if details.get("situation") else ""
+    exceptions = (" 例外/未知：" + details["exceptions"][:150]) if details.get("exceptions") else ""
+    frame = {"current": "阶段状态，不是永久特征", "aspirational": "愿望，不表示已经做到",
+             "long_term": "用户认同的倾向，不是行为预测已获证实", "context_only": "限这次情境"}.get(details.get("framing"), "")
+    return f"- [{section}] {claim['content']}{obj}（{layer}）{scope}{description(claim)}{situation}{exceptions} {frame}".rstrip()
 
 
 def _fit(lines: list[str], budget: int) -> list[str]:
@@ -60,13 +66,13 @@ def _fit(lines: list[str], budget: int) -> list[str]:
     return kept
 
 
-def _material_evidence(user_text: str, limit: int = 4) -> list:
+def _material_evidence(user_text: str, limit: int = 4, device_scope: str = "global") -> list:
     if os.environ.get("ZHIJUN_MATERIAL_EVIDENCE", "1").strip().lower() in ("0", "false", "no"):
         return []
     try:
         from .. import qa as _qa  # 延迟导入：拉起 embedder / vector_store，缺模型时直接跳过
 
-        return list(_qa.build_evidence(user_text, limit=limit) or [])
+        return list(_qa.build_evidence(user_text, limit=limit, device_scope=device_scope) or [])
     except Exception as exc:  # noqa: BLE001 - 资料证据是加速器，不是门禁
         logger.debug("资料片段检索不可用，跳过：%s", type(exc).__name__)
         return []
@@ -113,9 +119,17 @@ def assemble(
     turn_mode: str = "chat",
     decision: dict | None = None,
     past_decisions: list[dict] | None = None,
+    material_refs: list[dict] | None = None,
+    device_scope: str = "global",
+    conversation_store=None,
 ) -> Assembled:
     channel = "external" if provider.external else "local"
-    budget = BUDGETS[channel]
+    budget = dict(BUDGETS[channel])
+    attachment_text, attachment_sources = "", []
+    if material_refs:
+        from ..chat_imports import attachment_context
+        attachment_text, attachment_sources = attachment_context(material_refs, device_scope, user_text, external=provider.external)
+        budget["total"] -= len(attachment_text)
     mode = conversation.get("mode") or "chat"
     outcome_recorded = bool(decision and decision.get("status") in ("outcome_recorded", "reviewed"))
 
@@ -134,11 +148,12 @@ def assemble(
         parts.append(charter_text)
 
     confirmed = ontology.search_claims(user_text, k=12, trust_states=("confirmed",), include_hidden=True)
-    # 良师的底气来自原则与做法：商量 / 回访 / 深入时无论词面是否命中，都把已确认的原则与做法带上（最多 6 条）。
+    # Only relevant principles are eligible; unrelated high-affinity anchors
+    # must not displace facts needed to answer the current question.
     anchor_ids: list[str] = []
     if turn_mode == "deliberate" or mode == "review" or depth == "deep":
         seen = {c["id"] for c in confirmed}
-        anchors = ontology.search_claims("", k=6, trust_states=("confirmed",), sections=("principles", "ways"), include_hidden=True)
+        anchors = ontology.search_claims(user_text, k=6, trust_states=("confirmed",), sections=("principles", "ways"), include_hidden=True, min_score=0.08)
         anchor_ids = [c["id"] for c in anchors]
         confirmed = confirmed + [c for c in anchors if c["id"] not in seen]
     working = ontology.search_claims(user_text, k=6, trust_states=("working",), include_hidden=False)
@@ -146,10 +161,18 @@ def assemble(
         user_text, k=5, trust_states=("retracted", "superseded"), include_hidden=True, min_score=0.35
     )
     if provider.external:
-        confirmed = [c for c in confirmed if c.get("privacyLevel") in EXTERNAL_PRIVACY_ALLOWED]
-        working = [c for c in working if c.get("privacyLevel") in EXTERNAL_PRIVACY_ALLOWED]
-        retracted = [c for c in retracted if c.get("privacyLevel") in EXTERNAL_PRIVACY_ALLOWED]
+        from .source_policy import SourcePolicy
+        policy = SourcePolicy(ontology, conversation_store)
+        confirmed = [c for c in confirmed if not policy.claim_local(c)]
+        working = [c for c in working if not policy.claim_local(c)]
+        retracted = [c for c in retracted if not policy.claim_local(c)]
 
+    from . import alignment
+    from ..stores.conversation_store import ConversationStore
+    # The caller passes its store explicitly in tests and isolated runtimes.
+    convs = conversation_store or ConversationStore.instance()
+    confirmed = alignment.context_claims(confirmed, provider, ontology, convs, device_scope, user_text)
+    parts.append(alignment.INSTRUCTION)
     confirmed_lines = _fit([_claim_line(c) for c in confirmed], budget["confirmed"])
     confirmed = confirmed[: len(confirmed_lines)]
     if confirmed_lines:
@@ -171,9 +194,9 @@ def assemble(
     materials: list = []
     material_items: list[dict] = []
     if budget["materials"] > 0:
-        materials = _material_evidence(user_text)
+        materials = _material_evidence(user_text, device_scope=device_scope)
         lines: list[str] = []
-        for i, ev in enumerate(materials, start=1):
+        for i, ev in enumerate(materials, start=len(attachment_sources) + 1):
             title = getattr(ev, "title", "") or ""
             snippet = (getattr(ev, "snippet", "") or "").strip()
             lines.append(f"[m{i}] 《{title}》：{snippet}")
@@ -223,7 +246,14 @@ def assemble(
         messages.pop(0)
         prompt_chars = len(system) + sum(len(m["content"]) for m in messages)
 
+    if attachment_sources:
+        system += attachment_text
+        material_items = attachment_sources + material_items
+        prompt_chars = len(system) + sum(len(m["content"]) for m in messages)
+
     provenance = {
+        "localOnlyDerived": False,
+        "alignmentSources": [c["alignmentSource"] for c in confirmed if c.get("alignmentSource")],
         "confirmedClaims": [_brief(c) for c in confirmed],
         "workingClaims": [_brief(c) for c in working],
         "materials": material_items,
@@ -238,6 +268,10 @@ def assemble(
         ],
         "anchorClaimIds": [cid for cid in anchor_ids if cid in {c["id"] for c in confirmed}],
     }
+    if not provider.external:
+        from .source_policy import SourcePolicy
+        policy = SourcePolicy(ontology, convs)
+        provenance["localOnlyDerived"] = any(policy.claim_local(c) for c in confirmed + working + retracted)
     debug = {
         "mode": mode,
         "turnMode": turn_mode,

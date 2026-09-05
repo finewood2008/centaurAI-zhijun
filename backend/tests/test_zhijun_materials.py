@@ -4,8 +4,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from mindos.stores.ontology_store import OntologyStore
+from mindos.stores import job_store
 from mindos.zhijun import materials
 
 
@@ -28,6 +30,9 @@ class MaterialClaimsTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.store = OntologyStore(Path(self._tmp.name) / "ontology.db")
+        self.jobs = job_store.reset_for_tests(Path(self._tmp.name) / "jobs.db")
+        for mid in ("mat_1", "mat_2"):
+            self.jobs.register(mid, mid + ".txt", "text", str(Path(self._tmp.name) / (mid + ".txt")))
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -66,6 +71,29 @@ class MaterialClaimsTests(unittest.TestCase):
     def test_not_ok_records_are_ignored(self) -> None:
         report = materials.run("mat_2", store=self.store, entity_record={"status": "failed", "content": {"items": []}}, relation_record={"status": "skipped", "content": {"items": []}})
         self.assertEqual(report["created"], [])
+        self.assertEqual(self.store.stats()["claims"]["working"], 0)
+
+    def test_same_relations_from_two_devices_have_independent_entities_and_claims(self):
+        rows = []
+        for scope, mid in (("device:alpha", "mat_a"), ("device:beta", "mat_b")):
+            self.jobs.register(mid, mid + ".txt", "text", str(Path(self._tmp.name) / mid), device_scope=scope)
+            report = materials.run(mid, store=self.store, entity_record=ENTITY_RECORD, relation_record=RELATION_RECORD)
+            self.assertEqual(len(report["created"]), 2)
+            claims = [self.store.get_claim(cid) for cid in report["created"]]
+            self.assertTrue(all(c["deviceScope"] == scope for c in claims))
+            self.assertTrue(all(c["layer"] == "observed" and c["trustState"] == "working" for c in claims))
+            rows.append(claims)
+        self.assertTrue({c["id"] for c in rows[0]}.isdisjoint({c["id"] for c in rows[1]}))
+        self.assertTrue({c["subjectEntityId"] for c in rows[0]}.isdisjoint({c["subjectEntityId"] for c in rows[1]}))
+        self.assertEqual(self.store.list_claims(trust_states=("working",), device_scope="global"), [])
+
+    def test_unknown_recycled_and_cancelled_materials_do_not_fall_back_to_global(self):
+        for record in (None, {"device_scope": "device:alpha", "recycled": True},
+                       {"device_scope": "device:alpha", "canceled": True}, {}):
+            with self.subTest(record=record), patch.object(self.jobs, "get", return_value=record):
+                result = materials.run("unknown", store=self.store, entity_record=ENTITY_RECORD, relation_record=RELATION_RECORD)
+                self.assertEqual(result["reason"], "material_unavailable")
+                self.assertEqual(result["created"], [])
         self.assertEqual(self.store.stats()["claims"]["working"], 0)
 
 

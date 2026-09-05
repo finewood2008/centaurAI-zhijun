@@ -147,16 +147,25 @@ class ZhijunHomeTests(unittest.TestCase):
         class Provider:
             name = "stub"
             external = True
+            model = "synthetic"
+            _base_url = "https://synthetic.invalid/v1"
 
             def complete_json(self, request):
                 captured["payload"] = request.messages[0]["content"]
                 return {"headline": "我还记得你看重长期的选择", "message": "这条原则仍然在我们的共同地图里。", "focusIds": [private_id]}
 
+        from mindos.stores.routing_store import RoutingStore
+        from mindos.chat_imports import service_info
+        routing = RoutingStore(self.onto)
+        routing.set_mode("default:global", "online", service_info(Provider())["id"])
         with patch("mindos.zhijun.provider.build_provider", return_value=Provider()), patch("mindos.zhijun.gate.provider_gate.acquire", return_value=True), patch("mindos.zhijun.gate.provider_gate.release"):
             result = zhijun_home.generate_home_brief(overview["sourceHash"], store=self.onto, conv_store=self.convs)
-        self.assertEqual(result["generatedBy"], "stub")
-        self.assertIn(private["content"], captured["payload"])
-        self.assertNotIn(sensitive["content"], captured["payload"])
+        self.assertEqual(result["state"], "paused")
+        self.assertEqual(captured, {})
+        pending = routing.pending("scope:global")[0]
+        preview = routing.get_preview(pending["preview_id"], "scope:global")
+        self.assertIn("claim:" + sensitive["id"], preview["missing"])
+        self.assertIn("claim:" + private["id"], preview["missing"])
 
     def test_external_decision_prompt_only_contains_safe_summary(self) -> None:
         self._claim("我会先做小范围验证")
@@ -168,19 +177,29 @@ class ZhijunHomeTests(unittest.TestCase):
         class Provider:
             name = "stub"
             external = True
+            model = "synthetic"
+            _base_url = "https://synthetic.invalid/v1"
 
             def complete_json(self, request):
                 captured["payload"] = request.messages[0]["content"]
                 return {"headline": "我们在等一次验证", "message": "这个选择还在等待真实结果。", "focusIds": [decision_id]}
 
+        from mindos.stores.routing_store import RoutingStore
+        from mindos.chat_imports import service_info
+        routing = RoutingStore(self.onto)
+        routing.set_mode("default:global", "online", service_info(Provider())["id"])
         with patch("mindos.zhijun.provider.build_provider", return_value=Provider()), patch("mindos.zhijun.gate.provider_gate.acquire", return_value=True), patch("mindos.zhijun.gate.provider_gate.release"):
             zhijun_home.generate_home_brief(overview["sourceHash"], store=self.onto, conv_store=self.convs)
-        payload = json.loads(captured["payload"])
+        self.assertEqual(captured, {})
+        pending = routing.pending("scope:global")[0]
+        preview = routing.get_preview(pending["preview_id"], "scope:global")
+        proposed_text = preview["request"]["messages"][0]["content"]
+        payload = json.loads(proposed_text)
         sent = next(item for item in payload if item["id"] == decision_id)
         self.assertEqual(set(sent), {"id", "relation", "text", "choice", "status", "reviewAt"})
-        self.assertNotIn("测试上下文", captured["payload"])
-        self.assertNotIn("降低风险", captured["payload"])
-        self.assertNotIn("一周后看到结果", captured["payload"])
+        self.assertNotIn("测试上下文", proposed_text)
+        self.assertNotIn("降低风险", proposed_text)
+        self.assertNotIn("一周后看到结果", proposed_text)
 
     def test_invalid_model_source_ids_fall_back_to_template(self) -> None:
         self._claim("我会先做小范围验证")

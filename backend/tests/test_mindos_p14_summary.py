@@ -397,7 +397,7 @@ class WatcherEarlyReturnSummaryTests(unittest.TestCase):
             "material", "mindos_e1", "SUMMARY", "ok", {"text": "旧摘要"}, "oldhash", "g"
         )
         self.src.write_text("   ", encoding="utf-8")
-        with patch.object(watcher, "_index_fingerprint", return_value="h"), patch.object(
+        with patch.object(watcher, "_submit_material_analysis"), patch.object(watcher, "_index_fingerprint", return_value="h"), patch.object(
             watcher, "get_source_hash", return_value=None
         ), patch.object(watcher.annotations, "get_rag_override", return_value=None), patch.object(
             watcher.annotations, "caption_of", return_value=""

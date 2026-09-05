@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from fastapi import Request
 from fastapi.responses import FileResponse
 
 from mindos.services import ingestion
@@ -86,8 +87,17 @@ class TranscriptBuildTests(unittest.TestCase):
             return_value=MagicMock(get=lambda _mid: rec, is_canceled=lambda _mid: False),
         ), patch.object(ingestion, "get_job", return_value={"state": "done"}), patch.object(
             ingestion, "get_source_chunks", return_value=chunks
-        ), patch.object(ingestion, "_ann_get", return_value={"tags": []}):
+        ), patch.object(ingestion, "_ann_get", return_value={"tags": []}), patch(
+            "mindos.stage_d_admin.legacy_read_enabled", return_value=True
+        ), patch.object(ingestion, "_snapshot_text_of", return_value=None):
             return ingestion.detail_of("mindos_audio1")
+
+    def test_disabled_legacy_read_never_reads_chroma_timeline(self):
+        with patch("mindos.stage_d_admin.legacy_read_enabled", return_value=False), patch.object(
+            ingestion, "get_source_chunks"
+        ) as chunks:
+            self.assertEqual(ingestion._transcript_segments(self.source), [])
+            chunks.assert_not_called()
 
     def test_valid_transcript_segments(self):
         chunks = [
@@ -167,7 +177,7 @@ class FilePreviewTests(unittest.TestCase):
                 ingestion.JobStore, "instance",
                 return_value=MagicMock(get=lambda _mid: rec),
             ), patch("mindos.uploads.WATCH_FOLDER", new=watch_root):
-                response = uploads.mindos_material_file("mindos_audio2")
+                response = uploads.mindos_material_file("mindos_audio2", Request({"type": "http"}))
             self.assertIsInstance(response, FileResponse)
         finally:
             os.unlink(tmp.name)
@@ -184,7 +194,7 @@ class FilePreviewTests(unittest.TestCase):
                 return_value=MagicMock(get=lambda _mid: rec),
             ), patch("mindos.uploads.WATCH_FOLDER", new=watch_root):
                 with self.assertRaises(Exception) as ctx:
-                    uploads.mindos_material_file("mindos_audio3")
+                    uploads.mindos_material_file("mindos_audio3", Request({"type": "http"}))
             self.assertEqual(getattr(ctx.exception, "status_code", None), 404)
         finally:
             os.unlink(tmp.name)

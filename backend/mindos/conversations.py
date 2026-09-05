@@ -8,13 +8,16 @@ import json
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .stores.conversation_store import ConversationError, ConversationNotFoundError, ConversationStore
 from .zhijun import deliberate, persona
 from .zhijun.turn import TurnError, run_turn
+from .chat_import_routes import MaterialRef
+from .uploads import _device_scope_of
+from .zhijun.reply_assistance import ReplyInput
 
 _PREFIX = "/api/mindos/conversations"
 _TAGS = ["zhijun-conversations"]
@@ -28,12 +31,42 @@ class ConversationCreate(_StrictModel):
     mode: Literal["chat", "onboarding", "review"] = "chat"
     title: str = Field(default="", max_length=80)
     decisionId: str | None = Field(default=None, max_length=100)
+    taskContext: Literal["charter"] | None = None
+
+
+class ConversationUpdate(_StrictModel):
+    expectedRevision: int = Field(ge=0, strict=True)
+    title: str | None = Field(default=None, min_length=1, max_length=80)
+    status: Literal["active", "archived"] | None = None
+    pinned: bool | None = Field(default=None, strict=True)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def trim_title(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("名称必须是文字")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def require_changes(self):
+        fields = self.model_fields_set - {"expectedRevision"}
+        if not fields or any(getattr(self, name) is None for name in fields):
+            raise ValueError("请提供要修改的名称、归档状态或置顶状态")
+        return self
 
 
 class MessageCreate(_StrictModel):
-    content: str = Field(min_length=1, max_length=4000)
+    content: str = Field(default="", max_length=4000)
     depth: Literal["brief", "deep"] = "brief"
     mode: Literal["chat", "deliberate"] = "chat"
+    materialRefs: list[MaterialRef] = Field(default_factory=list, max_length=5)
+    localOnly: bool = False
+    routeRevision: str | None = Field(default=None, max_length=64)
+    omitSources: bool = False
+    requestId: str | None = Field(default=None, min_length=8, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    retryUserMessageId: str | None = Field(default=None, max_length=100)
+    replyAssistance: ReplyInput | None = None
+    charterExceptionId: str | None = Field(default=None, max_length=100)
 
 
 class DraftConfirm(_StrictModel):
@@ -44,6 +77,7 @@ class DraftConfirm(_StrictModel):
     reviewAt: datetime | None = None
     title: str | None = Field(default=None, max_length=300)
     options: list[str] | None = Field(default=None, max_length=30)
+    assistedFields: list[Literal["choice", "rationale", "expectedOutcome"]] | None = Field(default=None, max_length=3)
 
 
 class OutcomeBody(_StrictModel):
@@ -65,7 +99,7 @@ def _growth_store():
     return GrowthStore.instance()
 
 
-def create_conversation(req: ConversationCreate):
+def create_conversation(req: ConversationCreate, request: Request = None):
     store = _store()
     decision = None
     if req.mode == "review":
@@ -74,28 +108,41 @@ def create_conversation(req: ConversationCreate):
         decision = _growth_store().get_decision(req.decisionId)
         if decision is None:
             raise _error(404, "DECISION_NOT_FOUND", "判断不存在")
-    if decision is not None:
-        # 同一判断只开一段回访：已有就回到它（响应带 reused: true）。
-        existing = store.find_conversation_by_decision(decision["id"], mode="review")
-        if existing is not None:
-            return {**existing, "reused": True}
     try:
-        conversation = store.create_conversation(
-            mode=req.mode,
-            title=req.title or (f"回访：{decision['title']}" if decision else ""),
-            decision_id=decision["id"] if decision else None,
-        )
+        # Serialize lookup/create only; never hold the conversation lock while
+        # initializing consent or other stores.
+        with store._lock:
+            if decision is not None:
+                existing = store.find_conversation_by_decision(decision["id"], mode="review", status="all",
+                                                               device_scope=_device_scope_of(request))
+                if existing is not None:
+                    return {**existing, "reused": True}
+            conversation = store.create_conversation(
+                mode=req.mode,
+                title=req.title or (f"回访：{decision['title']}" if decision else ""),
+                decision_id=decision["id"] if decision else None,
+                device_scope=_device_scope_of(request),
+            )
     except ConversationError as exc:
         raise _error(400, "BAD_REQUEST", str(exc)) from None
+    from .stores.routing_store import RoutingStore
+    routing = RoutingStore(_ontology_store())
+    if req.taskContext:
+        routing.set_task(conversation["id"], req.taskContext)
+    default = routing.mode("default:" + _device_scope_of(request))
+    if default["mode"] != "legacy":
+        routing.set_mode(conversation["id"], default["mode"], default["service"])
     if decision is not None:
         # 开场是知君的一句话（模板生成，不调模型）：先问感受，不催结果。
+        from .zhijun.history import local_only_decision
         store.append_message(
             conversation["id"],
             "assistant",
             persona.review_opening(decision),
             provider="template",
             model="template",
-            meta={"kind": "review_open", "decisionId": decision["id"], "status": decision["status"]},
+            meta={"kind": "review_open", "decisionId": decision["id"], "status": decision["status"],
+                  "localOnlyDerived": local_only_decision(decision)},
         )
         conversation = store.get_conversation(conversation["id"])
         conversation["reused"] = False
@@ -163,9 +210,13 @@ def get_outcomes(conversation_id: str):
     }
 
 
-def list_conversations(limit: int = Query(50, ge=1, le=200)):
+def list_conversations(limit: int = Query(50, ge=1, le=200), request: Request = None,
+                       status: Literal["active", "archived", "all"] = "active",
+                       q: str = Query("", max_length=100), offset: int = Query(0, ge=0, le=2**63 - 1)):
     store = _store()
-    items = store.list_conversations(limit=limit)
+    page = store.query_conversations(limit=limit, status=status, q=q.strip(), offset=offset,
+                                     device_scope=_device_scope_of(request))
+    items = page["items"]
     counts: dict[str, dict] = {}
     confirmed_map: dict[str, str] = {}
     try:
@@ -182,7 +233,23 @@ def list_conversations(limit: int = Query(50, ge=1, le=200)):
             "decision": bool(_outcome_decision_id(store, item, confirmed_map)),
             "commitments": int(count.get("commitments") or 0),
         }
-    return {"items": items, "total": len(items)}
+    return {**page, "items": items}
+
+
+def update_conversation(conversation_id: str, req: ConversationUpdate, request: Request = None):
+    from .chat_imports import require_conversation
+    from .stores.conversation_store import ConversationConflictError
+    scope = _device_scope_of(request)
+    require_conversation(conversation_id, scope)
+    try:
+        return _store().update_metadata(conversation_id, expected_revision=req.expectedRevision,
+            title=req.title, status=req.status, pinned=req.pinned, device_scope=scope)
+    except ConversationNotFoundError as exc:
+        raise _error(404, "CONVERSATION_NOT_FOUND", str(exc)) from None
+    except ConversationConflictError as exc:
+        raise _error(409, "CONVERSATION_CHANGED", str(exc)) from None
+    except ConversationError as exc:
+        raise _error(400, "BAD_CONVERSATION_UPDATE", str(exc)) from None
 
 
 def _provenance_from_receipt(receipt: dict | None) -> dict | None:
@@ -220,16 +287,22 @@ def _provenance_from_receipt(receipt: dict | None) -> dict | None:
     }
 
 
-def get_conversation(conversation_id: str):
+def get_conversation(conversation_id: str, request: Request = None):
     store = _store()
+    from .chat_imports import require_conversation
+    from .uploads import _device_scope_of
+    require_conversation(conversation_id, _device_scope_of(request))
     conversation = store.get_conversation(conversation_id)
     if conversation is None:
         raise _error(404, "CONVERSATION_NOT_FOUND", "会话不存在")
     messages = store.list_messages(conversation_id)
     for message in messages:
+        if (message.get("meta") or {}).get("routingProvenance"):
+            message["provenance"] = message["meta"]["routingProvenance"]
         if message["role"] == "assistant":
-            provenance = _provenance_from_receipt(store.get_receipt(message["id"]))
+            provenance = (message.get("meta") or {}).get("routingProvenance") or (message.get("meta") or {}).get("attachmentProvenance") or _provenance_from_receipt(store.get_receipt(message["id"]))
             if provenance is not None:
+                provenance.setdefault("alignmentSources", (message.get("meta") or {}).get("alignmentSources", []))
                 message["provenance"] = provenance
     payload = {"conversation": conversation, "messages": messages}
     draft = store.get_draft(conversation_id)
@@ -240,13 +313,24 @@ def get_conversation(conversation_id: str):
     return payload
 
 
-def delete_conversation(conversation_id: str):
+def delete_conversation(conversation_id: str, request: Request = None):
+    from .chat_imports import require_conversation
+    require_conversation(conversation_id, _device_scope_of(request))
     if not _store().delete_conversation(conversation_id):
         raise _error(404, "CONVERSATION_NOT_FOUND", "会话不存在")
+    from .stores.memory_store import MemoryStore
+    MemoryStore(_ontology_store()).remove_conversation(conversation_id)
+    from .stores.routing_store import RoutingStore
+    onto = _ontology_store()
+    RoutingStore(onto)
+    with onto._lock, onto._connect() as db:
+        db.execute("DELETE FROM context_lookup_stages WHERE conversation_id=?", (conversation_id,))
     return {"deleted": True, "id": conversation_id}
 
 
-def get_receipt(conversation_id: str, message_id: str):
+def get_receipt(conversation_id: str, message_id: str, request: Request = None):
+    from .chat_imports import require_conversation
+    require_conversation(conversation_id, _device_scope_of(request))
     receipt = _store().get_receipt(message_id)
     if receipt is None or receipt.get("conversationId") != conversation_id:
         raise _error(404, "RECEIPT_NOT_FOUND", "回执不存在")
@@ -257,12 +341,32 @@ def _encode(name: str, data: dict) -> bytes:
     return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
-def post_message(conversation_id: str, req: MessageCreate):
-    generator = run_turn(conversation_id, req.content, depth=req.depth, mode=req.mode)
+def post_message(conversation_id: str, req: MessageCreate, request: Request = None):
+    from .zhijun.provider import ProviderError
+    from .chat_imports import require_conversation
+    from .uploads import _device_scope_of
+    store = require_conversation(conversation_id, _device_scope_of(request))
+    refs = [r.model_dump() for r in req.materialRefs]
+    known = {(r["materialId"], r["version"]) for r in store.refs(conversation_id)}
+    if any((r["materialId"], r["version"]) not in known for r in refs):
+        raise _error(400, "ATTACHMENT_NOT_LINKED", "请先把文件加入当前对话")
+    from .stores.routing_store import RoutingStore
+    managed = RoutingStore(_ontology_store()).mode(conversation_id)["mode"] != "legacy"
+    if req.localOnly and not managed:
+        from .stores.alignment_store import AlignmentStore
+        from .stores.ontology_store import OntologyStore
+        AlignmentStore(OntologyStore.instance()).status(conversation_id, local_only=True, status="paused",
+            detail="这段对话选择了仅本地处理；派生内容不自动外发")
+    generator = run_turn(conversation_id, req.content, depth=req.depth, mode=req.mode,
+                         material_refs=refs, local_only=req.localOnly, route_revision=req.routeRevision,
+                         omit_sources=req.omitSources, request_id=req.requestId, retry_user_id=req.retryUserMessageId,
+                         reply_assistance=req.replyAssistance, charter_exception_id=req.charterExceptionId)
     try:
         first = next(generator)
     except TurnError as exc:
         raise _error(exc.status_code, exc.code, exc.message) from None
+    except ProviderError as exc:
+        raise _error(exc.status_code, exc.code, str(exc)) from None
     except ConversationNotFoundError as exc:
         raise _error(404, "CONVERSATION_NOT_FOUND", str(exc)) from None
     except StopIteration:
@@ -294,7 +398,10 @@ def get_draft(conversation_id: str):
     return draft
 
 
-def confirm_draft(conversation_id: str, req: DraftConfirm):
+def confirm_draft(conversation_id: str, req: DraftConfirm, request: Request = None):
+    from .chat_imports import require_conversation
+    from .uploads import _device_scope_of
+    require_conversation(conversation_id, _device_scope_of(request))
     overrides = req.model_dump()
     if overrides.get("reviewAt") is not None:
         overrides["reviewAt"] = overrides["reviewAt"].isoformat()
@@ -343,19 +450,44 @@ def record_outcome(conversation_id: str, req: OutcomeBody):
 
 
 def _build_router(write_guard=None) -> APIRouter:
+    from .zhijun.decision_suggestions import suggest
+    from . import learning_routes
+    from .zhijun import reply_assistance
     built = APIRouter(prefix=_PREFIX, tags=_TAGS)
     write_dependencies = [Depends(write_guard)] if write_guard is not None else []
     built.add_api_route("", create_conversation, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("", list_conversations, methods=["GET"])
+    from . import routing_routes
+    built.add_api_route("/routing/default", routing_routes.default_state, methods=["GET"])
+    built.add_api_route("/routing/default", routing_routes.set_default, methods=["PUT"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}", get_conversation, methods=["GET"])
+    built.add_api_route("/{conversation_id}", update_conversation, methods=["PATCH"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/outcomes", get_outcomes, methods=["GET"])
     built.add_api_route("/{conversation_id}", delete_conversation, methods=["DELETE"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/messages", post_message, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/reply-assistance", reply_assistance.suggest, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/reply-assistance", reply_assistance.latest, methods=["GET"])
+    built.add_api_route("/{conversation_id}/routing", routing_routes.state, methods=["GET"])
+    built.add_api_route("/{conversation_id}/routing", routing_routes.set_mode, methods=["PUT"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/preview", routing_routes.preview, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/charter-exception", routing_routes.charter_exception, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/grant", routing_routes.grant, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/default-consent", routing_routes.set_default_consent, methods=["PUT"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/handling", routing_routes.set_handling, methods=["PUT"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/revoke", routing_routes.revoke, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/routing/audits", routing_routes.audits, methods=["GET"])
+    built.add_api_route("/{conversation_id}/routing/pending/{revision}", routing_routes.pending_preview, methods=["GET"])
+    built.add_api_route("/{conversation_id}/routing/resume", routing_routes.resume, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/messages/{message_id}/receipt", get_receipt, methods=["GET"])
     built.add_api_route("/{conversation_id}/decision-draft", get_draft, methods=["GET"])
+    built.add_api_route("/{conversation_id}/decision-draft/suggestions", suggest, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/decision-draft/confirm", confirm_draft, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/decision-draft/discard", discard_draft, methods=["POST"], dependencies=write_dependencies)
     built.add_api_route("/{conversation_id}/outcome", record_outcome, methods=["POST"], dependencies=write_dependencies)
+    built.add_api_route("/{conversation_id}/learning", learning_routes.state, methods=["GET"])
+    for path, endpoint in (("start", learning_routes.start), ("suggest", learning_routes.suggest),
+                           ("propose", learning_routes.propose), ("resolve", learning_routes.resolve)):
+        built.add_api_route("/{conversation_id}/learning/" + path, endpoint, methods=["POST"], dependencies=write_dependencies)
     return built
 
 

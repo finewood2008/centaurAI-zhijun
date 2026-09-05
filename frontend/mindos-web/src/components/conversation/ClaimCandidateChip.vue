@@ -11,9 +11,10 @@ import { layerMeta, sectionLabel, REVIEW_MORE, REVIEW_PRIMARY } from '@/shared/o
 const props = defineProps<{
   claim: Claim
   busy?: boolean
+  dismissible?: boolean
 }>()
 
-const emit = defineEmits<{ (e: 'review', action: ReviewAction, editedContent?: string): void }>()
+const emit = defineEmits<{ (e: 'review', action: ReviewAction, editedContent?: string): void; (e: 'dismiss'): void }>()
 
 const editing = ref(false)
 const edited = ref('')
@@ -29,10 +30,11 @@ function onAction(action: ReviewAction) {
 }
 
 function submitPartial() {
+  if (props.busy) return
   const text = edited.value.trim()
   if (!text || text === props.claim.content) return
   emit('review', 'partial', text)
-  editing.value = false
+  // The parent removes the card after a successful save. Keep edits on failure.
 }
 </script>
 
@@ -44,7 +46,7 @@ function submitPartial() {
       <span class="zj-chip__section">{{ sectionLabel(claim.section) }}</span>
     </div>
     <p class="zj-chip__content">{{ claim.content }}</p>
-    <p v-if="claim.evidence.length && claim.evidence[0].quote" class="zj-chip__quote">你的原话：「{{ claim.evidence[0].quote }}」</p>
+    <p v-if="claim.evidence?.[0]?.quote" class="zj-chip__quote">你的原话：「{{ claim.evidence[0].quote }}」</p>
     <div v-if="!editing" class="zj-chip__actions">
       <button
         v-for="item in REVIEW_PRIMARY"
@@ -58,13 +60,14 @@ function submitPartial() {
         {{ item.label }}
       </button>
       <MoreMenu :items="REVIEW_MORE" :disabled="busy" label="其他处理" @select="(a) => onAction(a as ReviewAction)" />
+      <button v-if="dismissible" type="button" class="zj-chip__btn" :disabled="busy" title="不保留这条候选，也不把这句话判为错误；原对话仍在" @click="emit('dismiss')">不用记住</button>
     </div>
     <div v-else class="zj-chip__edit">
       <label class="zj-chip__edit-label" :for="`edit-${claim.id}`">改成更准确的说法</label>
-      <textarea :id="`edit-${claim.id}`" v-model="edited" class="zj-chip__textarea" rows="2" maxlength="120" />
+      <textarea :id="`edit-${claim.id}`" v-model="edited" :disabled="busy" class="zj-chip__textarea" rows="2" maxlength="120" />
       <div class="zj-chip__edit-actions">
         <BaseButton size="sm" variant="primary" :disabled="busy || !edited.trim()" @click="submitPartial">保存修正</BaseButton>
-        <BaseButton size="sm" variant="text" @click="editing = false">取消</BaseButton>
+        <BaseButton size="sm" variant="text" :disabled="busy" @click="editing = false">取消</BaseButton>
       </div>
     </div>
   </div>

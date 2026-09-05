@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // 判断草稿面板：对话写、对象存、用户确认。知君只填它整理出来的部分；
-// 选择 / 理由 / 把握 / 预期结果只能由用户填，知君的看法永远不进判断簿。
+// 候选可由 AI 起草，但只有用户明确选择和最终确认才能入簿；把握仍由用户决定。
 import { computed, reactive, ref, watch } from 'vue'
-import { api, type DecisionDraft, type DecisionDraftConfirmPayload, type GrowthDecision } from '@/services/api'
+import { api, type DecisionDraft, type DecisionDraftConfirmPayload, type DecisionDirection, type GrowthDecision } from '@/services/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
-import { FIELD_LABELS, USER_REQUIRED_FIELDS, defaultReviewDate, draftMissingFields, reviewDateToIso } from '@/shared/decisionDraft'
+import { ASSISTABLE_FIELDS, FIELD_LABELS, defaultReviewDate, directionPatch, draftMissingFields, reviewDateToIso, type AssistableField } from '@/shared/decisionDraft'
+import DecisionSuggestions from './DecisionSuggestions.vue'
 
 const props = defineProps<{
   // 真实模型下草稿由后台整理：还没整理好时 draft 为 null，pending / timedOut 说明面板该显示什么
@@ -30,6 +31,9 @@ const form = reactive({
   reviewDate: '',
 })
 const touched = reactive<Record<string, boolean>>({})
+const assisted = reactive<Partial<Record<AssistableField, boolean>>>({})
+const chosenNotice = ref('')
+const directionInput = computed(() => ({ choice: form.choice, rationale: form.rationale, expectedOutcome: form.expectedOutcome }))
 const collapsed = ref(false)
 const flash = ref<Set<string>>(new Set())
 let flashTimer: number | null = null
@@ -118,6 +122,22 @@ function mark(key: string) {
   touched[key] = true
 }
 
+function useDirection(candidate: DecisionDirection, onlyEmpty: boolean) {
+  const patch = directionPatch(directionInput.value, candidate, onlyEmpty)
+  for (const key of ASSISTABLE_FIELDS) {
+    if (patch[key] === undefined) continue
+    form[key] = patch[key]!
+    touched[key] = true
+    assisted[key] = true
+  }
+  chosenNotice.value = Object.keys(patch).length ? '已填入你选用的候选，可继续修改。还没有保存到判断簿。' : '没有空白项，已保留你填写的内容。'
+}
+
+function setConfidence(value: number) {
+  form.confidence = value
+  mark('confidence')
+}
+
 function submit() {
   if (props.busy) return
   const payload: DecisionDraftConfirmPayload = {
@@ -126,6 +146,7 @@ function submit() {
     confidence: form.confidence === null || form.confidence === undefined ? undefined : Math.round(form.confidence),
     expectedOutcome: form.expectedOutcome.trim() || undefined,
     reviewAt: reviewDateToIso(form.reviewDate),
+    assistedFields: ASSISTABLE_FIELDS.filter(key => assisted[key]),
   }
   emit('confirm', payload)
 }
@@ -194,40 +215,50 @@ function isFlash(key: string) {
         </div>
       </section>
 
-      <!-- 第二步：只有你能填的 -->
+      <!-- 第二步：AI 可起草，用户决定和确认 -->
       <form v-if="draft.status === 'draft'" class="zj-panel__form" @submit.prevent="submit">
-        <h4 class="zj-panel__h">只有你能填的</h4>
+        <h4 class="zj-panel__h">由你来决定</h4>
+        <DecisionSuggestions :draft="draft" :current="directionInput" :disabled="busy || pending" @choose="useDirection" />
+        <p v-if="chosenNotice" class="zj-panel__hint" role="status">{{ chosenNotice }}</p>
         <label :class="{ 'is-flash': isFlash('choice') }">
           <span class="zj-panel__label">
             我的选择
-            <span v-if="fromUser.choice && !touched.choice" class="zj-panel__from">你的原话</span>
-            <span v-else-if="missing.includes('choice')" class="zj-panel__need">需要你说</span>
+            <span v-if="assisted.choice" class="zj-panel__from">AI 起草 · 你已选用</span>
+            <span v-else-if="fromUser.choice && !touched.choice" class="zj-panel__from">你的原话</span>
+            <span v-else-if="missing.includes('choice')" class="zj-panel__need">待选择或填写</span>
           </span>
           <textarea v-model="form.choice" rows="2" maxlength="2000" :disabled="busy" placeholder="最后你打算怎么选" @input="mark('choice')" />
         </label>
         <label :class="{ 'is-flash': isFlash('rationale') }">
           <span class="zj-panel__label">
             为什么
-            <span v-if="fromUser.rationale && !touched.rationale" class="zj-panel__from">你的原话</span>
-            <span v-else-if="missing.includes('rationale')" class="zj-panel__need">需要你说</span>
+            <span v-if="assisted.rationale" class="zj-panel__from">AI 起草 · 你已选用</span>
+            <span v-else-if="fromUser.rationale && !touched.rationale" class="zj-panel__from">你的原话</span>
+            <span v-else-if="missing.includes('rationale')" class="zj-panel__need">待选择或填写</span>
           </span>
           <textarea v-model="form.rationale" rows="2" maxlength="10000" :disabled="busy" placeholder="关键的事实、假设和取舍" @input="mark('rationale')" />
         </label>
         <label :class="{ 'is-flash': isFlash('confidence') }">
           <span class="zj-panel__label">
             把握有几成
-            <span v-if="missing.includes('confidence')" class="zj-panel__need">需要你说</span>
+            <span v-if="missing.includes('confidence')" class="zj-panel__need">待你选择</span>
           </span>
           <span class="zj-panel__conf">
             <input v-model.number="form.confidence" type="range" min="0" max="100" step="5" :disabled="busy" aria-label="把握，0 到 100" @input="mark('confidence')" />
             <span class="zj-panel__conf-val">{{ form.confidence === null || form.confidence === undefined ? '—' : `${form.confidence}%` }}</span>
           </span>
         </label>
+        <div class="zj-panel__presets" role="group" aria-label="自己选择把握">
+          <button v-for="preset in [{ value: 30, label: '三成 · 先试试' }, { value: 50, label: '五成 · 还不确定' }, { value: 70, label: '七成 · 比较有把握' }, { value: 90, label: '九成 · 很有把握' }]"
+            :key="preset.value" type="button" :aria-pressed="form.confidence === preset.value" :disabled="busy" @click="setConfidence(preset.value)">{{ preset.label }}</button>
+          <span>把握是你的判断，不由 AI 估计；也可以拖动滑杆。</span>
+        </div>
         <label :class="{ 'is-flash': isFlash('expectedOutcome') }">
           <span class="zj-panel__label">
             我预期会看到
-            <span v-if="fromUser.expectedOutcome && !touched.expectedOutcome" class="zj-panel__from">你的原话</span>
-            <span v-else-if="missing.includes('expectedOutcome')" class="zj-panel__need">需要你说</span>
+            <span v-if="assisted.expectedOutcome" class="zj-panel__from">AI 起草 · 你已选用</span>
+            <span v-else-if="fromUser.expectedOutcome && !touched.expectedOutcome" class="zj-panel__from">你的原话</span>
+            <span v-else-if="missing.includes('expectedOutcome')" class="zj-panel__need">待选择或填写</span>
           </span>
           <textarea v-model="form.expectedOutcome" rows="2" maxlength="5000" :disabled="busy" placeholder="到时候怎么判断这个选择对不对" @input="mark('expectedOutcome')" />
         </label>
@@ -243,7 +274,7 @@ function isFlash(key: string) {
           <BaseButton variant="secondary" size="sm" :disabled="busy" @click="emit('discard')">先不记</BaseButton>
           <BaseButton type="submit" variant="primary" size="sm" :loading="busy" :disabled="missing.length > 0">记进判断簿</BaseButton>
         </div>
-        <p class="zj-panel__rule">选择、理由、把握只能由你填；知君的看法不会写进判断簿。</p>
+        <p class="zj-panel__rule">候选不代表你的想法。只有你选用或填写，并点击「记进判断簿」后才会保存；刷新前请完成确认，未提交的编辑不会保存。</p>
       </form>
 
       <p v-else-if="draft.status === 'confirmed'" class="zj-panel__done">
@@ -255,6 +286,10 @@ function isFlash(key: string) {
 </template>
 
 <style scoped>
+.zj-panel__presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.zj-panel__presets button { cursor: pointer; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 6px; background: transparent; color: var(--ws-text-color, #3c403d); padding: 5px 7px; font: inherit; font-size: 11px; }
+.zj-panel__presets button[aria-pressed="true"] { color: var(--ws-primary-color, #a6452e); border-color: currentColor; }
+.zj-panel__presets span { width: 100%; font-size: 11px; color: var(--ws-text-secondary-color, #686b66); }
 .zj-panel {
   display: flex;
   flex-direction: column;

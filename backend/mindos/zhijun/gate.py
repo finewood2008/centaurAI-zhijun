@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from contextlib import contextmanager
 
 
@@ -44,25 +45,39 @@ class ConversationLocks:
 
 class ProviderGate:
     def __init__(self, local_limit: int = 1, external_limit: int = 3) -> None:
-        self._sems = {
-            "local": threading.BoundedSemaphore(max(1, int(local_limit))),
-            "external": threading.BoundedSemaphore(max(1, int(external_limit))),
-        }
+        self._limits = {"local": max(1, int(local_limit)), "external": max(1, int(external_limit))}
+        self._active = {"local": 0, "external": 0}
+        self._interactive = {"local": 0, "external": 0}
+        self._condition = threading.Condition()
 
-    def acquire(self, channel: str, timeout: float) -> bool:
-        sem = self._sems.get(channel) or self._sems["local"]
-        return sem.acquire(timeout=max(0.0, float(timeout)))
+    def acquire(self, channel: str, timeout: float, *, background: bool = False) -> bool:
+        channel = channel if channel in self._limits else "local"
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._condition:
+            if not background:
+                self._interactive[channel] += 1
+            try:
+                while self._active[channel] >= self._limits[channel] or (background and self._interactive[channel]):
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return False
+                    self._condition.wait(remaining)
+                self._active[channel] += 1
+                return True
+            finally:
+                if not background:
+                    self._interactive[channel] -= 1
+                self._condition.notify_all()
 
     def release(self, channel: str) -> None:
-        sem = self._sems.get(channel) or self._sems["local"]
-        try:
-            sem.release()
-        except ValueError:
-            pass
+        channel = channel if channel in self._limits else "local"
+        with self._condition:
+            self._active[channel] = max(0, self._active[channel] - 1)
+            self._condition.notify_all()
 
     @contextmanager
-    def slot(self, channel: str, timeout: float):
-        if not self.acquire(channel, timeout):
+    def slot(self, channel: str, timeout: float, *, background: bool = False):
+        if not self.acquire(channel, timeout, background=background):
             raise ProviderBusyError(channel)
         try:
             yield

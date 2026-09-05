@@ -2,13 +2,12 @@
 // 出处条：一行人话摘要 + 可展开的依据。展开即回执的可见部分（参考了哪些理解、哪些资料片段、
 // 避开了几条被纠正的理解、这轮用的是本机还是外部模型）。
 import { computed, ref } from 'vue'
-import { ChevronDown, ChevronUp } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, FileText } from 'lucide-vue-next'
 import type { ProvenanceEvent, TurnMetaEvent } from '@/services/api'
 import { formatDay, sectionLabel } from '@/shared/ontology'
-import { anchorLine, pastDecisionSummary } from '@/shared/labels'
-import { confirmedFraction } from '@/shared/selfmap'
-import { channelLine, channelShort } from '@/shared/model'
-import RingGlyph from '@/components/ui/RingGlyph.vue'
+import { ALIGNMENT_LEVELS } from '@/shared/alignment'
+import { channelShort } from '@/shared/model'
+import { normalizeProvenance, provenanceCharterSummary, provenanceMemorySummary } from '@/shared/provenanceGraph'
 import ProvenanceGraph from '@/components/conversation/ProvenanceGraph.vue'
 
 const props = defineProps<{
@@ -17,39 +16,17 @@ const props = defineProps<{
 }>()
 
 const open = ref(false)
+const safeProvenance = computed(() => normalizeProvenance(props.provenance))
 // 以前记过的相似判断（旧后端没有这个字段）
-const pastDecisions = computed(() => props.provenance.pastDecisions ?? [])
-const fraction = computed(() => confirmedFraction(props.provenance.confirmedClaims.length, props.provenance.workingClaims.length))
+const pastDecisions = computed(() => safeProvenance.value.pastDecisions ?? [])
+const charterSummary = computed(() => provenanceCharterSummary(safeProvenance.value))
 
-const summary = computed(() => {
-  const p = props.provenance
-  const parts: string[] = []
-  if (p.confirmedClaims.length) parts.push(`${p.confirmedClaims.length} 条你确认过的理解`)
-  if (p.workingClaims.length) parts.push(`${p.workingClaims.length} 条还没点头的`)
-  if (p.materials.length) parts.push(`${p.materials.length} 段资料`)
-  if (p.retractedNotices > 0) parts.push(`避开了 ${p.retractedNotices} 条你纠正过的`)
-  const base = parts.length ? `参考了 ${parts.join('、')}` : ''
-  // 以前记过的相似判断：点名第一条（有日期就写日期），其余只写数量
-  const past = pastDecisions.value
-  if (past.length) {
-    const first = past[0]
-    const sentence = pastDecisionSummary(first, formatDay(first.createdAt), past.length - 1)
-    return base ? `${base}；${sentence}` : sentence
-  }
-  return base || '这轮没有用到本体里的理解'
-})
-
-const channel = computed(() => channelLine(props.meta))
+const summary = computed(() => provenanceMemorySummary(safeProvenance.value))
+const lookupNotice = computed(() => safeProvenance.value.contextPlan?.stage === 'lookup_unavailable' ? safeProvenance.value.contextPlan.lookupNotice : '')
 const channelTag = computed(() => channelShort(props.meta))
 // 打底带上的原则与做法（旧后端没有这个字段）：内容从 confirmedClaims 里按 id 找，找不到就只写数量
-const anchorIds = computed(() => new Set(props.provenance.anchorClaimIds ?? []))
-const anchorText = computed(() => {
-  const ids = anchorIds.value
-  if (!ids.size) return ''
-  const hits = props.provenance.confirmedClaims.filter((c) => ids.has(c.id))
-  const ordered = [...hits.filter((c) => c.section === 'principles'), ...hits.filter((c) => c.section !== 'principles')]
-  return anchorLine(ordered.map((c) => c.content), ids.size)
-})
+const anchorIds = computed(() => new Set(safeProvenance.value.anchorClaimIds ?? []))
+const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${anchorIds.value.size} 条打底理解，不据此推定本轮读取或引用。` : '')
 </script>
 
 <template>
@@ -61,23 +38,38 @@ const anchorText = computed(() => {
       :aria-expanded="open"
       @click="open = !open"
     >
-      <RingGlyph :fraction="fraction" :size="14" />
+      <FileText :size="14" aria-hidden="true" />
       <span class="zj-prov__summary">{{ summary }}</span>
       <span v-if="provenance.fromReceipt" class="zj-prov__receipt" title="由本轮回执还原">（回执）</span>
       <span v-if="channelTag" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ channelTag }}</span>
       <component :is="open ? ChevronUp : ChevronDown" :size="14" aria-hidden="true" />
     </button>
+    <p v-if="lookupNotice" class="zj-prov__line zj-prov__lookup-notice" data-testid="context-lookup-notice">{{ lookupNotice }}</p>
+    <p v-if="provenance.routing?.handlingNotice" class="zj-prov__line" data-testid="routing-handling-notice">{{ provenance.routing.handlingNotice }}</p>
     <div v-if="open" class="zj-prov__body">
-      <ProvenanceGraph :provenance="provenance" />
-      <p v-if="channel" class="zj-prov__line">{{ channel }}</p>
-      <p v-if="provenance.charterVersion" class="zj-prov__line">参考了你的人生章程（第 {{ provenance.charterVersion }} 版）。</p>
-      <section v-if="provenance.confirmedClaims.length" class="zj-prov__group">
-        <h4>你确认过的理解</h4>
+      <p v-if="provenance.routing">{{ provenance.routing.service.external ? '在线处理' : '本地处理' }} · {{ provenance.routing.service.name }} · {{ provenance.routing.service.model }} · {{ provenance.routing.purposeLabel }}</p>
+      <p v-if="provenance.routing?.defaultAuthorization">其中 {{ provenance.routing.defaultAuthorization.sourceCount }} 项来源按你开启的默认授权处理（设置第 {{ provenance.routing.defaultAuthorization.revision }} 版）。可在「模型与授权」关闭。</p>
+      <p v-if="provenance.routing?.excluded.length">本轮有 {{ provenance.routing.excluded.length }} 条历史或资料未纳入：{{ [...new Set(provenance.routing.excluded.map(x => x.reason))].join('；') }}</p>
+      <ProvenanceGraph v-if="safeProvenance.contextPlan" :provenance="safeProvenance" />
+      <template v-else>
+      <p class="zj-prov__line zj-prov__muted">这是旧格式回执。下列是当时保存的关联记录，无法准确区分哪些文本提供给了模型、哪些被回答明确引用；不会据此补写历史。</p>
+      <p v-if="safeProvenance.memoryContext?.inheritedCount" class="zj-prov__line" data-testid="provenance-inherited">历史权限链关联了 {{ safeProvenance.memoryContext.inheritedCount }} 条本体理解，不代表本轮重新读取、提供或引用了原记录。</p>
+      <section v-if="provenance.alignmentSources?.length" class="zj-prov__group">
+        <h4>旧回执关联的自我校准</h4>
+        <ul><li v-for="source in provenance.alignmentSources" :key="source.fingerprint">
+          {{ source.content }} · 第 {{ source.revision }} 版 · {{ source.level == null ? '尚未校准' : ALIGNMENT_LEVELS[source.level] }}
+          <span v-if="source.reason"> · {{ source.reason }}</span>
+        </li></ul>
+      </section>
+      <p v-if="charterSummary" class="zj-prov__line"><RouterLink :to="{ path: '/me/charter', query: provenance.charterVersion ? { version: provenance.charterVersion } : {} }">{{ charterSummary }}</RouterLink>。</p>
+      <section v-if="provenance.charterBasis?.version && provenance.charterBasis.clauseIds.length" class="zj-prov__group" data-testid="provenance-charter-clauses"><h4>本轮章程依据</h4><p><RouterLink :to="{ path: '/me/charter', query: { version: provenance.charterBasis.version } }">查看当时第 {{ provenance.charterBasis.version }} 版</RouterLink> · 条款 {{ provenance.charterBasis.clauseIds.join('、') }}</p><p>只记录本轮采用的约定，不表示重新确认本体或授予新的资料权限。</p></section>
+      <section v-if="safeProvenance.confirmedClaims.length" class="zj-prov__group">
+        <h4>旧回执关联的已确认理解</h4>
         <ul>
-          <li v-for="c in provenance.confirmedClaims" :key="c.id">
+          <li v-for="c in safeProvenance.confirmedClaims" :key="c.id">
             <RouterLink :to="{ path: '/me', query: { section: c.section, claim: c.id } }">{{ c.content }}</RouterLink>
             <span class="zj-prov__tag">{{ sectionLabel(c.section) }}</span>
-            <span v-if="anchorIds.has(c.id)" class="zj-seal zj-seal--muted zj-prov__anchor" title="商量、回访或深入时，这条原则或做法会一直带在身边">打底</span>
+            <span v-if="anchorIds.has(c.id)" class="zj-seal zj-seal--muted zj-prov__anchor" title="当时回执保存的打底标记，不代表明确引用">旧打底标记</span>
           </li>
         </ul>
       </section>
@@ -85,7 +77,7 @@ const anchorText = computed(() => {
         <RouterLink :to="{ path: '/me', query: { section: 'principles' } }">{{ anchorText }}</RouterLink>
       </p>
       <section v-if="pastDecisions.length" class="zj-prov__group" data-testid="provenance-past">
-        <h4>你以前记过的相似判断</h4>
+        <h4>旧回执关联的历史判断</h4>
         <ul>
           <li v-for="d in pastDecisions" :key="d.id">
             <RouterLink :to="{ path: '/judgments', query: { decisionId: d.id } }">{{ d.title }}</RouterLink>
@@ -93,24 +85,25 @@ const anchorText = computed(() => {
           </li>
         </ul>
       </section>
-      <section v-if="provenance.workingClaims.length" class="zj-prov__group">
-        <h4>还没点头的理解（知君只会以保留语气使用）</h4>
+      <section v-if="safeProvenance.workingClaims.length" class="zj-prov__group">
+        <h4>旧回执关联的待核对理解</h4>
         <ul>
-          <li v-for="c in provenance.workingClaims" :key="c.id">
+          <li v-for="c in safeProvenance.workingClaims" :key="c.id">
             <RouterLink to="/me/inbox">{{ c.content }}</RouterLink>
             <span class="zj-prov__tag">{{ sectionLabel(c.section) }}</span>
           </li>
         </ul>
       </section>
-      <section v-if="provenance.materials.length" class="zj-prov__group">
-        <h4>资料片段</h4>
+      <section v-if="safeProvenance.materials.length" class="zj-prov__group">
+        <h4>旧回执关联的资料</h4>
         <ul>
-          <li v-for="(m, i) in provenance.materials" :key="`${m.materialId}-${i}`" :id="`cite-${i + 1}`">
+          <li v-for="(m, i) in safeProvenance.materials" :key="`${m.materialId}-${i}`" :id="`cite-${i + 1}`">
             <span class="zj-prov__cite">m{{ i + 1 }}</span>
             <RouterLink :to="`/materials/${encodeURIComponent(m.materialId)}`">{{ m.title || m.materialId }}</RouterLink>
           </li>
         </ul>
       </section>
+      </template>
       <p class="zj-prov__line zj-prov__muted">这轮给模型的提示约 {{ provenance.promptChars }} 字。</p>
     </div>
   </div>
@@ -122,6 +115,10 @@ const anchorText = computed(() => {
   margin-top: 6px;
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-prov__lookup-notice {
+  padding: 0 8px;
+  overflow-wrap: anywhere;
 }
 .zj-prov__toggle {
   display: inline-flex;

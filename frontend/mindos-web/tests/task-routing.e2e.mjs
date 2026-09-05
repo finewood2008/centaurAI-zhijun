@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict'
+import { mkdirSync } from 'node:fs'
+import { chromium } from 'playwright'
+
+const fixture = 'http://127.0.0.1:8772'
+const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } })
+const page = await ctx.newPage()
+const errors = []
+page.on('pageerror', e => errors.push(e.message))
+await page.route('**/*', async route => {
+  const u = new URL(route.request().url())
+  if (u.hostname !== '127.0.0.1') return route.abort()
+  if (u.pathname.startsWith('/api/')) return route.fulfill({ response: await route.fetch({ url: fixture + u.pathname + u.search, timeout: 90000 }) })
+  return route.continue()
+})
+const info = async () => (await (await ctx.request.get(fixture + '/__fixture')).json())
+const initial = await info()
+const dir = '../../data/diagnostics/task-routing'
+mkdirSync(dir, { recursive: true })
+try {
+  await page.goto(`http://127.0.0.1:5173/mindos/c/${initial.conversationId}`, { waitUntil: 'networkidle' })
+  const panel = page.getByRole('region', { name: '对话处理方式' })
+  // section is labelled, therefore has a region role.
+  await panel.getByRole('button', { name: '本地处理', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: '模型与授权', exact: true })
+  await settings.getByRole('checkbox', { name: /我理解日常消息/ }).check()
+  await settings.getByRole('button', { name: '启用在线理解', exact: true }).click()
+  await settings.getByText('不携带受保护旧历史的在线上下文；原记录仍保留。').waitFor()
+  await settings.getByRole('button', { name: '关闭模型与授权' }).click()
+  const composer = page.getByRole('textbox').last()
+  await composer.fill('合成案例：周末怎样安排一次短途散步？')
+  await composer.press('Enter')
+  await page.getByText('合成回复：先澄清约束，再比较选择，不把愿望当事实。', { exact: true }).waitFor()
+  let data = await info()
+  assert.equal(data.onlineRequests.length, 1)
+  assert.ok(!JSON.stringify(data.onlineRequests[0]).includes('SECRET_OLD_PROFILE'))
+  await composer.fill('星桥项目为什么迟迟不想推进？')
+  await composer.press('Enter')
+  const dialog = page.getByRole('dialog', { name: '这次要让在线模型使用哪些内容？' })
+  await dialog.waitFor()
+  assert.equal((await info()).onlineRequests.length, 1)
+  await page.screenshot({ path: `${dir}/consent-desktop.png`, animations: 'disabled' })
+  await dialog.getByRole('button', { name: '允许所选内容用于该服务和用途' }).click()
+  await dialog.waitFor({ state: 'hidden' })
+  await page.waitForFunction(() => document.body.innerText.split('合成回复：先澄清约束').length >= 3)
+  data = await info()
+  assert.equal(data.onlineRequests.length, 2)
+  assert.ok(data.onlineRequests[1].system.includes('星桥项目只是工作安排'))
+  await page.reload({ waitUntil: 'networkidle' })
+  assert.ok(await page.getByText('合成回复：先澄清约束', { exact: false }).count() >= 2)
+  await ctx.request.post(fixture + '/__fixture/fail')
+  await composer.fill('合成案例：接下来怎么安排日程？')
+  await composer.press('Enter')
+  await page.getByText('消息已保留，未自动切换模型。').waitFor()
+  assert.equal((await info()).localRequests, 0)
+  await page.getByRole('button', { name: '改用本地', exact: true }).click()
+  await page.getByText('消息已保留，未自动切换模型。').waitFor({ state: 'hidden' })
+  await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' })
+  assert.equal((await info()).localRequests, 1)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.keyboard.press('Escape')
+  await page.screenshot({ path: `${dir}/mobile.png`, animations: 'disabled' })
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true)
+  assert.deepEqual(errors, [])
+  console.log('task routing E2E: explicit opt-in, clean history, consent payload, refresh, failure/local retry, mobile passed')
+} catch (e) {
+  await page.screenshot({ path: `${dir}/failure.png`, animations: 'disabled' })
+  console.log((await page.locator('body').innerText()).slice(-10000))
+  throw e
+} finally { await browser.close() }

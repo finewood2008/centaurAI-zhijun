@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import memory_store
 
@@ -92,6 +93,34 @@ Always preserve the incremental cursor.
 
         context = memory_store.get_context(agent="codex", limit_chars=20_000)
         self.assertIn("Always preserve the incremental cursor", context["context"])
+
+    def test_symlink_root_reads_writes_and_deletes_its_own_files(self):
+        self.memory_dir.mkdir()
+        alias = Path(self.temp.name) / "memory-alias"
+        alias.symlink_to(self.memory_dir, target_is_directory=True)
+        memory_store.MEMORY_DIR = str(alias)
+        memory_store.write_memory_file("imports/test.md", "Own memory", skip_index=True)
+        self.assertEqual(memory_store.read_memory_file("imports/test.md")["content"], "Own memory")
+        collection = MagicMock()
+        with patch.object(memory_store, "_get_memory_collection", return_value=collection):
+            self.assertTrue(memory_store.delete_memory_file("imports/test.md"))
+        self.assertFalse((self.memory_dir / "imports/test.md").exists())
+        collection.delete.assert_called_once_with(where={
+            "source_path": str((self.memory_dir / "imports/test.md").resolve()),
+        })
+
+    def test_symlink_root_still_rejects_traversal_and_external_symlinks(self):
+        self.memory_dir.mkdir()
+        outside = Path(self.temp.name) / "outside.md"
+        outside.write_text("Must remain untouched", encoding="utf-8")
+        (self.memory_dir / "escape.md").symlink_to(outside)
+        for path in ("../outside.md", "escape.md"):
+            with self.subTest(path=path):
+                self.assertIsNone(memory_store.read_memory_file(path))
+                self.assertFalse(memory_store.delete_memory_file(path))
+                with self.assertRaises(ValueError):
+                    memory_store.write_memory_file(path, "overwrite", skip_index=True)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "Must remain untouched")
 
 
 if __name__ == "__main__":

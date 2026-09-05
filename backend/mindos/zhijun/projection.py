@@ -33,9 +33,22 @@ def _line(claim: dict) -> str:
     return f"- {claim['content']}{obj} — {layer}{scope}"
 
 
-def render(store: OntologyStore) -> tuple[str, str]:
+def _visible_claims(store: OntologyStore, scope: str) -> list[dict]:
+    from ..stores.conversation_store import ConversationStore
+    from .alignment import visible
+    conversations = ConversationStore.instance()
+    candidates = store.list_claims(trust_states=("confirmed",), device_scope="global", limit=5000)
+    if scope != "global":
+        candidates += store.list_claims(trust_states=("confirmed",), device_scope=scope, limit=5000)
+    return [claim for claim in candidates
+            if visible(claim, conversations, scope)]
+
+
+def render(store: OntologyStore, *, scope: str = "global") -> tuple[str, str]:
     """返回 (完整视图, 可导出子集)。"""
-    claims = store.list_claims(trust_states=("confirmed",), limit=2000)
+    claims = _visible_claims(store, scope)
+    from .source_policy import SourcePolicy
+    policy = SourcePolicy(store)
     by_section: dict[str, list[dict]] = {s: [] for s in SECTIONS}
     for claim in claims:
         by_section.setdefault(claim["section"], []).append(claim)
@@ -51,7 +64,7 @@ def render(store: OntologyStore) -> tuple[str, str]:
         full.append(f"## {SECTION_TITLES[section]}")
         full.extend(_line(c) for c in items)
         full.append("")
-        exportable = [c for c in items if c.get("exportAllowed") and c.get("privacyLevel") in ("public", "private")]
+        exportable = [c for c in items if c.get("exportAllowed") and c.get("privacyLevel") in ("public", "private") and c.get("scope") != "context_only" and not policy.claim_local(c)]
         if exportable:
             export.append(f"## {SECTION_TITLES[section]}")
             export.extend(_line(c) for c in exportable)
@@ -81,14 +94,16 @@ def write_projection(store: OntologyStore | None = None) -> dict:
     store = store or OntologyStore.instance()
     full, export = render(store)
     _write(PROFILE_FILE, full)
-    has_confirmed = store.stats()["claims"]["confirmed"] > 0
+    # These two files are shared legacy exports, not per-device storage. A
+    # different device must neither populate them nor erase a handwritten USER.
+    has_confirmed = bool(_visible_claims(store, "global"))
     if has_confirmed:
         _write(USER_FILE, export)
     store.meta_set("last_projection_at", _now())
     return {"profile": PROFILE_FILE, "user": USER_FILE if has_confirmed else None, "generatedAt": _now()}
 
 
-def projection_payload(store: OntologyStore | None = None) -> dict:
+def projection_payload(store: OntologyStore | None = None, *, scope: str = "global") -> dict:
     store = store or OntologyStore.instance()
-    full, export = render(store)
+    full, export = render(store, scope=scope)
     return {"markdown": full, "exportableMarkdown": export, "generatedAt": _now()}

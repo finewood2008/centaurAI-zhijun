@@ -12,6 +12,7 @@ import {
   nodeBand,
   nodeRadius,
   nodeSize,
+  isStale,
   polar,
   sectorCenterDeg,
   sectorIndex,
@@ -59,21 +60,32 @@ const claim = (over = {}) => ({
   }
 }
 
-// 4) 半径按信任状态落在对应环带
+// 4) 未校准不等于低分；时间不改变半径，五档正式校准才决定圈内距离
 {
   const fresh = nodeRadius(claim(), NOW)
-  assert.ok(fresh >= BANDS.fresh[0] && fresh <= BANDS.fresh[1], `fresh ${fresh}`)
-  assert.equal(nodeBand(claim(), NOW), 'fresh')
+  assert.ok(fresh >= BANDS.uncalibrated[0] && fresh <= BANDS.uncalibrated[1])
+  assert.equal(nodeBand(claim(), NOW), 'uncalibrated')
   const stale = claim({ lastReaffirmed: new Date(NOW - 90 * day).toISOString() })
-  assert.equal(nodeBand(stale, NOW), 'stale')
+  assert.equal(nodeBand(stale, NOW), 'uncalibrated')
+  assert.equal(isStale(stale, NOW), true)
   const rs = nodeRadius(stale, NOW)
-  assert.ok(rs >= BANDS.stale[0] && rs <= BANDS.stale[1], `stale ${rs}`)
+  assert.equal(rs, fresh)
   const working = claim({ trustState: 'working' })
   const rw = nodeRadius(working, NOW)
   assert.ok(rw >= BANDS.working[0] && rw <= BANDS.working[1], `working ${rw}`)
   assert.equal(nodeRadius(claim({ trustState: 'working', challenged: true }), NOW), BANDS.challenged)
   // 无效日期不算过期
-  assert.equal(nodeBand(claim({ lastReaffirmed: 'not-a-date' }), NOW), 'fresh')
+  assert.equal(nodeBand(claim({ lastReaffirmed: 'not-a-date' }), NOW), 'uncalibrated')
+  for (let level = 0; level <= 4; level++) {
+    const calibrated = claim({ selfAlignment: { level, framing: 'long_term' } })
+    assert.equal(nodeBand(calibrated, NOW), 'calibrated')
+    assert.equal(nodeRadius(calibrated, NOW), 140 - level * 15)
+    assert.equal(nodeRadius({ ...calibrated, ...stale, selfAlignment: calibrated.selfAlignment }, NOW), 140 - level * 15)
+    assert.equal(nodeBand({ ...calibrated, scope: 'context_only' }, NOW), 'contextual')
+    assert.ok(nodeRadius({ ...calibrated, selfAlignment: { level, framing: 'context_only' } }, NOW) > 230)
+    assert.equal(nodeBand({ ...calibrated, trustState: 'working' }, NOW), 'working')
+  }
+  assert.equal(nodeBand(claim({ selfAlignment: { level: null, proposal: { level: 4 } } }), NOW), 'uncalibrated')
 }
 
 // 5) 极坐标：-90° 在正上方，0° 在正右

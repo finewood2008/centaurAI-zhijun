@@ -7,7 +7,7 @@ import unittest
 import urllib.error
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from mindos.zhijun import provider as provider_module
 from mindos.zhijun.provider import (
@@ -86,6 +86,17 @@ class OllamaTests(unittest.TestCase):
 
 
 class OpenAITests(unittest.TestCase):
+    @contextmanager
+    def authorized_transport(self):
+        # Parser tests supply a synthetic route permit; actual routing is tested separately.
+        from mindos.zhijun.routing import EGRESS_PERMIT
+        permit = Mock()
+        token = EGRESS_PERMIT.set(permit)
+        try:
+            yield permit
+        finally:
+            EGRESS_PERMIT.reset(token)
+
     def test_stream_parses_sse_frames(self) -> None:
         frames = [
             b": keep-alive\n",
@@ -94,8 +105,9 @@ class OpenAITests(unittest.TestCase):
             b'data: {"choices":[{"delta":{"content":"\xe5\xa5\xbd"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}\n',
             b"data: [DONE]\n",
         ]
-        with patch.object(provider_module.llm_transport, "allowed_urlopen", return_value=_FakeResponse(b"".join(frames))) as mocked:
+        with self.authorized_transport() as permit, patch.object(provider_module.llm_transport, "allowed_urlopen", return_value=_FakeResponse(b"".join(frames))) as mocked:
             events = list(OpenAICompatibleProvider("https://api.example.com/v1", "m", "sk-test", timeout=5).stream(_req()))
+        permit.assert_called_once()
         self.assertEqual([e.text for e in events if isinstance(e, TextDelta)], ["你", "好"])
         self.assertEqual([e for e in events if isinstance(e, Usage)][0].output_tokens, 2)
         self.assertEqual(events[-1], Done("stop"))
@@ -103,10 +115,18 @@ class OpenAITests(unittest.TestCase):
 
     def test_complete_json_requests_json_object(self) -> None:
         payload = b'{"choices":[{"message":{"content":"{\\"claims\\":[]}"}}]}'
-        with patch.object(provider_module.llm_transport, "allowed_urlopen", return_value=_FakeResponse(payload)) as mocked:
+        with self.authorized_transport() as permit, patch.object(provider_module.llm_transport, "allowed_urlopen", return_value=_FakeResponse(payload)) as mocked:
             result = OpenAICompatibleProvider("https://api.example.com/v1", "m", "k", timeout=5).complete_json(_req(json_schema={}))
+        permit.assert_called_once()
         self.assertEqual(result, {"claims": []})
         self.assertIn(b'"response_format"', mocked.call_args.kwargs["data"])
+
+    def test_unguarded_transport_never_reaches_http(self) -> None:
+        with patch.object(provider_module.llm_transport, "allowed_urlopen") as mocked:
+            with self.assertRaises(ProviderError) as ctx:
+                OpenAICompatibleProvider("https://api.example.com/v1", "m", "k", timeout=5).complete_json(_req())
+        self.assertEqual(ctx.exception.code, "EGRESS_NOT_AUTHORIZED")
+        mocked.assert_not_called()
 
 
 class AnthropicStubTests(unittest.TestCase):
@@ -151,6 +171,43 @@ class AnthropicStubTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
+    def test_saved_default_uses_matching_endpoint_model_and_secret(self) -> None:
+        snap = SimpleNamespace(provider="openai", external_enabled=True,
+            external_provider_id="provider_saved", base_url="https://saved.invalid/v1",
+            model="chosen-model", timeout_seconds=30, local=None, secret_ref="saved-ref")
+        env = {"ZHIJUN_PROVIDER": "", "ZHIJUN_OPENAI_BASE_URL": "https://stale.invalid/v1",
+               "ZHIJUN_OPENAI_MODEL": "stale-model", "ZHIJUN_OPENAI_API_KEY": "stale-secret",
+               "ZHIJUN_OPENAI_TASK_MODEL": "stale-background-model"}
+        runtime = SimpleNamespace(resolve_api_key=lambda s: "saved-secret")
+        with patch.dict(os.environ, env), patch.object(provider_module, "get_provider", return_value=runtime):
+            first, second = build_provider(snap), build_provider(snap)
+        for actual in (first, second):
+            self.assertEqual(actual._base_url, snap.base_url)
+            self.assertEqual(actual.model, "chosen-model")
+            self.assertEqual(actual.task_model, "chosen-model")
+            self.assertEqual(actual._api_key, "saved-secret")
+            self.assertEqual(actual.configuration_revision, ("provider_saved", "saved-ref"))
+
+    def test_saved_default_missing_secret_never_borrows_environment_key(self) -> None:
+        snap = SimpleNamespace(provider="openai", external_enabled=True,
+            external_provider_id="provider_saved", base_url="https://saved.invalid/v1",
+            model="chosen-model", timeout_seconds=30, local=None)
+        with patch.dict(os.environ, {"ZHIJUN_PROVIDER": "", "ZHIJUN_OPENAI_API_KEY": "other-service-key"}), \
+             patch.object(provider_module, "get_provider", return_value=SimpleNamespace(resolve_api_key=lambda s: None)):
+            with self.assertRaises(ProviderError) as raised:
+                build_provider(snap)
+        self.assertEqual(raised.exception.code, "PROVIDER_MISCONFIGURED")
+
+    def test_paused_saved_default_cannot_be_reenabled_by_stale_environment(self) -> None:
+        local = SimpleNamespace(base_url="http://127.0.0.1:11434", model="local-test", timeout_seconds=30, keep_alive=0)
+        snap = SimpleNamespace(provider="openai", external_enabled=False,
+            external_provider_id="provider_saved", base_url="https://saved.invalid/v1",
+            model="chosen-model", timeout_seconds=30, local=local)
+        with patch.dict(os.environ, {"ZHIJUN_PROVIDER": "openai", "ZHIJUN_OPENAI_API_KEY": "stale-key"}):
+            actual = build_provider(snap)
+        self.assertIsInstance(actual, OllamaProvider)
+        self.assertFalse(actual.external)
+
     def test_fake_only_outside_production(self) -> None:
         with patch.dict(os.environ, {"ZHIJUN_PROVIDER": "fake", "MINDOS_RUNTIME_ENV": "development"}):
             self.assertIsInstance(build_provider(), FakeProvider)

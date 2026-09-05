@@ -11,6 +11,10 @@ function reset() {
   message.value = ''
 }
 
+function retry() {
+  window.location.reload()
+}
+
 onErrorCaptured((err) => {
   message.value = err instanceof Error && err.message ? err.message : '页面渲染出错，请重试'
   return false
@@ -25,7 +29,7 @@ watch(() => route.fullPath, reset)
     v-if="message"
     :message="message"
     retry-label="重新加载"
-    @retry="reset"
+    @retry="retry"
   />
   <slot v-else />
 </template>

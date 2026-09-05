@@ -341,7 +341,7 @@ class MaterialWorker:
             self.saga.save_and_commit_snapshot(
                 snap["snapshot_id"],
                 material_id,
-                version,
+                snap["version"],
                 result.text,
                 content_format=result.content_format,
                 parse_status=result.parse_status,

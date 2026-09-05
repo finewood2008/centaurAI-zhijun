@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 输入区：Enter 发送、Shift+Enter 换行（提示只出现一次）；「深入」「我在考虑…」是两枚开关 chip；
 // 麦克风在输入框里；字数只在快到上限时才出现。语音只填入输入框，永远不自动发送。
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { Mic, MicOff, Send, Square } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { appendReply, undoReply, type ReplyAssistanceInput } from '@/shared/replyAssistance'
+import { Mic, MicOff, Send, Square, Plus } from 'lucide-vue-next'
+import { DOC_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS } from '@/features/import/validation'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import { useToast } from '@/composables/useToast'
 import { intentHint } from '@/shared/decisionDraft'
@@ -16,14 +18,69 @@ const props = defineProps<{
   // 模型没配置 / 不可用时的提示；给了就禁用输入，并在输入区上方显示同一句话（带去偏好的链接）
   notice?: string
   noticeTo?: string
+  hasAttachments?: boolean
+  uploading?: boolean
+  conversationId?: string | null
 }>()
 
 const emit = defineEmits<{
-  (e: 'send', content: string, depth: 'brief' | 'deep', mode: 'chat' | 'deliberate'): void
+  (e: 'send', content: string, depth: 'brief' | 'deep', mode: 'chat' | 'deliberate', origin?: ReplyAssistanceInput): void
   (e: 'stop'): void
+  (e: 'files', files: FileList): void
+  (e: 'pick-materials'): void
 }>()
 
 const text = ref('')
+const expression = ref<ReplyAssistanceInput>()
+const undo = ref<{ inserted: string; offset: number; origin?: ReplyAssistanceInput }>()
+const inputDrafts = new Map<string, { text: string; origin?: ReplyAssistanceInput }>()
+const LANDING_DRAFT = '__new_conversation__'
+let draftLoaded = false
+const draftKey = (id: string) => `zhijun.reply-input.${id}`
+function storedDraft(id: string) {
+  if (inputDrafts.has(id)) return inputDrafts.get(id)
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(draftKey(id)) || 'null')
+    if (saved && typeof saved.text === 'string' && saved.text.length <= 4000) return saved as { text: string; origin?: ReplyAssistanceInput }
+  } catch { /* Storage may be unavailable; typing still works. */ }
+}
+watch(() => props.conversationId, (next, previous) => {
+  if (draftLoaded) inputDrafts.set(previous || LANDING_DRAFT, { text: text.value, origin: expression.value })
+  const saved = storedDraft(next || LANDING_DRAFT)
+  text.value = saved?.text || ''; expression.value = saved?.origin; undo.value = undefined
+  draftLoaded = true
+}, { immediate: true })
+watch([text, expression], () => {
+  const id = props.conversationId || LANDING_DRAFT
+  try {
+    if (text.value) sessionStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value }))
+    else sessionStorage.removeItem(draftKey(id))
+  } catch { /* Do not block the composer if local storage is full. */ }
+}, { deep: true })
+watch(text, value => { if (!value.trim()) { expression.value = undefined; undo.value = undefined } })
+function insertReply(extra: string, origin: ReplyAssistanceInput) {
+  try {
+    const result = appendReply(text.value, extra, expression.value, origin)
+    undo.value = { inserted: result.inserted, offset: result.offset, origin: expression.value }
+    text.value = result.text; expression.value = result.origin
+    textareaRef.value?.focus({ preventScroll: true })
+  } catch (e) { toast({ type: 'info', message: e instanceof Error ? e.message : '原文未改变' }) }
+}
+function undoInsertion() {
+  if (!undo.value) return
+  const result = undoReply(text.value, undo.value)
+  if (result === null) { toast({ type: 'info', message: '你已修改填入的文字，为保留修改，请手动调整或删除。' }); return }
+  text.value = result; expression.value = undo.value.origin; undo.value = undefined
+}
+const filesInput = ref<HTMLInputElement | null>(null)
+const addOpen = ref(false)
+const acceptFiles = [...DOC_EXTENSIONS, ...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS].join(',')
+function onFiles(e: Event) {
+  const input = e.target as HTMLInputElement
+  if (input.files?.length) emit('files', input.files)
+  input.value = ''
+  addOpen.value = false
+}
 const deep = ref(false)
 const deliberate = ref(false)
 const MAX = 4000
@@ -57,10 +114,11 @@ const effectivePlaceholder = computed(() => {
 
 function send() {
   const content = text.value.trim()
-  if (!content || props.streaming || blocked.value) return
+  if ((!content && !props.hasAttachments) || props.streaming || props.uploading || blocked.value) return
   if (content.length > MAX) return
-  emit('send', content, deep.value ? 'deep' : 'brief', deliberate.value ? 'deliberate' : 'chat')
+  emit('send', content, deep.value ? 'deep' : 'brief', deliberate.value ? 'deliberate' : 'chat', expression.value)
   text.value = ''
+  expression.value = undefined; undo.value = undefined
   if (!hintSeen.value) markHintSeen()
 }
 
@@ -132,12 +190,14 @@ onBeforeUnmount(stopVoice)
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
+  insertReply,
   focus: () => textareaRef.value?.focus(),
   setDeliberate: (on: boolean) => {
     deliberate.value = on
   },
-  setText: (value: string) => {
+  setText: (value: string, origin?: ReplyAssistanceInput) => {
     text.value = value
+    expression.value = origin
     textareaRef.value?.focus()
   },
 })
@@ -145,6 +205,11 @@ defineExpose({
 
 <template>
   <div class="zj-composer" :class="{ 'is-blocked': !!notice }">
+    <slot name="attachments" />
+    <div v-if="expression" class="zj-composer__assisted" role="status">
+      <span>{{ expression.selections.length ? 'AI 辅助起草，可修改后发送' : '对话操作，发送后生效' }}</span>
+      <button v-if="undo" type="button" @click="undoInsertion">撤销填入</button>
+    </div>
     <p v-if="notice" class="zj-composer__notice" role="status">
       <span>{{ notice }}</span>
       <RouterLink v-if="noticeTo" :to="noticeTo" class="zj-composer__notice-link">去偏好</RouterLink>
@@ -181,6 +246,15 @@ defineExpose({
       </button>
     </div>
     <div class="zj-composer__bar">
+      <div class="zj-composer__add" @keydown.esc="addOpen = false">
+        <button type="button" class="zj-composer__chip" aria-label="添加文件" :aria-expanded="addOpen" :disabled="disabled || uploading" @click="addOpen = !addOpen"><Plus :size="17" /></button>
+        <div v-if="addOpen" class="zj-composer__add-menu">
+          <button type="button" @click="filesInput?.click()">上传文件</button>
+          <button type="button" @click="emit('pick-materials'); addOpen = false">选择已有资料</button>
+          <span>也可以拖入文件或粘贴截图</span>
+        </div>
+        <input ref="filesInput" type="file" multiple hidden :accept="acceptFiles" aria-label="上传聊天文件" @change="onFiles" />
+      </div>
       <button
         v-if="allowDeliberate !== false"
         type="button"
@@ -209,7 +283,7 @@ defineExpose({
       <BaseButton v-if="streaming" variant="secondary" size="sm" class="zj-composer__send" @click="emit('stop')">
         <Square :size="14" aria-hidden="true" />停止
       </BaseButton>
-      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || !text.trim()" @click="send">
+      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || uploading || (!text.trim() && !hasAttachments)" @click="send">
         <Send :size="14" aria-hidden="true" />发送
       </BaseButton>
     </div>
@@ -217,6 +291,13 @@ defineExpose({
 </template>
 
 <style scoped>
+.zj-composer__assisted { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:11px; color:var(--ws-text-secondary-color,#686b66); }
+.zj-composer__assisted button { border:0; background:transparent; color:var(--ws-primary-color,#a6452e); font:inherit; cursor:pointer; text-decoration:underline; }
+.zj-composer__add { position: relative; }
+.zj-composer__add-menu { position: absolute; bottom: 38px; left: 0; width: 210px; z-index: 20; padding: 8px; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 9px; background: var(--ws-card-bg, #fff); box-shadow: 0 5px 22px rgb(0 0 0 / 10%); }
+.zj-composer__add-menu button { display: block; width: 100%; padding: 10px; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.zj-composer__add-menu button:hover { background: var(--ws-surface-2, #fbf8f1); }
+.zj-composer__add-menu span { display: block; padding: 8px 10px; font-size: 11px; color: var(--ws-text-secondary-color, #686b66); }
 .zj-composer {
   display: flex;
   flex-direction: column;

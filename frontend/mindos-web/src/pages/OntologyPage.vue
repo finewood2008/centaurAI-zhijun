@@ -20,6 +20,7 @@ import { useToast } from '@/composables/useToast'
 import { createSessionGate } from '@/composables/sessionGate'
 import { LAYER_META, SECTIONS, sectionLabel } from '@/shared/ontology'
 import SectionNav, { type NavKey } from '@/components/ontology/SectionNav.vue'
+import SelfSections from '@/components/ontology/SelfSections.vue'
 import ClaimCard from '@/components/ontology/ClaimCard.vue'
 import ProposalsPanel from '@/components/ontology/ProposalsPanel.vue'
 import SelfMap from '@/components/ontology/SelfMap.vue'
@@ -98,7 +99,7 @@ const heading = computed(() => {
 const hint = computed(() => {
   if (current.value === 'inbox') return '这些是知君从对话里提出、还没经你确认的理解。只有你点头，它们才会留下；否定后不会再次出现。'
   if (current.value === 'proposals') return '知君整理时发现的疑问：两个名字是不是同一个人？两条理解是不是矛盾？它不会自己拍板，只等你定。'
-  if (showMap.value) return '离中心越近，越是我确认过的；朱砂虚线外是知君的推测，我点头才会留下。点一个点看细节。'
+  if (showMap.value) return '已校准的点越靠近圆心，越能代表我；中间区域是待校准或仅当时的情境，朱砂线外是待确认推测。点一个点查看依据。'
   return SECTIONS.find((s) => s.key === current.value)?.hint ?? ''
 })
 
@@ -290,6 +291,7 @@ onBeforeUnmount(() => {
       <p>属于你的自我理解档案。知君可以提出理解，由你决定什么留下。</p>
     </div>
 
+    <SelfSections />
     <div class="zj-me__grid">
       <SectionNav :stats="stats" :current="current" @select="select" />
 
@@ -378,7 +380,7 @@ onBeforeUnmount(() => {
               <span>{{ sectionLabel(selected.section) }}</span>
               <button type="button" class="zj-me__panel-close" aria-label="关闭" @click="selected = null"><X :size="16" aria-hidden="true" /></button>
             </div>
-            <ClaimCard :claim="selected" :busy="!!busy[selected.id]" show-section @review="(action, edited) => onReview(selected!, action, edited)" />
+            <ClaimCard :claim="selected" :busy="!!busy[selected.id]" show-section @review="(action, edited) => onReview(selected!, action, edited)" @updated="c => applyReviewResult(selected!, 'reaffirm', c)" />
           </aside>
         </div>
 
@@ -404,6 +406,7 @@ onBeforeUnmount(() => {
               :busy="!!busy[c.id]"
               :show-section="current === 'inbox'"
               @review="(action, edited) => onReview(c, action, edited)"
+              @updated="updated => applyReviewResult(c, 'reaffirm', updated)"
             />
           </div>
         </template>

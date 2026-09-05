@@ -121,9 +121,11 @@ class NudgeTests(unittest.TestCase):
     def test_quiet_domain_from_onboarding_claims(self) -> None:
         """建档里说过「不希望主动提」的话题，也算静默领域：逾期判断标题命中就不提醒。"""
         onto = ontology_store_module.OntologyStore.instance()
+        origin = self.convs.create_conversation(mode="onboarding")
+        message = self.convs.append_message(origin["id"], "user", "健康和家里的矛盾这些话题不用主动提")
         onto.create_claim(
             {"content": "我不希望AI主动提起健康和家里的矛盾这些话题", "section": "principles", "layer": "self_declared"},
-            [{"kind": "conversation_turn", "conversation_id": "c1", "message_id": "m1", "quote": "健康和家里的矛盾这些话题不用主动提"}],
+            [{"kind": "conversation_turn", "conversation_id": origin["id"], "message_id": message["id"], "quote": message["content"]}],
             trust_state="confirmed",
             trust_origin="utterance",
         )
@@ -141,9 +143,11 @@ class NudgeTests(unittest.TestCase):
     def test_commitment_due_and_weekly_review(self) -> None:
         onto = ontology_store_module.OntologyStore.instance()
         due = _iso(self.now - timedelta(hours=2))
+        origin = self.convs.create_conversation()
+        message = self.convs.append_message(origin["id"], "user", "三个月内把团队招齐")
         commit = onto.create_claim(
             {"content": "我承诺三个月内把团队招齐", "section": "matters", "layer": "self_declared", "predicate": "committed_to", "valid_to": due},
-            [{"kind": "conversation_turn", "conversation_id": "c1", "message_id": "m1", "quote": "三个月内把团队招齐"}],
+            [{"kind": "conversation_turn", "conversation_id": origin["id"], "message_id": message["id"], "quote": message["content"]}],
             trust_state="confirmed",
             trust_origin="utterance",
         )

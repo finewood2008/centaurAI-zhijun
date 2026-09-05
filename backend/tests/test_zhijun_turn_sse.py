@@ -96,22 +96,21 @@ class TurnSseTests(unittest.TestCase):
         processed = jobs.drain(store=self.onto, conv_store=self.convs)
         self.assertGreaterEqual(processed, 1)
         stats = self.client.get("/api/mindos/ontology/stats").json()
-        self.assertTrue(stats["hasOntology"])
-        self.assertEqual(stats["claims"]["confirmed"], 1)
+        self.assertFalse(stats["hasOntology"])
+        self.assertEqual(stats["claims"]["confirmed"], 0)
         self.assertEqual(stats["inbox"], 1)
         inbox = self.client.get("/api/mindos/ontology/inbox").json()["items"]
-        self.assertEqual(inbox[0]["layer"], "aspirational")
-        working_id = inbox[0]["id"]
+        told_id = next(c["id"] for c in inbox if c["layer"] == "self_declared")
+        # One durable candidate per turn; the extra aspiration must not silently
+        # become a second candidate or a confirmed profile entry.
+        self.assertEqual(inbox[0]["trustState"], "working")
+        accepted = self.client.post(f"/api/mindos/ontology/claims/{told_id}/review",
+            json={"action": "confirm", "surface": "conversation", "conversationId": conv["id"], "messageId": meta["messageId"]})
+        self.assertEqual(accepted.status_code, 200)
+        self.assertEqual(accepted.json()["claim"]["trustState"], "confirmed")
         confirmed = self.client.get("/api/mindos/ontology/claims", params={"trust": "confirmed"}).json()["items"]
-        told_id = confirmed[0]["id"]
-        self.assertEqual(confirmed[0]["trustOrigin"], "utterance")
-
-        review = self.client.post(
-            f"/api/mindos/ontology/claims/{working_id}/review",
-            json={"action": "confirm", "surface": "conversation", "conversationId": conv["id"], "messageId": meta["messageId"]},
-        )
-        self.assertEqual(review.status_code, 200, review.text)
-        self.assertEqual(review.json()["claim"]["trustState"], "confirmed")
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0]["trustState"], "confirmed")
         detail = self.client.get(f"/api/mindos/conversations/{conv['id']}").json()
         note = detail["messages"][-1]
         self.assertEqual(note["role"], "system")
@@ -121,7 +120,6 @@ class TurnSseTests(unittest.TestCase):
         events = self._send(conv["id"], "远川项目最近推进得怎么样")
         provenance = next(d for n, d in events if n == "provenance")
         self.assertIn(told_id, [c["id"] for c in provenance["confirmedClaims"]])
-        self.assertIn(working_id, [c["id"] for c in provenance["confirmedClaims"]])
         reply = "".join(d["t"] for n, d in events if n == "token")
         self.assertIn("我记得你说过", reply)
         self.assertIn("【你告诉我的】我在做远川项目", reply)
@@ -148,13 +146,15 @@ class TurnSseTests(unittest.TestCase):
         self.assertNotIn("我在做远川项目", reply)
 
         projection = self.client.get("/api/mindos/ontology/projection").json()
-        self.assertIn("我想明年把公司做到盈利", projection["markdown"])
+        self.assertNotIn("我想明年把公司做到盈利", projection["markdown"])
         self.assertNotIn("我在做远川项目", projection["markdown"])
 
     def test_partial_review_returns_replacement(self) -> None:
+        conversation = self.convs.create_conversation()
+        message = self.convs.append_message(conversation["id"], "user", "x；y（合成的两段待核对原话）")
         claim = self.onto.create_claim(
             {"content": "我可能偏内向", "section": "who", "layer": "hypothesis", "confidence": 0.5},
-            [{"kind": "conversation_turn", "conversation_id": "c", "message_id": "m", "quote": "x"}],
+            [{"kind": "conversation_turn", "conversation_id": conversation["id"], "message_id": message["id"], "quote": "x"}],
         )
         res = self.client.post(
             f"/api/mindos/ontology/claims/{claim['id']}/review",
@@ -170,7 +170,7 @@ class TurnSseTests(unittest.TestCase):
         self.assertEqual(stale.status_code, 409)
         fresh = self.onto.create_claim(
             {"content": "我大概更信数据", "section": "ways", "layer": "hypothesis", "confidence": 0.5},
-            [{"kind": "conversation_turn", "conversation_id": "c", "message_id": "m", "quote": "y"}],
+            [{"kind": "conversation_turn", "conversation_id": conversation["id"], "message_id": message["id"], "quote": "y"}],
         )
         bad = self.client.post(f"/api/mindos/ontology/claims/{fresh['id']}/review", json={"action": "partial", "surface": "ontology_page"})
         self.assertEqual(bad.status_code, 400)

@@ -143,7 +143,10 @@ def excluded(relative: PurePosixPath) -> bool:
             PurePosixPath("frontend/renderer/lan_import.html"),
             PurePosixPath("frontend/package.json"),
         )
-        if not any(relative == path or path in relative.parents for path in allowed):
+        # tarfile prunes descendants when a directory is excluded. Keep the
+        # ancestors needed to reach dist/ and lan_import.html as well as their
+        # allowed contents; sibling source/dev files remain excluded.
+        if not any(relative == path or path in relative.parents or relative in path.parents for path in allowed):
             return True
     if len(relative.parts) > 1 and relative.parts[:2] == ("backend", "venv"):
         return True

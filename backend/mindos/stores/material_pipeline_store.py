@@ -630,6 +630,18 @@ class MaterialPipelineStore:
                 "AND storage_state=?",
                 (material_id, version, SS_PREPARING),
             )
+            # A reparse of the same material version must retain its previous
+            # snapshot, not collide with UNIQUE(material_id, version) or overwrite
+            # evidence already cited by a conversation. Snapshot revisions advance
+            # independently; the job fence above still checks the requested file
+            # version. New content therefore also gets a new consent identity.
+            latest = conn.execute(
+                "SELECT MAX(version) FROM material_content_snapshots WHERE material_id=?", (material_id,)
+            ).fetchone()[0]
+            if latest is not None and int(latest) >= version:
+                version = int(latest) + 1
+                snapshot_id = f"snp_{material_id.removeprefix('mindos_')[:8]}_{version}_{uuid.uuid4().hex[:8]}"
+                rel_path = f"{material_id}/{version}.json"
             conn.execute(
                 """INSERT INTO material_content_snapshots
                    (snapshot_id, material_id, version, source_hash, storage_state,

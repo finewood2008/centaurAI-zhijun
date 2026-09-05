@@ -1,216 +1,53 @@
 <script setup lang="ts">
-// 回复出处小图：左边「这条回复」，右边最多四组来源（已确认理解 / 工作理解 / 资料片段 / 避开的旧理解），
-// 连线粗细随数量。每个点都是可聚焦按钮，点了跳到对应理解或资料。
-import { computed, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import type { ProvenanceEvent } from '@/services/api'
-import { groups as buildGroups, lineWidth, truncateTitle, type ProvItem } from '@/shared/provenanceGraph'
-
+import { computed } from 'vue'
+import type { ContextItem, ProvenanceEvent } from '@/services/api'
+import { contextItems, normalizeContextPlan } from '@/shared/provenanceGraph'
+import { charterSourceLabel } from '@/shared/charterWorkspace'
 const props = defineProps<{ provenance: ProvenanceEvent }>()
-const router = useRouter()
-
-const W = 560
-const H = 170
-const REPLY = { x: 16, y: 55, w: 108, h: 60 }
-const GROUP_X = 190
-const ROW_H = 36
-const DOT_GAP = 22
-
-const groups = computed(() => buildGroups(props.provenance))
-const rows = computed(() => {
-  const n = groups.value.length
-  const total = n * ROW_H
-  const startY = Math.max(24, (H - total) / 2 + ROW_H / 2)
-  return groups.value.map((g, i) => ({ g, y: startY + i * ROW_H }))
-})
-const replyMid = { x: REPLY.x + REPLY.w, y: REPLY.y + REPLY.h / 2 }
-
-const hover = ref<{ item: ProvItem; x: number; y: number } | null>(null)
-const tip = computed(() => {
-  if (!hover.value) return null
-  return { left: `${(hover.value.x / W) * 100}%`, top: `${(hover.value.y / H) * 100}%`, text: hover.value.item.label }
-})
-
-function layerClass(item: ProvItem): string {
-  if (item.kind === 'working') return 'is-working'
-  if (item.kind === 'material') return 'is-material'
-  if (item.kind === 'retracted') return 'is-retracted'
-  if (item.layer === 'observed') return 'is-observed'
-  if (item.layer === 'aspirational') return 'is-aspirational'
-  return 'is-told'
-}
-
-function go(item: ProvItem) {
-  if (item.kind === 'material' && item.materialId) {
-    router.push(`/materials/${encodeURIComponent(item.materialId)}`)
-  } else if (item.kind === 'claim' || item.kind === 'working') {
-    router.push({ path: '/me', query: { section: item.section ?? 'who', claim: item.id } })
-  } else {
-    router.push('/me')
-  }
-}
-
-function onKey(event: KeyboardEvent, item: ProvItem) {
-  if (event.key === 'Enter' || event.key === ' ') {
-    event.preventDefault()
-    go(item)
-  }
-}
-
-function itemAria(item: ProvItem, groupLabel: string): string {
-  return `${groupLabel}：${item.label}`
+const plan = computed(() => normalizeContextPlan(props.provenance.contextPlan))
+const provided = computed(() => plan.value ? contextItems(plan.value, 'providedRefs') : [])
+const cited = computed(() => plan.value ? contextItems(plan.value, 'citedRefs') : [])
+function sourceLink(item: ContextItem) {
+  if (item.kind === 'claim') return { path: '/me', query: { claim: item.id, section: item.claim?.section } }
+  if (item.kind === 'material') return { path: '/materials/' + encodeURIComponent(item.material?.materialId || item.ref?.id || item.id) }
+  if (item.kind === 'decision') return { path: '/judgments', query: { decisionId: item.id } }
+  return null
 }
 </script>
-
 <template>
-  <div class="zj-pg" data-testid="provenance-graph">
-    <svg :viewBox="`0 0 ${W} ${H}`" class="zj-pg__svg" role="group" :aria-label="groups.length ? `这条回复的依据：${groups.map((g) => `${g.label} ${g.count}`).join('，')}` : '这条回复没有依据本体'">
-      <g class="zj-pg__reply" aria-hidden="true">
-        <rect :x="REPLY.x" :y="REPLY.y" :width="REPLY.w" :height="REPLY.h" rx="10" />
-        <text :x="REPLY.x + REPLY.w / 2" :y="REPLY.y + REPLY.h / 2 + 5" text-anchor="middle">这条回复</text>
-      </g>
-      <template v-if="rows.length">
-        <g v-for="{ g, y } in rows" :key="g.key">
-          <path :d="`M ${replyMid.x} ${replyMid.y} C ${replyMid.x + 34} ${replyMid.y}, ${GROUP_X - 34} ${y}, ${GROUP_X - 6} ${y}`" class="zj-pg__link" :class="`is-${g.key}`" :style="{ strokeWidth: lineWidth(g.count) }" aria-hidden="true" />
-          <text :x="GROUP_X" :y="y - 10" class="zj-pg__label">{{ g.label }} <tspan class="zj-pg__count">{{ g.count }}</tspan><tspan v-if="g.note" class="zj-pg__note"> · {{ g.note }}</tspan></text>
-          <g v-for="(item, i) in g.shown" :key="item.id" class="zj-pg__item" :class="layerClass(item)" role="button" tabindex="0" :aria-label="itemAria(item, g.label)" @click="go(item)" @keydown="onKey($event, item)" @mouseenter="hover = { item, x: GROUP_X + 8 + i * DOT_GAP, y: y + 8 }" @mouseleave="hover = null" @focus="hover = { item, x: GROUP_X + 8 + i * DOT_GAP, y: y + 8 }" @blur="hover = null">
-            <template v-if="item.kind === 'material'">
-              <rect :x="GROUP_X + i * DOT_GAP" :y="y + 1" width="12" height="15" rx="2" class="zj-pg__doc" />
-              <line :x1="GROUP_X + 3 + i * DOT_GAP" :x2="GROUP_X + 9 + i * DOT_GAP" :y1="y + 6" :y2="y + 6" class="zj-pg__doc-line" />
-              <line :x1="GROUP_X + 3 + i * DOT_GAP" :x2="GROUP_X + 9 + i * DOT_GAP" :y1="y + 10" :y2="y + 10" class="zj-pg__doc-line" />
-            </template>
-            <template v-else-if="item.kind === 'retracted'">
-              <circle :cx="GROUP_X + 6" :cy="y + 8" r="6" class="zj-pg__dot" />
-              <line :x1="GROUP_X + 2" :x2="GROUP_X + 10" :y1="y + 4" :y2="y + 12" class="zj-pg__cross" />
-              <line :x1="GROUP_X + 10" :x2="GROUP_X + 2" :y1="y + 4" :y2="y + 12" class="zj-pg__cross" />
-              <text :x="GROUP_X + 18" :y="y + 12" class="zj-pg__inline">{{ item.label }}</text>
-            </template>
-            <circle v-else :cx="GROUP_X + 6 + i * DOT_GAP" :cy="y + 8" r="6" class="zj-pg__dot" />
-          </g>
-          <text v-if="g.key === 'materials'" :x="GROUP_X + g.shown.length * DOT_GAP + 4" :y="y + 12" class="zj-pg__inline">{{ g.shown.map((m) => truncateTitle(m.label)).join(' · ') }}</text>
-          <text v-if="g.extra > 0" :x="GROUP_X + g.shown.length * DOT_GAP + 4" :y="y + 12" class="zj-pg__inline">+{{ g.extra }}</text>
-        </g>
-      </template>
-      <g v-else aria-hidden="true">
-        <line :x1="replyMid.x" :x2="GROUP_X - 6" :y1="replyMid.y" :y2="replyMid.y" class="zj-pg__link is-empty" />
-        <text :x="GROUP_X" :y="replyMid.y + 4" class="zj-pg__label">没有依据本体，只用了这轮的话</text>
-      </g>
-    </svg>
-    <div v-if="tip" class="zj-pg__tip" :style="{ left: tip.left, top: tip.top }" role="status">{{ tip.text }}</div>
+  <div v-if="plan" class="zj-context" data-testid="provenance-graph" aria-label="本轮约定、提供信息与明确引用">
+    <section class="zj-context__section" data-testid="context-constraints">
+      <h4>遵循的约定</h4>
+      <div v-if="provenance.charterBasis?.version && provenance.charterBasis.clauseIds.length" data-testid="provenance-charter-clauses">
+        <RouterLink :to="{ path: '/me/charter', query: { version: provenance.charterBasis.version } }">人生章程第 {{ provenance.charterBasis.version }} 版</RouterLink> · {{ provenance.charterBasis.clauseIds.length }} 条约定
+        <details><summary>查看条款标识</summary>{{ provenance.charterBasis.clauseIds.join('、') }}</details>
+      </div>
+      <p v-else>本轮没有记录章程约定。资料权限仍独立检查。</p>
+      <p class="zj-context__note">约定约束处理方式，不等于关于你的事实或回答引用。</p>
+    </section>
+    <section class="zj-context__section" data-testid="context-provided">
+      <h4>提供给模型的信息 <span>{{ provided.length }} 项</span></h4>
+      <p v-if="!provided.length">本轮未记录额外提供的信息条目。</p>
+      <details v-for="item in provided" :key="item.citationId" class="zj-context__item">
+        <summary><span class="zj-context__id">[{{ item.citationId }}]</span> {{ item.title || item.id }} <small>{{ plan.background.some(b => b.citationId === item.citationId) ? '背景' : '证据' }}</small></summary>
+        <p class="zj-context__text">{{ item.text }}</p>
+        <p class="zj-context__note">{{ charterSourceLabel(item.kind) }} · 版本 {{ item.version }}<template v-if="item.claim?.trustState"> · {{ item.claim.trustState === 'confirmed' ? '已确认理解' : '待核对理解' }}</template></p>
+        <RouterLink v-if="sourceLink(item)" :to="sourceLink(item)!">查看原记录（可能已有新版本）</RouterLink>
+      </details>
+      <p class="zj-context__note">这里是实际放进本轮请求的片段，不表示完整阅读原文件，也不保证每项都影响了回答。</p>
+    </section>
+    <section class="zj-context__section" data-testid="context-cited">
+      <h4>回答明确引用的信息 <span>{{ cited.length }} 项</span></h4>
+      <ul v-if="cited.length"><li v-for="item in cited" :key="item.citationId"><span class="zj-context__id">[{{ item.citationId }}]</span> {{ item.title || item.id }} · 版本 {{ item.version }}</li></ul>
+      <p v-else>这条回答没有标注可核验的来源引用；不能据此判断模型是否受到某条信息影响。</p>
+      <p class="zj-context__note">只列出回答中出现、且确实提供过的引用标识。它不证明结论被证据支持，也不是因果影响或影响权重。</p>
+      <p v-if="plan.citationAudit?.invalidRefs.length" class="zj-context__note">另有 {{ plan.citationAudit.invalidRefs.length }} 个无法核验的引用标识，未列入明确引用。</p>
+    </section>
+    <details v-if="plan.excluded.length" class="zj-context__excluded"><summary>{{ plan.excluded.length }} 项信息未纳入本轮</summary><p v-for="(item, index) in plan.excluded" :key="item.id || index">{{ item.title || '相关信息' }}：{{ item.reason }}</p></details>
+    <p v-if="plan.stage === 'supplemented'" class="zj-context__note">本轮补查过一次，以上记录包含获准提供的补充信息。</p>
   </div>
+  <p v-else class="zj-context__note">旧回执无法区分实际提供的信息与回答引用，不展示推定的使用关系。</p>
 </template>
-
 <style scoped>
-.zj-pg {
-  position: relative;
-  margin: 0 0 8px;
-}
-.zj-pg__svg {
-  display: block;
-  width: 100%;
-  max-width: 560px;
-  height: auto;
-  overflow: visible;
-}
-.zj-pg__reply rect {
-  fill: var(--ws-surface-2, #fbf8f1);
-  stroke: var(--ws-border-color, #d8d3c8);
-}
-.zj-pg__reply text {
-  font-family: var(--ws-font-display, serif);
-  font-size: 14px;
-  fill: var(--ws-text-primary-color, #1d211f);
-}
-.zj-pg__link {
-  fill: none;
-  stroke: var(--ws-border-color, #d8d3c8);
-  stroke-linecap: round;
-}
-.zj-pg__link.is-confirmed {
-  stroke: var(--ws-text-primary-color, #1d211f);
-}
-.zj-pg__link.is-working {
-  stroke: var(--ws-primary-color, #a6452e);
-  stroke-dasharray: 4 3;
-}
-.zj-pg__link.is-materials {
-  stroke: #4a7c59;
-}
-.zj-pg__link.is-retracted,
-.zj-pg__link.is-empty {
-  stroke: var(--ws-text-placeholder-color, #a3a69f);
-}
-.zj-pg__label {
-  font-size: 12px;
-  fill: var(--ws-text-color, #3c403d);
-}
-.zj-pg__count {
-  fill: var(--ws-text-primary-color, #1d211f);
-  font-weight: 600;
-}
-.zj-pg__note,
-.zj-pg__inline {
-  font-size: 12px;
-  fill: var(--ws-text-placeholder-color, #a3a69f);
-}
-.zj-pg__item {
-  cursor: pointer;
-  outline: none;
-}
-.zj-pg__dot {
-  fill: var(--ws-text-primary-color, #1d211f);
-  stroke: var(--ws-text-primary-color, #1d211f);
-  stroke-width: 1.5;
-}
-.zj-pg__item.is-observed .zj-pg__dot {
-  fill: #4a7c59;
-  stroke: #4a7c59;
-}
-.zj-pg__item.is-aspirational .zj-pg__dot {
-  fill: var(--ws-primary-color, #a6452e);
-  stroke: var(--ws-primary-color, #a6452e);
-}
-.zj-pg__item.is-working .zj-pg__dot {
-  fill: var(--ws-body-bg, #fffcf6);
-  stroke: var(--ws-primary-color, #a6452e);
-  stroke-dasharray: 2 2;
-}
-.zj-pg__item.is-retracted .zj-pg__dot {
-  fill: var(--ws-body-bg, #fffcf6);
-  stroke: var(--ws-text-placeholder-color, #a3a69f);
-}
-.zj-pg__cross {
-  stroke: var(--ws-text-placeholder-color, #a3a69f);
-  stroke-width: 1.5;
-}
-.zj-pg__doc {
-  fill: var(--ws-body-bg, #fffcf6);
-  stroke: #4a7c59;
-  stroke-width: 1.2;
-}
-.zj-pg__doc-line {
-  stroke: #4a7c59;
-  stroke-width: 1;
-}
-.zj-pg__item:hover .zj-pg__dot,
-.zj-pg__item:focus-visible .zj-pg__dot {
-  stroke-width: 3;
-}
-.zj-pg__item:focus-visible .zj-pg__doc {
-  stroke-width: 2.5;
-}
-.zj-pg__tip {
-  position: absolute;
-  z-index: 2;
-  transform: translate(-50%, calc(-100% - 12px));
-  max-width: 280px;
-  padding: 4px 8px;
-  border: 1px solid var(--ws-border-color, #d8d3c8);
-  border-radius: var(--ws-radius, 6px);
-  background: var(--ws-surface-2, #fbf8f1);
-  box-shadow: var(--ws-shadow-sm);
-  font-size: 12px;
-  color: var(--ws-text-color, #3c403d);
-  pointer-events: none;
-}
+.zj-context { font-size:12px; line-height:1.75; overflow-wrap:anywhere; }.zj-context__section { margin:14px 0; padding:0 0 12px; border-bottom:1px solid var(--ws-border-color-3); }.zj-context h4 { color:var(--ws-text-color); font-size:13px; margin:0 0 8px; }.zj-context h4 span { font-weight:400; color:var(--ws-text-secondary-color); margin-left:5px; }.zj-context p { margin:6px 0; }.zj-context__note,.zj-context small { color:var(--ws-text-secondary-color); font-size:12px; }.zj-context__item { padding:7px 0; }.zj-context summary { cursor:pointer; }.zj-context__id { font-variant-numeric:tabular-nums; color:var(--ws-primary-color); }.zj-context__text { white-space:pre-wrap; padding:10px 12px; background:var(--ws-surface-2); border-radius:8px; max-height:240px; overflow:auto; }.zj-context a { color:var(--ws-primary-color); }.zj-context ul { padding-left:18px; margin:6px 0; }.zj-context__excluded { margin:10px 0; }
 </style>
