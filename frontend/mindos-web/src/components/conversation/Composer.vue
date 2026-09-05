@@ -191,6 +191,10 @@ onBeforeUnmount(stopVoice)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
   insertReply,
+  appendText: (value: string) => {
+    text.value = text.value.trim() ? text.value + '\n\n' + value : value
+    textareaRef.value?.focus()
+  },
   focus: () => textareaRef.value?.focus(),
   setDeliberate: (on: boolean) => {
     deliberate.value = on
@@ -265,7 +269,7 @@ defineExpose({
         title="把这件事整理成一条判断：选项、倾向、把握、预期"
         @click="deliberate = !deliberate"
       >
-        我在考虑…
+        整理成判断
       </button>
       <button
         type="button"
@@ -273,10 +277,10 @@ defineExpose({
         :class="{ 'is-on': deep }"
         :aria-pressed="deep"
         :disabled="streaming || blocked"
-        title="让知君展开说：观察、依据、其他解释、想确认什么、可以试什么"
+        title="结合依据展开分析，按当前问题组织内容；不要求每次回答一串问题"
         @click="deep = !deep"
       >
-        深入
+        展开分析
       </button>
       <span v-if="!hintSeen" class="zj-composer__tip">Enter 发送 · Shift+Enter 换行</span>
       <span v-if="text.length >= COUNT_FROM" class="zj-composer__count" aria-live="polite">{{ text.length }}/{{ MAX }}</span>

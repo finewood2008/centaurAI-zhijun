@@ -98,12 +98,20 @@ def active_pending(r):
                for p in r.store.pending(r.cid) if p["task_key"] not in job_tasks}
     for job in latest_jobs:
         result = job.get("result") or {}
-        if job["state"] != "done" or result.get("state") != "paused":
+        if not r.store.recoverable_job(job):
             continue
+        failed = job["state"] == "failed"
+        if failed:
+            # Do not expose raw provider errors: they may contain request details.
+            cause = {"PROVIDER_TIMEOUT": "模型等待超时", "PROVIDER_BUSY": "模型通道繁忙",
+                "PROVIDER_UNAVAILABLE": "模型服务暂时不可用", "PROVIDER_MISCONFIGURED": "模型连接设置需要检查",
+                "INVALID_JSON_REPLY": "模型返回的整理内容不完整", "EMPTY_REPLY": "模型没有返回整理内容"}.get(job.get("errorCode"), "本次整理未完成")
+            result = {"reason": "task_failed", "detail": cause + "，原对话仍保留。可重试；继续前会重新核对当前模型、资料权限与人生章程。"}
         task = job["kind"]
         item = pending.setdefault(task, {"conversation_id": r.cid, "task_key": task, "preview_id": "",
-            "count": 0, "reason": result.get("reason", "consent_required"), "detail": "", "messageIds": [], "updated_at": "", "reasons": []})
+            "count": 0, "failedCount": 0, "reason": result.get("reason", "consent_required"), "detail": "", "messageIds": [], "updated_at": "", "reasons": []})
         item["count"] += 1
+        item["failedCount"] += int(failed)
         message_id = job["payload"].get("messageId")
         if message_id and message_id not in item["messageIds"]:
             item["messageIds"].append(message_id)
@@ -124,6 +132,7 @@ def active_pending(r):
         if len(item["reasons"]) > 1:
             item["reason"] = "multiple_reasons"
             item["detail"] = "；".join(f"{entry['count']} 项：{entry['detail']}" for entry in item["reasons"])
+        item["state"] = "failed" if item.get("failedCount") == item["count"] else "mixed" if item.get("failedCount") else "paused"
         item["previewExpired"] = not bool(item["preview_id"] and r.store.get_preview(item["preview_id"], r.cid))
         values.append(item)
     return values
@@ -333,7 +342,7 @@ def resume(conversation_id: str, req: Resume, request: Request):
         fail("TASK_CHANGED", "原任务不可用，请重新触发")
     job_ids = r.store.resume_jobs(r.cid, req.task, local_only=req.localOnly)
     return {"state": "queued", "jobIds": job_ids, "jobId": job_ids[0] if job_ids else None,
-            "queuedCount": len(job_ids), "pendingCount": len(r.store.paused_jobs(r.cid, req.task))}
+            "queuedCount": len(job_ids), "pendingCount": len(r.store.recoverable_jobs(r.cid, req.task))}
 
 
 def set_default(req: Mode, request: Request):

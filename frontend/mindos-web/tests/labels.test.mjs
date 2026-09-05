@@ -1,7 +1,7 @@
 // 认识论标签 → 文字徽章回归：四种标记、引用 chip、无关文本不动、不放行原始 HTML。
 // 运行：node --experimental-strip-types tests/labels.test.mjs
 import assert from 'node:assert/strict'
-import { decorateLabels, stripLabels, LAYER_MARKERS } from '../src/shared/labels.ts'
+import { decorateLabels, stripContextCitations, stripLabels, LAYER_MARKERS } from '../src/shared/labels.ts'
 
 // 1) 四种标记都被替换成带文字的 span（不能只靠颜色）
 {
@@ -35,9 +35,19 @@ import { decorateLabels, stripLabels, LAYER_MARKERS } from '../src/shared/labels
   assert.match(out, /layer-badge--view/)
 }
 
-// 5) stripLabels 去掉标记与引用，用于纯文本摘要
+// 5) pN 是内部审计编号：支持多位、连续引用和异常编号，只清理编号占用的空格。
+// MessageBubble 只对 Markdown 的普通 text token 调用它，因此代码 token 不受影响。
 {
-  assert.equal(stripLabels('【资料里看到的】你去年换过城市 [m2]'), '你去年换过城市 ')
+  assert.equal(stripContextCitations('产品方向 [p2][p10]。团队判断 [p1]'), '产品方向。团队判断')
+  assert.equal(stripContextCitations('Use [p1] because it matters.'), 'Use because it matters.')
+  assert.equal(stripContextCitations('[p0]异常编号也不展示'), '异常编号也不展示')
+  assert.equal(stripContextCitations('普通 [x] 和材料 [m2] 保留'), '普通 [x] 和材料 [m2] 保留')
+  assert.equal(stripContextCitations('普通文本  的空格，不应被改动。'), '普通文本  的空格，不应被改动。')
 }
 
-console.log('labels: 5 tests OK')
+// 6) stripLabels 去掉用户可见摘要中的认识论标记与全部内部引用。
+{
+  assert.equal(stripLabels('【资料里看到的】你去年换过城市 [m2] [p12]。'), '你去年换过城市。')
+}
+
+console.log('labels: 6 tests OK')

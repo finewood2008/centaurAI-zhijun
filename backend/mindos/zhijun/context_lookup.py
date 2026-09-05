@@ -16,12 +16,24 @@ from .provider import ChatRequest, ProviderError
 
 LOOKUP_UNAVAILABLE_NOTICE = "额外补查暂未完成，本轮使用已读取且已授权的信息回答。"
 _RETRYABLE_OUTPUT_CODES = {"EMPTY_REPLY", "INVALID_JSON_REPLY"}
+_CITATION_MARKER_RE = re.compile(r"[ \t\u00a0]*(?:\[(?:p|m)\d+\])+")
+
+
+def strip_citation_markers(text: str | None) -> str:
+    """Remove per-turn audit IDs before old assistant prose becomes model input."""
+    if not text:
+        return ""
+    return _CITATION_MARKER_RE.sub("", text)
 
 
 def fingerprint(router, content, *, depth, mode, material_refs, local, omit):
     from .charter_policy import scope_policy, snapshot
+    from ..stores.matters_store import MattersStore, source_version
+    binding = MattersStore(router.onto, router.convs).binding(router.cid, router.scope)
+    matter = binding["matter"]
     return digest([router.scope, content, depth, mode, material_refs or [], local, omit,
                    router.mode, snapshot(scope_policy(router.scope)),
+                   binding["bindingRevision"], source_version(matter) if matter else None,
                    getattr(router.provider(local), "_base_url", ""), router.provider(local).model])
 
 

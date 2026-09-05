@@ -337,7 +337,7 @@ onMounted(async () => {
   <div class="page growth-page">
     <div class="page-head growth-head">
       <div><h1>判断</h1><p>记下当时为什么这样选，等结果回来再一起复盘。</p></div>
-      <BaseButton variant="primary" @click="showDecisionForm = true"><Plus :size="15" aria-hidden="true" />记录判断</BaseButton>
+      <div class="form-actions"><BaseButton variant="primary" @click="router.push({ path: '/chat', query: { say: '我想和你商量一个选择：', deliberate: '1' } })">和知君商量</BaseButton><BaseButton variant="text" @click="showDecisionForm = true"><Plus :size="15" aria-hidden="true" />手动记录</BaseButton></div>
     </div>
 
     <form v-if="showDecisionForm" id="decision-create" class="growth-form decision-create" @submit.prevent="decisionStep === 1 ? nextDecisionStep() : createDecision()">
@@ -368,7 +368,7 @@ onMounted(async () => {
       </div>
       <div v-if="decisionsLoading" class="loading-state" aria-live="polite">正在加载判断簿…</div>
       <ErrorState v-else-if="decisionsError" :message="decisionsError" @retry="loadDecisions" />
-      <EmptyState v-else-if="!decisions.length" title="还没有判断记录" description="从一个当下正在做的真实选择开始，不需要一次写得完美；在对话里打开「我在考虑…」也能记。"><template #action><BaseButton variant="primary" size="sm" @click="showDecisionForm = true">记录第一次判断</BaseButton></template></EmptyState>
+      <EmptyState v-else-if="!decisions.length" title="还没有判断记录" description="从一个正在面对的选择聊起，知君帮助你理清取舍，由你核对后留下判断。"><template #action><BaseButton variant="primary" size="sm" @click="router.push({ path: '/chat', query: { say: '我正在考虑一个选择：', deliberate: '1' } })">聊聊第一个选择</BaseButton></template></EmptyState>
       <div v-else class="board" :class="`board--${visibleBoardColumns.length}`">
         <section v-for="column in visibleBoardColumns" :key="column.key" class="board__column" :aria-labelledby="`column-${column.key}`">
           <header class="board__column-head"><h3 :id="`column-${column.key}`">{{ column.title }}</h3><small>{{ column.hint }} · {{ column.items.length }}</small></header>

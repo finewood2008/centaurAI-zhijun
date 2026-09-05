@@ -28,6 +28,7 @@ from ..stores.ontology_store import (
     normalize_text,
 )
 from .provider import ChatProvider, ChatRequest, ProviderError
+from .context_lookup import strip_citation_markers
 
 logger = logging.getLogger(__name__)
 
@@ -606,7 +607,7 @@ def run_extraction(
 ) -> dict:
     if input_origin and input_origin.get("kind") == "control":
         return {"state": "skipped", "reason": "conversation_control", "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}
-    prev_assistant = prev_assistant.strip()[-300:] if prev_assistant else None
+    prev_assistant = strip_citation_markers(prev_assistant).strip()[-300:] if prev_assistant else None
     ok, reason = should_extract(user_text, prev_assistant)
     if not ok:
         return {"state": "skipped", "reason": reason, "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}

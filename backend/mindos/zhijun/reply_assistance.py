@@ -16,6 +16,7 @@ from ..stores.ontology_store import OntologyStore
 from ..stores.reply_assist_store import ReplyAssistStore
 from ..uploads import _device_scope_of
 from .gate import provider_gate, ProviderBusyError
+from .context_lookup import strip_citation_markers
 from .provider import ChatRequest, ProviderError
 
 CONTROLS = {"rephrase": "请换一种更简单、具体的说法，一次只问一个问题。",
@@ -89,7 +90,7 @@ def build_request(messages, previous_texts=None):
     # Do not end the request with an assistant turn: that invites continuation in
     # the assistant's voice. Give the dialogue as labelled data and an explicit task.
     context = {"对话记录（仅作参考）": [
-        {"说话人": "用户" if m["role"] == "user" else "知君", "内容": m["content"]}
+        {"说话人": "用户" if m["role"] == "user" else "知君", "内容": strip_citation_markers(m["content"]) if m["role"] == "assistant" else m["content"]}
         for m in messages
     ], "上一组候选（不要重复）": previous_texts or []}
     return ChatRequest(system=SYSTEM, messages=[{"role": "user", "content":

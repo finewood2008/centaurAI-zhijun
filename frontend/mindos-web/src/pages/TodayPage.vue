@@ -15,6 +15,8 @@ import { greetingLine } from '@/shared/labels'
 import RelationshipMap from '@/components/today/RelationshipMap.vue'
 import RelationshipTimeline from '@/components/today/RelationshipTimeline.vue'
 import HomeNodePanel from '@/components/today/HomeNodePanel.vue'
+import MattersHome from '@/components/matters/MattersHome.vue'
+import ErrorState from '@/components/ui/ErrorState.vue'
 
 const router = useRouter()
 const toast = useToast()
@@ -143,8 +145,8 @@ onBeforeUnmount(() => {
   <main class="zj-today">
     <header class="zj-today__greeting">
       <div>
-        <p>你的今日来信</p>
-        <span>知君根据你留下的理解、判断与结果，为今天写来这一封。</span>
+        <p>从眼下重要的事开始</p>
+        <span>继续推进，也留一点空间回看自己。</span>
       </div>
       <time>{{ dateLine }}</time>
     </header>
@@ -154,12 +156,10 @@ onBeforeUnmount(() => {
       <span />
     </div>
 
-    <section v-else-if="!overview" class="zj-today__fallback" role="alert">
-      <p>{{ error || '共同地图暂时没有打开' }}</p>
-      <button type="button" @click="loadHome()">再试一次</button>
-    </section>
+    <ErrorState v-else-if="!overview" :message="error || '共同地图暂时没有打开'" recover-on-reconnect @retry="loadHome()" />
 
     <template v-else>
+      <MattersHome class="zj-today__matters" />
       <div class="zj-today__grid">
         <article class="zj-letter" aria-label="知君写给你的今日来信">
           <header class="zj-letter__identity">
@@ -225,6 +225,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 22px;
   width: min(100%, 1120px);
+  min-width: 0;
   margin: 0 auto;
   padding: 2px 0 40px;
 }
@@ -233,6 +234,7 @@ onBeforeUnmount(() => {
   align-items: end;
   justify-content: space-between;
   gap: 18px;
+  flex-wrap: wrap;
   padding: 0 4px;
 }
 .zj-today__greeting div { display: grid; gap: 4px; }
@@ -247,22 +249,24 @@ onBeforeUnmount(() => {
 }
 .zj-today__greeting span,
 .zj-today__greeting time {
-  color: var(--ws-text-placeholder-color, #92958f);
-  font-size: 11px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 13px;
 }
 .zj-today__greeting time { white-space: nowrap; }
 .zj-today__grid {
   display: grid;
   grid-template-areas: "letter map" "panel map";
-  grid-template-columns: minmax(340px, .86fr) minmax(0, 1.14fr);
+  grid-template-columns: minmax(0, .86fr) minmax(0, 1.14fr);
   align-items: start;
   gap: 16px;
 }
+.zj-today__grid > *, .zj-today__matters { min-width: 0; max-width: 100%; }
 .zj-today__map { grid-area: map; }
 .zj-today__panel { grid-area: panel; }
 .zj-letter {
   grid-area: letter;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
   min-height: 430px;
@@ -273,15 +277,18 @@ onBeforeUnmount(() => {
   background: linear-gradient(155deg, #fffdf8 0%, #fbf4e9 100%);
   box-shadow: 0 20px 56px rgba(55, 45, 35, .08);
 }
+.zj-letter > * { min-width: 0; overflow-wrap: anywhere; }
 .zj-letter__identity {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
 }
 .zj-letter__identity > div {
   display: grid;
   flex: 1;
+  min-width: 0;
   gap: 2px;
 }
 .zj-letter__identity strong {
@@ -291,12 +298,12 @@ onBeforeUnmount(() => {
   letter-spacing: .08em;
 }
 .zj-letter__identity small {
-  color: var(--ws-text-placeholder-color, #92958f);
-  font-size: 10px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 12px;
 }
 .zj-letter__identity i {
-  color: var(--ws-text-placeholder-color, #92958f);
-  font-size: 10px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 12px;
   font-style: normal;
   font-weight: 400;
   white-space: nowrap;
@@ -306,6 +313,7 @@ onBeforeUnmount(() => {
   place-items: center;
   width: 34px;
   height: 34px;
+  flex-shrink: 0;
   border: 1px solid var(--ws-primary-color, #a6452e);
   border-radius: 8px;
   color: var(--ws-primary-color, #a6452e);
@@ -325,11 +333,12 @@ onBeforeUnmount(() => {
   margin: -2px 0 0;
   color: var(--ws-text-secondary-color, #686b66);
   font-family: var(--ws-font-display, serif);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.9;
 }
 .zj-letter__sources {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding-top: 12px;
   border-top: 1px solid var(--ws-border-color-3, #e8e2d7);
@@ -337,27 +346,30 @@ onBeforeUnmount(() => {
 .zj-letter__sources > p {
   margin: 0;
   color: var(--ws-text-secondary-color, #686b66);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: .08em;
 }
 .zj-letter__sources > div {
   display: flex;
+  min-width: 0;
   flex-wrap: wrap;
   gap: 7px;
 }
 .zj-letter__sources button {
+  min-width: 0;
   max-width: 100%;
   padding: 5px 8px;
-  overflow: hidden;
   border: 1px solid var(--ws-border-color-3, #e8e2d7);
-  border-radius: 999px;
+  border-radius: 12px;
   background: transparent;
   color: var(--ws-text-secondary-color, #686b66);
   font: inherit;
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.55;
+  text-align: left;
   cursor: pointer;
 }
 .zj-letter__sources button:hover,
@@ -387,9 +399,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .zj-letter__action:disabled { cursor: wait; opacity: .7; }
-.zj-letter__action span { display: grid; gap: 3px; }
-.zj-letter__action small { opacity: .72; font-size: 9px; font-weight: 400; letter-spacing: .06em; }
-.zj-letter__action strong { font-size: 13px; font-weight: 600; }
+.zj-letter__action span { display: grid; min-width: 0; gap: 3px; text-align: left; overflow-wrap: anywhere; }
+.zj-letter__action svg { flex-shrink: 0; }
+.zj-letter__action small { opacity: .9; font-size: 12px; font-weight: 400; }
+.zj-letter__action strong { font-size: 14px; font-weight: 600; }
 .zj-letter__action:hover:not(:disabled) { filter: brightness(.94); }
 .zj-letter__action:focus-visible { outline: 3px solid rgba(166, 69, 46, .2); outline-offset: 3px; }
 .zj-today__first-note {
@@ -430,7 +443,7 @@ onBeforeUnmount(() => {
   .zj-today { gap: 14px; padding-bottom: 26px; }
   .zj-today__greeting { display: grid; gap: 4px; padding: 0 2px; }
   .zj-today__greeting p { font-size: 18px; }
-  .zj-today__greeting span { font-size: 10px; }
+  .zj-today__greeting span { font-size: 13px; }
   .zj-today__grid {
     grid-template-areas: "letter" "map" "panel";
     grid-template-columns: minmax(0, 1fr);

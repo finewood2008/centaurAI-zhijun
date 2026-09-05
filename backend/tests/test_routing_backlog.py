@@ -29,6 +29,13 @@ class BacklogTests(unittest.TestCase):
         self.onto.finish_job(jid, "synthetic-worker", result={"state": "paused", "reason": reason, "previewId": preview_id})
         return jid
 
+    def failure(self, message, *, kind="extract_turn"):
+        jid = self.onto.enqueue_job(kind, message["id"], payload={"conversationId": message["conversationId"], "messageId": message["id"]})
+        self.assertEqual(self.onto.claim_next_job("failed-worker")["jobId"], jid)
+        self.onto.fail_job(jid, "failed-worker", failure_class="transient", error_code="TIMEOUT",
+            error_detail="private provider payload must not be shown", retry=False)
+        return jid
+
     def routing_state(self):
         response = self.client.get(self.url + "/routing")
         self.assertEqual(response.status_code, 200, response.text)
@@ -266,3 +273,61 @@ class BacklogTests(unittest.TestCase):
         restored = self.store.resume_jobs("scope:global", "home_brief")
         self.assertEqual(len(restored), 1)
         self.assertEqual(len(self.store.paused_jobs("scope:another-device", "home_brief")), 1)
+
+    def test_failed_turns_are_visible_private_and_retried_once(self):
+        first, second = self.message(), self.message(text="第二条合成记录")
+        ids = [self.failure(first), self.failure(second)]
+        state = self.routing_state()["pending"]
+        self.assertEqual(len(state), 1)
+        self.assertEqual((state[0]["state"], state[0]["failedCount"], state[0]["count"]), ("failed", 2, 2))
+        self.assertEqual(set(state[0]["messageIds"]), {first["id"], second["id"]})
+        self.assertNotIn("private provider", str(state))
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            results = list(pool.map(lambda _: self.store.resume_jobs(self.cid, "extract_turn"), range(3)))
+        self.assertEqual(sorted(jid for batch in results for jid in batch), sorted(ids))
+        self.assertEqual(self.resume()["queuedCount"], 0)
+        self.assertEqual(self.routing_state()["pending"], [])
+        for jid in ids:
+            self.assertEqual(self.onto.get_job(jid)["state"], "queued")
+
+    def test_mixed_failed_and_paused_keep_counts_and_foreign_failures_out(self):
+        self.failure(self.message())
+        self.pause(self.message(text="另一个合成输入"))
+        foreign = self.convs.create_conversation(device_scope="another-device")["id"]
+        foreign_id = self.failure(self.message(foreign))
+        item = self.routing_state()["pending"][0]
+        self.assertEqual((item["state"], item["count"], item["failedCount"]), ("mixed", 2, 1))
+        self.assertEqual(item["reason"], "multiple_reasons")
+        self.assertEqual(self.resume()["queuedCount"], 2)
+        self.assertEqual(self.onto.get_job(foreign_id)["state"], "failed")
+        response = self.client.post("/api/mindos/conversations/" + foreign + "/routing/resume", json={"task": "extract_turn"})
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_newer_success_suppresses_failed_attempt(self):
+        message = self.message()
+        self.failure(message)
+        jid = self.onto.enqueue_job("extract_turn", message["id"], payload={"conversationId": self.cid, "messageId": message["id"]})
+        self.assertEqual(self.onto.claim_next_job("success-worker")["jobId"], jid)
+        self.onto.finish_job(jid, "success-worker", result={"state": "done", "created": []})
+        self.assertEqual(self.routing_state()["pending"], [])
+        self.assertEqual(self.resume()["queuedCount"], 0)
+
+    def test_retry_failure_rechecks_revoked_authorization_before_model(self):
+        GrowthStore.instance().create_charter({"challengeStyle": "先听完整问题"})
+        self.enable()
+        self.default_consent(includeCharter=True)
+        self.failure(self.message())
+        self.assertEqual(self.resume()["queuedCount"], 1)
+        self.store.revoke("global")
+        with patch("mindos.zhijun.memory.extraction_allowed", return_value=True):
+            jobs.drain(store=self.onto, conv_store=self.convs)
+        self.assertEqual(self.online.requests, [])
+        self.assertEqual(self.local.requests, [])
+        self.assertEqual(self.routing_state()["pending"][0]["state"], "paused")
+
+    def test_failed_charter_does_not_reopen_published_workspace(self):
+        self.failure(self.message(), kind="charter_draft")
+        GrowthStore.instance().create_charter({"challengeStyle": "正式章程不自动修改"})
+        self.assertEqual(self.routing_state()["pending"], [])
+        response = self.client.post(self.url + "/routing/resume", json={"task": "charter_draft"})
+        self.assertEqual(response.status_code, 409)

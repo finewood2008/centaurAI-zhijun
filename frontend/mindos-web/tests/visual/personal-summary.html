@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>个人理解摘要 · 合成预览</title>
+  <script>
+    window.fetch = () => Promise.reject(new Error('合成预览禁止接口请求'))
+    XMLHttpRequest.prototype.send = function () { throw new Error('合成预览禁止接口请求') }
+    navigator.sendBeacon = () => false
+  </script>
+  <style>
+    #app { max-width:1200px; margin:0 auto; padding:24px; }
+    h1 { font:600 25px/1.5 var(--ws-font-display); margin:0 0 8px; }
+    .fixture-note { font-size:13px; color:var(--ws-text-secondary-color); margin:0 0 20px; }
+    .fixture-controls { display:flex; flex-wrap:wrap; gap:12px; margin:20px 0; }
+    .fixture-controls button { padding:8px 12px; border:1px solid var(--ws-border-color); border-radius:8px; background:var(--ws-card-bg); font:inherit; }
+    .fixture-selection { margin-top:20px; padding:16px; border:1px solid var(--ws-border-color); font-size:14px; line-height:1.75; overflow-wrap:anywhere; }
+    @media(max-width:600px) { #app { padding:16px; } }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { createApp, defineComponent, h, ref } from 'vue'
+    import Summary from '../../src/components/ontology/PersonalSummary.vue'
+    import '../../src/styles/tokens.css'
+    import '../../src/styles/base.css'
+    const base = { trustState:'confirmed', layer:'self_declared', scope:'long_term', firstSeen:'2026-09-04T10:00:00Z', lastReaffirmed:'2026-09-04T10:00:00Z', evidence:[] }
+    const records = [
+      { ...base, id:'role', section:'who', content:'我负责一家成长中企业的经营，也希望给团队更清晰的授权。' },
+      { ...base, id:'matter', section:'matters', scope:'context_only', content:'这周要和合伙人讨论新业务的投入，先明确可用预算、验证周期和各自承担的事情。' },
+      { ...base, id:'principle', section:'principles', content:'重大承诺前把风险说清楚；不同意时也让对方知道我理解他的出发点。' },
+      { ...base, id:'wish', section:'direction', layer:'aspirational', content:'我希望能够把更多时间留给家人，同时让团队有独立做决定的空间。' },
+      { ...base, id:'uncertain', section:'ways', trustState:'working', content:'知君提出的一种可能：在责任没有说清楚时，我可能更倾向于自己接手。' },
+    ]
+    createApp(defineComponent({ setup() {
+      const empty = ref(false), selected = ref('')
+      return () => h('main', [
+        h('h1', '知君对我的理解'), h('p', { class:'fixture-note' }, '只使用合成记录；不读取或修改真实资料。'),
+        h('div', { class:'fixture-controls' }, [h('button', { onClick:() => empty.value = !empty.value }, empty.value ? '显示合成记录' : '查看空状态')]),
+        h(Summary, { claims:empty.value ? [] : records, onSelect:c => selected.value = c.content, onBrowse:s => selected.value = '查看分区：' + s }),
+        selected.value && h('p', { class:'fixture-selection', role:'status' }, selected.value),
+      ])
+    } })).mount('#app')
+  </script>
+</body>
+</html>

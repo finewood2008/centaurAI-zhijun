@@ -14,6 +14,8 @@ models_cache_ms/
 whisper_models/
 # 默认运行时数据根。源码、模型和依赖与用户资料/索引/SQLite 数据库隔离。
 data/
+# Local user-data backups can include private conversations and credentials.
+/backups/
 # 旧版本在项目根目录写入的数据路径；迁移完成前继续忽略，避免误提交。
 chroma_data/
 video_frames/

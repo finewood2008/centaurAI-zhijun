@@ -6,7 +6,7 @@ import type { Conversation } from '@/services/api'
 import MoreMenu from '@/components/ui/MoreMenu.vue'
 import { conversationActions } from '@/shared/conversationManagement'
 import { formatDate } from '@/shared/format'
-import { conversationModeLabel, outcomesLine } from '@/shared/labels'
+import { conversationModeLabel, outcomesLine, stripLabels } from '@/shared/labels'
 
 function sealText(c: Conversation): string {
   return conversationModeLabel(c.mode, !!c.outcomes?.decision)
@@ -84,7 +84,7 @@ const emit = defineEmits<{
               <span class="zj-convs__title">{{ c.title || (c.mode === 'onboarding' ? '第一次对话' : '未命名对话') }}</span>
             </span>
             <span v-if="c.pinnedAt || c.status === 'archived'" class="zj-convs__markers"><span v-if="c.pinnedAt"><Pin :size="11" aria-hidden="true" />置顶</span><span v-if="c.status === 'archived'">已归档</span></span>
-            <span v-if="query.trim() && c.searchMatch" class="zj-convs__match">{{ c.searchMatch.field === 'message' ? '正文：' : '标题：' }}{{ c.searchMatch.snippet }}</span>
+            <span v-if="query.trim() && c.searchMatch" class="zj-convs__match">{{ c.searchMatch.field === 'message' ? '正文：' : '标题：' }}{{ stripLabels(c.searchMatch.snippet) }}</span>
             <span v-if="outcomesLine(c.outcomes)" class="zj-convs__outcomes">{{ outcomesLine(c.outcomes) }}</span>
             <span class="zj-convs__time">{{ formatDate(c.lastMessageAt || c.updatedAt) }}</span>
           </button>

@@ -15,7 +15,7 @@ from mindos import conversations, growth, nudges, ontology
 from mindos.stores import conversation_store as conversation_store_module
 from mindos.stores import growth_store as growth_store_module
 from mindos.stores import ontology_store as ontology_store_module
-from mindos.zhijun import deliberate, jobs
+from mindos.zhijun import context, deliberate, jobs
 from mindos.zhijun.provider import fake_draft
 
 USER_TEXTS = [
@@ -94,6 +94,48 @@ class ParseAndValidateTests(unittest.TestCase):
         self.assertIn("因为", raw["rationale"])
         self.assertIn("预期", raw["expectedOutcome"])
         self.assertEqual(raw["zhijunView"], "先招一个核心再说。")
+
+    def test_derived_prompts_strip_assistant_markers_but_preserve_user_literals(self) -> None:
+        request = deliberate.build_draft_request(
+            ["我把 [p0] 当作自己的原始代号。"],
+            ["知君引用了旧依据 [p01][m0]，继续讨论。"],
+            None,
+        )
+        prompt = request.messages[0]["content"]
+        self.assertIn("用户1：我把 [p0] 当作自己的原始代号。", prompt)
+        self.assertIn("知君最近一句：知君引用了旧依据，继续讨论。", prompt)
+        self.assertNotIn("[p01]", request.debug["assistantText"])
+        self.assertNotIn("[m0]", request.debug["assistantText"])
+
+        rendered = context._render_history([
+            {"role": "user", "content": "这是用户输入的 [p0]。"},
+            {"role": "assistant", "content": "这是旧回复 [p01][m0]。"},
+        ], 1000)
+        self.assertEqual(rendered[0]["content"], "这是用户输入的 [p0]。")
+        self.assertEqual(rendered[1]["content"], "这是旧回复。")
+
+    def test_summary_prompt_only_strips_markers_from_assistant_messages(self) -> None:
+        class SummaryProvider:
+            name = "local-test"
+            external = False
+
+            def complete_json(self, request):
+                self.request = request
+                return {"summary": "测试摘要", "themes": [], "open_loops": []}
+
+        provider = SummaryProvider()
+        messages = [
+            {"id": "user-1", "role": "user", "content": "我把 [p0] 当作自己的原始代号。", "meta": {}},
+            {"id": "assistant-1", "role": "assistant", "content": "旧回答依据 [p01][m0]，继续讨论。", "meta": {}},
+        ]
+        with patch.object(jobs.provider_gate, "acquire", return_value=True), \
+                patch.object(jobs.provider_gate, "release"):
+            jobs._model_summary(messages, provider)
+        prompt = provider.request.messages[0]["content"]
+        self.assertIn("用户：我把 [p0] 当作自己的原始代号。", prompt)
+        self.assertIn("知君：旧回答依据，继续讨论。", prompt)
+        self.assertNotIn("[p01]", prompt)
+        self.assertNotIn("[m0]", prompt)
 
 
 class DeliberateApiTests(unittest.TestCase):

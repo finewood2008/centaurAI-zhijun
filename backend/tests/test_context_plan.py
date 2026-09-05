@@ -333,6 +333,36 @@ class ContextPlanTests(unittest.TestCase):
         self.assertIn(old["id"], [c["ref"]["id"] for c in context_sources.history_candidates(router, ["星桥项目保密"])])
         self.assertIn(self.cid + ":1", [c["ref"]["id"] for c in context_sources.summary_candidates(router, ["星桥项目保密"])])
 
+    def test_derived_summary_decision_and_episode_strip_old_markers_without_rewriting_storage(self):
+        router = Router(self.onto, self.convs, self.cid)
+        message = self.convs.append_message(self.cid, "user", "星桥项目需要复盘", meta={"routingSources": []})
+        summary = self.convs.save_summary(
+            self.cid,
+            up_to_seq=message["seq"],
+            summary="星桥项目摘要 [p0][p01]",
+            key_points=["核心边界 [m0][m007]"],
+            meta={"routingSources": [router.ref("message", message["id"])]},
+        )
+        summary_item = context_sources.summary_candidates(router, ["星桥项目摘要 核心边界"])[0]
+        self.assertNotRegex(summary_item["text"], r"\[(?:p|m)\d+\]")
+        stored_summary = self.convs.get_summary(self.cid, summary["revision"])
+        self.assertIn("[p0]", stored_summary["summary"])
+        self.assertIn("[m007]", stored_summary["keyPoints"][0])
+
+        claim = self.claim("星桥项目复盘要核对结果")
+        decision = self.decision(message, title="星桥项目复盘 [p00]", text="星桥项目当时情境 [p01][m0]")
+        LearningStore(self.onto).start(decision, claim, self.cid, {
+            "situation": "星桥项目合作 [p0]",
+            "prediction": "边界会更清楚 [m007]",
+        })
+        items = context_sources.decision_candidates(router, ["星桥项目复盘 合作"])
+        self.assertTrue({"decision", "episode"}.issubset({item["category"] for item in items}))
+        for item in items:
+            self.assertNotRegex(item["title"], r"\[(?:p|m)\d+\]")
+            self.assertNotRegex(item["text"], r"\[(?:p|m)\d+\]")
+        self.assertIn("[p01]", GrowthStore.instance().get_decision(decision["id"])["context"])
+        self.assertIn("[m007]", LearningStore(self.onto).get(decision["id"])["expectation"]["prediction"])
+
     def test_retry_upper_bound_excludes_current_future_and_derived_text(self):
         router = Router(self.onto, self.convs, self.cid)
         old = self.convs.append_message(self.cid, "user", "星桥项目过去谈过合作范围", meta={"routingSources": []})

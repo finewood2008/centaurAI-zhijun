@@ -85,6 +85,7 @@ import { contextNeedsReview, contextRetryBody, isContextReviewError } from '@/sh
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
+import MatterWorkspace from '@/components/matters/MatterWorkspace.vue'
 
 interface UiMessage extends Message {
   provenance?: ProvenanceEvent | null
@@ -155,6 +156,8 @@ const deleting = ref(false)
 const reviewBusy = reactive<Record<string, boolean>>({})
 const listRef = ref<HTMLElement | null>(null)
 const composerRef = ref<InstanceType<typeof Composer> | null>(null)
+const matterWorkspace = ref<InstanceType<typeof MatterWorkspace> | null>(null)
+const matterSuspension = computed(() => messages.value.filter(m => m.role === 'assistant' && m.status === 'complete').at(-1)?.provenance?.contextPlan?.matterSuspended)
 
 // P2：判断草稿（商量模式）与回访会话
 const draft = ref<DecisionDraft | null>(null)
@@ -472,13 +475,14 @@ const pendingJobs = computed(() => status.value?.pendingJobs ?? 0)
 // ---- 空白态的三张起手卡：点一下把话头放进输入框，不自动发送
 interface Starter { title: string; desc: string; text: string; deliberate?: boolean }
 const STARTERS: Starter[] = [
-  { title: '我在考虑一件事', desc: '把选项、倾向和把握说清楚，聊完会落成判断簿里一条可回访的记录', text: '我在考虑一件事：', deliberate: true },
+  { title: '一起想清楚一件事', desc: '理清目标与取舍，需要时形成判断，由你核对后保存', text: '我在考虑一件事：', deliberate: true },
+  { title: '准备一次重要沟通', desc: '围绕目标、对方与顾虑，一起准备可修改的谈话提纲', text: '我想准备一次重要沟通：' },
   { title: '最近发生了……', desc: '说说这周让你在意的事，知君会把它和你以前说过的连起来', text: '最近发生了一件事，' },
   { title: '你怎么看我？', desc: '让知君用它目前对你的认识说说看，不对的地方你直接改', text: '基于你目前对我的认识，说说你眼中的我，哪些地方你其实不确定？' },
 ]
 function useStarter(s: Starter) {
   composerRef.value?.setDeliberate(!!s.deliberate)
-  composerRef.value?.setText(s.text)
+  composerRef.value?.appendText(s.text)
 }
 
 // 从今日页 / 其它页带着话头过来：?say=… → 放进输入框（?deliberate=1 时同时打开「商量」开关），然后把 query 清掉
@@ -1423,6 +1427,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="zj-page__tools">
           <RoutingPanel ref="routingPanel" :conversation-id="currentId || undefined" :disabled="streaming" @mode="routingMode = $event" />
+          <MatterWorkspace v-if="currentId && !guidedOnboarding" ref="matterWorkspace" :conversation-id="currentId" :suspension="matterSuspension" :disabled="streaming || messagesLoading" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
           <button v-if="decision" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('review')">观察与复盘</button>
@@ -1453,7 +1458,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-else-if="showBlank" class="zj-blank">
-          <p class="zj-blank__lead">带一件正在拿主意的事来。聊完，它会变成一条你确认过、到期知君会来回访的判断。</p>
+          <p class="zj-blank__lead">从你眼下在意的事聊起。可以一起想清楚、准备一份文稿，也可以只是说说，不必马上作决定。</p>
           <button v-if="pendingOnboarding" type="button" class="zj-blank__resume" data-testid="resume-onboarding" @click="selectConversation(pendingOnboarding.id)">
             <span class="zj-seal zj-seal--accent">建档</span>
             <span class="zj-blank__resume-title">继续完善我的方向</span>
@@ -1479,7 +1484,9 @@ onBeforeUnmount(() => {
               :status="m.status"
               :pending-label="contextNeedsReview(m) ? '等待核对' : undefined"
               :streaming="m.streaming"
+              :allow-save="!!currentId && !guidedOnboarding && m.role === 'assistant'"
               @cite="(n) => onCite(m, n)"
+              @save="matterWorkspace?.saveFromReply(m)"
             />
             <ImportBatchCard
               v-for="batch in imports.batches.filter(b => b.messageId === m.id)" :key="batch.id"
@@ -1531,7 +1538,7 @@ onBeforeUnmount(() => {
           :disabled="messagesLoading"
           :has-attachments="imports.staged.length > 0"
           :uploading="imports.uploading"
-          :allow-deliberate="!isReview && !guidedOnboarding && !showIntro && !imports.batches.length"
+          :allow-deliberate="!isReview && !guidedOnboarding && !showIntro"
           :notice="modelBlocked && !imports.staged.length && !imports.localOnly && !alignmentLocalOnly && !prefillLocalOnly ? MODEL_UNAVAILABLE_TEXT : undefined"
           notice-to="/settings"
           :placeholder="current?.mode === 'onboarding' || showIntro ? '回答知君的问题，或者说说你想先聊什么…' : isReview ? '说说实际发生了什么，和预期比差在哪…' : undefined"

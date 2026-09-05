@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from ..stores.ontology_store import lexical_similarity, tokenize
 from ..stores.alignment_store import digest
 from .charter_policy import record_in_scope
+from .context_lookup import strip_citation_markers
 
 _STOP = set("我 你 我们 现在 这个 那个 什么 怎么 如何 哪些 还有 可以 希望 需要 知君 帮我 自己 觉得 事情 问题 之前 相关".split())
 
@@ -37,6 +38,31 @@ def message_ref(router, message):
 def relevance(queries, text):
     tokens = tokenize(text) - _STOP
     return max((lexical_similarity(tokenize(q) - _STOP, tokens) for q in queries), default=0.0)
+
+
+def bound_matter(router, include_inactive=False):
+    """Only an explicit conversation binding supplies an ongoing-matter source."""
+    from ..stores.matters_store import MattersStore, matter_text, source_version
+    binding = MattersStore(router.onto, router.convs).binding(router.cid, router.scope)
+    matter = binding["matter"]
+    snapshot = {"matterId": (matter or {}).get("id"), "revision": binding["bindingRevision"]}
+    if not matter or (matter["status"] != "active" and not include_inactive):
+        return snapshot, None
+    return snapshot, {"ref": router.ref("matter", matter["id"], version=source_version(matter)),
+        "category": "matter", "title": ("正在推进 · " if matter["status"] == "active" else "回顾事项 · ") + matter["title"], "text": matter_text(matter), "score": 1.2,
+        "query": "\n".join(matter[key] for key in ("title", "goal", "context", "nextStep", "outcome") if matter.get(key))[:1200]}
+
+
+def artifact_candidates(router, matter_id, queries):
+    from ..stores.matters_store import MattersStore, source_version
+    items = MattersStore(router.onto, router.convs).artifacts(matter_id, router.scope)
+    candidates = []
+    for item in items:
+        score = relevance(queries, item["title"] + "\n" + item["markdown"])
+        if score >= .12:
+            candidates.append({"ref": router.ref("artifact", item["id"], version=source_version(item)),
+                "category": "artifact", "title": "已保存成果 · " + item["title"], "text": item["markdown"], "score": score})
+    return sorted(candidates, key=lambda item: -item["score"])[:3]
 
 
 def _batches(store, sql, parameters):
@@ -122,7 +148,7 @@ def summary_candidates(router, queries):
     results = []
     for rows in batches:
         for row in rows:
-            text = row["summary"] + "\n" + "\n".join(json.loads(row["key_points_json"] or "[]"))
+            text = strip_citation_markers(row["summary"] + "\n" + "\n".join(json.loads(row["key_points_json"] or "[]")))
             score = relevance(queries, text)
             if score >= .12:
                 results.append({"ref": router.ref("summary", f"{row['conversation_id']}:{row['revision']}"),
@@ -140,20 +166,21 @@ def decision_candidates(router, queries):
     for decision in growth.list_decisions():
         if not record_in_scope(decision, router.convs, router.scope, growth=growth):
             continue
+        decision_title = strip_citation_markers(decision["title"])
         outcome = decision.get("outcome") or {}
         review = decision.get("review") or {}
-        parts = ["当时的判断：" + decision["title"], "当时情境：" + decision.get("context", ""),
+        parts = ["当时的判断：" + decision_title, "当时情境：" + decision.get("context", ""),
                  "当时选择：" + decision.get("choice", ""), "当时理由：" + decision.get("rationale", ""),
                  "事前预期（不是实际结果）：" + decision.get("expectedOutcome", "")]
         if outcome:
             parts.append("用户记录的实际结果：" + str(outcome.get("result", "")) + "；" + str(outcome.get("notes", "")))
         if review:
             parts.append("用户复盘：" + str(review.get("reflection", "")) + "；" + "；".join(review.get("lessons") or []))
-        text = "\n".join(parts)
+        text = strip_citation_markers("\n".join(parts))
         score = relevance(queries, text)
         if score >= .12:
             results.append({"ref": router.ref("decision", decision["id"], version=digest(decision)), "score": score,
-                "category": "decision", "title": decision["title"], "text": text, "decision": decision})
+                "category": "decision", "title": decision_title, "text": text, "decision": decision})
         episode = LearningStore(router.onto).get(decision["id"])
         if episode and router.convs.get_conversation(episode["conversationId"]):
             expectation = episode.get("expectation") or {}
@@ -162,10 +189,11 @@ def decision_candidates(router, queries):
                 text += "\n尚待核对的解释提议：" + json.dumps(episode["proposal"], ensure_ascii=False)
             if episode.get("resolution"):
                 text += "\n用户处理记录：" + json.dumps(episode["resolution"], ensure_ascii=False)
+            text = strip_citation_markers(text)
             score = relevance(queries, text)
             if score >= .12:
                 results.append({"ref": router.ref("episode", decision["id"], version=digest(episode)), "score": score,
-                    "category": "episode", "title": "情境观察 · " + decision["title"], "text": text})
+                    "category": "episode", "title": "情境观察 · " + decision_title, "text": text})
     return sorted(results, key=lambda c: (-c["score"], c["ref"]["id"]))[:120]
 
 

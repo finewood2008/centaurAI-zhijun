@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 我的本体：默认「全景」——一张图看懂知君眼中的我；「列表」保留六个抽屉 + 收件箱 + 裁决。
+// 我的本体：摘要先读原文；保留用户已有全景 / 列表偏好。
 // 全景里点一个点，右侧打开这条理解的卡片，所有动作（确认 / 修正 / 撤回 / 可带走）都在卡片上。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -25,6 +25,9 @@ import ClaimCard from '@/components/ontology/ClaimCard.vue'
 import ProposalsPanel from '@/components/ontology/ProposalsPanel.vue'
 import SelfMap from '@/components/ontology/SelfMap.vue'
 import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
+import PersonalSummary from '@/components/ontology/PersonalSummary.vue'
+import { preferredOntologyView, type OntologyView } from '@/components/ontology/summary'
+import SideDrawer from '@/components/ui/SideDrawer.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -51,16 +54,15 @@ const newLayer = ref<'self_declared' | 'aspirational'>('self_declared')
 
 // ---- 全景 / 列表 视图（记住上次选择）
 const VIEW_KEY = 'zhijun.me.view'
-type ViewMode = 'map' | 'list'
-function readView(): ViewMode {
+function readView(): OntologyView {
   try {
-    return localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'map'
+    return preferredOntologyView(localStorage.getItem(VIEW_KEY))
   } catch {
-    return 'map'
+    return 'summary'
   }
 }
-const view = ref<ViewMode>(readView())
-function setView(v: ViewMode) {
+const view = ref<OntologyView>(readView())
+function setView(v: OntologyView) {
   view.value = v
   try {
     localStorage.setItem(VIEW_KEY, v)
@@ -89,16 +91,20 @@ const current = computed<NavKey>(() => {
 
 const isSectionView = computed(() => current.value !== 'inbox' && current.value !== 'proposals')
 const showMap = computed(() => view.value === 'map' && isSectionView.value)
+const showSummary = computed(() => view.value === 'summary' && isSectionView.value)
+const usesOverview = computed(() => showMap.value || showSummary.value)
 
 const heading = computed(() => {
   if (current.value === 'inbox') return '知君最近学到的'
   if (current.value === 'proposals') return '需要你裁决'
+  if (showSummary.value) return '知君对我的理解'
   if (showMap.value) return '本体全景'
   return sectionLabel(current.value)
 })
 const hint = computed(() => {
   if (current.value === 'inbox') return '这些是知君从对话里提出、还没经你确认的理解。只有你点头，它们才会留下；否定后不会再次出现。'
   if (current.value === 'proposals') return '知君整理时发现的疑问：两个名字是不是同一个人？两条理解是不是矛盾？它不会自己拍板，只等你定。'
+  if (showSummary.value) return '从具体的经历、处境与在意的事，看看我们已经理解到哪里。'
   if (showMap.value) return '已校准的点越靠近圆心，越能代表我；中间区域是待校准或仅当时的情境，朱砂线外是待确认推测。点一个点查看依据。'
   return SECTIONS.find((s) => s.key === current.value)?.hint ?? ''
 })
@@ -168,6 +174,7 @@ async function loadMap() {
 }
 
 function select(key: NavKey) {
+  if (showSummary.value && key !== 'inbox' && key !== 'proposals') setView('list')
   if (key === 'inbox') router.push('/me/inbox')
   else router.push({ path: '/me', query: { section: key } })
 }
@@ -197,7 +204,7 @@ watch(current, () => {
   if (isSectionView.value && current.value !== focusSection.value) focusSection.value = null
 })
 
-watch(showMap, (on) => {
+watch(usesOverview, (on) => {
   if (on && !mapItems.value.length) void loadMap()
 })
 
@@ -271,11 +278,11 @@ onMounted(() => {
   const claimQuery = typeof route.query.claim === 'string' ? route.query.claim : ''
   if (claimQuery) {
     pendingClaimId.value = claimQuery
-    if (!showMap.value) setView('map')
+    if (!usesOverview.value) view.value = 'summary'
   }
   void loadStats()
   void load()
-  if (showMap.value) void loadMap()
+  if (usesOverview.value) void loadMap()
 })
 
 onBeforeUnmount(() => {
@@ -286,23 +293,21 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page zj-me">
-    <div class="page-head">
-      <h1>我的本体</h1>
-      <p>属于你的自我理解档案。知君可以提出理解，由你决定什么留下。</p>
-    </div>
+    <p class="zj-me__intro">属于你的自我理解档案。知君可以提出理解，由你决定什么留下。</p>
 
     <SelfSections />
-    <div class="zj-me__grid">
-      <SectionNav :stats="stats" :current="current" @select="select" />
+    <div class="zj-me__grid" :class="{ 'is-summary': showSummary }">
+      <SectionNav v-if="!showSummary" :stats="stats" :current="current" @select="select" />
 
       <section class="zj-me__main">
         <header class="zj-me__head">
           <div>
-            <h2>{{ heading }}</h2>
+            <h1>{{ heading }}</h1>
             <p>{{ hint }}</p>
           </div>
           <div class="zj-me__head-actions">
             <div v-if="isSectionView" class="zj-me__viewtoggle" role="group" aria-label="视图">
+              <button type="button" :class="{ 'is-on': view === 'summary' }" :aria-pressed="view === 'summary'" @click="setView('summary')">摘要</button>
               <button type="button" :class="{ 'is-on': view === 'map' }" :aria-pressed="view === 'map'" @click="setView('map')">全景</button>
               <button type="button" :class="{ 'is-on': view === 'list' }" :aria-pressed="view === 'list'" @click="setView('list')">列表</button>
             </div>
@@ -336,8 +341,17 @@ onBeforeUnmount(() => {
           </div>
         </form>
 
+        <div v-if="showSummary">
+          <ErrorState v-if="mapError" :message="mapError" @retry="loadMap" />
+          <div v-else-if="mapLoading && !mapItems.length" class="loading-state">正在读取…</div>
+          <PersonalSummary v-else :claims="mapItems" @select="selected = $event" @browse="select" />
+          <SideDrawer :open="!!selected" title="这条理解与依据" @close="selected = null">
+            <ClaimCard v-if="selected" :claim="selected" :busy="!!busy[selected.id]" show-section @review="(action, edited) => onReview(selected!, action, edited)" @updated="c => applyReviewResult(selected!, 'reaffirm', c)" />
+          </SideDrawer>
+        </div>
+
         <!-- 全景 -->
-        <div v-if="showMap" class="zj-me__map" :class="{ 'has-panel': !!selected }">
+        <div v-else-if="showMap" class="zj-me__map" :class="{ 'has-panel': !!selected }">
           <div class="zj-me__map-main">
             <div class="zj-me__chips" role="group" aria-label="按来源筛选">
               <button type="button" class="zj-me__chip zj-me__chip--toggle" :class="{ 'is-on': filtersOpen || !!layerFilter }" :aria-expanded="filtersOpen" @click="filtersOpen = !filtersOpen">{{ layerFilter ? '筛选中' : '筛选' }}</button>
@@ -416,6 +430,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.zj-me__intro { margin:0 0 14px; color:var(--ws-text-secondary-color); font-size:14px; line-height:1.75; }
+.zj-me__grid.is-summary { grid-template-columns:minmax(0,1fr); }
 .zj-me__grid {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
@@ -432,7 +448,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   margin-bottom: 14px;
 }
-.zj-me__head h2 {
+.zj-me__head h1 {
   margin: 0;
   font-family: var(--ws-font-display, serif);
   font-size: 20px;
@@ -448,6 +464,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
   flex: none;
 }
 .zj-me__viewtoggle {
@@ -639,5 +656,6 @@ onBeforeUnmount(() => {
   .zj-me__head {
     flex-direction: column;
   }
+  .zj-me__head-actions { width:100%; justify-content:space-between; }
 }
 </style>
