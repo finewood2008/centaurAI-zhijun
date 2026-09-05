@@ -1,6 +1,6 @@
 # 知君 Electron SDK 与 data-engine 集成方案
 
-> 状态：M0-L 独立桌面已实现；正式 SDK / data-engine 业务集成未完成。更新日期：2026-09-06。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)，原调研审核见 [审核记录](REVIEW-0905.md)，产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
+> 状态：M0-L及正式Consumer/SDK客户端装配已实现；真实data-engine业务桥与真机集成未完成。更新日期：2026-09-06。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)，原调研审核见 [审核记录](REVIEW-0905.md)，产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
 
 实施规格入口：[桌面接口合同与 M0](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移](DOMAIN-INTEGRATION-0905.md)、[工作包与交付依赖](INTEGRATION-WORKPACKAGES-0905.md)。本文维护源码事实与总体方案，配套规格维护完整目标接口和验收，已实现部分以 M0 实施记录及当前源码为准；正式应用/跨仓合同未冻结的字段按 D01–D05 跟踪。
 
@@ -73,7 +73,7 @@
 | `@nexusaos/device-provisioning-uni` | 1.0.1 | 配网编排依赖；额外需要 `@noble/hashes ^1.7.1`，离线 tgz 不含所有依赖 |
 | Go sidecar | 本地 `electron-sidecars-1.2.0` | 六平台产物单独交付；manifest 记录 Go 源提交 `a13d7e5` 且 dirty；不能当作生产签名版本 |
 
-M0-L 只锁定 Electron 37.10.3，尚未安装 Connectivity 或账号管理包。后续正式集成只引入必要依赖。当前宿主使用 CommonJS，SDK 是 ESM，接入时需使用动态 `import()`，或明确将宿主迁到 ESM；不要在 CommonJS 中直接 `require()` 新 SDK。[S1] [D2]
+后续开发已安装固定归档 Connectivity Electron 1.2.0 和 contracts 1.0.1，采用SDK共享auth coordinator；Electron仍锁定37.10.3。详见[正式接入记录](M0-PRODUCTION-0906.md)。当前宿主使用 CommonJS，SDK 是 ESM，接入时需使用动态 `import()`，或明确将宿主迁到 ESM；不要在 CommonJS 中直接 `require()` 新 SDK。[S1] [D2]
 
 发布安装包时 sidecar 放在 `process.resourcesPath/sidecar/`、ASAR 外，并按安装包目标映射 `x64 → amd64`、`win32 → windows`。Gateway/ICE 信任参数和二进制路径由主进程的受信配置决定。签名会改变文件哈希，应分别保存签名前与签名后的 manifest。[S2]
 
@@ -96,7 +96,7 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 
 ### 2.3 preload 与 renderer 边界
 
-当前应用已实现 `window.zhijunDesktop`：快照/订阅、登录动作、列设备、连接/断开/退出、`materials.list` 和本地读结果取消；这是**应用自有接口**，不是 SDK 已提供这些方法。主进程仅在显式模拟环境下装配合成 adapter；未来正式 Consumer、SDK、stream 和上传仍待开发。[A29] [A30]
+当前应用已实现 `window.zhijunDesktop`：快照/订阅、登录动作、列设备、连接/断开/退出、`materials.list` 和本地读结果取消；这是**应用自有接口**，不是 SDK 已提供这些方法。主进程支持显式模拟或配置后的正式Consumer adapter；已新增signInWithPassword、签名/刷新与SDK装配，stream、上传和真实业务桥仍待开发。[A29] [A30]
 
 - 验证 IPC sender、主 frame 和准确应用 URL，拒绝外部页面或子 frame。
 - 保留 `contextIsolation:true`、`sandbox:true`、`nodeIntegration:false`、`webSecurity:true`，不要复制旧 `frontend/main.js` 的 `webSecurity:false`。
@@ -295,7 +295,7 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 
 ## 6. 分阶段工作包、依赖与验收
 
-下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。[早期文档样例](contracts/desktop-contract-v1.ts) 保留设计背景，当前实现类型在 [frontend/shared/desktop-contract.ts](../../frontend/shared/desktop-contract.ts)。M0-L 已落实 preload、runtime 和资料页面；SDK 适配、正式认证和业务身份桥尚未实现，不能只凭类型检查判定完成。
+下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。[早期文档样例](contracts/desktop-contract-v1.ts) 保留设计背景，当前实现类型在 [frontend/shared/desktop-contract.ts](../../frontend/shared/desktop-contract.ts)。M0-L 已落实 preload、runtime 和资料页面；SDK/正式认证客户端已实现，本地通过；业务身份桥尚未实现，不能只凭类型检查判定完成。
 
 | 阶段 | 工作与受影响文件（拟） | 前置依赖 | 完成标准 |
 | --- | --- | --- | --- |
@@ -422,3 +422,5 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 [A25]: ../../frontend/mindos-web/src/composables/useReplyRecovery.ts#L1
 [A26]: ../../frontend/mindos-web/src/services/matters.ts#L1
 [A27]: ../../frontend/mindos-web/src/components/matters/MatterWorkspace.vue#L1
+
+2026-09-06 正式接入增量详见[实施记录](M0-PRODUCTION-0906.md)：可配置账号登录和设备列表，SDK装配通过合成私有管道测试；这不关闭D03、真实资料归属和M0-R验收。

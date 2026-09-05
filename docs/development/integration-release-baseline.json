@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "recordedAt": "2026-09-06",
-  "milestone": "M0-L",
+  "milestone": "M0-production-client",
   "realDeviceValidated": false,
-  "clientSourceBase": "ee8cd96d3b8e46be067132a10e7217ec1c55a997",
+  "clientSourceBase": "3d9679b3b17b63ca98baaf59212598f401514091",
   "development": {
     "platform": "darwin",
     "arch": "arm64",
@@ -26,10 +26,14 @@
       "commit": "ec2854e8e56008571115cf637e9d27b63fbf1322",
       "dirty": true,
       "releaseInputApproved": false
+    },
+    "admin": {
+      "commit": "8ff6e888fb17ce268527755d6795c9d68b5b5305",
+      "dirty": false
     }
   },
   "sdkAudit": {
-    "runtimeDependencyInstalled": false,
+    "runtimeDependencyInstalled": true,
     "electronVersion": "1.2.0",
     "electronTgzSha256": "0637f4c3cbc309bc96e3be553b47b31e8a36279e1d6230fa7a0831a69b84bcea",
     "contractsVersion": "1.0.1",
@@ -37,16 +41,21 @@
     "sidecarArtifactsVerified": 12,
     "sidecarManifestDirtyInput": true,
     "cleanRebuildVerified": false,
-    "releaseSigningVerified": false
+    "releaseSigningVerified": false,
+    "privatePipeFixtureValidated": true
   },
   "production": {
-    "enabled": false,
     "missing": [
-      "D02: independent application registration, Consumer login configuration and secure storage namespace",
+      "D02: verified deployment configuration, independent application registration and real account/OS credential acceptance",
       "D03: trusted Agent to data-engine identity bridge and deployed route authorization",
       "BASE-04: approved material ownership and bounded server projection",
       "D05: traceable clean sidecar input and production release matrix",
       "DESK-15: authorized real devices and cross-account/device acceptance"
-    ]
+    ],
+    "consumerAdapterImplemented": true,
+    "deploymentLoginValidated": false,
+    "businessBridgeImplemented": false,
+    "realConnectionEnabled": false,
+    "osCredentialStorageValidated": false
   }
 }

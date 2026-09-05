@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, protocol, session } = require('electron')
+const { app, BrowserWindow, ipcMain, protocol, session, safeStorage } = require('electron')
 const path = require('node:path')
 const { access } = require('node:fs/promises')
 const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
@@ -18,18 +18,28 @@ if (process.env.ZHIJUN_SHELL_NOGPU === '1') app.disableHardwareAcceleration()
 
 const mode = !app.isPackaged && process.env.ZHIJUN_DESKTOP_MODE === 'simulation'
   ? 'simulation' : 'unconfigured'
-const runtime = createDesktopRuntime({ mode })
+let runtime
+let unsubscribe = () => {}
 const assetRoot = path.resolve(__dirname, '../mindos-web/dist-desktop')
 let window
 let quitting = false
-const unsubscribe = runtime.subscribe(snapshot => {
-  if (window && !window.isDestroyed() && isEntryUrl(window.webContents.getURL())) {
-    window.webContents.send(SNAPSHOT_CHANNEL, snapshot)
-  }
-})
 
 async function createWindow() {
   await access(path.join(assetRoot, 'desktop.html'))
+  let config
+  if (mode !== 'simulation') {
+    const filename = app.isPackaged ? path.join(process.resourcesPath, 'zhijun-product.json') : process.env.ZHIJUN_DESKTOP_CONFIG
+    try { config = await require('./production/config.cjs').loadConfig(filename) } catch { /* Invalid configuration stays closed. */ }
+  }
+  const adapter = config ? await require('./production/adapter.cjs').createProductionAdapter({
+    config, directory: app.getPath('userData'), safeStorage,
+  }) : undefined
+  runtime = createDesktopRuntime({ mode: config ? 'production' : mode, adapter })
+  unsubscribe = runtime.subscribe(snapshot => {
+    if (window && !window.isDestroyed() && isEntryUrl(window.webContents.getURL())) {
+      window.webContents.send(SNAPSHOT_CHANNEL, snapshot)
+    }
+  })
   const isolatedSession = session.fromPartition('zhijun-desktop-m0')
   isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   isolatedSession.setPermissionCheckHandler(() => false)
@@ -74,5 +84,5 @@ app.on('before-quit', event => {
   ipcMain.removeHandler(INVOKE_CHANNEL)
   const deadline = setTimeout(() => app.exit(0), 2500)
   const finish = () => { clearTimeout(deadline); app.quit() }
-  Promise.resolve().then(() => runtime.dispose()).then(finish, finish)
+  Promise.resolve().then(() => runtime?.dispose()).then(finish, finish)
 })

@@ -2,7 +2,7 @@
 
 更新：2026-09-06。设计基线：知君 `94239a1`（产品源 `22dc9a3`）；M0-L 实施起点 `ee8cd96`。配套：[架构](ARCHITECTURE-0905.md)、[集成分析](INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[领域迁移](DOMAIN-INTEGRATION-0905.md)。
 
-**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；跨团队协议未冻结，正式应用未注册，M0-R 未验收。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
+**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；跨团队协议未冻结，已新增正式密码登录/签名/共享刷新与SDK装配代码，正式应用注册与M0-R未验收；最新结果见[正式接入记录](M0-PRODUCTION-0906.md)。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
 
 ## 原规格编制计划与验收（历史）
 
@@ -37,13 +37,14 @@ M0 的业务能力只有 `materials.list`。认证/设备控制及内部健康�
 
 ## 3. Renderer → preload → main 的窄接口
 
-已通过安全 preload 暴露 `window.zhijunDesktop`，接口版本为 `1`；唯一类型源为 [desktop-contract.ts](../../frontend/shared/desktop-contract.ts)，[文档入口](contracts/desktop-contract-v1.ts)重新导出该类型并提供无副作用样例。实际 IPC 由 shell 注册，未导入真实 SDK。
+已通过安全 preload 暴露 `window.zhijunDesktop`，接口版本为 `1`；唯一类型源为 [desktop-contract.ts](../../frontend/shared/desktop-contract.ts)，[文档入口](contracts/desktop-contract-v1.ts)重新导出该类型并提供无副作用样例。实际 IPC 由 shell 注册；真实 SDK 仅由主进程 production 模块动态导入。
 
 | 操作 | 输入 | 公开输出与语义 |
 | --- | --- | --- |
 | `getSnapshot()` | 无 | 当前连接状态/代次/事件序号及公开主体；用于初始加载和事件缺失后重取 |
 | `subscribe(listener)` | 本地回调 | 返回 unsubscribe；只发送公开快照，不将 IPC event 对象传给 renderer |
-| `beginSignIn(context)` | callId、expectedGeneration | 启动主进程控制的登录过程并返回快照；完成结果通过快照通知。登录手段由D02确定，renderer不提交已有access/refresh token |
+| `beginSignIn(context)` | callId、expectedGeneration | 启动主进程控制的登录过程并返回快照；完成结果通过快照通知。此入口用于显式模拟登录；正式密码登录使用下行独立方法，renderer不提交已有access/refresh token |
+| `signInWithPassword(context, credentials)` | 一次性 phone/password | 正式账号登录；手机号11位，密码8–72 UTF-8字节，不接受token/clientId等额外字段，客户端注册身份由main生成 |
 | `listDevices(context)` | 已登录代次 | 已审核的设备标识/显示名/在线提示；在线提示不代表可建立连接 |
 | `connect(context, deviceId)` | 设备选择 | 仅允许属于最新授权设备列表的目标，服务端仍再授权；main构造固定binding |
 | `disconnect(context)` | 当前代次 | 立即失效旧执行，再有界回收连接；保留登录身份，回到选设备 |
@@ -61,7 +62,7 @@ main 对每次调用做运行时结构校验、准确 sender WebContents/主fram
 
 - main唯一生成 `generation`，初值0。登录主体变化、开始切设备/连接、显式断开/退出或会话失败失效时递增；renderer不能自选更高代次。
 - 业务调用的 expectedGeneration 必须等于当前 generation；请求排队、发出、完成投影时分别复核，旧结果不会写回新页面。
-- beginSignIn/connect/disconnect/signOut 先检查入参代次，再分配新代次。该控制操作的后续完成与新代次及内部operation token绑定，避免它因自身递增被误判为旧请求；新的控制操作会使旧操作迟到结果失效。重复登录及退出后的旧认证回调不得恢复凭据或连接。
+- beginSignIn/signInWithPassword/connect/disconnect/signOut 先检查入参代次，再分配新代次。该控制操作的后续完成与新代次及内部operation token绑定，避免它因自身递增被误判为旧请求；新的控制操作会使旧操作迟到结果失效。重复登录及退出后的旧认证回调不得恢复凭据或连接。
 - `sequence` 是 main 生命周期内全局递增的快照序号；renderer丢弃旧快照。订阅先注册再getSnapshot，按sequence合并，主进程重启会创建新窗口及新生命周期。
 - 显式断开保留登录状态；账号退出删除凭据。会话失效不自动登出，先分类原因，再由用户重连；未知错误不进入无限重连循环。
 - native close/watchdog 有界结束后清理资源；无法确认某个远端执行已取消时，记录“结果未知”，不能展示“服务端已停止”。
@@ -104,7 +105,7 @@ M0-L 已实现：最多2个在途业务读、最多8个排队读；同主体同q
 
 当前参考PC Agent是8并发/120每分钟/64MiB会话，Core还有限1024次和默认60秒；本规格的2/8是应用策略，并非SDK新增限制。已发出但被本地取消的请求仍占真实在途槽，直到SDK结束；否则renderer可用快速取消突破并发预算。
 
-快照新增 `environment`：当前只产生 `unconfigured` 或 `simulation`，`production` 仅保留类型值，没有可用的正式模式。默认拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
+快照 `environment` 可为 `unconfigured`、`simulation` 或 `production`。显式有效账号配置启用production Consumer adapter；这不代表业务桥已部署，未注入真实D03时connect拒绝且不启动sidecar。默认未配置时拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
 
 本地默认调用超时 15 秒；最多 64 个资料订阅、128 个待决调用、8 个真实未完成的 adapter 控制操作和 64 个快照监听。取消/超时不提前释放实际操作额度。session 清理等待上限 1 秒，宿主退出兜底 2.5 秒；这些均为本地应用策略，不是 SDK 保证。退出接受时立即启动身份清理，后续断开不能跳过；清理真实结束前禁止新登录，避免旧清理覆盖新身份。
 
@@ -159,3 +160,5 @@ rtk proxy frontend/mindos-web/node_modules/.bin/tsc --noEmit --strict --target E
 ```
 
 独立交叉审核后补齐queued状态、取消调用结算与登录竞态，统一迁移编号、外部输入边界和后端测试selector写法。上述为原文档阶段结果。2026-09-06 已开发 M0-L 并执行本地回归和真实 Electron 的模拟端到端验证；实际结果与未验项见[实施记录](M0-IMPLEMENTATION-0906.md)，未连接真实盒子。
+
+2026-09-06 后续增量：新增密码登录窄方法、生产账号模式、safeStorage与SDK auth/facade/admin/process装配。三个新增公开错误码为 AUTHENTICATION_FAILED、SECURE_STORAGE_UNAVAILABLE、BUSINESS_BRIDGE_REQUIRED（另沿用已有认证错误）；具体执行证据与限制见[正式接入记录](M0-PRODUCTION-0906.md)。

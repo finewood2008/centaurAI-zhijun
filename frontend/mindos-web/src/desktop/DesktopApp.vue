@@ -7,6 +7,8 @@ const bridge = (window as Window & { zhijunDesktop?: ZhijunDesktopV1 }).zhijunDe
 const controller = new DesktopController(bridge)
 const state = shallowRef(controller.state)
 const stopObserving = controller.observe(next => { state.value = next })
+const phone = ref('')
+const password = ref('')
 const keyword = ref('')
 const type = ref<MaterialType | ''>('')
 const status = ref<MaterialStatus | ''>('')
@@ -34,6 +36,12 @@ const displayAccount = computed(() => state.value.snapshot?.subject?.accountId ?
 watch(() => state.value.snapshot?.generation, () => {
   keyword.value = ''; type.value = ''; status.value = ''
 })
+function signIn(): void {
+  const credentials = { phone: phone.value, password: password.value }
+  password.value = ''
+  void controller.control('signInWithPassword', credentials)
+}
+watch(phase, next => { if (next === 'signed_out') { phone.value = ''; password.value = '' } })
 function filtersChanged(): void {
   void controller.setFilters({ keyword: keyword.value, type: type.value, status: status.value })
 }
@@ -44,7 +52,7 @@ function displayDate(value: string): string {
   return Number.isNaN(date.getTime()) ? '时间未知' : date.toLocaleString('zh-CN', { hour12: false })
 }
 onMounted(() => { checkRoute(); window.addEventListener('hashchange', checkRoute); void controller.start() })
-onBeforeUnmount(() => { window.removeEventListener('hashchange', checkRoute); stopObserving(); controller.dispose() })
+onBeforeUnmount(() => { password.value = ''; phone.value = ''; window.removeEventListener('hashchange', checkRoute); stopObserving(); controller.dispose() })
 </script>
 
 <template>
@@ -55,8 +63,8 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', checkRoute); st
     </header>
 
     <div class="environment-banner" :class="{ simulation: environment === 'simulation' }" data-testid="environment">
-      <strong>{{ environment === 'simulation' ? '模拟环境 · 合成数据' : environment === 'production' ? '正式环境' : '正式连接尚未配置' }}</strong>
-      <span>{{ environment === 'simulation' ? '用于验证桌面操作流程，当前展示的账号、盒子和资料均为模拟内容。' : environment === 'production' ? '资料来自当前授权盒子。' : '完成正式登录、设备授权和访问配置后，才能连接真实盒子。' }}</span>
+      <strong>{{ environment === 'simulation' ? '模拟环境 · 合成数据' : environment === 'production' ? '账号服务已配置' : '正式连接尚未配置' }}</strong>
+      <span>{{ environment === 'simulation' ? '用于验证桌面操作流程，当前展示的账号、盒子和资料均为模拟内容。' : environment === 'production' ? '可登录并查询已绑定设备；资料访问仍需完成盒端授权通道配置。' : '完成正式登录、设备授权和访问配置后，才能连接真实盒子。' }}</span>
     </div>
 
     <main>
@@ -82,11 +90,18 @@ onBeforeUnmount(() => { window.removeEventListener('hashchange', checkRoute); st
             <p v-if="displayAccount" class="account" data-testid="account">账号：{{ displayAccount }}<span v-if="state.snapshot?.subject?.deviceId"> · 盒子：{{ state.snapshot.subject.deviceId }}</span></p>
           </div>
           <div class="connection-actions">
-            <button v-if="canSignIn" class="primary" data-testid="sign-in" @click="controller.control('beginSignIn')">登录知君</button>
+            <button v-if="canSignIn && environment !== 'production'" class="primary" data-testid="sign-in" @click="controller.control('beginSignIn')">登录知君</button>
             <button v-if="canDisconnect" data-testid="disconnect" @click="controller.control('disconnect')">{{ phase === 'failed' ? '重新选择盒子' : '断开连接' }}</button>
             <button v-if="canSignOut" class="text-button" data-testid="sign-out" @click="controller.control('signOut')">退出登录</button>
           </div>
         </section>
+
+        <form v-if="canSignIn && environment === 'production'" class="login-form" data-testid="password-login" @submit.prevent="signIn">
+          <label>手机号<input v-model="phone" data-testid="login-phone" type="tel" inputmode="numeric" autocomplete="username" pattern="1[0-9]{10}" maxlength="11" required /></label>
+          <label>密码<input v-model="password" data-testid="login-password" type="password" autocomplete="current-password" minlength="8" maxlength="72" required /></label>
+          <button class="primary" type="submit" data-testid="sign-in">登录知君</button>
+          <p>使用已设置密码的账号登录。密码仅用于本次登录，凭据由系统加密保存。</p>
+        </form>
 
         <section v-if="state.error" class="error-card" role="alert" data-testid="error">
           <strong>暂时无法完成操作</strong><p>{{ state.error.message }}</p>

@@ -9,6 +9,9 @@ export interface CallContext {
 export type PublicErrorCode =
   | 'CONFIGURATION_REQUIRED'
   | 'AUTHENTICATION_REQUIRED'
+  | 'AUTHENTICATION_FAILED'
+  | 'SECURE_STORAGE_UNAVAILABLE'
+  | 'BUSINESS_BRIDGE_REQUIRED'
   | 'SESSION_NOT_READY'
   | 'STALE_GENERATION'
   | 'INVALID_REQUEST'
@@ -107,12 +110,19 @@ export interface MaterialsPage {
   readonly hasMore: boolean;
 }
 
+export interface PasswordCredentials {
+  readonly phone: string;
+  readonly password: string;
+}
+
 export interface ZhijunDesktopV1 {
   readonly protocolVersion: 1;
   getSnapshot(): Promise<Result<DesktopSnapshot>>;
   /** Preload strips Electron events and returns a local unsubscribe function. */
   subscribe(listener: (snapshot: DesktopSnapshot) => void): () => void;
   beginSignIn(context: CallContext): Promise<Result<DesktopSnapshot>>;
+  /** One-time user input only; no access/refresh tokens cross IPC. */
+  signInWithPassword(context: CallContext, credentials: PasswordCredentials): Promise<Result<DesktopSnapshot>>;
   listDevices(context: CallContext): Promise<Result<readonly DeviceSummary[]>>;
   connect(context: CallContext, deviceId: string): Promise<Result<DesktopSnapshot>>;
   disconnect(context: CallContext): Promise<Result<DesktopSnapshot>>;

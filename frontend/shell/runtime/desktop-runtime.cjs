@@ -4,8 +4,9 @@ const { DesktopError, toPublicError } = require('./public-error.cjs');
 const { normalizeMaterialsQuery, buildMaterialsRequest, projectMaterialsResponse } = require('./materials.cjs');
 const { createReadScheduler } = require('./read-scheduler.cjs');
 const { createSimulationAdapter } = require('./adapters.cjs');
+const { validatePassword } = require('../production/consumer-client.cjs');
 
-const ARG_COUNTS = { getSnapshot: 0, beginSignIn: 1, listDevices: 1, connect: 2,
+const ARG_COUNTS = { getSnapshot: 0, signInWithPassword: 2, beginSignIn: 1, listDevices: 1, connect: 2,
   disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2 };
 const CALL_ID = /^[A-Za-z0-9_-]{8,100}$/;
 const plain = (value) => value !== null && typeof value === 'object'
@@ -21,9 +22,10 @@ function assert(condition, code = 'INVALID_REQUEST') {
 }
 
 function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 15000 } = {}) {
-  assert(['unconfigured', 'simulation'].includes(mode));
+  assert(['unconfigured', 'simulation', 'production'].includes(mode));
+  assert(mode !== 'production' || adapter, 'CONFIGURATION_REQUIRED');
   assert(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 120000);
-  const auth = mode === 'simulation' ? (adapter || createSimulationAdapter()) : null;
+  const auth = mode === 'simulation' ? (adapter || createSimulationAdapter()) : mode === 'production' ? adapter : null;
   const scheduler = createReadScheduler({ timeoutMs });
   let generation = 0;
   let sequence = 0;
@@ -183,7 +185,9 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       return snapshot();
     }
     assert(auth, 'CONFIGURATION_REQUIRED');
-    if (operation === 'beginSignIn') {
+    if (operation === 'beginSignIn' || operation === 'signInWithPassword') {
+      assert((mode === 'production') === (operation === 'signInWithPassword'), 'OPERATION_NOT_ALLOWED');
+      const credentials = operation === 'signInWithPassword' ? validatePassword(input) : undefined;
       assert(!signingOut, 'OPERATION_NOT_ALLOWED');
       assert(['signed_out', 'authenticating', 'selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
       invalidate();
@@ -194,7 +198,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       devices = [];
       publish('authenticating');
       try {
-        const identity = await bounded(callAdapter(() => auth.signIn()), gen);
+        const identity = await bounded(callAdapter(() => auth.signIn(credentials, () => isCurrent(gen))), gen);
         ensureCurrent(gen);
         assert(plain(identity) && safeText(identity.accountId), 'CONTRACT_MISMATCH');
         accountId = identity.accountId;
@@ -291,6 +295,12 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       ensureCurrent(ticket.generation);
       return { ok: true, generation: ticket.generation, data };
     } catch (error) {
+      if (mode === 'production' && isCurrent(ticket.generation) && error instanceof DesktopError
+          && ['AUTHENTICATION_REQUIRED', 'SECURE_STORAGE_UNAVAILABLE'].includes(error.code)) {
+        accountId = null;
+        devices = [];
+        failure(error, ticket.generation);
+      }
       return { ok: false, generation: ticket.generation, error: toPublicError(error) };
     } finally { if (registered) pending.delete(pendingKey); }
   }
@@ -310,7 +320,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     await detachSession();
     await Promise.all([...closing]);
     // Reuse bounded cleanup; no credentials are persisted by the simulation adapter.
-    await closeSession({ close: clearIdentity });
+    await closeSession({ close: auth?.dispose ? () => auth.dispose() : clearIdentity });
     accountId = null;
     devices = [];
     phase = 'signed_out';

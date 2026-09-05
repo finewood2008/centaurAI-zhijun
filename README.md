@@ -16,7 +16,7 @@
 
 Electron SDK 与 data-engine 的后续集成调研见 [技术架构图](docs/development/ARCHITECTURE-0905.md)、[集成方案](docs/development/INTEGRATION-0905.md) 和 [二次审核记录](docs/development/REVIEW-0905.md)，其中区分了当前实现、接口缺口及建议实施步骤。
 
-接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L，本地模拟可运行；正式 SDK 业务身份链路尚未接通。
+接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L，以及正式Consumer登录/签名/刷新和SDK主进程装配；真实业务身份桥尚未接通。正式账号启动配置与本轮验证见[正式接入记录](docs/development/M0-PRODUCTION-0906.md)。
 
 分配具体开发工作时使用 [详细开发任务清单](docs/development/DEVELOPMENT-TASKS-0905.md)，包含任务编号、角色、文件、依赖、实施步骤、估算与验收。
 

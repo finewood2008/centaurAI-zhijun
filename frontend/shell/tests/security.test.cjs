@@ -73,7 +73,7 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
     assert.equal(name, 'electron')
     return { contextBridge: { exposeInMainWorld: (name, value) => { assert.equal(name, 'zhijunDesktop'); api = value } }, ipcRenderer: fakeIpc }
   } })
-  assert.deepEqual(Object.keys(api).sort(), ['protocolVersion', 'getSnapshot', 'subscribe', 'beginSignIn', 'listDevices', 'connect', 'disconnect', 'signOut', 'materials', 'cancelRead'].sort())
+  assert.deepEqual(Object.keys(api).sort(), ['protocolVersion', 'getSnapshot', 'subscribe', 'beginSignIn', 'signInWithPassword', 'listDevices', 'connect', 'disconnect', 'signOut', 'materials', 'cancelRead'].sort())
   const received = []
   const unsubscribe = api.subscribe((...args) => received.push(args))
   const snapshot = { phase: 'signed_out' }

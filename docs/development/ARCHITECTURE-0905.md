@@ -2,7 +2,7 @@
 
 更新日期：2026-09-06，已落实独立桌面 M0-L。产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。配套步骤见 [集成方案](INTEGRATION-0905.md)，原调研审核见 [审核记录](REVIEW-0905.md)。第 3 节描述当前实现，第 5、6 节保留正式 SDK / 盒端集成目标。
 
-进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。桌面宿主、窄 IPC、资料策略和模拟流程已落地；正式 SDK / Consumer 身份、业务身份桥和盒端领域迁移仍待实现。
+进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。桌面宿主、窄 IPC、资料策略和模拟流程已落地；正式 Consumer 密码登录/签名/刷新与SDK装配代码已新增，业务身份桥和盒端领域迁移仍待实现；见[正式接入记录](M0-PRODUCTION-0906.md)。
 
 具体文件归属、开发步骤、跨仓依赖和里程碑验收见 [详细开发任务](DEVELOPMENT-TASKS-0905.md)；任务完成状态与架构设计状态分别记录。
 
@@ -52,6 +52,9 @@ flowchart TB
     desktopui --> preload --> runtime
     runtime --> closed
     runtime --> simulated
+    runtime --> configured[显式账号配置：密码登录 / P-256签名 / 系统加密]
+    configured -. HTTPS接口已适配，部署待验 .-> consumer[现有 Admin Consumer 服务]
+    configured --> bridgeclosed[业务桥未实现：禁止连接与资料访问]
   end
   subgraph product[知君 Vue 应用]
     vue[今日来信 / 事情与成果 / 对话 / 本体 / 判断]
@@ -91,7 +94,7 @@ flowchart TB
 当前桌面与保留产品路线的边界：
 
 1. 根 `start-desktop.sh` 与 `frontend/package.json` 的 desktop 命令已统一到 `frontend/shell`。新宿主加载 `zhijun://desktop/desktop.html`，不启动 Python，不等待或回退到 PC 的 `8618`；旧 `frontend/main.js` 只保留源码，不参与新启动链。[Z1] [Z2] [Z17]
-2. 新桌面的 `window.zhijunDesktop` 已提供窄方法和状态订阅；main 验证窗口、主 frame、精确入口 URL、参数及资料响应。默认 `unconfigured` 不创建认证适配器；仅开发显式 `simulation` 使用合成数据，打包应用禁用模拟。SDK、凭据存储与正式桥尚未接入。[Z18] [Z19] [Z20]
+2. 新桌面的 `window.zhijunDesktop` 已提供窄方法和状态订阅；main 验证窗口、主 frame、精确入口 URL、参数及资料响应。默认 `unconfigured` 不创建认证适配器；仅开发显式 `simulation` 使用合成数据，打包应用禁用模拟。正式密码登录、系统加密凭据与SDK装配已在 production 模块实现，需显式账号配置；真实业务桥尚未接入。[Z18] [Z19] [Z20]
 3. 新入口通过 `vite.desktop.config.ts` 独立生成 `dist-desktop`，使用受控资源协议和有限 hash 页面状态，不加载旧 router、onboarding guard 或票据桥。保留的 Web `/mindos/` 产品仍使用 `api.ts`、`sse.ts`、`taskRouting.ts` 三处网络入口；后续完整产品接入时仍需统一它们，不能把 M0-L 当成全部页面已迁移。[Z3] [Z4] [Z5] [Z6] [Z21]
 
 新增 `matters.ts` 复用 `routingRequest`；`chatStream.ts` 编排预览与 SSE，没有新增第四套传输。它只在尚未收到事件、命中特定 409 且用户未取消时重新预览一次，并复用 requestId；不自动重放来源变化、500、断网或已开始的流。`backendConnection` 的 Web 后端状态也不是 SDK 连接快照，桌面接入需映射到主进程状态。[Z14] [Z15]
@@ -180,7 +183,7 @@ flowchart TB
   zj --> model
 ```
 
-本图及配套 SVG 保留完整正式集成的目标含义；其中「待实现」指完整目标能力，M0-L 已实现的窄 preload、局部状态管理和资料策略见第 3 节，不能据此声称 SDK 或业务身份桥已接通。图中没有将 PC 的 `127.0.0.1:8618` 作为正式依赖。该地址在目标部署中属于盒内 data-engine；当前 M0-L 已无本机 HTTP 回退，本地 Web 开发保留独立入口。[D1] [D2]
+本图及配套 SVG 保留完整正式集成的目标含义；其中「待实现」指完整目标能力，M0-L 已实现的窄 preload、局部状态管理和资料策略见第 3 节，不能据此声称 SDK真实网络或业务身份桥已接通。图中没有将 PC 的 `127.0.0.1:8618` 作为正式依赖。该地址在目标部署中属于盒内 data-engine；当前 M0-L 已无本机 HTTP 回退，本地 Web 开发保留独立入口。[D1] [D2]
 
 ### 5.1 责任与数据归属
 
@@ -231,7 +234,7 @@ frontend/
 
 M0 固定为正式登录、选择已绑定盒子、连接并完成业务身份桥、资料分页只读、断开/重连。新宿主的窄接口及类型样例见桌面接口规格；业务调用不让 renderer 指定任意 path/header。SDK connect 成功只代表进入 authorizing，真实身份桥成功才允许进入 ready，资料读取仍需单独验收。
 
-2026-09-06 已落地的是 M0-L 本地实施子集：实际 Electron/main/preload/runtime 与 Vue 页面，通过显式模拟 adapter 验证登录、两台合成盒子切换、资料分页/筛选、退出、代次和公开字段。未配置模式关闭真实能力；模拟 `authorize` 不是正式鉴权。D02 认证输入与实现、D03 可信身份桥、D05 固定发布组合和真机验收仍待完成，验证范围见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。
+2026-09-06 已落地的是 M0-L 本地实施子集：实际 Electron/main/preload/runtime 与 Vue 页面，通过显式模拟 adapter 验证登录、两台合成盒子切换、资料分页/筛选、退出、代次和公开字段。未配置模式关闭真实能力；模拟 `authorize` 不是正式鉴权。D02 正式注册与部署验收、D03 可信身份桥、D05 固定发布组合和真机验收仍待完成，验证范围见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。
 
 资料公开投影仅保留标识、文件名、类型、状态、创建时间和分页信息；顶层 folders 及条目 folder/folderId 均不透出。聊天、事项写入、附件、模型管理、BLE 与现有建档 guard 在 M0 不开放。后续领域迁移按独立模块方案准备，D01–D05 决策明确之前可推进隔离骨架/模拟合同，不能将模拟通过计为真实联调完成。
 
@@ -315,3 +318,5 @@ sequenceDiagram
 [Z14]: ../../frontend/mindos-web/src/services/chatStream.ts#L1
 [Z15]: ../../frontend/mindos-web/src/services/matters.ts#L1
 [Z16]: ../../backend/mindos/stores/matters_store.py#L1
+
+当前增量：`frontend/shell/production/` 实现 Consumer/存储/配置/SDK adapter；SDK包固定在 shell/vendor。当前图新增正式账号分支，完整目标图仍不代表真机已验收，最新文件与命令见[正式接入记录](M0-PRODUCTION-0906.md)。

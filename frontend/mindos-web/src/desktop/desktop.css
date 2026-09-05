@@ -86,3 +86,8 @@ footer { margin-top: 40px; padding-top: 18px; border-top: 1px solid #ede8de; col
   .read-actions { flex-wrap: wrap; justify-content: flex-end; }
   .pagination { align-items: flex-start; flex-direction: column; }
 }
+
+.login-form { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; margin: 20px 0; padding: 24px; background: #fff; border: 1px solid #e9e1d6; border-radius: 16px; }
+.login-form label { display: grid; gap: 8px; flex: 1 1 200px; font-size: 14px; }
+.login-form input { min-height: 42px; width: 100%; border: 1px solid #d8cebf; border-radius: 8px; padding: 8px 12px; background: #fffcf6; font: inherit; }
+.login-form p { flex-basis: 100%; margin: 0; font-size: 13px; color: #766a59; }

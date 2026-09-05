@@ -1,0 +1,83 @@
+# 正式认证与 SDK 接入实施记录
+
+日期：2026-09-06；起点 `3d9679b`，当前开发分支不变。
+
+## 实施计划
+
+- [x] 核查 Admin 已有密码登录、签名、刷新、设备与连接票据合同。
+- [x] 实现主进程受信配置、独立系统加密存储、Consumer 登录/签名/共享刷新/退出。
+- [x] 安装固定归档 SDK，实现 main facade / ticket provider / sidecar 装配和业务桥拒绝边界。
+- [x] 扩展窄 IPC 与独立桌面密码登录页面，保留模拟模式和旧 Web 行为。
+- [x] 隔离验证真实 SDK 模块、合成 Consumer/密钥/竞态和 Electron 页面；审核修复。
+- [x] 更新架构/接口/任务状态；交付提交后的远程状态另由Git校验。
+
+## 范围与验收
+
+影响 `frontend/shell/production/`、宿主/runtime/preload/安全白名单、`frontend/shared`、桌面 Vue/controller、shell 依赖锁、vendor 归档和相关文档。相邻仓库保持只读；data-engine 有既有未提交变更，不能代为合入。
+
+1. 未配置时不发请求；配置只由 main 从显式文件读取，renderer 无权设置服务地址、应用身份或sidecar路径。
+2. 按现有 Admin 密码登录与 ECDSA-SHA256 签名合同执行；密码只作一次登录输入，access/refresh/private key 不通过 IPC，凭据只使用独立 safeStorage 加密目录；不可用时拒绝明文降级。
+3. 一份 SDK auth coordinator 服务设备/票据调用；换账号/退出/超时后旧登录和刷新不恢复身份，401只允许一次受控刷新，业务写不重放。
+4. SDK包固定哈希并仅 main import；native host 验证 sidecar 哈希和固定参数，业务桥未实现时不进入ready，不用P2P ticket替代data-engine业务票据。
+5. 登录页/模拟路径、权限与错误边界、Web/Desktop构建、隔离测试通过；真实网络/账号/设备结果单独记录，不以合成fixture代替。
+
+## 外部输入
+
+已向用户请求非敏感 Consumer 地址和已注册 applicationId/purpose/scopes；账号密码在应用内输入。源码已确认 Admin 提供 `/app-api/auth/password/login`，D02 的客户端代码可先完成。D03 的可信业务桥及真实部署仍需单独落实；本记录不会将它们笼统地当作全部编码的阻塞。
+
+并行研究未全部返回，代码实现及最终审核由主代理接续；不将未完成的独立审核列为通过证据。
+
+## 已实现的正式接口
+
+| 层 | 实际文件 | 已实现行为 |
+| --- | --- | --- |
+| 受信配置 | [config.cjs](../../frontend/shell/production/config.cjs) | 仅 main 读取显式文件；HTTPS、字段白名单、16 KiB、文件权限及拒绝符号链接；无配置保持 unconfigured |
+| 系统存储 | [credential-store.cjs](../../frontend/shell/production/credential-store.cjs) | P-256 客户端身份、ECDSA-SHA256 DER 签名；safeStorage 加密、0600原子写入、按 Consumer 基址和登录账号分别保存客户端身份；不降级 basic_text |
+| 账号请求 | [consumer-client.cjs](../../frontend/shell/production/consumer-client.cjs) | 密码登录、已授权设备、签名连接票据、共享刷新及退出；HTTPS请求10秒超时、禁止重定向、流式读取256 KiB上限 |
+| SDK 装配 | [sdk-runtime.cjs](../../frontend/shell/production/sdk-runtime.cjs) | 实际SDK动态import；二进制哈希和权限校验、固定gateway/ICE参数、Direct-only、私有管道与有界关闭 |
+| 应用适配 | [adapter.cjs](../../frontend/shell/production/adapter.cjs) | 身份绑定、业务桥端口、请求字段转换、退出/迟到授权资源回收；主程序没有注入fake bridge |
+| 桌面 UI/IPC | [共享类型](../../frontend/shared/desktop-contract.ts)、[DesktopApp](../../frontend/mindos-web/src/desktop/DesktopApp.vue) | 新增 signInWithPassword(context,{phone,password})；密码提交时清空输入框，不存入controller状态、浏览器存储或公开快照 |
+
+Admin 源码基线 `8ff6e888fb17ce268527755d6795c9d68b5b5305`：
+
+- [控制器](../../../nexusaos-admin/admin-backend/module_nexus/controller/nexus_consumer_auth_controller.py)：`POST /app-api/auth/password/login`、`POST /app-api/auth/refresh`、`POST /app-api/auth/logout`、`GET /app-api/devices`、`POST /app-api/devices/{device_id}/connectivity/sessions`。
+- [输入输出模型](../../../nexusaos-admin/admin-backend/module_nexus/entity/vo/nexus_consumer_auth_vo.py)：登录需手机号、8–72 UTF-8字节密码及宿主生成的clientId/P-256公钥；不沿用旧占位Consumer路径或RSA签名。
+- [签名验签](../../../nexusaos-admin/admin-backend/module_nexus/service/consumer_request_signature_service.py)：`NEXUSAOS-CONSUMER-V1`、account/client、method、应用路由、时间戳、nonce、body SHA-256；签名不含反向代理的 `/prod-api` 前缀。
+
+所有账号受保护请求共用实际SDK `createElectronConsumerAuth`。只在明确401时共享刷新并重试一次；403不猜测为撤销，不自动重试超时/丢包，更不重放业务写入。登录提交凭据前检查client epoch和runtime代次，超时或退出后的迟到结果不会形成隐藏登录。刷新凭据拒绝后清空公开主体，允许重新登录。
+
+显式退出首先清理本地令牌，再尝试远端logout；远端失败会提示失败，不能声称服务器已撤销。关闭应用仅清理本地登录并关闭所持SDK资源，下一次打开仍需登录；同一登录账号的客户端密钥保留以复用注册身份；切换手机号使用独立clientId/P-256密钥。账号索引整体加密，不把手机号作为文件名，最多保留32个账号身份。Admin `_upsert_client` 不允许跨账号复用clientId，因此不能只按安装实例共用一把身份密钥。当前 Electron 37 使用同步 safeStorage，系统钥匙串交互可能阻塞主线程，应用计时器不能保证截断系统提示；签名安装包和真实 OS 存储验收仍待完成。[Electron 官方说明](https://www.electronjs.org/docs/latest/api/safe-storage)
+
+## 启动正式账号入口
+
+安装本轮新增SDK依赖后，显式指定配置文件：
+
+```sh
+rtk proxy npm --prefix frontend/shell ci
+rtk proxy env ZHIJUN_DESKTOP_CONFIG="$PWD/frontend/shell/config/zhijun-product.example.json" bash start-desktop.sh
+```
+
+[样例配置](../../frontend/shell/config/zhijun-product.example.json)的 Consumer 地址来自 data-engine 现有 product-config 的受信默认值；它不代表知君应用已经注册，也未由本次开发登录验证。可复制到仓库外，替换部署地址后再指定绝对路径；文件禁止组/其他用户写权限。不要在JSON中放账号密码或token。没有配置文件时仍保留原未配置状态，`--simulation` 继续显式运行合成数据。
+
+配置正确时显示“账号服务已配置”，用户可在应用内输入已有账号密码并查询设备。`production` 表示加载了正式账号适配器，不表示部署和真机验收通过。打包后只接受 `resources/zhijun-product.json`，忽略配置环境变量；打包/签名尚未交付。
+
+可选 `connectivity` 对象字段是 applicationId、purpose、requestedScopes、gatewayHost、iceHost、sidecarPath、sidecarSha256、profile；profile只能为 SOVEREIGN_DIRECT_ONLY，传输固定DIRECT_ONLY。这些必须对应真实注册和固定产物，不能使用猜测值。**配置文件不能启用/伪造业务桥；当前主程序没有真实D03实现，点击连接会返回 BUSINESS_BRIDGE_REQUIRED，且不会启动sidecar。**
+
+## 验证及未验范围
+
+- shell：61项（原45项加Consumer9、存储/配置3、SDK/生产适配4）。实际SDK模块与合成Consumer响应、临时加密存储替身及私有管道进程一起运行，未连接真实网络。
+- 前端：原37个文件级项目和11个desktop controller用例，新增密码不进入状态及退出抢占。
+- 真实Electron：4项，新增配置后的密码页、UTF-8超预算拒绝及输入清空；该拒绝发生在系统存储/网络之前。原模拟资料全流程保持通过。
+- Web、Desktop分别构建并执行模块边界检查，文档类型严格检查、启动检查和差异格式检查。
+
+上述测试分别位于 [shell/tests](../../frontend/shell/tests)、[desktop-ui.test.mjs](../../frontend/mindos-web/tests/desktop-ui.test.mjs)。命令沿用 M0 实施记录的 shell test、前端 tests/*.test.mjs、build/build:desktop 和 test:e2e。没有把测试替身的AES加密当成真实系统钥匙串已验收，没有把合成管道进程当成生产sidecar或盒子连通。
+
+新增测试覆盖并修复了以下问题：已失效Consumer身份仍停留在设备页、主进程超时后迟到登录保存令牌、签名等待期间旧代次继续发请求、退出时业务桥授权迟到遗漏回收，以及Admin拒绝跨账号复用同一clientId的兼容问题。共享刷新、错误主体、字段泄漏和退出失败均有拒绝测试。
+
+## 当前完成状态与下一步
+
+DESK-04/05/06 已有正式客户端实现并通过本地合同测试，实际部署及OS签名存储仍待验；DESK-07/08 已有真实SDK装配与关闭边界，D03未实现使整条M0-R仍未完成。BASE-02 的配置文件和现有Admin合同已经落实到代码，正式应用注册并未由本次代码创建。M1领域迁移、流式聊天、上传和签名发布没有因此完成。
+
+仍需：核实所用账号服务部署版本及知君 applicationId/purpose/scopes；实现并部署 Agent→data-engine 的可信业务身份桥、明确资料归属；提供可重建签名sidecar及真实盒子，执行正式认证/资料/跨主体拒绝验证。现有Admin P2P票据不能直接交给data-engine session exchange，不能借用其他应用登录态或开启local-debug补过验证。
+
+本轮最终本地结果：shell 61项、前端48项、真实Electron 4项全部通过；Web/Desktop构建、严格类型与启动边界通过。289处本地文档链接与4段Mermaid渲染通过，目标图源码未变。已检查真实Electron密码页布局；截图仅保留临时检查目录，不提交用户/运行数据。

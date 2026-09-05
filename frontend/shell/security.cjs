@@ -4,7 +4,7 @@ const path = require('node:path')
 const ENTRY_URL = 'zhijun://desktop/desktop.html'
 const INVOKE_CHANNEL = 'zhijun:invoke'
 const SNAPSHOT_CHANNEL = 'zhijun:snapshot'
-const OPERATIONS = new Set(['getSnapshot', 'beginSignIn', 'listDevices', 'connect',
+const OPERATIONS = new Set(['getSnapshot', 'beginSignIn', 'signInWithPassword', 'listDevices', 'connect',
   'disconnect', 'signOut', 'materials.list', 'cancelRead'])
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
 

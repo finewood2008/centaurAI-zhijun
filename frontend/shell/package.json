@@ -13,5 +13,9 @@
   },
   "devDependencies": {
     "electron": "37.10.3"
+  },
+  "dependencies": {
+    "@nexusaos/connectivity-contracts": "file:vendor/nexusaos-connectivity-contracts-1.0.1.tgz",
+    "@nexusaos/connectivity-electron": "file:vendor/nexusaos-connectivity-electron-1.2.0.tgz"
   }
 }

@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('zhijunDesktop', Object.freeze({
     return () => { if (active) { active = false; ipcRenderer.removeListener('zhijun:snapshot', receive) } }
   },
   beginSignIn: context => invoke('beginSignIn', context),
+  signInWithPassword: (context, credentials) => invoke('signInWithPassword', context, credentials),
   listDevices: context => invoke('listDevices', context),
   connect: (context, deviceId) => invoke('connect', context, deviceId),
   disconnect: context => invoke('disconnect', context),

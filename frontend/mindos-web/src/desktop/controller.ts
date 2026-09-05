@@ -1,6 +1,6 @@
 import type {
   CallContext, DesktopSnapshot, DeviceSummary, MaterialStatus, MaterialType,
-  MaterialsPage, MaterialsQuery, PublicError, Result, ZhijunDesktopV1,
+  MaterialsPage, MaterialsQuery, PasswordCredentials, PublicError, Result, ZhijunDesktopV1,
 } from '../../../shared/desktop-contract'
 
 export interface DesktopViewState {
@@ -12,7 +12,7 @@ export interface DesktopViewState {
   readonly query: MaterialsQuery
   readonly loading: boolean
   readonly controlPending: boolean
-  readonly pendingOperation: 'beginSignIn' | 'disconnect' | 'signOut' | 'connect' | null
+  readonly pendingOperation: 'beginSignIn' | 'signInWithPassword' | 'disconnect' | 'signOut' | 'connect' | null
   readonly error: PublicError | null
   readonly notice: string
 }
@@ -103,7 +103,7 @@ export class DesktopController {
     }
   }
 
-  async control(operation: 'beginSignIn' | 'disconnect' | 'signOut' | 'connect', deviceId?: string): Promise<void> {
+  async control(operation: 'beginSignIn' | 'signInWithPassword' | 'disconnect' | 'signOut' | 'connect', input?: string | PasswordCredentials): Promise<void> {
     if (!this.bridge || this.disposed || !this.state.snapshot) return
     if (this.state.controlPending && (operation !== 'signOut' || this.state.pendingOperation === 'signOut')) return
     const revision = ++this.controlRevision
@@ -112,8 +112,10 @@ export class DesktopController {
     try {
       const context = this.context()
       const result = operation === 'connect'
-        ? await this.bridge.connect(context, deviceId ?? '')
-        : await this.bridge[operation](context)
+        ? await this.bridge.connect(context, typeof input === 'string' ? input : '')
+        : operation === 'signInWithPassword'
+          ? await this.bridge.signInWithPassword(context, input as PasswordCredentials)
+          : await this.bridge[operation](context)
       if (this.disposed || revision !== this.controlRevision) return
       if (result.ok) this.acceptSnapshot(result.data)
       else this.acceptError(result)

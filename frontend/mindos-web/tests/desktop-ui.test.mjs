@@ -30,7 +30,7 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
     protocolVersion: 1,
     getSnapshot: async () => ok(initial.generation, initial),
     subscribe: callback => { listener = callback; return () => { unsubscribed = true; listener = undefined } },
-    beginSignIn: invoke('beginSignIn'), connect: invoke('connect'), disconnect: invoke('disconnect'), signOut: invoke('signOut'),
+    beginSignIn: invoke('beginSignIn'), signInWithPassword: invoke('signInWithPassword'), connect: invoke('connect'), disconnect: invoke('disconnect'), signOut: invoke('signOut'),
     listDevices: context => { const result = deferred(); devices.push({ context, ...result }); return result.promise },
     materials: { list: (context, query) => { const result = deferred(); reads.push({ context, query, ...result }); return result.promise } },
     cancelRead: async (context, targetCallId) => { cancellations.push({ context, targetCallId }); return ok(context.expectedGeneration, { delivery: 'suppressed', remoteCancellation: 'not_supported' }) },
@@ -176,4 +176,23 @@ test('unmount suppresses a read and unsubscribes without disconnecting the sessi
   f.reads[0].resolve(ok(1, page(f.reads[0].query)))
   await tick()
   assert.equal(updates, 1)
+})
+
+test('password input only goes to the narrow action, never controller state, and logout wins', async () => {
+  const f = fixture({ ...snapshot('signed_out', 0, 0), environment: 'production' })
+  await f.controller.start()
+  const credentials = { phone: '13800000000', password: 'synthetic-password' }
+  const signingIn = f.controller.control('signInWithPassword', credentials)
+  assert.equal(f.controls[0].operation, 'signInWithPassword')
+  assert.deepEqual(f.controls[0].deviceId, credentials)
+  assert.equal(JSON.stringify(f.controller.state).includes(credentials.password), false)
+  f.emit({ ...snapshot('authenticating', 1, 1), environment: 'production', subject: null })
+  const signingOut = f.controller.control('signOut')
+  f.controls[1].resolve(ok(2, { ...snapshot('signed_out', 2, 3), environment: 'production' }))
+  await signingOut
+  f.controls[0].resolve(ok(1, snapshot('selecting_device', 1, 2)))
+  await signingIn
+  assert.equal(f.controller.state.snapshot.subject, null)
+  assert.equal(f.controller.state.snapshot.generation, 2)
+  f.controller.dispose()
 })

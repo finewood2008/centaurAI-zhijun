@@ -1,15 +1,17 @@
 'use strict'
 const test = require('node:test')
 const assert = require('node:assert/strict')
-const { mkdtemp, rm } = require('node:fs/promises')
+const { mkdtemp, rm, writeFile } = require('node:fs/promises')
 const { tmpdir } = require('node:os')
 const path = require('node:path')
 const { _electron: electron } = require('../../mindos-web/node_modules/playwright')
 const { expect } = require('../../mindos-web/node_modules/playwright/test')
 
-async function openApp(t, mode) {
+async function openApp(t, mode, productConfig) {
   const directory = await mkdtemp(path.join(tmpdir(), 'zhijun-m0-e2e-'))
-  const env = { ...process.env, ZHIJUN_DESKTOP_MODE: mode,
+  const configPath = path.join(directory, 'product.json')
+  if (productConfig) await writeFile(configPath, JSON.stringify(productConfig))
+  const env = { ...process.env, ZHIJUN_DESKTOP_MODE: mode, ZHIJUN_DESKTOP_CONFIG: productConfig ? configPath : '',
     ZHIJUN_DESKTOP_USER_DATA: directory, ZHIJUN_SHELL_NOGPU: '1' }
   delete env.ELECTRON_RUN_AS_NODE
   let application
@@ -111,4 +113,20 @@ test('unknown mode stays unconfigured; unknown hash cannot enter legacy business
   assert.equal(snapshot.data.capabilities.streamChat, false)
   assert.equal(snapshot.data.capabilities.matters, false)
   await expect(page.getByTestId('materials-table')).toHaveCount(0)
+})
+
+
+test('configured Consumer shows password login; UTF-8 overbudget input is cleared and rejected before authentication', async t => {
+  const { page } = await openApp(t, '', { version: 1, consumerBaseUrl: 'https://consumer.example.test/prod-api' })
+  await expect(page.getByTestId('environment')).toContainText('账号服务已配置')
+  await page.getByTestId('login-phone').fill('13800000000')
+  await page.getByTestId('login-password').fill('汉'.repeat(25))
+  await page.getByTestId('sign-in').click()
+  await expect(page.getByTestId('error')).toContainText('INVALID_REQUEST')
+  await expect(page.getByTestId('login-password')).toHaveValue('')
+  const snapshot = await page.evaluate(() => window.zhijunDesktop.getSnapshot())
+  assert.equal(snapshot.data.subject, null)
+  assert.equal(snapshot.data.environment, 'production')
+  assert.equal(snapshot.data.capabilities.materialsRead, false)
+  assert.equal(JSON.stringify(snapshot).includes('13800000000'), false)
 })
