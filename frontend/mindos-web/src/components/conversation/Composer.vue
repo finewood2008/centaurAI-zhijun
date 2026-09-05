@@ -2,7 +2,8 @@
 // 输入区：Enter 发送、Shift+Enter 换行（提示只出现一次）；「深入」「我在考虑…」是两枚开关 chip；
 // 麦克风在输入框里；字数只在快到上限时才出现。语音只填入输入框，永远不自动发送。
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { appendReply, undoReply, type ReplyAssistanceInput } from '@/shared/replyAssistance'
+import { appendReply, mergeReplyDrafts, undoReply, type ReplyAssistanceInput, type ReplyInputDraft } from '@/shared/replyAssistance'
+import { replyNeedsRecovery } from '@/composables/useReplyRecovery'
 import { Mic, MicOff, Send, Square, Plus } from 'lucide-vue-next'
 import { DOC_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS } from '@/features/import/validation'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -32,34 +33,53 @@ const emit = defineEmits<{
 
 const text = ref('')
 const expression = ref<ReplyAssistanceInput>()
-const undo = ref<{ inserted: string; offset: number; origin?: ReplyAssistanceInput }>()
-const inputDrafts = new Map<string, { text: string; origin?: ReplyAssistanceInput }>()
+type InputUndo = NonNullable<ReplyInputDraft['undo']>
+type InputDraft = ReplyInputDraft
+const undo = ref<InputUndo>()
+let lastSubmission: { conversationId?: string | null; text: string; origin?: ReplyAssistanceInput; undo?: typeof undo.value } | undefined
+const recovery = computed(() => replyNeedsRecovery(props.conversationId, expression.value))
+const inputDrafts = new Map<string, InputDraft>()
 const LANDING_DRAFT = '__new_conversation__'
 let draftLoaded = false
 const draftKey = (id: string) => `zhijun.reply-input.${id}`
+const failedKey = (id: string) => `zhijun.reply-failed.${id}`
+const failedDrafts = ref<InputDraft[]>([])
+const failedDraftCache = new Map<string, InputDraft[]>()
+function readFailed(id: string): InputDraft[] {
+  if (failedDraftCache.has(id)) return failedDraftCache.get(id)!
+  try { const saved = JSON.parse(sessionStorage.getItem(failedKey(id)) || '[]'); return Array.isArray(saved) ? saved.filter(d => d && typeof d.text === 'string') : [] }
+  catch { return [] }
+}
+function saveFailed(id: string, values: InputDraft[]) {
+  failedDraftCache.set(id, values)
+  if (id === (props.conversationId || LANDING_DRAFT)) failedDrafts.value = values
+  try { sessionStorage.setItem(failedKey(id), JSON.stringify(values)) } catch { /* The current mounted draft remains readable. */ }
+}
 function storedDraft(id: string) {
   if (inputDrafts.has(id)) return inputDrafts.get(id)
   try {
     const saved = JSON.parse(sessionStorage.getItem(draftKey(id)) || 'null')
-    if (saved && typeof saved.text === 'string' && saved.text.length <= 4000) return saved as { text: string; origin?: ReplyAssistanceInput }
+    if (saved && typeof saved.text === 'string' && saved.text.length <= 4000) return saved as InputDraft
   } catch { /* Storage may be unavailable; typing still works. */ }
 }
 watch(() => props.conversationId, (next, previous) => {
-  if (draftLoaded) inputDrafts.set(previous || LANDING_DRAFT, { text: text.value, origin: expression.value })
+  if (draftLoaded) inputDrafts.set(previous || LANDING_DRAFT, { text: text.value, origin: expression.value, undo: undo.value })
   const saved = storedDraft(next || LANDING_DRAFT)
-  text.value = saved?.text || ''; expression.value = saved?.origin; undo.value = undefined
+  text.value = saved?.text || ''; expression.value = saved?.origin; undo.value = saved?.undo
+  failedDrafts.value = readFailed(next || LANDING_DRAFT)
   draftLoaded = true
 }, { immediate: true })
-watch([text, expression], () => {
+watch([text, expression, undo], () => {
   const id = props.conversationId || LANDING_DRAFT
   try {
-    if (text.value) sessionStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value }))
+    if (text.value) sessionStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value, undo: undo.value }))
     else sessionStorage.removeItem(draftKey(id))
   } catch { /* Do not block the composer if local storage is full. */ }
 }, { deep: true })
 watch(text, value => { if (!value.trim()) { expression.value = undefined; undo.value = undefined } })
 function insertReply(extra: string, origin: ReplyAssistanceInput) {
   try {
+    if (recovery.value) throw new Error('请先撤销旧辅助句，再选择新的回答。已改写的文字会保留，不能自动移除其来源。')
     const result = appendReply(text.value, extra, expression.value, origin)
     undo.value = { inserted: result.inserted, offset: result.offset, origin: expression.value }
     text.value = result.text; expression.value = result.origin
@@ -71,6 +91,30 @@ function undoInsertion() {
   const result = undoReply(text.value, undo.value)
   if (result === null) { toast({ type: 'info', message: '你已修改填入的文字，为保留修改，请手动调整或删除。' }); return }
   text.value = result; expression.value = undo.value.origin; undo.value = undefined
+}
+function applyDraft(id: string, draft: InputDraft) {
+  inputDrafts.set(id, draft)
+  try { sessionStorage.setItem(draftKey(id), JSON.stringify(draft)) } catch { /* Preserve the in-memory copy if storage is unavailable. */ }
+  if (id === (props.conversationId || LANDING_DRAFT)) { text.value = draft.text; expression.value = draft.origin; undo.value = draft.undo }
+}
+function restoreSubmission(value: string, origin: ReplyAssistanceInput | undefined, conversationId: string | null) {
+  const id = conversationId || LANDING_DRAFT
+  const previous = lastSubmission && (lastSubmission.conversationId || LANDING_DRAFT) === id && lastSubmission.text.trim() === value && JSON.stringify(lastSubmission.origin) === JSON.stringify(origin) ? lastSubmission : undefined
+  const failed: InputDraft = { text: previous?.text ?? value, origin, undo: previous?.undo }
+  const here = id === (props.conversationId || LANDING_DRAFT)
+  const current = here ? { text: text.value, origin: expression.value, undo: undo.value } : storedDraft(id) || { text: '' }
+  const merged = mergeReplyDrafts(current, failed)
+  if (merged) { applyDraft(id, merged); return }
+  const pending = here ? failedDrafts.value : readFailed(id)
+  if (!pending.some(d => d.text === failed.text && JSON.stringify(d.origin) === JSON.stringify(failed.origin))) saveFailed(id, [...pending, failed])
+}
+function switchFailedDraft() {
+  const [next, ...rest] = failedDrafts.value
+  if (!next) return
+  if (text.value) rest.push({ text: text.value, origin: expression.value, undo: undo.value })
+  const id = props.conversationId || LANDING_DRAFT
+  saveFailed(id, rest); applyDraft(id, next)
+  textareaRef.value?.focus({ preventScroll: true })
 }
 const filesInput = ref<HTMLInputElement | null>(null)
 const addOpen = ref(false)
@@ -116,6 +160,7 @@ function send() {
   const content = text.value.trim()
   if ((!content && !props.hasAttachments) || props.streaming || props.uploading || blocked.value) return
   if (content.length > MAX) return
+  lastSubmission = { conversationId: props.conversationId, text: text.value, origin: expression.value, undo: undo.value }
   emit('send', content, deep.value ? 'deep' : 'brief', deliberate.value ? 'deliberate' : 'chat', expression.value)
   text.value = ''
   expression.value = undefined; undo.value = undefined
@@ -191,6 +236,7 @@ onBeforeUnmount(stopVoice)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
   insertReply,
+  restoreSubmission,
   appendText: (value: string) => {
     text.value = text.value.trim() ? text.value + '\n\n' + value : value
     textareaRef.value?.focus()
@@ -200,8 +246,10 @@ defineExpose({
     deliberate.value = on
   },
   setText: (value: string, origin?: ReplyAssistanceInput) => {
-    text.value = value
+    const failed = lastSubmission && lastSubmission.conversationId === props.conversationId && lastSubmission.text.trim() === value && JSON.stringify(lastSubmission.origin) === JSON.stringify(origin) ? lastSubmission : undefined
+    text.value = failed?.text ?? value
     expression.value = origin
+    undo.value = failed?.undo
     textareaRef.value?.focus()
   },
 })
@@ -214,6 +262,8 @@ defineExpose({
       <span>{{ expression.selections.length ? 'AI 辅助起草，可修改后发送' : '对话操作，发送后生效' }}</span>
       <button v-if="undo" type="button" @click="undoInsertion">撤销填入</button>
     </div>
+    <p v-if="recovery" class="zj-composer__recovery" role="status">{{ recovery.reason }}<span v-if="!undo"> 已修改的辅助文字不会自动删除；请保留草稿，再整理要表达的内容。</span></p>
+    <div v-if="failedDrafts.length" class="zj-composer__assisted" role="status"><span>另有 {{ failedDrafts.length }} 份未发送草稿已保留，切换不会丢失当前输入。</span><button type="button" @click="switchFailedDraft">切换到未发送草稿</button></div>
     <p v-if="notice" class="zj-composer__notice" role="status">
       <span>{{ notice }}</span>
       <RouterLink v-if="noticeTo" :to="noticeTo" class="zj-composer__notice-link">去偏好</RouterLink>
@@ -297,6 +347,7 @@ defineExpose({
 <style scoped>
 .zj-composer__assisted { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:11px; color:var(--ws-text-secondary-color,#686b66); }
 .zj-composer__assisted button { border:0; background:transparent; color:var(--ws-primary-color,#a6452e); font:inherit; cursor:pointer; text-decoration:underline; }
+.zj-composer__recovery { margin:6px 0; font-size:12px; line-height:1.6; color:var(--ws-text-secondary-color,#686b66); overflow-wrap:anywhere; }
 .zj-composer__add { position: relative; }
 .zj-composer__add-menu { position: absolute; bottom: 38px; left: 0; width: 210px; z-index: 20; padding: 8px; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 9px; background: var(--ws-card-bg, #fff); box-shadow: 0 5px 22px rgb(0 0 0 / 10%); }
 .zj-composer__add-menu button { display: block; width: 100%; padding: 10px; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }

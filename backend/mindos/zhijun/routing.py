@@ -305,6 +305,13 @@ class Router:
                 raise ValueError("来源内容或权限版本已变化；旧派生内容暂停使用")
         except (ValueError, KeyError, HTTPException) as exc:
             base["blocked"] = str(exc.detail if isinstance(exc, HTTPException) else exc)
+        if not isinstance(parents, list) or any(not isinstance(parent, dict)
+                or not isinstance(parent.get("kind"), str) or not parent["kind"]
+                or not isinstance(parent.get("id"), str) or not parent["id"] for parent in parents):
+            # Unknown ancestry is a blocked source, never an authorized empty
+            # dependency list. Avoid traversing null/malformed legacy payloads.
+            base.update(blocked="来源依赖记录缺失或格式不完整，暂停使用", blockedReason="source_invalid")
+            parents = []
         base["ref"] = {**ref, "version": base["version"]}
         result = [base]
         for parent in parents:
@@ -349,6 +356,8 @@ class Router:
                 fail("SOURCE_CHANGED", "来源版本已变化，请重新核对本轮上下文")
             if s.get("blockedReason") in ("source_depth", "source_budget"):
                 fail("SOURCE_LIMIT", s["blocked"])
+            if s.get("blockedReason") == "source_invalid":
+                fail("SOURCE_UNAVAILABLE", "来源依赖记录不完整，请移除该参考或重新生成；原内容保留")
             kind, ident = s["kind"], s["id"]
             try:
                 if kind == "material":
@@ -571,7 +580,9 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
         # Retrieval must not inspect even temporarily unapproved preview text.
         # Authorization for the message alone does not authorize its ancestry.
         if not any(s["blocked"] or (p.external and not router.allowed(s, service, "chat")) for s in closure):
-            allowed_history.insert(0, {**m, **history[0]})
+            # Prompt prose is cleaned for readability, but its source revision
+            # must remain the immutable snapshot taken before that transform.
+            allowed_history.insert(0, {**m, **history[0], "_sourceRef": ref})
             inherited_claims.update(s["id"] for s in closure if s["kind"] == "claim")
             if m["role"] == "assistant" and latest_direct_claims is None:
                 # A transitive closure may contain ancient, irrelevant claims.

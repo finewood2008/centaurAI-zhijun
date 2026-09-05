@@ -173,8 +173,21 @@ def suggest(conversation_id: str, req: SuggestRequest, request: Request):
     store = ReplyAssistStore(convs)
     ident = "reply_" + digest([conversation_id, req.requestId])[:24]
     previous = store.get(req.previousBatchId) if req.previousBatchId else None
+    previous_excluded = False
     if req.previousBatchId:
-        validate_batch(router, previous)
+        # A previous group is only a deduplication hint, never required context.
+        # A new explicit generation can proceed without stale suggestions, but
+        # must not read them or discard the latest reply's own source checks.
+        if not previous or previous["conversationId"] != conversation_id:
+            fail("REPLY_BATCH_NOT_FOUND", "候选不存在或不属于这段对话", 404)
+        try:
+            validate_batch(router, previous)
+        except HTTPException as exc:
+            code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+            if exc.status_code != 409 or code not in {"REPLY_CONTEXT_CHANGED", "REPLY_SOURCE_CHANGED", "SOURCE_CHANGED", "SOURCE_UNAVAILABLE", "SOURCE_LIMIT"}:
+                raise
+            previous = None
+            previous_excluded = True
     provider = router.provider(req.localOnly)
     # Only the target reply is required. Other protected history is not silently added.
     refs, messages, excluded = [], [], []
@@ -222,6 +235,7 @@ def suggest(conversation_id: str, req: SuggestRequest, request: Request):
                  "formatVersion": FORMAT_VERSION,
                  "messageId": req.messageId, "contextRevision": revision, "mode": router.mode,
                  "previousBatchId": req.previousBatchId, "localOnly": req.localOnly,
+                 "previousBatchExcluded": previous_excluded,
                  "candidates": [{"id": f"{ident}_{i}", "text": t} for i, t in enumerate(texts)],
                  "model": guarded.model, "external": guarded.external, "service": preview["service"],
                  "charterBasis": preview.get("charterBasis"),

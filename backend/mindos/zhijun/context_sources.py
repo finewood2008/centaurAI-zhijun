@@ -27,6 +27,10 @@ def claim_ref(router, claim):
 
 
 def message_ref(router, message):
+    # Only prepare_chat creates this top-level field on an internal history
+    # copy; user metadata is nested and cannot provide/replace this snapshot.
+    if "_sourceRef" in message:
+        return dict(message["_sourceRef"])
     content = message["content"]
     meta = message.get("meta") or {}
     marker = "[用户从 AI 候选起草后发送，不等于独立自述或长期画像确认]\n"

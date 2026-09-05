@@ -48,7 +48,7 @@ import {
   type TurnMode,
   type ZhijunStatus,
 } from '@/services/api'
-import { streamPost } from '@/services/sse'
+import { streamChat } from '@/services/chatStream'
 import { useToast } from '@/composables/useToast'
 import { useChatImports } from '@/composables/useChatImports'
 import ChatFilesPanel from '@/components/conversation/ChatFilesPanel.vue'
@@ -866,6 +866,7 @@ async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversa
 
 async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat', origin?: ReplyAssistanceInput) {
   if (streaming.value) return
+  const submittedConversationId = current.value?.id || null
   if (route.query.message) {
     const query = { ...route.query }
     delete query.message
@@ -874,7 +875,7 @@ async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = '
   }
   if (imports.staged.length) {
     await imports.send(content, origin)
-    if (imports.staged.length) composerRef.value?.setText(content, origin)
+    if (imports.staged.length) composerRef.value?.restoreSubmission(content, origin, submittedConversationId)
     if (current.value) void refreshCurrentMetadata(current.value.id)
     void loadConversations()
     return
@@ -888,7 +889,7 @@ async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = '
     conv = await ensureConversation(wantOnboarding ? 'onboarding' : 'chat')
   } catch (err) {
     streaming.value = false
-    composerRef.value?.setText(content, origin)
+    composerRef.value?.restoreSubmission(content, origin, submittedConversationId)
     toast({ type: 'error', message: friendlyError(err, '无法创建会话') })
     return
   }
@@ -944,16 +945,23 @@ async function finishLightOnboarding() {
 }
 
 async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat', origin?: ReplyAssistanceInput) {
+  abortController = new AbortController()
+  const signal = abortController.signal
   let sendBody: Record<string, unknown> | null
   try {
-    const routeState = await routingRequest(routePath(conv.id))
+    const routeState = await routingRequest(routePath(conv.id), 'GET', undefined, signal)
     routingMode.value = routeState.mode.mode
     sendBody = await prepareChatRoute(conv.id, { content, depth, mode, materialRefs: imports.references, replyAssistance: origin,
-      localOnly: prefillLocalOnly.value || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) })
-    if (!sendBody) { composerRef.value?.setText(content, origin); streaming.value = false; return }
+      localOnly: prefillLocalOnly.value || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal)
+    if (!sendBody || !alive || currentId.value !== conv.id) {
+      composerRef.value?.restoreSubmission(content, origin, conv.id)
+      streaming.value = false; abortController = null; return
+    }
   } catch (err) {
-    streaming.value = false; composerRef.value?.setText(content, origin)
-    toast({ type: 'error', message: friendlyError(err, '未能完成外发预览') }); return
+    streaming.value = false; abortController = null
+    composerRef.value?.restoreSubmission(content, origin, conv.id)
+    if (!signal.aborted) toast({ type: 'error', message: friendlyError(err, '未能完成外发预览') })
+    return
   }
   const now = new Date().toISOString()
   const seqBase = messages.value.length
@@ -987,15 +995,13 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
   let gotToken = false
   const rollback = () => {
     if (!alive) return
-    messages.value = messages.value.filter((m) => m !== userMsg && m !== assistant)
-    composerRef.value?.setText(content, origin)
+    if (currentId.value === conv.id) messages.value = messages.value.filter((m) => m !== userMsg && m !== assistant)
+    composerRef.value?.restoreSubmission(content, origin, conv.id)
   }
 
-  abortController = new AbortController()
-  const signal = abortController.signal
   try {
-    await streamPost(
-      `/mindos/conversations/${encodeURIComponent(conv.id)}/messages`,
+    const completed = await streamChat(
+      conv.id,
       sendBody,
       {
         decision_draft: (d) => {
@@ -1088,10 +1094,13 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
         },
       },
       signal,
+      () => alive && currentId.value === conv.id,
     )
+    if (!completed) rollback()
   } catch (err) {
     if (signal.aborted) {
       assistant.status = 'aborted'
+      if (assistant.id.startsWith('local-')) rollback()
     } else {
       assistant.status = 'error'
       if (alive) {
@@ -1110,7 +1119,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
     streaming.value = false
     closingStreaming.value = false
     abortController = null
-    if (alive) {
+    if (alive && currentId.value === conv.id) {
       void loadConversations()
       void refreshCurrentMetadata(conv.id)
       void refreshOutcomes(conv.id, true)
@@ -1129,13 +1138,13 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
   streaming.value = true
   try {
     const cid = current.value.id
-    const body = await prepareChatRoute(cid, contextRetryBody(user, message, localOnly))
-    if (!body) return
+    abortController = new AbortController()
+    const body = await prepareChatRoute(cid, contextRetryBody(user, message, localOnly), abortController.signal)
+    if (!body || !alive || currentId.value !== cid) return
     message.meta = { ...message.meta, requestId: body.requestId }
     message.streaming = true
-    abortController = new AbortController()
     let started = false
-    await streamPost(`/mindos/conversations/${encodeURIComponent(cid)}/messages`, body, {
+    await streamChat(cid, body, {
       meta: d => { const m = d as TurnMetaEvent; message.id = m.messageId; message.turnMeta = m; message.provider = m.provider; message.model = m.model; message.external = m.external; message.meta = { ...message.meta, replyTo: m.userMessageId, depth: m.depth, turnMode: m.turnMode || body.mode } },
       provenance: d => { message.provenance = d as ProvenanceEvent },
       token: d => { if (!started) { message.content = ''; started = true }; message.content += (d as { t: string }).t || '' },
@@ -1149,7 +1158,7 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
           if (!started) message.content = e.message || '补充信息仍需核对，原消息已保留。'
         } else toast({ type: 'error', message: e.message })
       },
-    }, abortController.signal)
+    }, abortController.signal, () => alive && currentId.value === cid)
     if (alive && currentId.value === cid) await loadConversation(cid)
   } catch (e) {
     if (e instanceof ApiError && isContextReviewError({ code: e.code || '', preview: e.preview })) {
