@@ -1,0 +1,17 @@
+{
+  "appId": "ai.centaur.personalnode",
+  "appName": "半人马个人AI节点",
+  "webDir": "www",
+  "server": {
+    "appStartPath": "/mobile/",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

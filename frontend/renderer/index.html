@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>半人马AI 私有记忆库</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 加载遮罩 -->
+  <div id="loading-overlay">
+    <img class="brand-mark" src="../assets/logo-wordmark.svg" alt="CentaurAI 私有记忆库">
+    <div class="loading-bar"><div class="loading-bar-fill" id="loading-bar-fill"></div></div>
+    <p id="loading-msg">正在启动服务…</p>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="app" class="hidden">
+    <!-- 顶栏 -->
+    <header>
+      <div class="brand">
+        <img class="brand-icon" src="../assets/logo-wordmark.svg" alt="CentaurAI 私有记忆库">
+      </div>
+      <div class="view-tabs" id="view-tabs">
+        <button class="view-tab active" data-view="search">🔍 检索</button>
+        <button class="view-tab" data-view="files">📂 文件中心</button>
+        <button class="view-tab" data-view="wiki">🕸 Wiki</button>
+        <button class="view-tab" data-view="memory">🧠 身份记忆</button>
+        <button class="view-tab" data-view="agent-memory">🤖 Agent 记忆</button>
+        <button class="view-tab" data-view="settings">⚙ 设置</button>
+      </div>
+      <div class="header-stats" id="header-stats">
+        <div class="stat-pill"><span class="stat-num" id="stat-total">--</span><span class="stat-label">文档</span></div>
+        <div class="stat-pill"><span class="stat-num" id="stat-chunks">--</span><span class="stat-label">向量块</span></div>
+        <div class="stat-pill"><span class="stat-num" id="stat-image">--</span><span class="stat-label">图片</span></div>
+        <div class="stat-pill"><span class="stat-num" id="stat-video">--</span><span class="stat-label">视频</span></div>
+      </div>
+      <div class="header-actions">
+        <button id="reindex-btn" class="icon-btn" title="重建索引">⟳</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- 左侧：上传 + 文档列表 -->
+      <aside>
+        <div id="drop-zone">
+          <div class="drop-icon">＋</div>
+          <p class="drop-title">拖入文件 或 <button id="browse-btn" class="link-btn">浏览</button></p>
+          <p class="drop-hint">PDF · Word · Excel · PPT · Markdown · 图片 · 视频</p>
+          <input type="file" id="file-input" multiple accept=".pdf,.docx,.xlsx,.xlsm,.xls,.pptx,.md,.txt,.jpg,.jpeg,.png,.bmp,.gif,.webp,.mp4,.mov,.mkv,.webm,.avi,.m4v" hidden>
+        </div>
+        <div id="upload-progress" class="hidden"></div>
+
+        <div id="doc-list-container">
+          <div class="list-head">
+            <span>已索引文档</span>
+            <span class="count-badge" id="doc-count">0</span>
+          </div>
+          <div id="doc-list"></div>
+        </div>
+      </aside>
+
+      <!-- 右侧：搜索 -->
+      <section id="search-area">
+        <div class="search-head">
+          <div id="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="search-input" placeholder="用自然语言搜索你的知识库…">
+            <button id="search-btn">搜索</button>
+          </div>
+          <div class="mode-switch" id="mode-switch">
+            <button class="mode-opt active" data-mode="text">📝 文本</button>
+            <button class="mode-opt" data-mode="visual">🖼️ 以文搜图</button>
+            <button class="mode-opt" data-mode="hybrid">✨ 混合</button>
+          </div>
+        </div>
+        <div id="tag-filter-bar" class="tag-filter-bar hidden">
+          <span class="tag-filter-label">🏷 按标签筛选：</span>
+          <div id="tag-filter-chips" class="tag-filter-chips"></div>
+        </div>
+        <div id="result-meta" class="result-meta hidden"></div>
+        <div id="search-results">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-icon">🔎</div>
+            <p>输入问题，从本地知识库中语义检索</p>
+            <p class="empty-sub">文本模式经向量召回 + 重排精选；视觉模式可用中文描述搜图片</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 文件中心 -->
+      <section id="file-center" class="hidden">
+        <div class="fc-toolbar">
+          <div class="fc-title">
+            <span>文件中心</span>
+            <span class="count-badge" id="fc-count">0</span>
+            <span class="fc-title-context" id="fc-title-context">全部文件</span>
+          </div>
+          <div class="fc-tools">
+            <button id="fc-batch-btn" class="secondary-btn sm">☐ 批量管理</button>
+            <button id="fc-save-view" class="secondary-btn sm" title="保存当前筛选">☆ 保存视图</button>
+            <button id="fc-audit-btn" class="secondary-btn sm" title="操作记录">☷ 记录</button>
+            <button id="fc-trash-btn" class="secondary-btn sm" title="回收站">🗑 回收站</button>
+            <input type="text" id="fc-search" class="fc-search" placeholder="搜索名称、标签、备注、说明…">
+            <select id="fc-sort-key" aria-label="排序方式">
+              <option value="mtime">修改时间</option>
+              <option value="name">名称</option>
+              <option value="size">大小</option>
+              <option value="type">类型</option>
+              <option value="status">索引状态</option>
+              <option value="importance">重要度</option>
+            </select>
+            <button id="fc-sort-dir" class="icon-btn" title="升序/降序">↓</button>
+            <div class="fc-view-switch" role="group" aria-label="文件显示方式">
+              <button class="fc-view-btn active" data-fc-view="grid" title="网格视图" aria-label="网格视图" aria-pressed="true">▦</button>
+              <button class="fc-view-btn" data-fc-view="list" title="列表视图" aria-label="列表视图" aria-pressed="false">☷</button>
+              <button class="fc-view-btn" data-fc-view="masonry" title="瀑布流视图" aria-label="瀑布流视图" aria-pressed="false">▥</button>
+            </div>
+          </div>
+        </div>
+        <div class="fc-body">
+          <nav class="fc-nav" id="fc-nav"></nav>
+          <div class="fc-content">
+            <div id="fc-batch-bar" class="fc-batch-bar hidden">
+              <button id="fc-select-all" class="secondary-btn sm">选择本页</button>
+              <button id="fc-select-results" class="secondary-btn sm">选择全部结果</button>
+              <button id="fc-clear-selection" class="secondary-btn sm">清空选择</button>
+              <span id="fc-selected-count" class="fc-sel-count">已选 0 个</span>
+              <span class="spacer"></span>
+              <button id="fc-batch-edit" class="primary-btn sm" disabled>⚙ 批量设置</button>
+              <button id="fc-batch-reindex" class="secondary-btn sm" disabled>↻ 批量重建</button>
+              <button id="fc-batch-delete" class="secondary-btn sm danger-action" disabled>🗑 移至回收站</button>
+            </div>
+            <div class="fc-grid" id="fc-grid" data-view="grid"></div>
+            <div id="fc-pagination" class="fc-pagination">
+              <button id="fc-prev" class="secondary-btn sm">← 上一页</button>
+              <span id="fc-page-info">第 1 页</span>
+              <button id="fc-next" class="secondary-btn sm">下一页 →</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Wiki 知识层 -->
+      <section id="wiki-panel" class="hidden">
+        <div class="wiki-shell">
+          <div class="wiki-section-bar">
+            <div class="wiki-section-title">
+              <strong>Wiki Vault</strong>
+              <span>唯一内容源 · Markdown Wiki</span>
+            </div>
+            <div class="wiki-engine-runtime" id="wiki-engine-runtime" title="本地智能检索状态">
+              <i></i><span id="wiki-engine-status-text">智能检索检查中…</span>
+            </div>
+          </div>
+
+          <div class="wiki-layout" id="wiki-vault-page">
+            <nav class="wiki-nav">
+              <div class="wiki-nav-head">
+                <span>Wiki Vault</span>
+                <button id="wiki-new-page" class="icon-btn" title="新建页面">＋</button>
+              </div>
+              <div class="wiki-search-box">
+                <input type="text" id="wiki-search-input" placeholder="搜索 Wiki（本地语义）…">
+                <button id="wiki-search-btn" class="primary-btn sm">搜索</button>
+              </div>
+              <div id="wiki-folder-tabs" class="wiki-folder-tabs">
+                <button class="wiki-folder active" data-folder="">全部</button>
+                <button class="wiki-folder" data-folder="Sources">Sources</button>
+                <button class="wiki-folder" data-folder="Concepts">Concepts</button>
+                <button class="wiki-folder" data-folder="Projects">Projects</button>
+                <button class="wiki-folder" data-folder="Areas">Areas</button>
+                <button class="wiki-folder" data-folder="Resources">Resources</button>
+                <button class="wiki-folder" data-folder="Archives">Archives</button>
+              </div>
+              <div id="wiki-page-list" class="wiki-page-list"></div>
+            </nav>
+
+            <div class="wiki-editor">
+              <div class="wiki-editor-head">
+                <div>
+                  <span id="wiki-title">请选择 Wiki 页面</span>
+                  <small id="wiki-meta"></small>
+                </div>
+                <span class="spacer"></span>
+                <button id="wiki-organize-selected" class="secondary-btn sm" title="若当前页面来自原始资料，重新整理">整理</button>
+                <button id="wiki-maintain" class="secondary-btn sm">维护</button>
+                <button id="wiki-save" class="primary-btn sm">保存</button>
+              </div>
+              <textarea id="wiki-editor-text" placeholder="Markdown Wiki 页面…"></textarea>
+            </div>
+
+            <div class="wiki-side">
+              <div class="wiki-side-section">
+                <div class="wiki-side-title">反链</div>
+                <div id="wiki-backlinks" class="wiki-link-list"></div>
+              </div>
+              <div class="wiki-side-section">
+                <div class="wiki-side-title">出链</div>
+                <div id="wiki-outlinks" class="wiki-link-list"></div>
+              </div>
+              <div class="wiki-side-section">
+                <div class="wiki-side-title">智能关系图谱</div>
+                <div id="wiki-graph" class="wiki-graph"></div>
+              </div>
+              <div class="wiki-side-section">
+                <div class="wiki-side-title">任务</div>
+                <div id="wiki-jobs" class="wiki-jobs"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 身份记忆面板 -->
+      <section id="memory-panel" class="hidden">
+        <div class="memory-layout">
+          <!-- 左侧文件列表 -->
+          <nav class="memory-nav" id="memory-nav">
+            <div class="memory-nav-head">身份记忆</div>
+            <ul id="memory-core-list">
+              <li data-file="SOUL.md">SOUL.md <small>人格与价值观</small></li>
+              <li data-file="AGENTS.md">AGENTS.md <small>执行规则</small></li>
+              <li data-file="IDENTITY.md">IDENTITY.md <small>身份定义</small></li>
+              <li data-file="USER.md">USER.md <small>用户画像</small></li>
+            </ul>
+            <div class="memory-standard-note">OPENCLAW IDENTITY STANDARD<br><small>四个文件组成统一身份，并同步给已检测 Agent。</small></div>
+          </nav>
+
+          <!-- 右侧编辑器 -->
+          <div class="memory-editor" id="memory-editor-area">
+            <div class="memory-editor-head">
+              <span id="memory-editor-title">SOUL.md</span>
+              <span class="memory-editor-meta" id="memory-editor-meta"></span>
+              <span class="spacer"></span>
+              <span id="identity-sync-status" class="identity-sync-status">尚未同步</span>
+              <button id="identity-sync-retry" class="secondary-btn sm hidden">重试同步</button>
+              <button id="identity-settings-open" class="secondary-btn sm">接入设置</button>
+              <button id="memory-save" class="primary-btn sm">保存</button>
+            </div>
+            <textarea id="memory-editor-text" placeholder="在此编辑记忆内容…"></textarea>
+          </div>
+
+          <!-- 搜索面板 -->
+          <div class="memory-search" id="memory-search-panel">
+            <div class="memory-search-head">语义搜索身份</div>
+            <div class="memory-search-box">
+              <input type="text" id="memory-search-input" placeholder="搜索四个身份文件…">
+              <button id="memory-search-btn" class="primary-btn sm">搜索</button>
+            </div>
+            <div id="memory-search-results"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Agent 记忆 -->
+      <section id="agent-memory-panel" class="hidden">
+        <div class="agent-memory-page">
+          <div class="agent-memory-page-head">
+            <div>
+              <span class="agent-memory-eyebrow">PRIVATE AGENT CONTEXT</span>
+              <h2>Agent 记忆</h2>
+              <p>浏览各智能体沉淀的原生记忆与对话记录</p>
+            </div>
+            <div class="agent-memory-head-actions">
+              <div class="agent-memory-stats" aria-label="Agent 记忆概览">
+                <div><strong id="agent-memory-agent-count">0</strong><span>Agent</span></div>
+                <div><strong id="agent-memory-record-count">0</strong><span>记忆</span></div>
+                <div class="agent-memory-connection-stat"><i id="agent-memory-connection-dot"></i><span id="agent-memory-connection-status">未连接</span></div>
+              </div>
+              <button id="agent-memory-settings-open" class="primary-btn sm">接入设置</button>
+            </div>
+          </div>
+
+          <nav id="agent-memory-tabs" class="agent-memory-tabs" aria-label="按 Agent 筛选"></nav>
+
+          <div class="agent-memory-filters">
+            <label>时间
+              <select id="agent-memory-month-filter" aria-label="按月份筛选">
+                <option value="all">全部月份</option>
+              </select>
+            </label>
+            <label id="agent-memory-user-filter-wrap" class="hidden">用户
+              <select id="agent-memory-user-filter" aria-label="按用户筛选">
+                <option value="all">全部用户</option>
+              </select>
+            </label>
+            <span id="agent-memory-filter-summary" class="agent-memory-filter-summary">0 条记录</span>
+          </div>
+
+          <div class="agent-memory-body">
+            <div class="agent-memory-list-panel">
+              <div class="agent-memory-panel-title">
+                <div id="agent-memory-type-tabs" class="agent-memory-type-tabs" role="tablist" aria-label="记忆类型">
+                  <button type="button" class="active" data-memory-type="conversation" role="tab" aria-selected="true">AI 对话 <b id="agent-memory-conversation-count">0</b></button>
+                  <button type="button" data-memory-type="native" role="tab" aria-selected="false">原生记忆 <b id="agent-memory-native-count">0</b></button>
+                </div>
+                <span>按时间倒序</span>
+              </div>
+              <div id="agent-memory-record-list" class="agent-memory-record-list">
+                <div class="agent-memory-empty"><span>⌛</span><strong>正在加载</strong></div>
+              </div>
+            </div>
+
+            <article class="agent-memory-detail-panel">
+              <div class="agent-memory-detail-head">
+                <div>
+                  <h3 id="agent-memory-detail-title">请选择一条记忆</h3>
+                  <p id="agent-memory-detail-meta"></p>
+                </div>
+                <span id="agent-memory-detail-kind" class="agent-memory-kind hidden"></span>
+              </div>
+              <div id="agent-memory-detail-empty" class="agent-memory-detail-empty">
+                <span>🤖</span><strong>暂无可预览内容</strong><p>选择左侧记录后在这里查看完整记忆</p>
+              </div>
+              <pre id="agent-memory-detail-content" class="agent-memory-detail-content hidden"></pre>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- 设置页面 -->
+      <section id="settings-panel" class="settings-page hidden">
+        <div class="settings-shell">
+          <div class="settings-page-head">
+            <div>
+              <span class="settings-eyebrow">PREFERENCES</span>
+              <h2>设置中心</h2>
+              <p>统一管理资料目录、AI 能力、设备访问与外部集成</p>
+            </div>
+          </div>
+          <div class="settings-workspace">
+            <nav class="settings-nav" aria-label="设置分类">
+              <div class="settings-nav-label">设置分类</div>
+              <button class="settings-nav-item active" data-settings-section="general" type="button">
+                <span class="settings-nav-icon">⌂</span><span><strong>基础设置</strong><small>目录、维护与服务</small></span>
+              </button>
+              <button class="settings-nav-item" data-settings-section="intelligence" type="button">
+                <span class="settings-nav-icon">✦</span><span><strong>AI 与索引</strong><small>模型、检索与 Wiki</small></span>
+              </button>
+              <button class="settings-nav-item" data-settings-section="access" type="button">
+                <span class="settings-nav-icon">⇄</span><span><strong>连接与访问</strong><small>局域网与标准 MCP</small></span>
+              </button>
+              <button class="settings-nav-item" data-settings-section="integrations" type="button">
+                <span class="settings-nav-icon">⌘</span><span><strong>手机端与 A2A <em class="settings-nav-status">未开通</em></strong><small>采集 App 与上下文共享</small></span>
+              </button>
+              <div class="settings-nav-note"><i></i><span>配置保存在本机</span></div>
+            </nav>
+            <div class="settings-content">
+              <div class="settings-content-head">
+                <div>
+                  <span id="settings-content-kicker">基础设置</span>
+                  <h3 id="settings-content-title">设备与服务</h3>
+                  <p id="settings-content-desc">管理文件目录、维护任务和后端运行状态。</p>
+                </div>
+                <span class="settings-local-badge" id="settings-scope-badge">LOCAL FIRST</span>
+              </div>
+              <div class="settings-page-grid">
+          <div class="settings-section settings-wide" data-settings-group="general">
+            <h3>监控目录</h3>
+            <div class="folder-row">
+              <input type="text" id="setting-watch-folder" readonly>
+            </div>
+            <p class="setting-hint">文件放入此目录后自动向量化入库</p>
+          </div>
+
+          <div class="settings-section" data-settings-group="intelligence">
+            <h3>检索管线</h3>
+            <div id="model-info"></div>
+          </div>
+
+          <div class="settings-section" data-settings-group="intelligence">
+            <h3>RAG 向量策略</h3>
+            <div class="rag-strategy-grid">
+              <label class="setting-field">
+                <span>默认策略</span>
+                <select id="setting-rag-default"></select>
+              </label>
+              <label class="setting-field">
+                <span>文档</span>
+                <select id="setting-rag-text"></select>
+              </label>
+              <label class="setting-field">
+                <span>图片/OCR</span>
+                <select id="setting-rag-image"></select>
+              </label>
+              <label class="setting-field">
+                <span>视频</span>
+                <select id="setting-rag-video"></select>
+              </label>
+            </div>
+            <div id="rag-strategy-detail" class="rag-strategy-detail"></div>
+            <button id="setting-rag-save" class="secondary-btn" style="margin-top:8px">保存策略</button>
+            <p class="setting-hint" id="setting-rag-msg"></p>
+          </div>
+
+          <div class="settings-section" data-settings-group="intelligence">
+            <h3>Wiki 智能索引</h3>
+            <div class="wiki-index-settings-head">
+              <span class="wiki-engine-runtime" id="setting-wiki-engine-runtime"><i></i><span id="setting-wiki-index-status">检查中…</span></span>
+              <span class="wiki-index-private">仅在本机运行</span>
+            </div>
+            <div class="wiki-index-settings-grid">
+              <div><span>向量模型</span><strong id="setting-wiki-index-model">—</strong></div>
+              <div><span>本地存储</span><strong id="setting-wiki-index-engine">—</strong></div>
+              <div><span>Wiki 页面</span><strong id="setting-wiki-index-pages">—</strong></div>
+              <div><span>向量进度</span><strong id="setting-wiki-index-vectors">—</strong></div>
+            </div>
+            <button id="setting-wiki-index-reconcile" class="secondary-btn" type="button">对账并重建 Wiki 索引</button>
+            <p class="setting-hint" id="setting-wiki-index-msg">Wiki 是唯一内容源；智能索引可随时由 Wiki 重新生成。</p>
+          </div>
+
+          <div class="settings-section" data-settings-group="general">
+            <h3>维护</h3>
+            <button id="reindex-action" class="secondary-btn">⟳ 重建全部索引</button>
+            <p class="setting-hint">清空并按当前管线重新索引监控目录（换嵌入模型后需执行）</p>
+          </div>
+
+          <div class="settings-section" data-settings-group="intelligence">
+            <h3>Wiki 本地自动整理</h3>
+            <div class="wiki-index-settings-head">
+              <span class="wiki-engine-runtime" id="setting-wiki-organizer-runtime"><i></i><span id="setting-wiki-organizer-status">检查中…</span></span>
+              <span class="wiki-index-private">完全本地</span>
+            </div>
+            <div class="wiki-index-settings-grid">
+              <div><span>生成模型</span><strong id="setting-wiki-organizer-model">—</strong></div>
+              <div><span>运行方式</span><strong id="setting-wiki-organizer-provider">Ollama（本机）</strong></div>
+              <div><span>内存策略</span><strong id="setting-wiki-organizer-memory">按需加载 · 用后卸载</strong></div>
+              <div><span>并发限制</span><strong id="setting-wiki-organizer-concurrency">单模型 · 单任务</strong></div>
+            </div>
+            <button id="setting-wiki-organizer-refresh" class="secondary-btn" type="button">重新检测本地模型</button>
+            <p class="setting-hint" id="setting-wiki-organizer-msg">资料不会发送到云端；模型不可用时使用本地规则整理。</p>
+          </div>
+
+          <div class="settings-section" data-settings-group="access">
+            <h3>局域网访问</h3>
+            <label class="switch" style="margin-bottom:10px">
+              <input type="checkbox" id="setting-lan-enabled">
+              <span>启用（需同时设置密码；首次启用可能需重启）</span>
+            </label>
+            <div class="lan-address-row">
+              <input type="text" id="setting-lan-url" readonly value="检测中…">
+              <button id="setting-lan-copy" class="copy-btn" type="button">复制</button>
+            </div>
+            <div id="setting-lan-alt-urls" class="lan-alt-urls"></div>
+            <p class="setting-hint" id="setting-lan-url-hint">同一局域网设备打开此地址导入文件</p>
+            <input type="password" id="setting-lan-password" placeholder="访问密码" style="width:100%;margin-top:8px">
+            <button id="setting-lan-save" class="secondary-btn" style="margin-top:8px">保存</button>
+            <p class="setting-hint" id="setting-lan-msg"></p>
+          </div>
+
+          <div class="settings-section" data-settings-group="integrations">
+            <h3 class="setting-card-title"><span>手机 App 导入</span><span class="feature-status unavailable">未开通</span></h3>
+            <label class="switch" style="margin-bottom:10px">
+              <input type="checkbox" id="setting-mobile-enabled">
+              <span>启用 App Token 导入</span>
+            </label>
+            <div class="lan-address-row">
+              <input type="text" id="setting-mobile-url" readonly value="检测中…">
+              <button id="setting-mobile-copy" class="copy-btn" type="button">复制</button>
+            </div>
+            <div id="setting-mobile-alt-urls" class="lan-alt-urls"></div>
+            <input type="password" id="setting-mobile-token" placeholder="App Token（生成后只显示一次；留空保留）" style="width:100%;margin-top:8px">
+            <div class="mobile-token-actions">
+              <button id="setting-mobile-save" class="secondary-btn" type="button">保存</button>
+              <button id="setting-mobile-generate" class="secondary-btn" type="button">生成新 Token</button>
+              <button id="setting-mobile-pairing" class="secondary-btn" type="button">复制配对链接</button>
+              <button id="setting-mobile-clear" class="secondary-btn" type="button">关闭并清空</button>
+            </div>
+            <div id="setting-mobile-pair-card" class="mobile-pair-card hidden">
+              <div class="mobile-pair-qr">
+                <img id="setting-mobile-qr" alt="手机配对二维码">
+              </div>
+              <div class="mobile-pair-body">
+                <div class="mobile-pair-title">手机扫码配对</div>
+                <input type="text" id="setting-mobile-pair-url" readonly>
+                <div id="setting-mobile-pair-alt" class="lan-alt-urls"></div>
+                <div class="mobile-pair-actions">
+                  <button id="setting-mobile-copy-pair-url" class="copy-btn sm" type="button">复制链接</button>
+                  <button id="setting-mobile-open-url" class="copy-btn sm" type="button">复制手机入口</button>
+                </div>
+              </div>
+            </div>
+            <p class="setting-hint" id="setting-mobile-msg">手机需先连入 Tailscale，再打开 /mobile 并保存 App Token</p>
+          </div>
+
+          <div class="settings-section settings-wide" data-settings-group="integrations">
+            <h3 class="setting-card-title"><span>A2A Context Pack</span><span class="feature-status unavailable">未开通</span></h3>
+            <input type="text" id="setting-context-name" placeholder="端点名称，例如：产品顾问上下文">
+            <input type="text" id="setting-context-query" placeholder="检索范围/主题，例如：半人马AI 产品、价格、合同" style="margin-top:8px">
+            <input type="text" id="setting-context-desc" placeholder="端点说明" style="margin-top:8px">
+            <label class="switch" style="margin-top:8px"><input type="checkbox" id="setting-context-memory" checked><span>包含记忆</span></label>
+            <label class="switch" style="margin-top:8px"><input type="checkbox" id="setting-context-wiki" checked><span>包含 Wiki</span></label>
+            <label class="switch" style="margin-top:8px"><input type="checkbox" id="setting-context-docs" checked><span>包含文档检索</span></label>
+            <button id="setting-context-create" class="secondary-btn" type="button" style="margin-top:8px">创建 Context Pack</button>
+            <div id="setting-context-list" class="context-pack-list"></div>
+            <p class="setting-hint" id="setting-context-msg">用于 A2A 社交时只共享被授权的上下文包</p>
+          </div>
+
+          <div class="settings-section" data-settings-group="general">
+            <h3>后端服务</h3>
+            <p class="kv"><span>API</span><span id="setting-api">http://127.0.0.1:8618</span></p>
+            <p class="kv"><span>状态</span><span id="setting-status">--</span></p>
+          </div>
+
+          <div class="settings-section settings-wide" data-settings-group="access">
+            <h3 class="setting-card-title"><span>标准 MCP 远程接入</span><span id="setting-mcp-mode-badge" class="feature-status mcp-basic">普通模式</span></h3>
+            <div id="mcp-remote-info">
+              <p class="setting-hint">加载中…</p>
+            </div>
+            <div class="mcp-remote-form">
+              <label class="switch"><input type="checkbox" id="setting-mcp-enabled"><span>启用局域网 MCP</span></label>
+              <div class="mcp-mode-picker" role="radiogroup" aria-label="MCP 访问模式">
+                <label><input type="radio" name="setting-mcp-mode" value="basic" checked><span><strong>普通模式</strong><small>一个密钥，开放常用能力</small></span></label>
+                <label><input type="radio" name="setting-mcp-mode" value="advanced"><span><strong>高级模式</strong><small>OAuth、分客户端与权限管理</small></span></label>
+              </div>
+              <button id="setting-mcp-save" class="secondary-btn" type="button">应用设置</button>
+              <p class="setting-hint" id="setting-mcp-msg">开启时只有选中的一种模式可以访问。</p>
+            </div>
+
+            <div id="setting-mcp-basic-panel" class="mcp-mode-panel">
+              <div class="mcp-panel-head"><div><strong>简单接入</strong><p>适合 Codex、Claude 及其他支持标准 MCP 与 Bearer 请求头的 Agent。</p></div></div>
+              <div id="mcp-basic-info"><p class="setting-hint">加载中…</p></div>
+              <div class="mcp-basic-actions">
+                <button id="setting-mcp-basic-token" class="secondary-btn" type="button">生成连接密钥</button>
+                <button id="setting-mcp-basic-ca-save" class="copy-btn" type="button">保存连接证书</button>
+              </div>
+              <div id="setting-mcp-basic-token-once" class="mcp-token-once hidden"></div>
+              <div class="mcp-tools-head">普通模式可用能力</div>
+              <div id="setting-mcp-basic-tools" class="mcp-tool-pills"></div>
+            </div>
+
+            <div id="setting-mcp-advanced-panel" class="mcp-mode-panel hidden">
+              <div class="mcp-panel-head"><div><strong>高级安全与权限</strong><p>按 Agent 分配权限，支持 OAuth 2.1 和独立 Bearer Token。</p></div></div>
+              <div id="mcp-advanced-info"><p class="setting-hint">加载中…</p></div>
+              <div class="mcp-advanced-password">
+                <input type="password" id="setting-mcp-admin-password" placeholder="OAuth 管理员密码（至少 10 位；留空保留）">
+              </div>
+              <div class="mcp-client-create">
+                <input type="text" id="setting-mcp-client-label" placeholder="Agent / 设备名称">
+                <select id="setting-mcp-client-tier">
+                  <option value="kb">仅知识库</option>
+                  <option value="full">完整私人记忆</option>
+                </select>
+                <button id="setting-mcp-client-create" class="secondary-btn" type="button">生成独立 Token</button>
+              </div>
+              <div id="setting-mcp-token-once" class="mcp-token-once hidden"></div>
+              <div class="mcp-tools-head">已授权客户端</div>
+              <div id="setting-mcp-clients" class="mcp-client-list"><p class="setting-hint">暂无客户端</p></div>
+              <details class="mcp-audit-details">
+                <summary>调用审计</summary>
+                <div class="mcp-code-head"><span>最近记录</span><button id="setting-mcp-audit-refresh" class="copy-btn sm" type="button">刷新</button></div>
+                <div id="setting-mcp-audit" class="mcp-client-list"><p class="setting-hint">展开后刷新查看。</p></div>
+              </details>
+            </div>
+            <details class="mcp-local-details">
+              <summary>本机 stdio 接入与工具列表</summary>
+              <div id="mcp-info"><p class="setting-hint">加载中…</p></div>
+            </details>
+          </div>
+          </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- 底栏 -->
+    <footer>
+      <span id="status" class="disconnected">● 连接中…</span>
+      <div class="footer-chips" id="model-chips"></div>
+      <span id="watch-folder" class="watch-folder">监控：--</span>
+    </footer>
+  </div>
+
+  <!-- 文件中心：重建索引 -->
+  <div id="fc-reindex-modal" class="hidden">
+    <div class="video-overlay" id="fc-reindex-overlay"></div>
+    <div class="fc-maint-dialog compact">
+      <div class="dialog-head"><div><h2>批量重建索引</h2><p id="fc-reindex-summary" class="fc-batch-summary"></p></div><button id="fc-reindex-close" class="icon-btn">✕</button></div>
+      <label class="annot-field"><span>RAG 策略</span><select id="fc-reindex-strategy"></select></label>
+      <p class="annot-hint">策略会保存为这些文件的独立覆盖；以后内容变化时仍沿用。</p>
+      <div class="annot-actions"><span class="spacer"></span><button id="fc-reindex-cancel" class="secondary-btn">取消</button><button id="fc-reindex-apply" class="primary-btn">提交重建</button></div>
+    </div>
+  </div>
+
+  <!-- 文件中心：回收站 / 操作记录 -->
+  <div id="fc-maint-modal" class="hidden">
+    <div class="video-overlay" id="fc-maint-overlay"></div>
+    <div class="fc-maint-dialog">
+      <div class="dialog-head"><div><h2 id="fc-maint-title">回收站</h2><p id="fc-maint-subtitle" class="fc-batch-summary"></p></div><button id="fc-maint-close" class="icon-btn">✕</button></div>
+      <div id="fc-maint-list" class="fc-maint-list"></div>
+    </div>
+  </div>
+
+  <div id="fc-context-menu" class="fc-context-menu hidden" role="menu"></div>
+  <div id="fc-undo-bar" class="fc-undo-bar hidden"><span id="fc-undo-label"></span><button id="fc-undo-action">撤销</button><button id="fc-undo-close" aria-label="关闭">✕</button></div>
+
+
+  <!-- 批量设置 -->
+  <div id="fc-batch-modal" class="hidden">
+    <div class="video-overlay" id="fc-batch-overlay"></div>
+    <div class="fc-batch-dialog">
+      <div class="dialog-head">
+        <div>
+          <h2>批量设置</h2>
+          <p id="fc-batch-summary" class="fc-batch-summary"></p>
+        </div>
+        <button id="fc-batch-close" class="icon-btn" aria-label="关闭">✕</button>
+      </div>
+
+      <div class="fc-batch-fields">
+        <div class="fc-batch-field">
+          <label class="fc-batch-toggle"><input type="checkbox" data-batch-field="group"><span>分组</span></label>
+          <div class="fc-batch-control-row">
+            <select id="fc-batch-group" data-batch-control="group" disabled></select>
+            <button id="fc-batch-group-new" class="secondary-btn sm" type="button" data-batch-control="group" disabled>＋ 新建</button>
+          </div>
+        </div>
+
+        <div class="fc-batch-field">
+          <label class="fc-batch-toggle"><input type="checkbox" data-batch-field="importance"><span>重要度</span></label>
+          <select id="fc-batch-importance" data-batch-control="importance" disabled>
+            <option value="0">普通（0 星）</option>
+            <option value="1">1 星</option>
+            <option value="2">2 星</option>
+            <option value="3">3 星</option>
+            <option value="4">4 星</option>
+            <option value="5">5 星</option>
+          </select>
+        </div>
+
+        <div class="fc-batch-field">
+          <label class="fc-batch-toggle"><input type="checkbox" data-batch-field="pinned"><span>置顶状态</span></label>
+          <select id="fc-batch-pinned" data-batch-control="pinned" disabled>
+            <option value="true">设为置顶</option>
+            <option value="false">取消置顶</option>
+          </select>
+        </div>
+
+        <div class="fc-batch-field wide">
+          <label class="fc-batch-toggle"><input type="checkbox" data-batch-field="tags"><span>标签</span></label>
+          <div class="fc-batch-control-row tags-row">
+            <select id="fc-batch-tags-mode" data-batch-control="tags" disabled>
+              <option value="add">追加标签</option>
+              <option value="replace">替换标签</option>
+              <option value="remove">移除标签</option>
+            </select>
+            <input id="fc-batch-tags" type="text" data-batch-control="tags" disabled placeholder="多个标签用逗号分隔">
+          </div>
+        </div>
+
+        <div class="fc-batch-field wide">
+          <label class="fc-batch-toggle"><input type="checkbox" data-batch-field="note"><span>备注</span></label>
+          <select id="fc-batch-note-mode" data-batch-control="note" disabled>
+            <option value="append">追加备注</option>
+            <option value="replace">替换备注</option>
+            <option value="clear">清空备注</option>
+          </select>
+          <textarea id="fc-batch-note" data-batch-control="note" rows="3" disabled placeholder="批量备注内容"></textarea>
+        </div>
+      </div>
+
+      <p id="fc-batch-hint" class="annot-hint"></p>
+      <div class="annot-actions">
+        <span class="spacer"></span>
+        <button id="fc-batch-cancel" class="secondary-btn">取消</button>
+        <button id="fc-batch-apply" class="primary-btn">应用到所选文件</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 标注编辑（标签/重要度/置顶/说明/备注）-->
+  <div id="annot-modal" class="hidden">
+    <div class="video-overlay" id="annot-overlay"></div>
+    <div class="annot-dialog">
+      <div class="dialog-head">
+        <h2>标注</h2>
+        <button id="annot-close" class="icon-btn">✕</button>
+      </div>
+      <div class="annot-file">
+        <span id="annot-thumb" class="annot-thumb"></span>
+        <p class="annot-target" id="annot-target" title=""></p>
+      </div>
+
+      <div class="annot-field">
+        <label>重要度</label>
+        <div class="star-row" id="annot-stars"></div>
+      </div>
+
+      <div class="annot-field">
+        <label>置顶</label>
+        <label class="switch">
+          <input type="checkbox" id="annot-pinned">
+          <span>命中相关查询时绕过阈值必回（📌）</span>
+        </label>
+      </div>
+
+      <div class="annot-field">
+        <label>分组</label>
+        <div class="annot-group-row">
+          <select id="annot-group"></select>
+          <button id="annot-group-new" class="secondary-btn sm" type="button">+ 新建</button>
+        </div>
+      </div>
+
+      <div class="annot-field">
+        <label>标签 <small>（回车或逗号添加）</small></label>
+        <div id="annot-tag-chips" class="tag-chips"></div>
+        <input type="text" id="annot-tag-input" placeholder="输入标签后回车…">
+      </div>
+
+      <div class="annot-field">
+        <label>说明 <small>（一句话描述，会被语义搜索命中——适合给图片/视频/LOGO 加可搜文字）</small></label>
+        <textarea id="annot-caption" rows="2" placeholder="例如：公司 LOGO，蓝底白字半人马标志"></textarea>
+      </div>
+
+      <div class="annot-field">
+        <label>备注 <small>（仅展示，不参与检索）</small></label>
+        <textarea id="annot-note" rows="2" placeholder="内部备注…"></textarea>
+      </div>
+
+      <div class="annot-actions">
+        <button id="annot-delete" class="link-btn danger">清除全部标注</button>
+        <span class="spacer"></span>
+        <button id="annot-cancel" class="secondary-btn">取消</button>
+        <button id="annot-save" class="primary-btn">保存</button>
+      </div>
+      <p class="annot-hint" id="annot-hint"></p>
+    </div>
+  </div>
+
+  <!-- 视频播放(命中跳到时刻) -->
+  <div id="video-modal" class="hidden">
+    <div class="video-overlay" id="video-overlay"></div>
+    <div class="video-dialog">
+      <div class="video-bar">
+        <span id="video-title" class="video-title"></span>
+        <button id="video-close" class="icon-btn">✕</button>
+      </div>
+      <video id="video-player" controls preload="metadata"></video>
+    </div>
+  </div>
+
+  <!-- 通用输入弹窗（Electron 不支持原生 prompt()，自实现）-->
+  <div id="prompt-modal" class="hidden">
+    <div class="video-overlay" id="prompt-overlay"></div>
+    <div class="prompt-dialog">
+      <p class="prompt-title" id="prompt-title"></p>
+      <input type="text" id="prompt-input" autocomplete="off">
+      <div class="prompt-actions">
+        <button id="prompt-cancel" class="secondary-btn">取消</button>
+        <button id="prompt-ok" class="primary-btn">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Agent 记忆：TokenManager 接入设置抽屉 -->
+  <div id="tokenmanager-memory-drawer" class="agent-memory-drawer-layer hidden" aria-hidden="true">
+    <div id="tokenmanager-memory-overlay" class="agent-memory-drawer-overlay"></div>
+    <div class="agent-memory-drawer" role="dialog" aria-modal="true" aria-labelledby="tokenmanager-memory-drawer-title">
+      <div class="agent-memory-drawer-head">
+        <div>
+          <span>AGENT MEMORY SOURCE</span>
+          <h2 id="tokenmanager-memory-drawer-title">接入设置</h2>
+        </div>
+        <button id="tokenmanager-memory-close" class="icon-btn" aria-label="关闭接入设置">✕</button>
+      </div>
+      <div class="agent-memory-drawer-body">
+        <div class="tokenmanager-memory-title">
+          <div><strong>TokenManager</strong><small>Agent 原生记忆、对话全文与摘要统一进入私人记忆，并通过现有 MCP 提供给任何 Agent</small></div>
+          <span id="tokenmanager-memory-badge" class="memory-sync-badge">未连接</span>
+        </div>
+        <label class="tokenmanager-memory-field">本机 API 地址<input id="tokenmanager-memory-url" type="text" value="http://127.0.0.1:15722" spellcheck="false"></label>
+        <label class="tokenmanager-memory-field">本机 API Bearer Token<input id="tokenmanager-memory-token" type="password" placeholder="从 TokenManager 复制后粘贴；已保存时可留空" autocomplete="off"></label>
+        <div class="tokenmanager-memory-options">
+          <label><input id="tokenmanager-memory-enabled" type="checkbox"> 自动同步</label>
+          <label>间隔（秒）<input id="tokenmanager-memory-interval" type="number" min="30" max="3600" value="60"></label>
+        </div>
+        <div class="tokenmanager-memory-actions">
+          <button id="tokenmanager-memory-test" class="primary-btn sm">保存并测试</button>
+          <button id="tokenmanager-memory-sync" class="secondary-btn sm">立即同步</button>
+        </div>
+        <div id="tokenmanager-memory-status" class="tokenmanager-memory-status">等待配置</div>
+        <p class="tokenmanager-memory-note">此地址与令牌同时用于读取对话/原生记忆和发布统一身份，不需要重复配置。身份写入还需在 TokenManager 开启“允许身份写入”。</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- 索引处理悬浮窗 -->
+  <div id="indexing-float" class="hidden">
+    <div class="idx-dots">
+      <span class="idx-dot"></span><span class="idx-dot"></span><span class="idx-dot"></span>
+    </div>
+    <div class="idx-body">
+      <div class="idx-title">正在向量化处理</div>
+      <div class="idx-file" id="idx-file"></div>
+      <div class="idx-progress" id="idx-progress"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

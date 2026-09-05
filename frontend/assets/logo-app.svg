@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">半人马AI 私有记忆库</title>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#17233C"/>
+  <g transform="translate(46 46) scale(3)" fill="none" stroke="#FFFFFF" stroke-width="17" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M120 42C108 27 94 20 76 20C43 20 20 47 20 80C20 113 43 140 76 140C94 140 108 133 120 118"/>
+    <path d="M52 124L81 38L112 124M64 92H101"/>
+  </g>
+</svg>

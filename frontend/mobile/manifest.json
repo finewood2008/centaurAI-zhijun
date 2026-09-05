@@ -1,0 +1,48 @@
+{
+  "name": "半人马个人 AI 节点",
+  "short_name": "AI节点",
+  "start_url": "/mobile",
+  "display": "standalone",
+  "scope": "/mobile",
+  "background_color": "#f4f6f8",
+  "theme_color": "#111827",
+  "share_target": {
+    "action": "/mobile/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "files",
+          "accept": [
+            "audio/*",
+            "image/*",
+            "video/*",
+            "application/pdf",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel.sheet.macroEnabled.12",
+            "text/*",
+            ".docx",
+            ".xlsx",
+            ".xlsm",
+            ".xls",
+            ".pptx",
+            ".md",
+            ".txt"
+          ]
+        }
+      ]
+    }
+  },
+  "icons": [
+    {
+      "src": "/assets/icon-256.png",
+      "sizes": "256x256",
+      "type": "image/png"
+    }
+  ]
+}

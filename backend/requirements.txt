@@ -1,0 +1,26 @@
+fastapi>=0.115
+uvicorn[standard]>=0.34
+chromadb>=0.5
+sentence-transformers>=3.3
+transformers>=4.47
+torch>=2.9
+pymupdf>=1.25
+python-docx>=1.1
+openpyxl>=3.1             # Excel .xlsx/.xlsm 解析
+xlrd>=2.0                 # 旧版 Excel .xls 解析
+watchdog>=6.0
+Pillow>=11.0
+qrcode>=8.0
+python-multipart>=0.0.19
+rapidocr-onnxruntime>=1.2  # 图片 OCR（提取文字后走文本嵌入，与文本统一向量空间）
+modelscope>=1.20           # 模型下载（hf-mirror 不稳时的镜像源）
+sentencepiece>=0.2         # bge-reranker / bge-m3 分词器依赖
+jieba>=0.42                # 中文分词（BM25 混合检索）
+rank_bm25>=0.2             # BM25 词面召回（与稠密向量混合）
+faster-whisper>=1.1        # 视频语音转写（ASR，CPU/CTranslate2，缺失时视频仅走帧+OCR）
+av>=12.0                   # 音频解码回退：未安装系统 ffmpeg 时仍可转写 MP3/M4A/WAV
+opencc-python-reimplemented>=0.1.7  # 转写繁→简（whisper 对 zh 默认出繁体；纯 Python wheel）
+mcp>=1.28,<2               # MCP 2025-11-25 Streamable HTTP + OAuth；固定 v1 API
+cryptography>=45           # 机器本地加密 OAuth 客户端密钥
+PyJWT>=2.13,<3             # Consumer Connectivity Ticket 的 JWKS/JWT 验签
+# 视频抽帧/抽音轨依赖系统 ffmpeg/ffprobe（apt install ffmpeg），非 pip 包

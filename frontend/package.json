@@ -1,0 +1,15 @@
+{
+  "name": "local-vector-db",
+  "version": "1.0.0",
+  "description": "让不同 AI 调用同一份属于你的个人记忆",
+  "main": "main.js",
+  "scripts": {
+    "web": "npm --prefix mindos-web run dev",
+    "web:build": "npm --prefix mindos-web run build",
+    "desktop": "electron .",
+    "start": "node -e \"console.error('请选择 npm run web 或 npm run desktop'); process.exit(1)\""
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

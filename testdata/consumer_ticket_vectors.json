@@ -1,0 +1,287 @@
+{
+  "version": 1,
+  "schema": "consumer-connectivity-ticket-vector/v1",
+  "generatedBy": "scripts/consumer_ticket_vectors.py",
+  "note": "仅测试夹具：私钥禁止进入生产包（发布检查排除 testdata）。",
+  "issuer": "https://consumer.example.test",
+  "audience": "mindos-device-service",
+  "deviceId": "device_local",
+  "requiredScope": "mindos:access",
+  "maxTtlSeconds": 300,
+  "algorithms": [
+    "RS256"
+  ],
+  "kid": "consumer-ticket-test-1",
+  "privateKeyPem": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDRv29nXQSeWg1J\n/XxgVvEwZaNzGPeScj643Huct28P1XYH/lS5HIHjlRpS3hVPGQl6le2LxvmFhujP\ni4pLizorz6SwS7RNXvBmX79PXhYTwFFxA4K18bl7tBoozH9HCASpTLk4T6oiFPIP\nrlA/vFWJ1f9sombfXTxlAhX9uu4EpY9c6o39dK5aBFl+cx456hoh+cfslTjk3Txw\nUW0kgJOPboG65aNDQAs1CWBKeJL7rTuJb4vR4lLJsVaLj8q6cC50Ge/es82h2wjp\nosl+dGEAw7HCqNBk4cNyZW3eyzRPHEaaGnMf9lOk38/lebQD6msjAFenHFlAkxvW\nigV0lZhNAgMBAAECggEAPJC2rnYhm0gNhkv32inAw2TV6apP8q2ihubDmuEs5LmS\nt4QtGrasmva2/y65oHluT0NzsGToMDJgj22PpXiyd2wh9fYmPiEn8ae8KkLUxSdH\nXQbSe48tLBc5ZoaGShB6qBhLc4MtcWHy86w15/GOEZsFgmzyn5Tgl5oel4GesSBH\nbs4KHxT4wsPEA3fkpa8VkGgjEhx1A+9MFpcmC+ftau+8f8jvSBkVB4t+N10RM339\n6cNTDUJomOLaIeW9S2HKSBk7Kc8QnYS55VkNuVtQl1fe6w8X+rP8FJ3gYuyE3prA\n42tplBao2o1jy3oAD9NthuW/wwzgz69yYgmmTQo0UQKBgQDx7TCMtXEA9vFnzUET\n3fSKte2Ltrb9JqTNH9kvGxSeFqpmyGIvk0DQUcJPPGt4LkXLKW1A7EUE2NHLiE6K\nh1VHVGDfIkmJynbryJBMZxeY4T8dwdgO5x3sGPQXG+xuQJIQbDK8844s9P9Itgil\nJAFsEulP8LfbhtJqKSLycHvbuwKBgQDd8wjVHIVwIv/OJsfDuQi5zEnf+XyFOIHq\n4PT1wc5QqhmN8KeAqQMAp9tA2bxBRJFbKrFUypfeQ9VGcZbdmAjqWFRttkU4XKYV\nTyKSfJckLzQxQ8cjFWKQ1Zn2fJFKC7swagTBfUzCE/PQYtKuUMsAHRYg3QTuwZho\nSFKPwpCnlwKBgQDCIiGpaBgMPB0vvMeSF7Qacy7xxGdG8XGhoQL5B/Qdf/axj+8q\nWjHSeSlByCw9PnSHOPEQ/gfMgeioOPM9uqe2G4G4zJzSU4PmZQVWKgwHhAjP6jNk\nkhWy1btZp/Cr8GjFgO2eLptSfC82u8xoKGJzxSEwIuyG3sOOqQAAKD9b7QKBgAxU\nqUP1vrAZMa8JVoXYLNTttZj86l8YYZdkAhf5OXYfzSWmnhe2zBToPnUe46eYoJ65\nA3sbek595EZynxgWj0A9wgsKWlQkSZHbgKc0xsza1oJ6KoEXeg9j3pbkGspLVo39\nBeCeDnql0yDbrKrEkFKkSwtuXAzLsqTwh622+IRnAoGARSKiqBT0onouguAqnS+h\n7iM4UUdfqxHo9xLUNRJadoxlmxj1hSGChDFe9Zrt9uJEzf7wvYNwY3iEOIMibJdi\nhuNPUqX0lU01+8ELU7nHKdjcYw+eJXXTVst07EvE/uE5xDZyCHN+8EFhRZdZPPJ5\n3MeKGSkNgDbbipOPZRNCPhw=\n-----END PRIVATE KEY-----\n",
+  "jwks": {
+    "keys": [
+      {
+        "kty": "RSA",
+        "kid": "consumer-ticket-test-1",
+        "alg": "RS256",
+        "use": "sig",
+        "n": "0b9vZ10EnloNSf18YFbxMGWjcxj3knI-uNx7nLdvD9V2B_5UuRyB45UaUt4VTxkJepXti8b5hYboz4uKS4s6K8-ksEu0TV7wZl-_T14WE8BRcQOCtfG5e7QaKMx_RwgEqUy5OE-qIhTyD65QP7xVidX_bKJm3108ZQIV_bruBKWPXOqN_XSuWgRZfnMeOeoaIfnH7JU45N08cFFtJICTj26BuuWjQ0ALNQlgSniS-607iW-L0eJSybFWi4_KunAudBnv3rPNodsI6aLJfnRhAMOxwqjQZOHDcmVt3ss0TxxGmhpzH_ZTpN_P5Xm0A-prIwBXpxxZQJMb1ooFdJWYTQ",
+        "e": "AQAB"
+      }
+    ]
+  },
+  "vectors": [
+    {
+      "id": "valid",
+      "description": "绑定本机设备、scope 足够、epoch=0、首连窗口未关闭的合法票据",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_1",
+        "client_id": "client_vector_1",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "39684ef427d2937bdaf1fd9b78b4bbaa",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "expected": "accept"
+    },
+    {
+      "id": "replay",
+      "description": "与 valid 相同 nonce 的票据再次使用（运行时重签）",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_1",
+        "client_id": "client_vector_1",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "39684ef427d2937bdaf1fd9b78b4bbaa",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_NONCE_REUSED"
+      }
+    },
+    {
+      "id": "expired",
+      "description": "exp 早于 iat（票据已过期）",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "a87f11190e8fb93869e417d25f8adf57",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": -60,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_INVALID"
+      }
+    },
+    {
+      "id": "wrong_device",
+      "description": "device_id 不是本机设备",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_other",
+        "scope": "mindos:access mindos:read",
+        "nonce": "53d29ac6c4f2d13a459c793fd4d45783",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_DEVICE_MISMATCH"
+      }
+    },
+    {
+      "id": "wrong_audience",
+      "description": "audience 不匹配",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "other-audience",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "5f25c17f2552bcf8c89f877617794591",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_INVALID"
+      }
+    },
+    {
+      "id": "missing_epoch",
+      "description": "缺少 epoch_generation 声明",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "dde71641560c65d99177234bd39d6d38"
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_INVALID"
+      }
+    },
+    {
+      "id": "missing_connect_before",
+      "description": "缺少 connect_before 声明",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "e6f69c19e3b2adc9221a40808fdf4f97",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": null,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_INVALID"
+      }
+    },
+    {
+      "id": "connect_window_closed",
+      "description": "connect_before 已过（窗口关闭，但 exp 未到）",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "50aa8352614b9491174befc5e9174a0d",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 5,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_CONNECT_WINDOW_CLOSED"
+      }
+    },
+    {
+      "id": "ttl_too_long",
+      "description": "有效期超过 maxTtlSeconds(300)",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "4d2a09d2d40ddd847689b29850107204",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 3600,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_INVALID"
+      }
+    },
+    {
+      "id": "scope_denied",
+      "description": "scope 缺少 mindos:access",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_vector_2",
+        "client_id": "client_vector_2",
+        "device_id": "device_local",
+        "scope": "mindos:read",
+        "nonce": "f1a20c6f508acc56687829d2d3bd557e",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_SCOPE_DENIED"
+      }
+    },
+    {
+      "id": "stale_epoch",
+      "description": "先轮换 tuple 的 epoch，旧 epoch=0 票据失效",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_stale",
+        "client_id": "client_stale",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "8a6a4ef32eaaadd405f3e99a6bc71c22",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "setup": {
+        "type": "rotate_epoch",
+        "accountId": "account_stale",
+        "clientId": "client_stale"
+      },
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_EPOCH_STALE"
+      }
+    },
+    {
+      "id": "revoked",
+      "description": "tuple 已被撤销",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_rev",
+        "client_id": "client_rev",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "694aaa3713c8244adb0aa86836466fc7",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "setup": {
+        "type": "revoke",
+        "accountId": "account_rev",
+        "clientId": "client_rev"
+      },
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_REVOKED"
+      }
+    },
+    {
+      "id": "denied_device",
+      "description": "本机设备被 ACL 禁用（最后执行，影响所有本机设备票据）",
+      "claims": {
+        "iss": "https://consumer.example.test",
+        "aud": "mindos-device-service",
+        "account_id": "account_deny",
+        "client_id": "client_deny",
+        "device_id": "device_local",
+        "scope": "mindos:access mindos:read",
+        "nonce": "9b17a1e8b1cac9e8715725f6006b394e",
+        "epoch_generation": 0
+      },
+      "ttlSeconds": 120,
+      "connectBefore": 60,
+      "setup": {
+        "type": "deny_device"
+      },
+      "expected": {
+        "code": "CONNECTIVITY_TICKET_DEVICE_DENIED"
+      }
+    }
+  ]
+}

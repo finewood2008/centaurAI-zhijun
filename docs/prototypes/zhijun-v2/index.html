@@ -1,0 +1,3293 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="知君个人本体 Data Agent 高保真产品原型" />
+  <link rel="icon" href="data:," />
+  <title>知君 · 个人本体 Data Agent — 高保真原型</title>
+  <style>
+    :root {
+      --bg: #F3EFE6;
+      --surface: #FFFCF6;
+      --fg: #1D211F;
+      --muted: #686B66;
+      --border: #D8D3C8;
+      --accent: #A6452E;
+
+      --accent-soft: color-mix(in oklch, var(--accent) 11%, transparent);
+      --ink-soft: color-mix(in oklch, var(--fg) 6%, transparent);
+      --ink-medium: color-mix(in oklch, var(--fg) 14%, transparent);
+      --paper-soft: color-mix(in oklch, var(--surface) 66%, transparent);
+      --shadow: 0 18px 56px color-mix(in srgb, var(--fg) 10%, transparent);
+
+      --font-display: "Songti SC", "Noto Serif SC", "STSong", "SimSun", serif;
+      --font-body: "PingFang SC", "Microsoft YaHei", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      --font-mono: "SFMono-Regular", "IBM Plex Mono", "Roboto Mono", Menlo, monospace;
+
+      --fs-display: clamp(38px, 4.2vw, 64px);
+      --fs-h1: clamp(30px, 3vw, 45px);
+      --fs-h2: clamp(24px, 2vw, 32px);
+      --fs-h3: 19px;
+      --fs-body: 15px;
+      --fs-meta: 12px;
+
+      --sidebar: 236px;
+      --gutter: clamp(24px, 4vw, 56px);
+      --radius-sm: 8px;
+      --radius: 14px;
+      --radius-lg: 22px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+    html { background: var(--fg); -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--font-body);
+      font-size: var(--fs-body);
+      line-height: 1.6;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; }
+    a { color: inherit; }
+    img, svg { display: block; max-width: 100%; }
+    h1, h2, h3, h4, p { margin: 0; }
+    h1, h2, h3, h4 { font-family: var(--font-display); text-wrap: balance; }
+    p { text-wrap: pretty; }
+    ::selection { background: var(--accent-soft); }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      background: var(--bg);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      padding: 26px 18px 18px;
+      color: var(--bg);
+      background: var(--fg);
+      border-right: 1px solid color-mix(in oklch, var(--surface) 9%, transparent);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px 26px;
+    }
+    .brand-seal {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      background: var(--accent);
+      color: var(--surface);
+      border-radius: 8px;
+      font-family: var(--font-display);
+      font-size: 23px;
+      line-height: 1;
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--surface) 22%, transparent);
+    }
+    .brand-word {
+      font-family: var(--font-display);
+      font-size: 23px;
+      letter-spacing: .08em;
+      line-height: 1;
+    }
+    .brand-sub {
+      display: block;
+      margin-top: 5px;
+      color: color-mix(in oklch, var(--bg) 54%, transparent);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .profile-chip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 6px 18px;
+      padding: 13px 11px;
+      border-top: 1px solid color-mix(in oklch, var(--surface) 12%, transparent);
+      border-bottom: 1px solid color-mix(in oklch, var(--surface) 12%, transparent);
+    }
+    .profile-avatar {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid color-mix(in oklch, var(--surface) 24%, transparent);
+      border-radius: 50%;
+      color: var(--surface);
+      font-family: var(--font-display);
+    }
+    .profile-copy { min-width: 0; }
+    .profile-name { color: var(--surface); font-size: 13px; font-weight: 600; }
+    .profile-meta {
+      color: color-mix(in oklch, var(--bg) 50%, transparent);
+      font-size: 10px;
+      font-family: var(--font-mono);
+    }
+
+    .nav-label {
+      padding: 4px 12px 7px;
+      color: color-mix(in oklch, var(--bg) 38%, transparent);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .main-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .nav-item {
+      width: 100%;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 9px 12px;
+      border: 0;
+      border-radius: 9px;
+      color: color-mix(in oklch, var(--bg) 65%, transparent);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: background 180ms ease, color 180ms ease;
+    }
+    .nav-item:hover {
+      color: var(--surface);
+      background: color-mix(in oklch, var(--surface) 6%, transparent);
+    }
+    .nav-item.active {
+      color: var(--surface);
+      background: color-mix(in oklch, var(--surface) 10%, transparent);
+    }
+    .nav-icon {
+      width: 18px;
+      height: 18px;
+      flex: 0 0 auto;
+      stroke-width: 1.55;
+    }
+    .nav-text { flex: 1; font-size: 13px; }
+    .nav-count {
+      min-width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--surface);
+      font-family: var(--font-mono);
+      font-size: 9px;
+    }
+
+    .sidebar-spacer { flex: 1; min-height: 18px; }
+    .capture-button {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 14px;
+      border: 1px solid color-mix(in oklch, var(--surface) 21%, transparent);
+      border-radius: 10px;
+      color: var(--surface);
+      background: transparent;
+      cursor: pointer;
+      transition: background 180ms ease;
+    }
+    .capture-button:hover { background: color-mix(in oklch, var(--surface) 8%, transparent); }
+
+    .box-status {
+      margin-top: 12px;
+      padding: 12px 10px 4px;
+      color: color-mix(in oklch, var(--bg) 52%, transparent);
+      font-size: 10px;
+      line-height: 1.5;
+    }
+    .box-status-line {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: color-mix(in oklch, var(--bg) 72%, transparent);
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--bg);
+      box-shadow: 0 0 0 3px color-mix(in oklch, var(--bg) 10%, transparent);
+    }
+
+    .main-shell { min-width: 0; background: var(--bg); }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      min-height: 66px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 12px var(--gutter);
+      background: color-mix(in oklch, var(--bg) 90%, transparent);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+    }
+    .topbar-left { min-width: 0; display: flex; align-items: center; gap: 14px; }
+    .page-kicker {
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .topbar-title {
+      font-family: var(--font-display);
+      font-size: 19px;
+      font-weight: 600;
+    }
+    .topbar-actions { display: flex; align-items: center; gap: 9px; }
+    .prototype-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--paper-soft);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: .04em;
+    }
+
+    .content {
+      width: min(100%, 1420px);
+      margin-inline: auto;
+      padding: 38px var(--gutter) 80px;
+    }
+    .view { display: none; animation: view-in 220ms ease both; }
+    .view.active { display: block; }
+    @keyframes view-in {
+      from { opacity: 0; transform: translateY(5px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .eyebrow {
+      margin-bottom: 12px;
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .display-title {
+      font-family: var(--font-display);
+      font-size: var(--fs-display);
+      font-weight: 500;
+      line-height: 1.06;
+      letter-spacing: -.03em;
+    }
+    .page-title {
+      font-family: var(--font-display);
+      font-size: var(--fs-h1);
+      font-weight: 500;
+      line-height: 1.12;
+      letter-spacing: -.02em;
+    }
+    .section-title {
+      font-family: var(--font-display);
+      font-size: var(--fs-h2);
+      font-weight: 500;
+      line-height: 1.2;
+    }
+    .card-title {
+      font-family: var(--font-display);
+      font-size: var(--fs-h3);
+      font-weight: 600;
+      line-height: 1.35;
+    }
+    .lead {
+      max-width: 60ch;
+      color: var(--muted);
+      font-size: 17px;
+      line-height: 1.75;
+    }
+    .meta {
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: var(--fs-meta);
+    }
+    .subtle { color: var(--muted); }
+    .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+    .row { display: flex; align-items: center; gap: 12px; }
+    .row-between { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .stack { display: flex; flex-direction: column; gap: 18px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+    .grid-7-5 { display: grid; grid-template-columns: minmax(0, 7fr) minmax(320px, 5fr); gap: 28px; }
+    .grid-8-4 { display: grid; grid-template-columns: minmax(0, 8fr) minmax(300px, 4fr); gap: 24px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+    .paper-panel {
+      background: color-mix(in oklch, var(--surface) 76%, var(--bg));
+      border: 1px solid var(--border);
+    }
+    .rule { height: 1px; background: var(--border); border: 0; margin: 0; }
+    .strong-rule { height: 1px; background: var(--fg); border: 0; margin: 0; }
+
+    .btn {
+      min-height: 39px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 9px 15px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--fg);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 80ms ease, border-color 160ms ease, background 160ms ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+    .btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, var(--fg)); }
+    .btn-secondary { border-color: var(--border); background: var(--surface); }
+    .btn-secondary:hover { border-color: var(--fg); }
+    .btn-ghost { padding-inline: 8px; color: var(--muted); }
+    .btn-ghost:hover { color: var(--fg); background: var(--ink-soft); }
+    .btn-danger { border-color: color-mix(in oklch, var(--accent) 35%, var(--border)); color: var(--accent); }
+    .btn-icon { width: 38px; padding: 0; }
+    .btn svg { width: 16px; height: 16px; }
+
+    .status-label, .type-label, .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--paper-soft);
+      font-size: 11px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .type-label::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      border: 1px solid currentColor;
+    }
+    .type-label.confirmed { color: var(--fg); border-style: solid; }
+    .type-label.declared::before { border-radius: 1px; }
+    .type-label.aspiration::before { transform: rotate(45deg); border-radius: 1px; }
+    .type-label.hypothesis { border-style: dashed; }
+    .type-label.suggestion::before { width: 8px; height: 1px; border: 0; border-top: 1px solid currentColor; border-radius: 0; }
+    .tag.active { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 34%, var(--border)); background: var(--accent-soft); }
+
+    .page-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 32px;
+      margin-bottom: 32px;
+    }
+    .page-head-copy { max-width: 760px; }
+    .page-head .lead { margin-top: 9px; }
+
+    .today-hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, .66fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 34px;
+      padding-bottom: 30px;
+      border-bottom: 1px solid var(--border);
+    }
+    .today-date {
+      margin-bottom: 13px;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: .05em;
+    }
+    .today-intro {
+      max-width: 17ch;
+      font-family: var(--font-display);
+      font-size: clamp(36px, 4.4vw, 62px);
+      font-weight: 500;
+      line-height: 1.12;
+      letter-spacing: -.035em;
+    }
+    .today-intro em { color: var(--accent); font-style: normal; }
+    .today-system {
+      padding-left: 20px;
+      border-left: 1px solid var(--border);
+    }
+    .today-system p { margin-top: 7px; color: var(--muted); font-size: 13px; }
+
+    .focus-card {
+      position: relative;
+      overflow: hidden;
+      min-height: 430px;
+      display: flex;
+      flex-direction: column;
+      padding: 30px;
+      background: var(--fg);
+      color: var(--surface);
+      border-radius: var(--radius-lg);
+    }
+    .focus-card::after {
+      content: "";
+      position: absolute;
+      right: -100px;
+      top: -130px;
+      width: 330px;
+      height: 330px;
+      border: 1px solid color-mix(in oklch, var(--surface) 11%, transparent);
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 36px color-mix(in oklch, var(--surface) 3%, transparent),
+        0 0 0 74px color-mix(in oklch, var(--surface) 2%, transparent);
+      pointer-events: none;
+    }
+    .focus-card .eyebrow { color: color-mix(in oklch, var(--surface) 65%, transparent); }
+    .focus-top { position: relative; z-index: 1; }
+    .focus-title {
+      max-width: 14ch;
+      margin-top: 17px;
+      font-family: var(--font-display);
+      font-size: clamp(30px, 3.2vw, 46px);
+      font-weight: 500;
+      line-height: 1.2;
+    }
+    .focus-context {
+      max-width: 58ch;
+      margin-top: 18px;
+      color: color-mix(in oklch, var(--surface) 68%, transparent);
+      font-size: 14px;
+    }
+    .focus-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+    .focus-tags .tag {
+      color: color-mix(in oklch, var(--surface) 72%, transparent);
+      border-color: color-mix(in oklch, var(--surface) 16%, transparent);
+      background: transparent;
+    }
+    .focus-actions {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: auto;
+      padding-top: 32px;
+    }
+    .focus-actions .btn-secondary {
+      color: var(--surface);
+      border-color: color-mix(in oklch, var(--surface) 23%, transparent);
+      background: transparent;
+    }
+
+    .mentor-card {
+      min-height: 430px;
+      display: flex;
+      flex-direction: column;
+      padding: 28px;
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--accent);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .mentor-mark {
+      color: var(--accent);
+      font-family: var(--font-display);
+      font-size: 44px;
+      line-height: .8;
+    }
+    .mentor-copy {
+      margin-top: 24px;
+      font-family: var(--font-display);
+      font-size: clamp(22px, 2vw, 28px);
+      line-height: 1.55;
+    }
+    .mentor-reason {
+      margin-top: 20px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .mentor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 20px; }
+
+    .today-lower {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(280px, .85fr);
+      gap: 28px;
+      margin-top: 30px;
+    }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 15px;
+    }
+    .section-head h2 {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .task-list { border-top: 1px solid var(--fg); }
+    .task-row {
+      display: grid;
+      grid-template-columns: 98px minmax(0, 1fr) auto;
+      gap: 18px;
+      align-items: center;
+      min-height: 88px;
+      padding: 17px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .task-kind {
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: .06em;
+    }
+    .task-title { font-weight: 600; font-size: 15px; }
+    .task-note { margin-top: 3px; color: var(--muted); font-size: 12px; }
+    .task-arrow {
+      width: 32px;
+      height: 32px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+    }
+    .task-arrow:hover { border-color: var(--fg); }
+
+    .charter-quote {
+      height: 100%;
+      min-height: 280px;
+      display: flex;
+      flex-direction: column;
+      padding: 25px;
+      background: color-mix(in oklch, var(--accent) 7%, var(--surface));
+      border: 1px solid color-mix(in oklch, var(--accent) 20%, var(--border));
+      border-radius: var(--radius);
+    }
+    .charter-quote blockquote {
+      margin: 18px 0 0;
+      font-family: var(--font-display);
+      font-size: 23px;
+      line-height: 1.58;
+    }
+    .charter-quote footer { margin-top: auto; padding-top: 20px; color: var(--muted); font-size: 12px; }
+
+    /* Ask Zhijun */
+    .ask-workspace {
+      height: calc(100vh - 142px);
+      min-height: 650px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 356px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: 0 8px 28px color-mix(in srgb, var(--fg) 5%, transparent);
+    }
+    .conversation {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .conversation-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+    }
+    .conversation-topic { min-width: 0; }
+    .conversation-topic strong { display: block; font-family: var(--font-display); font-size: 17px; }
+    .conversation-topic span { display: block; color: var(--muted); font-size: 11px; }
+    .mode-switch {
+      display: flex;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg);
+    }
+    .mode-switch button {
+      padding: 6px 10px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .mode-switch button.active { color: var(--fg); background: var(--surface); box-shadow: 0 1px 4px var(--ink-medium); }
+
+    .thread {
+      flex: 1;
+      overflow-y: auto;
+      padding: 30px clamp(24px, 4vw, 54px);
+      scroll-behavior: smooth;
+    }
+    .user-message {
+      max-width: 72%;
+      margin-left: auto;
+      padding: 15px 18px;
+      border-radius: 16px 16px 4px 16px;
+      background: var(--fg);
+      color: var(--surface);
+      font-size: 14px;
+    }
+    .assistant-message { max-width: 740px; margin-top: 30px; }
+    .assistant-byline {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-bottom: 16px;
+    }
+    .mini-seal {
+      width: 27px;
+      height: 27px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--accent);
+      color: var(--surface);
+      font-family: var(--font-display);
+      font-size: 15px;
+    }
+    .assistant-content {
+      padding-left: 18px;
+      border-left: 2px solid var(--fg);
+    }
+    .assistant-lead {
+      font-family: var(--font-display);
+      font-size: 22px;
+      line-height: 1.65;
+    }
+    .answer-block { margin-top: 22px; }
+    .answer-label { margin-bottom: 9px; }
+    .answer-block p { color: color-mix(in oklch, var(--fg) 88%, var(--muted)); font-size: 14px; }
+    .citation {
+      display: inline-grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      margin-inline: 3px;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      color: var(--accent);
+      background: var(--surface);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      text-decoration: none;
+      vertical-align: 2px;
+      cursor: pointer;
+    }
+    .assistant-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 22px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .assistant-actions .btn { font-size: 11px; }
+
+    .ask-composer {
+      padding: 15px 18px 18px;
+      border-top: 1px solid var(--border);
+      background: var(--paper-soft);
+    }
+    .composer-box {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+      padding: 11px 11px 11px 16px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: var(--surface);
+    }
+    .composer-box textarea {
+      width: 100%;
+      min-height: 44px;
+      max-height: 120px;
+      resize: none;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--fg);
+      line-height: 1.55;
+    }
+    .composer-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .composer-shortcuts { display: flex; gap: 10px; flex-wrap: wrap; }
+    .composer-shortcuts button { padding: 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+    .composer-shortcuts button:hover { color: var(--fg); }
+
+    .evidence-panel {
+      min-width: 0;
+      overflow-y: auto;
+      border-left: 1px solid var(--border);
+      background: color-mix(in oklch, var(--bg) 64%, var(--surface));
+    }
+    .evidence-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 18px 20px 14px;
+      background: color-mix(in oklch, var(--bg) 88%, transparent);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-tabs { display: flex; gap: 5px; margin-top: 13px; }
+    .panel-tab {
+      padding: 6px 10px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .panel-tab.active { color: var(--fg); border-color: var(--border); background: var(--surface); }
+    .panel-body { padding: 18px 20px 30px; }
+    .panel-pane { display: none; }
+    .panel-pane.active { display: block; }
+    .evidence-item {
+      padding: 16px 0 18px;
+      border-bottom: 1px solid var(--border);
+      transition: background 180ms ease, padding 180ms ease, margin 180ms ease;
+    }
+    .evidence-item.highlight {
+      margin-inline: -10px;
+      padding-inline: 10px;
+      background: var(--accent-soft);
+    }
+    .evidence-index {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--fg);
+      border-radius: 50%;
+      font-family: var(--font-mono);
+      font-size: 9px;
+    }
+    .evidence-source { margin-top: 13px; font-weight: 600; font-size: 13px; }
+    .evidence-locator { margin-top: 3px; color: var(--muted); font-family: var(--font-mono); font-size: 9px; }
+    .evidence-quote {
+      margin-top: 11px;
+      padding-left: 12px;
+      border-left: 1px solid var(--border);
+      color: var(--muted);
+      font-family: var(--font-display);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+    .integrity-line {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+    .receipt-summary {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1px;
+      overflow: hidden;
+      margin-top: 15px;
+      border: 1px solid var(--border);
+      background: var(--border);
+      border-radius: 10px;
+    }
+    .receipt-cell { padding: 14px; background: var(--surface); }
+    .receipt-cell strong { display: block; margin-top: 4px; font-family: var(--font-display); font-size: 20px; }
+    .receipt-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .flow-step {
+      position: relative;
+      padding-left: 22px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .flow-step::before {
+      content: "";
+      position: absolute;
+      left: 3px;
+      top: 6px;
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--fg);
+      border-radius: 50%;
+      background: var(--surface);
+    }
+    .flow-step + .flow-step::after {
+      content: "";
+      position: absolute;
+      left: 6px;
+      top: -13px;
+      width: 1px;
+      height: 14px;
+      background: var(--border);
+    }
+
+    /* Self / ontology */
+    .self-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(320px, .75fr);
+      gap: 28px;
+    }
+    .layer-switcher {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 25px 0 22px;
+    }
+    .layer-button {
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .layer-button.active { color: var(--fg); border-color: var(--fg); background: var(--surface); }
+    .self-map {
+      position: relative;
+      min-height: 500px;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background:
+        radial-gradient(circle at center, var(--surface) 0, var(--surface) 17%, transparent 17.2%),
+        color-mix(in oklch, var(--surface) 72%, var(--bg));
+    }
+    .self-map::before, .self-map::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+    .self-map::before { width: 300px; height: 300px; }
+    .self-map::after { width: 440px; height: 440px; border-style: dashed; opacity: .72; }
+    .self-core {
+      position: relative;
+      z-index: 2;
+      width: 132px;
+      height: 132px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      border-radius: 50%;
+      background: var(--fg);
+      color: var(--surface);
+      animation: core-breathe 5s ease-in-out infinite;
+    }
+    .self-core strong { display: block; font-family: var(--font-display); font-size: 25px; }
+    .self-core span { display: block; color: color-mix(in oklch, var(--surface) 60%, transparent); font-size: 9px; }
+    @keyframes core-breathe {
+      0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklch, var(--accent) 0%, transparent); }
+      50% { box-shadow: 0 0 0 12px color-mix(in oklch, var(--accent) 7%, transparent); }
+    }
+    .orbit-node {
+      position: absolute;
+      z-index: 3;
+      min-width: 92px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface);
+      box-shadow: 0 5px 18px color-mix(in srgb, var(--fg) 5%, transparent);
+      text-align: center;
+      cursor: pointer;
+    }
+    .orbit-node:hover { border-color: var(--fg); }
+    .orbit-node strong { display: block; font-family: var(--font-display); font-size: 15px; }
+    .orbit-node span { display: block; color: var(--muted); font-size: 9px; }
+    .orbit-node.n1 { left: 8%; top: 17%; }
+    .orbit-node.n2 { right: 8%; top: 13%; }
+    .orbit-node.n3 { left: 5%; bottom: 17%; }
+    .orbit-node.n4 { right: 6%; bottom: 20%; }
+    .orbit-node.n5 { left: 50%; top: 7%; transform: translateX(-50%); }
+    .orbit-node.n6 { left: 50%; bottom: 7%; transform: translateX(-50%); }
+    .map-legend {
+      position: absolute;
+      left: 18px;
+      bottom: 16px;
+      z-index: 4;
+      display: flex;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .self-detail {
+      min-height: 500px;
+      display: flex;
+      flex-direction: column;
+      padding: 27px;
+      border-top: 1px solid var(--fg);
+      background: var(--surface);
+    }
+    .self-detail h2 {
+      margin-top: 20px;
+      font-family: var(--font-display);
+      font-size: 28px;
+      line-height: 1.45;
+    }
+    .self-detail-copy {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .self-evidence {
+      margin-top: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .self-evidence-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .self-detail-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: auto; padding-top: 24px; }
+    .entity-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      margin-top: 28px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--border);
+    }
+    .entity-cell { padding: 18px 20px; background: var(--bg); }
+    .entity-cell strong { display: block; font-family: var(--font-display); font-size: 17px; }
+    .entity-cell span { color: var(--muted); font-size: 10px; }
+
+    /* Growth */
+    .subnav {
+      display: flex;
+      gap: 4px;
+      padding-bottom: 15px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 28px;
+      overflow-x: auto;
+    }
+    .subnav-button {
+      padding: 8px 13px;
+      border: 0;
+      border-radius: 999px;
+      color: var(--muted);
+      background: transparent;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .subnav-button.active { color: var(--surface); background: var(--fg); }
+    .subview { display: none; }
+    .subview.active { display: block; animation: view-in 180ms ease both; }
+    .review-letter {
+      padding: clamp(26px, 4vw, 46px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+    }
+    .letter-number { color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; }
+    .review-letter h2 {
+      max-width: 22ch;
+      margin-top: 15px;
+      font-family: var(--font-display);
+      font-size: clamp(29px, 3vw, 42px);
+      font-weight: 500;
+      line-height: 1.35;
+    }
+    .letter-body {
+      max-width: 710px;
+      margin-top: 25px;
+      color: color-mix(in oklch, var(--fg) 85%, var(--muted));
+      font-family: var(--font-display);
+      font-size: 18px;
+      line-height: 1.9;
+    }
+    .review-pattern {
+      padding: 26px;
+      border: 1px solid var(--border);
+      border-top: 3px solid var(--accent);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .pattern-question {
+      margin-top: 18px;
+      font-family: var(--font-display);
+      font-size: 24px;
+      line-height: 1.48;
+    }
+    .pattern-evidence {
+      margin-top: 20px;
+      padding: 16px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .pattern-evidence-row {
+      display: grid;
+      grid-template-columns: 85px 1fr;
+      gap: 12px;
+      padding: 8px 0;
+      font-size: 12px;
+    }
+    .review-progress {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 18px;
+    }
+    .review-progress i { height: 3px; flex: 1; background: var(--border); }
+    .review-progress i.done { background: var(--fg); }
+    .experiment-card {
+      margin-top: 22px;
+      padding: 22px;
+      border: 1px solid color-mix(in oklch, var(--accent) 24%, var(--border));
+      border-radius: var(--radius);
+      background: var(--accent-soft);
+    }
+    .experiment-card h3 { margin-top: 9px; font-family: var(--font-display); font-size: 20px; }
+    .decision-list { border-top: 1px solid var(--fg); }
+    .decision-row {
+      display: grid;
+      grid-template-columns: 115px minmax(0, 1fr) 170px auto;
+      gap: 18px;
+      align-items: center;
+      padding: 19px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .decision-title { font-family: var(--font-display); font-size: 18px; }
+    .decision-context { margin-top: 3px; color: var(--muted); font-size: 11px; }
+    .decision-bound { color: var(--muted); font-size: 11px; }
+    .charter-sheet {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(270px, .5fr);
+      gap: 34px;
+      padding: clamp(28px, 4vw, 48px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+    }
+    .charter-manifesto {
+      margin-top: 18px;
+      font-family: var(--font-display);
+      font-size: clamp(27px, 3vw, 39px);
+      line-height: 1.5;
+    }
+    .principle-list { margin-top: 30px; border-top: 1px solid var(--fg); }
+    .principle-row {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 14px;
+      padding: 17px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .principle-row .mono { color: var(--muted); font-size: 10px; }
+    .charter-side { padding-left: 24px; border-left: 1px solid var(--border); }
+    .charter-side-item { padding: 13px 0; border-bottom: 1px solid var(--border); }
+    .charter-side-item span { display: block; color: var(--muted); font-size: 10px; }
+    .charter-side-item strong { display: block; margin-top: 4px; font-size: 13px; }
+
+    /* Review queue */
+    .filter-row { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 22px; }
+    .review-queue { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, .7fr); gap: 24px; }
+    .understanding-card {
+      padding: 28px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .understanding-card + .understanding-card { margin-top: 16px; }
+    .understanding-text {
+      max-width: 25ch;
+      margin-top: 18px;
+      font-family: var(--font-display);
+      font-size: clamp(25px, 2.5vw, 35px);
+      line-height: 1.45;
+    }
+    .understanding-why {
+      margin-top: 20px;
+      padding: 17px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .understanding-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 20px; }
+    .conflict-card {
+      padding: 25px;
+      border: 1px solid var(--border);
+      border-top: 3px double var(--accent);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .conflict-side {
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .conflict-side p { margin-top: 6px; font-family: var(--font-display); font-size: 18px; line-height: 1.55; }
+    .review-guide {
+      margin-top: 16px;
+      padding: 20px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    /* Sources */
+    .drop-zone {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 24px;
+      padding: 25px 28px;
+      border: 1px dashed color-mix(in oklch, var(--fg) 42%, var(--border));
+      border-radius: var(--radius);
+      background: color-mix(in oklch, var(--surface) 58%, var(--bg));
+    }
+    .drop-zone strong { display: block; font-family: var(--font-display); font-size: 19px; }
+    .drop-zone span { display: block; color: var(--muted); font-size: 11px; }
+    .source-table { width: 100%; border-collapse: collapse; }
+    .source-table th {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--fg);
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 500;
+      letter-spacing: .08em;
+      text-align: left;
+      text-transform: uppercase;
+    }
+    .source-table td {
+      padding: 16px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+      font-size: 12px;
+    }
+    .source-table tr:hover td { background: var(--ink-soft); }
+    .source-name { display: flex; align-items: center; gap: 11px; }
+    .file-mark {
+      width: 32px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--surface);
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 8px;
+    }
+    .source-name strong { display: block; font-size: 12px; }
+    .source-name span { display: block; color: var(--muted); font-size: 9px; }
+    .local-seal {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--fg);
+      font-size: 10px;
+    }
+    .local-seal::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--fg);
+      border-radius: 2px;
+    }
+    .progress-line {
+      width: 90px;
+      height: 3px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--border);
+    }
+    .progress-line span { display: block; height: 100%; background: var(--fg); }
+    .source-note {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 25px;
+      border: 1px solid var(--border);
+      background: var(--border);
+    }
+    .source-note-cell { padding: 18px; background: var(--surface); }
+    .source-note-cell strong { display: block; font-family: var(--font-display); font-size: 17px; }
+    .source-note-cell span { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+
+    /* Privacy */
+    .privacy-promise {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(280px, .55fr);
+      gap: 30px;
+      padding: 30px;
+      border-radius: var(--radius-lg);
+      background: var(--fg);
+      color: var(--surface);
+    }
+    .privacy-promise h2 {
+      font-family: var(--font-display);
+      font-size: clamp(30px, 3vw, 42px);
+      line-height: 1.3;
+    }
+    .privacy-promise p { margin-top: 14px; max-width: 67ch; color: color-mix(in oklch, var(--surface) 66%, transparent); font-size: 13px; }
+    .privacy-zero {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding-left: 25px;
+      border-left: 1px solid color-mix(in oklch, var(--surface) 17%, transparent);
+    }
+    .privacy-zero strong { font-family: var(--font-display); font-size: 56px; line-height: 1; }
+    .privacy-zero span { color: color-mix(in oklch, var(--surface) 54%, transparent); font-size: 11px; }
+    .privacy-tabs { margin-top: 28px; }
+    .ledger-list { border-top: 1px solid var(--fg); }
+    .ledger-row {
+      display: grid;
+      grid-template-columns: 95px minmax(0, 1fr) 150px 92px auto;
+      gap: 18px;
+      align-items: center;
+      padding: 17px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .ledger-purpose strong { display: block; font-size: 13px; }
+    .ledger-purpose span { display: block; color: var(--muted); font-size: 10px; }
+    .permission-card {
+      padding: 22px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .permission-card h3 { font-family: var(--font-display); font-size: 19px; }
+    .permission-scope { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 15px; }
+    .device-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .device-copy strong { display: block; font-size: 13px; }
+    .device-copy span { display: block; color: var(--muted); font-size: 10px; }
+    .danger-zone {
+      margin-top: 28px;
+      padding-top: 25px;
+      border-top: 1px solid color-mix(in oklch, var(--accent) 35%, var(--border));
+    }
+
+    /* Modals, drawers, toast */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: color-mix(in oklch, var(--fg) 65%, transparent);
+      backdrop-filter: blur(5px);
+    }
+    .overlay.open { display: flex; animation: overlay-in 160ms ease both; }
+    @keyframes overlay-in { from { opacity: 0; } to { opacity: 1; } }
+    .modal {
+      width: min(680px, 100%);
+      max-height: min(840px, calc(100vh - 48px));
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      animation: modal-in 190ms ease both;
+    }
+    .modal.wide { width: min(920px, 100%); }
+    @keyframes modal-in { from { transform: translateY(10px) scale(.99); opacity: 0; } to { transform: none; opacity: 1; } }
+    .modal-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      padding: 22px 25px 18px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in oklch, var(--surface) 93%, transparent);
+      backdrop-filter: blur(10px);
+    }
+    .modal-head h2 { font-family: var(--font-display); font-size: 23px; }
+    .modal-head p { margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .modal-body { padding: 25px; }
+    .modal-foot {
+      position: sticky;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 9px;
+      padding: 16px 25px;
+      border-top: 1px solid var(--border);
+      background: color-mix(in oklch, var(--surface) 93%, transparent);
+      backdrop-filter: blur(10px);
+    }
+    .close-button {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      background: transparent;
+      cursor: pointer;
+    }
+    .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 17px; }
+    .field label { color: var(--muted); font-size: 11px; }
+    .input, .textarea, .select {
+      width: 100%;
+      padding: 11px 13px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+      color: var(--fg);
+      outline: 0;
+    }
+    .input:focus, .textarea:focus, .select:focus { border-color: var(--fg); }
+    .textarea { min-height: 110px; resize: vertical; line-height: 1.6; }
+    .option-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .option-card {
+      min-height: 90px;
+      padding: 15px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .option-card:hover, .option-card.selected { border-color: var(--fg); background: var(--ink-soft); }
+    .option-card strong { display: block; font-size: 13px; }
+    .option-card span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; }
+    .context-fragment {
+      padding: 15px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .context-fragment p { margin-top: 7px; font-family: var(--font-display); font-size: 15px; line-height: 1.65; }
+
+    .onboarding-modal { width: min(980px, 100%); }
+    .onboarding-layout {
+      min-height: 610px;
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr);
+    }
+    .onboarding-rail {
+      padding: 28px 24px;
+      background: var(--fg);
+      color: var(--surface);
+    }
+    .onboarding-brand { font-family: var(--font-display); font-size: 23px; }
+    .onboarding-steps { margin-top: 42px; }
+    .onboarding-step-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 0;
+      color: color-mix(in oklch, var(--surface) 43%, transparent);
+      font-size: 11px;
+    }
+    .onboarding-step-label.active { color: var(--surface); }
+    .onboarding-step-label i {
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-style: normal;
+      font-family: var(--font-mono);
+      font-size: 8px;
+    }
+    .onboarding-content {
+      display: flex;
+      flex-direction: column;
+      padding: 38px 42px 28px;
+      background: var(--surface);
+    }
+    .onboarding-screen { display: none; }
+    .onboarding-screen.active { display: block; animation: view-in 180ms ease both; }
+    .onboarding-screen h2 {
+      max-width: 20ch;
+      font-family: var(--font-display);
+      font-size: clamp(30px, 3vw, 43px);
+      font-weight: 500;
+      line-height: 1.28;
+    }
+    .onboarding-screen .lead { margin-top: 15px; font-size: 15px; }
+    .boundary-diagram {
+      display: grid;
+      grid-template-columns: 1fr 40px 1fr 40px 1fr;
+      gap: 6px;
+      align-items: center;
+      margin-top: 30px;
+    }
+    .boundary-box {
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      text-align: center;
+    }
+    .boundary-box strong { font-family: var(--font-display); font-size: 16px; }
+    .boundary-box span { margin-top: 5px; color: var(--muted); font-size: 9px; }
+    .boundary-arrow { color: var(--muted); text-align: center; }
+    .first-insight {
+      margin-top: 26px;
+      padding: 24px;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 var(--radius) var(--radius) 0;
+      background: var(--bg);
+    }
+    .first-insight p { margin-top: 11px; font-family: var(--font-display); font-size: 20px; line-height: 1.6; }
+    .onboarding-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: auto;
+      padding-top: 28px;
+    }
+
+    .toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 140;
+      min-width: 280px;
+      max-width: 420px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 15px 17px;
+      border: 1px solid color-mix(in oklch, var(--surface) 18%, transparent);
+      border-radius: 12px;
+      background: var(--fg);
+      color: var(--surface);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+    .toast.show { opacity: 1; transform: none; }
+    .toast-mark {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 1px solid color-mix(in oklch, var(--surface) 36%, transparent);
+      border-radius: 50%;
+      font-size: 10px;
+    }
+    .toast strong { display: block; font-size: 12px; }
+    .toast span { display: block; color: color-mix(in oklch, var(--surface) 60%, transparent); font-size: 10px; }
+
+    .mobile-brand { display: none; }
+
+    @media (max-width: 1180px) {
+      :root { --sidebar: 86px; }
+      .brand { justify-content: center; padding-inline: 0; }
+      .brand-word, .profile-copy, .profile-chip, .nav-label, .nav-text, .box-status { display: none; }
+      .main-nav { align-items: center; }
+      .nav-item { width: 48px; justify-content: center; padding-inline: 0; position: relative; }
+      .nav-count { position: absolute; right: -3px; top: 2px; min-width: 16px; height: 16px; padding: 0 4px; }
+      .capture-button { width: 48px; height: 48px; padding: 0; margin-inline: auto; }
+      .capture-button span { display: none; }
+      .today-hero { grid-template-columns: 1fr; }
+      .today-system { padding-left: 0; border-left: 0; }
+      .grid-7-5, .self-layout { grid-template-columns: 1fr; }
+      .ask-workspace { grid-template-columns: minmax(0, 1fr) 320px; }
+    }
+
+    @media (max-width: 920px) {
+      .grid-2, .grid-3, .grid-7-5, .grid-8-4, .today-lower, .charter-sheet, .privacy-promise, .review-queue {
+        grid-template-columns: 1fr;
+      }
+      .ask-workspace { height: auto; min-height: 0; grid-template-columns: 1fr; }
+      .thread { min-height: 600px; }
+      .evidence-panel { border-left: 0; border-top: 1px solid var(--border); max-height: 520px; }
+      .charter-side { padding-left: 0; padding-top: 20px; border-left: 0; border-top: 1px solid var(--border); }
+      .decision-row { grid-template-columns: 92px minmax(0, 1fr) auto; }
+      .decision-bound { display: none; }
+      .ledger-row { grid-template-columns: 80px minmax(0, 1fr) auto; }
+      .ledger-row > :nth-child(3), .ledger-row > :nth-child(4) { display: none; }
+      .source-table th:nth-child(3), .source-table td:nth-child(3), .source-table th:nth-child(4), .source-table td:nth-child(4) { display: none; }
+      .onboarding-layout { grid-template-columns: 1fr; }
+      .onboarding-rail { display: none; }
+    }
+
+    @media (max-width: 720px) {
+      :root { --gutter: 18px; }
+      .app-shell { display: block; }
+      .sidebar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        top: auto;
+        bottom: 0;
+        z-index: 80;
+        width: 100%;
+        height: 69px;
+        padding: 7px 10px calc(7px + env(safe-area-inset-bottom));
+        overflow-x: auto;
+        flex-direction: row;
+        align-items: center;
+      }
+      .brand, .sidebar-spacer, .capture-button { display: none; }
+      .main-nav { width: 100%; min-width: 560px; flex-direction: row; justify-content: space-between; }
+      .nav-item { width: auto; min-width: 66px; height: 52px; flex-direction: column; gap: 2px; border-radius: 8px; }
+      .nav-text { display: block; flex: 0; font-size: 9px; }
+      .nav-icon { width: 17px; height: 17px; }
+      .content { padding-top: 25px; padding-bottom: 110px; }
+      .topbar { min-height: 58px; }
+      .topbar-title, .page-kicker, .prototype-pill { display: none; }
+      .mobile-brand { display: block; font-family: var(--font-display); font-size: 19px; }
+      .page-head { align-items: flex-start; flex-direction: column; }
+      .today-intro { font-size: 38px; }
+      .focus-card, .mentor-card { min-height: 380px; }
+      .task-row { grid-template-columns: 72px minmax(0, 1fr) auto; }
+      .entity-strip, .source-note { grid-template-columns: repeat(2, 1fr); }
+      .self-map { min-height: 460px; }
+      .self-map::after { width: 360px; height: 360px; }
+      .orbit-node { min-width: 72px; padding: 8px; }
+      .orbit-node strong { font-size: 13px; }
+      .source-table th:nth-child(2), .source-table td:nth-child(2) { display: none; }
+      .source-table td { padding-inline: 6px; }
+      .drop-zone { align-items: flex-start; flex-direction: column; }
+      .onboarding-content { padding: 28px 22px 22px; }
+      .boundary-diagram { grid-template-columns: 1fr; }
+      .boundary-arrow { transform: rotate(90deg); }
+      .option-grid { grid-template-columns: 1fr; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="知君主导航">
+      <div class="brand">
+        <span class="brand-seal" aria-hidden="true">知</span>
+        <span class="brand-word">知君<span class="brand-sub">Personal Ontology</span></span>
+      </div>
+
+      <div class="profile-chip">
+        <span class="profile-avatar">林</span>
+        <span class="profile-copy">
+          <span class="profile-name">林致远</span>
+          <span class="profile-meta">示例档案 · 本体 v3</span>
+        </span>
+      </div>
+
+      <span class="nav-label">与你有关</span>
+      <nav class="main-nav">
+        <button class="nav-item active" data-nav="today" aria-current="page">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
+          <span class="nav-text">今日</span>
+        </button>
+        <button class="nav-item" data-nav="ask">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 6.5h14v9H9l-4 3v-12Z"/><path d="M9 10h6M9 13h4"/></svg>
+          <span class="nav-text">问知君</span>
+        </button>
+        <button class="nav-item" data-nav="self">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3"/><path d="M5.5 20c.7-4 2.8-6 6.5-6s5.8 2 6.5 6"/><circle cx="12" cy="12" r="9"/></svg>
+          <span class="nav-text">我的本体</span>
+        </button>
+        <button class="nav-item" data-nav="growth">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="m5 9 7-4 7 7"/></svg>
+          <span class="nav-text">成长</span>
+        </button>
+        <button class="nav-item" data-nav="review">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 4h12v16H6z"/><path d="M9 9h6M9 13h6M9 17h3"/></svg>
+          <span class="nav-text">待确认</span>
+          <span class="nav-count" id="review-count">4</span>
+        </button>
+        <button class="nav-item" data-nav="sources">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 12h8M8 15h5"/></svg>
+          <span class="nav-text">来源</span>
+        </button>
+        <button class="nav-item" data-nav="privacy">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3 5 6v5c0 4.5 2.7 7.8 7 10 4.3-2.2 7-5.5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg>
+          <span class="nav-text">隐私与设备</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      <button class="capture-button" data-open-modal="capture">
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"><path d="M12 5v14M5 12h14"/></svg>
+        <span>记录此刻</span>
+      </button>
+      <div class="box-status">
+        <div class="box-status-line"><span class="status-dot"></span><span>私人记忆盒子运行正常</span></div>
+        <div>原件留在盒内 · 云上原件 0</div>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <span class="mobile-brand">知君</span>
+          <div>
+            <div class="page-kicker">Zhijun · Personal Ontology</div>
+            <div class="topbar-title" id="topbar-title">今日</div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="prototype-pill">虚构示例 · 不连接真实数据</span>
+          <button class="btn btn-ghost" data-open-modal="onboarding">重看首次建档</button>
+          <button class="btn btn-icon btn-secondary" aria-label="全局搜索" data-toast="全局搜索将在下一版原型中展示">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="view active" id="view-today" data-view="today" data-od-id="today">
+          <div class="today-hero">
+            <div>
+              <div class="today-date">2026 年 9 月 1 日 · 星期二 · 上海</div>
+              <h1 class="today-intro">早上好，致远。今天值得你亲自判断的，<em>只有一件事。</em></h1>
+            </div>
+            <div class="today-system">
+              <div class="row"><span class="status-dot" style="background: var(--fg);"></span><strong>你的知君已准备好</strong></div>
+              <p>昨夜的资料已在盒内完成整理。发现 2 项新理解，其中 1 项值得你确认。</p>
+              <button class="btn btn-ghost" data-nav-jump="sources">查看本地处理状态 →</button>
+            </div>
+          </div>
+
+          <div class="grid-7-5">
+            <article class="focus-card">
+              <div class="focus-top">
+                <div class="eyebrow">今日的一步 · 判断将在明日到期</div>
+                <div class="meta" style="color: color-mix(in oklch, var(--surface) 55%, transparent);">远川资本 · 战略投资条款</div>
+                <h2 class="focus-title">是否接受带有一票否决权的投资条款？</h2>
+                <p class="focus-context">你已经确认增长资金有必要，但“控制权是否可逆”仍未被写进判断。知君找到了两次相似合作，以及一条与你当前章程直接相关的原则。</p>
+                <div class="focus-tags">
+                  <span class="tag">2 次相似判断</span>
+                  <span class="tag">4 段可核对依据</span>
+                  <span class="tag">章程 v3</span>
+                </div>
+              </div>
+              <div class="focus-actions">
+                <button class="btn btn-primary" data-nav-jump="ask">和知君想清楚</button>
+                <button class="btn btn-secondary" data-open-modal="decision">打开判断记录</button>
+              </div>
+            </article>
+
+            <aside class="mentor-card">
+              <div class="row-between">
+                <span class="type-label hypothesis">待验证观察</span>
+                <span class="meta">良师模式 · 可关闭</span>
+              </div>
+              <div class="mentor-mark">“</div>
+              <p class="mentor-copy">你过去并不排斥长期合作。真正让你后悔的，往往是没有提前说清楚如何退出。</p>
+              <p class="mentor-reason">这是根据 2022 年云岫并购、2024 年联营项目和你在章程中的“可逆性原则”形成的推测。另一个可能解释是：你只是在为这次谈判争取时间。</p>
+              <div class="mentor-actions">
+                <button class="btn btn-ghost" data-nav-jump="ask">为什么这样说</button>
+                <button class="btn btn-ghost" data-toast="已记下：这次可能不同。知君不会把观察当作事实。">这次不一样</button>
+                <button class="btn btn-ghost" data-toast="已延后到今晚 20:30，不会重复打扰。">今晚再提醒</button>
+              </div>
+            </aside>
+          </div>
+
+          <div class="today-lower">
+            <div>
+              <div class="section-head">
+                <h2>接下来</h2>
+                <span class="meta">最多展示 3 项</span>
+              </div>
+              <div class="task-list">
+                <article class="task-row">
+                  <div class="task-kind">等待结果</div>
+                  <div>
+                    <div class="task-title">COO 候选人试用期判断</div>
+                    <div class="task-note">你预期的“跨团队推进能力”已有结果，可以开始复盘。</div>
+                  </div>
+                  <button class="task-arrow" aria-label="开始复盘" data-growth-tab="review">→</button>
+                </article>
+                <article class="task-row">
+                  <div class="task-kind">待你确认</div>
+                  <div>
+                    <div class="task-title">“重要合作应先明确退出机制”</div>
+                    <div class="task-note">来自两个时间点的共同线索；确认后才会进入你的本体。</div>
+                  </div>
+                  <button class="task-arrow" aria-label="前往确认" data-nav-jump="review">→</button>
+                </article>
+                <article class="task-row">
+                  <div class="task-kind">承诺到期</div>
+                  <div>
+                    <div class="task-title">给林岚发送新加坡信托材料</div>
+                    <div class="task-note">12 天前在晚餐记录中明确答应，目前没有完成记录。</div>
+                  </div>
+                  <button class="task-arrow" aria-label="查看关系上下文" data-toast="关系详情将在下一轮原型独立成页；相关上下文已在我的本体中保留。">→</button>
+                </article>
+              </div>
+            </div>
+
+            <aside class="charter-quote">
+              <span class="type-label aspiration">理想目标 · 章程 v3</span>
+              <blockquote>做一个能够长期合作，也始终保有独立判断的人。</blockquote>
+              <footer>
+                <div>本阶段复审：2026 年 10 月 1 日</div>
+                <button class="btn btn-ghost" style="margin-top: 9px;" data-growth-tab="charter">查看我的人生章程 →</button>
+              </footer>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-ask" data-view="ask" data-od-id="ask-zhijun">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <p class="eyebrow">共同思考桌</p>
+              <h1 class="page-title">问知君</h1>
+              <p class="lead">它会记得你的过去，但不会用过去定义你。重要回答始终可以回到出处。</p>
+            </div>
+            <button class="btn btn-secondary" data-open-modal="decision">形成一条判断</button>
+          </div>
+
+          <div class="ask-workspace">
+            <div class="conversation">
+              <div class="conversation-head">
+                <div class="conversation-topic">
+                  <strong>远川资本条款 · 控制权与可逆性</strong>
+                  <span>本议题不会自动写入长期本体</span>
+                </div>
+                <div class="mode-switch" aria-label="知君回应方式">
+                  <button class="active" data-mode="mirror">镜子</button>
+                  <button data-mode="mentor">良师</button>
+                  <button data-mode="listen">只听</button>
+                </div>
+              </div>
+
+              <div class="thread" id="chat-thread">
+                <div class="user-message">我过去在引入外部股东时，最容易忽略什么？这次远川的条款值得接受吗？</div>
+
+                <article class="assistant-message">
+                  <div class="assistant-byline">
+                    <span class="mini-seal">知</span>
+                    <div><strong>知君</strong><div class="meta">依据充分 · 3 份来源 · 章程 v3</div></div>
+                  </div>
+                  <div class="assistant-content">
+                    <p class="assistant-lead">我能确认的是：你过去并不是因为引入资本本身后悔，而是两次都在关系确定后，才补谈退出和否决机制。</p>
+
+                    <div class="answer-block">
+                      <div class="answer-label"><span class="type-label confirmed">已确认事实</span></div>
+                      <p>在 2022 年云岫项目中，你接受了“先合作、后补治理条款”，六个月后花了更多精力重新划定董事会权限。<button class="citation" data-evidence="1" aria-label="查看依据 1">1</button> 2024 年的联营复盘里，你亲自写下“关系不是治理机制的替代品”。<button class="citation" data-evidence="2" aria-label="查看依据 2">2</button></p>
+                    </div>
+
+                    <div class="answer-block">
+                      <div class="answer-label"><span class="type-label hypothesis">另一种可能解释</span></div>
+                      <p>这一次你迟迟没有答复，也可能不是控制权焦虑，而是在等待远川主动提高估值。目前的资料无法把两者区分开。</p>
+                    </div>
+
+                    <div class="answer-block">
+                      <div class="answer-label"><span class="type-label declared">我想向你确认</span></div>
+                      <p>如果估值保持不变，但否决权改为仅覆盖增发和出售，你会更愿意接受吗？这个答案能帮助你分清：你真正守护的是经济利益，还是行动自主。</p>
+                    </div>
+
+                    <div class="answer-block">
+                      <div class="answer-label"><span class="type-label suggestion">可选小行动</span></div>
+                      <p>先不决定“接受或拒绝”，只拟一页你愿意承诺的权利边界，明天下午与对方逐条确认。这一步可逆，也能暴露真正分歧。</p>
+                    </div>
+
+                    <div class="assistant-actions">
+                      <button class="btn btn-ghost" data-evidence="all">追溯全部依据</button>
+                      <button class="btn btn-ghost" data-toast="知君将在下一轮回答中站在接受条款的一方，主动寻找反例。">站在反方再说一次</button>
+                      <button class="btn btn-ghost" data-open-modal="decision">形成判断记录</button>
+                      <button class="btn btn-ghost" data-open-modal="correction">纠正这段理解</button>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <div class="ask-composer">
+                <div class="composer-box">
+                  <textarea id="ask-input" aria-label="向知君提问" placeholder="把你正在判断的一件事交给我……"></textarea>
+                  <button class="btn btn-primary" id="ask-send">发送</button>
+                </div>
+                <div class="composer-meta">
+                  <div class="composer-shortcuts">
+                    <button data-fill-prompt="把这件事拆成我真正需要做的三个判断。">帮我判断</button>
+                    <button data-fill-prompt="先不要给建议，陪我把背景梳理完整。">陪我梳理</button>
+                    <button data-fill-prompt="找一个和这次最相似的历史判断。">找相似经历</button>
+                  </div>
+                  <span>云端回答前会先展示必要片段</span>
+                </div>
+              </div>
+            </div>
+
+            <aside class="evidence-panel">
+              <div class="evidence-head">
+                <div class="row-between">
+                  <strong>这段回答如何形成</strong>
+                  <span class="status-label">原件均在盒内</span>
+                </div>
+                <div class="panel-tabs">
+                  <button class="panel-tab active" data-panel-tab="evidence">依据</button>
+                  <button class="panel-tab" data-panel-tab="egress">本次出盒</button>
+                </div>
+              </div>
+              <div class="panel-body">
+                <div class="panel-pane active" data-panel-pane="evidence">
+                  <article class="evidence-item" data-evidence-item="1">
+                    <span class="evidence-index">01</span>
+                    <div class="evidence-source">云岫项目董事会复盘</div>
+                    <div class="evidence-locator">PDF · 第 8 页 · 第 3 段 · 2022-11-18</div>
+                    <p class="evidence-quote">“当时为了尽快把关系定下来，把否决事项留到了合作之后再谈。”</p>
+                    <div class="integrity-line">✓ 原件版本一致 · 已由你确认</div>
+                  </article>
+                  <article class="evidence-item" data-evidence-item="2">
+                    <span class="evidence-index">02</span>
+                    <div class="evidence-source">联营项目语音复盘</div>
+                    <div class="evidence-locator">M4A · 18:42–19:16 · 2024-06-03</div>
+                    <p class="evidence-quote">“关系不是治理机制的替代品，我不该因为信任就省掉退出设计。”</p>
+                    <div class="integrity-line">✓ 本地转写 · 用户原话</div>
+                  </article>
+                  <article class="evidence-item" data-evidence-item="3">
+                    <span class="evidence-index">03</span>
+                    <div class="evidence-source">人生章程 v3</div>
+                    <div class="evidence-locator">用户确认 · 原则 02 · 2026-08-14</div>
+                    <p class="evidence-quote">“重要承诺首先应当可逆；不可逆时，必须明确我愿意失去什么。”</p>
+                    <div class="integrity-line">✓ 当前有效章程版本</div>
+                  </article>
+                </div>
+
+                <div class="panel-pane" data-panel-pane="egress">
+                  <span class="type-label confirmed">调用成功 · 已有回执</span>
+                  <div class="receipt-summary">
+                    <div class="receipt-cell"><span class="meta">发送原件</span><strong class="mono">0</strong></div>
+                    <div class="receipt-cell"><span class="meta">必要片段</span><strong class="mono">3</strong></div>
+                    <div class="receipt-cell"><span class="meta">敏感上限</span><strong style="font-size: 16px;">私密</strong></div>
+                    <div class="receipt-cell"><span class="meta">接收方</span><strong style="font-size: 16px;">云模型</strong></div>
+                  </div>
+                  <div class="receipt-flow">
+                    <div class="flow-step"><strong>盒内检索</strong><br>从已确认理解中选出相关内容</div>
+                    <div class="flow-step"><strong>最小片段</strong><br>问题与 3 段必要上下文，共 742 字</div>
+                    <div class="flow-step"><strong>一次授权</strong><br>仅用于“分析远川资本条款”</div>
+                    <div class="flow-step"><strong>回到盒内</strong><br>回答与回执已保存，授权已消费</div>
+                  </div>
+                  <button class="btn btn-secondary" style="width: 100%; margin-top: 20px;" data-open-modal="receipt">查看精确出盒回执</button>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-self" data-view="self" data-od-id="personal-ontology">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <p class="eyebrow">一个持续生长、由你治理的我</p>
+              <h1 class="page-title">这是知君目前理解的你，<br>不是对你的定义。</h1>
+              <p class="lead">每一项理解都有层次、时间和依据。你可以确认、修正、撤回，也可以允许自己改变。</p>
+            </div>
+            <button class="btn btn-secondary" data-nav-jump="review">查看 4 项待确认理解</button>
+          </div>
+
+          <div class="layer-switcher" aria-label="四层自我">
+            <button class="layer-button active" data-self-layer="observed">现实中的我</button>
+            <button class="layer-button" data-self-layer="declared">我如何理解自己</button>
+            <button class="layer-button" data-self-layer="aspirational">我想成为谁</button>
+            <button class="layer-button" data-self-layer="hypothesis">知君待验证的观察</button>
+          </div>
+
+          <div class="self-layout">
+            <div class="self-map" aria-label="林致远个人本体关系年轮">
+              <div class="self-core"><span><strong>林致远</strong>当前的我 · 2026</span></div>
+              <button class="orbit-node n1" data-entity="创业者"><strong>创业者</strong><span>当前角色</span></button>
+              <button class="orbit-node n2" data-entity="林岚"><strong>林岚</strong><span>朋友 · 合作者</span></button>
+              <button class="orbit-node n3" data-entity="远川资本"><strong>远川资本</strong><span>当前项目</span></button>
+              <button class="orbit-node n4" data-entity="独立判断"><strong>独立判断</strong><span>长期原则</span></button>
+              <button class="orbit-node n5" data-entity="父亲"><strong>父亲</strong><span>重要角色</span></button>
+              <button class="orbit-node n6" data-entity="可逆性"><strong>可逆性</strong><span>判断方法</span></button>
+              <div class="map-legend"><span>内环 · 由你确认</span><span>外环 · 仍在变化</span></div>
+            </div>
+
+            <aside class="self-detail" id="self-detail">
+              <div class="row-between">
+                <span class="type-label confirmed" id="self-detail-label">已确认事实</span>
+                <span class="meta">最近重申 · 18 天前</span>
+              </div>
+              <h2 id="self-detail-title">你目前同时承担创业者、投资人和父亲三个重要角色。</h2>
+              <p class="self-detail-copy" id="self-detail-copy">这项理解来自你亲自确认的人生章程，以及过去六个月持续出现的日程、项目和自我记录。角色不是永久身份；下一次章程复审时可以调整。</p>
+              <div class="self-evidence">
+                <div class="self-evidence-row"><span class="evidence-index">01</span><span>人生章程 v3 · “当前最重要的三个角色”</span></div>
+                <div class="self-evidence-row"><span class="evidence-index">02</span><span>2026 年度自述 · 1 月 7 日语音记录</span></div>
+                <div class="self-evidence-row"><span class="evidence-index">03</span><span>近 180 天确认事件 · 角色上下文</span></div>
+              </div>
+              <div class="self-detail-actions">
+                <button class="btn btn-secondary" data-open-modal="correction">需要修正</button>
+                <button class="btn btn-ghost" data-toast="已标记为“需要在下次章程复审时重申”。">稍后重申</button>
+                <button class="btn btn-ghost" data-toast="撤回属于高影响治理动作，原型已展示确认入口。">撤回理解</button>
+              </div>
+            </aside>
+          </div>
+
+          <div class="entity-strip">
+            <div class="entity-cell"><strong>人物与关系</strong><span>共同经历、承诺与变化</span></div>
+            <div class="entity-cell"><strong>项目与组织</strong><span>角色、目标与历史判断</span></div>
+            <div class="entity-cell"><strong>事件与时间线</strong><span>发生过什么，依据在哪里</span></div>
+            <div class="entity-cell"><strong>原则与主题</strong><span>你确认过的判断方法</span></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-growth" data-view="growth" data-od-id="growth">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <p class="eyebrow">不是打卡，是看见自己的变化</p>
+              <h1 class="page-title">成长</h1>
+              <p class="lead">把判断留在当时，把结果带回现在。知君只帮助你看清，最终的解释和下一步仍由你决定。</p>
+            </div>
+            <button class="btn btn-primary" data-open-modal="decision">记录一项关键判断</button>
+          </div>
+
+          <div class="subnav" data-subnav-group="growth">
+            <button class="subnav-button active" data-subview-target="growth-review">本周复盘</button>
+            <button class="subnav-button" data-subview-target="growth-decisions">判断簿</button>
+            <button class="subnav-button" data-subview-target="growth-charter">人生章程</button>
+            <button class="subnav-button" data-subview-target="growth-experiments">行动实验</button>
+          </div>
+
+          <div class="subview active" id="growth-review" data-subview-group="growth">
+            <div class="grid-7-5">
+              <article class="review-letter">
+                <div class="letter-number">知君写给你的第 18 封周信 · 草稿</div>
+                <h2>这周真正重要的变化，不是你做完了多少事。</h2>
+                <div class="letter-body">
+                  <p>你在与陈致远的谈话里，第一次直接说出了合伙边界，没有再用“以后再讨论”维持表面舒适。</p>
+                  <p style="margin-top: 18px;">与此同时，远川条款和南岸投委会两个可逆判断，都在信息已经足够后继续等待。这不一定是拖延；也可能是你正在重新定义“独立”对现在的你意味着什么。</p>
+                </div>
+                <div class="row-between" style="margin-top: 28px; padding-top: 20px; border-top: 1px solid var(--border);">
+                  <span class="meta">周信只引用已确认事实；下面的模式仍待你确认</span>
+                  <button class="btn btn-secondary" data-toast="周信已暂存为复盘草稿，可随时继续。">保存草稿</button>
+                </div>
+              </article>
+
+              <aside class="review-pattern">
+                <div class="review-progress" aria-label="复盘进度 2/3"><i class="done"></i><i class="done"></i><i></i></div>
+                <div class="row-between">
+                  <span class="type-label hypothesis">模式候选 · 不进入正式回答</span>
+                  <span class="meta">2 / 3</span>
+                </div>
+                <p class="pattern-question">你是否在用“保护独立性”，延后本可以小步验证的合作？</p>
+                <div class="pattern-evidence">
+                  <div class="pattern-evidence-row"><span class="meta">观察</span><span>两项可逆判断在信息足够后继续等待</span></div>
+                  <div class="pattern-evidence-row"><span class="meta">其他解释</span><span>对方条款确实尚未完整，不是所有等待都源于你</span></div>
+                  <div class="pattern-evidence-row"><span class="meta">反例</span><span>你在陈致远合伙边界上当场做了清晰表达</span></div>
+                </div>
+                <div class="stack" style="gap: 8px; margin-top: 18px;">
+                  <button class="btn btn-primary" data-open-modal="review-complete">这值得我继续观察</button>
+                  <button class="btn btn-secondary" data-open-modal="correction">你忽略了关键背景</button>
+                  <button class="btn btn-ghost" data-toast="已设为不适用。该模式不会进入你的本体或后续建议。">这不适用</button>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="subview" id="growth-decisions" data-subview-group="growth">
+            <div class="section-head">
+              <div><h2>判断簿</h2><p class="subtle" style="font-size: 12px;">保留当时的理由，抵抗事后解释。</p></div>
+              <button class="btn btn-secondary" data-open-modal="decision">新建判断</button>
+            </div>
+            <div class="decision-list">
+              <article class="decision-row">
+                <span class="status-label">等待决定</span>
+                <div><div class="decision-title">是否接受远川资本的一票否决权</div><div class="decision-context">控制权 · 融资 · 章程 v3</div></div>
+                <div class="decision-bound">观察期限<br><span class="mono">2026-09-02</span></div>
+                <button class="btn btn-ghost" data-open-modal="decision">继续记录 →</button>
+              </article>
+              <article class="decision-row">
+                <span class="status-label">等待结果</span>
+                <div><div class="decision-title">聘任周牧担任 COO</div><div class="decision-context">人才 · 组织 · 章程 v2</div></div>
+                <div class="decision-bound">当时信心<br><span class="mono">72 / 100</span></div>
+                <button class="btn btn-ghost" data-open-modal="outcome">记录结果 →</button>
+              </article>
+              <article class="decision-row">
+                <span class="status-label">已复盘</span>
+                <div><div class="decision-title">退出云岫联合投资项目</div><div class="decision-context">合作 · 退出 · 章程 v2</div></div>
+                <div class="decision-bound">可复用原则<br>先设计退出</div>
+                <button class="btn btn-ghost" data-toast="已打开 2025 年 12 月的完整判断与复盘记录。">查看复盘 →</button>
+              </article>
+            </div>
+          </div>
+
+          <div class="subview" id="growth-charter" data-subview-group="growth">
+            <article class="charter-sheet">
+              <div>
+                <div class="row-between">
+                  <span class="type-label aspiration">人生章程 · 当前版本 v3</span>
+                  <span class="meta">由你确认 · 2026-08-14</span>
+                </div>
+                <p class="charter-manifesto">做一个能够长期合作、敢于表达边界，也始终保有独立判断的人。</p>
+                <div class="principle-list">
+                  <div class="principle-row"><span class="mono">01</span><span>不以短期增长交换长期信誉。</span></div>
+                  <div class="principle-row"><span class="mono">02</span><span>重要承诺首先应当可逆；不可逆时，明确我愿意失去什么。</span></div>
+                  <div class="principle-row"><span class="mono">03</span><span>关系值得珍惜，但不能替代清晰的治理机制。</span></div>
+                </div>
+              </div>
+              <aside class="charter-side">
+                <div class="charter-side-item"><span>当前重要角色</span><strong>创业者 · 投资人 · 父亲</strong></div>
+                <div class="charter-side-item"><span>AI 不替我决定</span><strong>家庭承诺、重大投资、公开立场</strong></div>
+                <div class="charter-side-item"><span>知君如何挑战我</span><strong>先问反例，再给可逆建议</strong></div>
+                <div class="charter-side-item"><span>静默领域</span><strong>医疗资料、家庭冲突</strong></div>
+                <div class="charter-side-item"><span>下次复审</span><strong>2026 年 10 月 1 日</strong></div>
+                <button class="btn btn-secondary" style="width: 100%; margin-top: 20px;" data-open-modal="charter">更新章程</button>
+                <button class="btn btn-ghost" style="width: 100%; margin-top: 6px;" data-toast="已展示 v1–v3 的不可变历史；历史建议仍指向当时版本。">查看历史版本</button>
+              </aside>
+            </article>
+          </div>
+
+          <div class="subview" id="growth-experiments" data-subview-group="growth">
+            <div class="grid-2">
+              <article class="card">
+                <div class="row-between"><span class="type-label suggestion">进行中 · 还剩 6 天</span><span class="meta">由你确认</span></div>
+                <h2 class="card-title" style="margin-top: 18px;">可逆判断的 24 小时小步行动</h2>
+                <p class="subtle" style="margin-top: 10px;">当把握达到 70% 且行动可逆时，在 24 小时内做一步真实验证，不要求一次完成决定。</p>
+                <div class="experiment-card">
+                  <span class="meta">本次观察</span>
+                  <h3>先把远川条款改成你愿意承诺的一页边界</h3>
+                  <button class="btn btn-primary" style="margin-top: 16px;" data-toast="已记录一步行动，将在明晚询问真实结果。">记录我已行动</button>
+                </div>
+              </article>
+              <article class="card">
+                <span class="type-label confirmed">已完成 · 形成原则候选</span>
+                <h2 class="card-title" style="margin-top: 18px;">在重要关系中直接说清边界</h2>
+                <p class="subtle" style="margin-top: 10px;">你在三次会谈中尝试先讲清不能接受的条件。两次让合作更快，一次发现双方并不适合。</p>
+                <button class="btn btn-secondary" style="margin-top: 18px;" data-nav-jump="review">决定是否形成长期原则</button>
+              </article>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-review" data-view="review" data-od-id="review-understandings">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <p class="eyebrow">你的最终解释权</p>
+              <h1 class="page-title">知君有 4 项理解，<br>需要听听你的意见。</h1>
+              <p class="lead">没有经过你的确认，它们不会成为“你是谁”，也不会提供给其他 Agent。</p>
+            </div>
+            <span class="status-label">今日建议处理不超过 5 项</span>
+          </div>
+
+          <div class="filter-row">
+            <button class="tag active" data-filter="all">全部 4</button>
+            <button class="tag" data-filter="new">新理解 2</button>
+            <button class="tag" data-filter="conflict">存在冲突 1</button>
+            <button class="tag" data-filter="hypothesis">系统推测 1</button>
+          </div>
+
+          <div class="review-queue">
+            <div id="review-primary-list">
+              <article class="understanding-card" data-review-card="u1">
+                <div class="row-between">
+                  <span class="type-label hypothesis">知君推测 · 尚未进入本体</span>
+                  <span class="meta">连接 2 个时间点</span>
+                </div>
+                <p class="understanding-text">在重要合作的早期，你倾向先建立信任，再讨论退出机制。</p>
+                <div class="understanding-why">
+                  <strong style="color: var(--fg);">为什么现在出现</strong>
+                  <p style="margin-top: 7px;">远川条款触发了与云岫并购和 2024 年联营项目相似的结构。知君也找到了一个反例：你与陈致远明确了合伙边界。</p>
+                  <button class="btn btn-ghost" style="margin-top: 6px;" data-nav-jump="ask">查看 4 段依据 →</button>
+                </div>
+                <div class="understanding-actions">
+                  <button class="btn btn-primary" data-review-action="confirm" data-review-target="u1">这很像我</button>
+                  <button class="btn btn-secondary" data-open-modal="correction">部分正确</button>
+                  <button class="btn btn-secondary" data-review-action="reject" data-review-target="u1">完全不对</button>
+                  <button class="btn btn-ghost" data-review-action="later" data-review-target="u1">稍后再判断</button>
+                </div>
+              </article>
+
+              <article class="understanding-card" data-review-card="u2">
+                <div class="row-between">
+                  <span class="type-label confirmed">现实观察 · 待你确认</span>
+                  <span class="meta">来自 3 份来源</span>
+                </div>
+                <p class="understanding-text">你已把“海外业务亲自审批”从日常职责交给了周牧。</p>
+                <div class="understanding-why">
+                  <strong style="color: var(--fg);">依据一致</strong>
+                  <p style="margin-top: 7px;">组织调整纪要、你的语音记录和 8 月权限表都指向同一变化。确认后，“当前角色”会更新，但不会改写过去。</p>
+                </div>
+                <div class="understanding-actions">
+                  <button class="btn btn-primary" data-review-action="confirm" data-review-target="u2">确认这项变化</button>
+                  <button class="btn btn-secondary" data-open-modal="correction">范围需要修正</button>
+                  <button class="btn btn-ghost" data-review-action="later" data-review-target="u2">暂不判断</button>
+                </div>
+              </article>
+            </div>
+
+            <aside>
+              <article class="conflict-card" data-review-card="u3">
+                <div class="row-between">
+                  <span class="type-label hypothesis">两项表达存在变化</span>
+                  <span class="meta">需要你解释</span>
+                </div>
+                <div class="conflict-side">
+                  <span class="meta">2023 · 你的明确表达</span>
+                  <p>“我不希望任何财务投资人进入董事会。”</p>
+                </div>
+                <div class="conflict-side">
+                  <span class="meta">2026 · 人生章程访谈</span>
+                  <p>“只要边界清楚，我愿意让资本参与治理。”</p>
+                </div>
+                <p class="subtle" style="margin-top: 16px; font-size: 12px;">知君不会替你判断哪一个“更真实”。这可能是原则变化，也可能是两种情境不同。</p>
+                <div class="understanding-actions">
+                  <button class="btn btn-primary" data-review-action="confirm" data-review-target="u3">这是我的变化</button>
+                  <button class="btn btn-secondary" data-open-modal="correction">两种情境不同</button>
+                </div>
+              </article>
+
+              <div class="review-guide">
+                <strong style="color: var(--fg);">确认之后会发生什么？</strong>
+                <p style="margin-top: 8px;">现实事实会进入可信回答；你的表达会保留为“你曾经这样说”；理想目标只用于与你的章程对照；系统推测仅在你确认后才可形成模式。</p>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-sources" data-view="sources" data-od-id="sources">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <p class="eyebrow">原件留在私人记忆盒子</p>
+              <h1 class="page-title">来源</h1>
+              <p class="lead">在这里看见资料如何被安全保存、在本地处理，并成为可以核对的依据。上传成功不等于已经理解。</p>
+            </div>
+            <button class="btn btn-secondary" data-toast="目录“董事会与融资”已设为仅本地监控；新文件会先进入待处理队列。">管理监控目录</button>
+          </div>
+
+          <div class="drop-zone" id="drop-zone">
+            <div>
+              <strong>把资料交给知君在盒内整理</strong>
+              <span>文件、录音、图片、聊天导出；任何处理失败都会明确显示。</span>
+            </div>
+            <div class="row">
+              <button class="btn btn-primary" id="source-upload-button">选择资料</button>
+              <button class="btn btn-secondary" data-open-modal="capture">直接记录</button>
+            </div>
+            <input id="source-file-input" type="file" multiple hidden />
+          </div>
+
+          <div style="overflow-x: auto;">
+            <table class="source-table">
+              <thead>
+                <tr>
+                  <th>来源</th>
+                  <th>本地处理</th>
+                  <th>可核对依据</th>
+                  <th>隐私</th>
+                  <th>更新时间</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="source-table-body">
+                <tr>
+                  <td><div class="source-name"><span class="file-mark">PDF</span><span><strong>远川资本 Term Sheet v4</strong><span>原件版本 4 · 1.8 MB</span></span></div></td>
+                  <td><span class="local-seal">已在盒内完成</span></td>
+                  <td>11 处 · 3 项理解待确认</td>
+                  <td><span class="status-label">敏感</span></td>
+                  <td class="mono">今天 08:21</td>
+                  <td><button class="btn btn-ghost" data-open-modal="source-detail">查看 →</button></td>
+                </tr>
+                <tr>
+                  <td><div class="source-name"><span class="file-mark">M4A</span><span><strong>与林岚晚餐录音</strong><span>原件版本 1 · 38:12</span></span></div></td>
+                  <td><span class="local-seal">转写已完成</span></td>
+                  <td>7 处 · 2 项理解待确认</td>
+                  <td><span class="status-label">私密</span></td>
+                  <td class="mono">昨天 22:08</td>
+                  <td><button class="btn btn-ghost" data-open-modal="source-detail">查看 →</button></td>
+                </tr>
+                <tr>
+                  <td><div class="source-name"><span class="file-mark">DOCX</span><span><strong>2026 组织职责调整</strong><span>原件版本 2 · 342 KB</span></span></div></td>
+                  <td><span class="local-seal">已在盒内完成</span></td>
+                  <td>9 处 · 1 项理解待确认</td>
+                  <td><span class="status-label">私密</span></td>
+                  <td class="mono">8 月 29 日</td>
+                  <td><button class="btn btn-ghost" data-open-modal="source-detail">查看 →</button></td>
+                </tr>
+                <tr>
+                  <td><div class="source-name"><span class="file-mark">ZIP</span><span><strong>项目群聊导出 · 8 月</strong><span>原件版本 1 · 28 MB</span></span></div></td>
+                  <td><div class="stack" style="gap: 5px;"><span style="font-size: 10px;">本地处理中 · 64%</span><span class="progress-line"><span style="width: 64%;"></span></span></div></td>
+                  <td>尚未形成理解</td>
+                  <td><span class="status-label">敏感</span></td>
+                  <td class="mono">今天 08:37</td>
+                  <td><button class="btn btn-ghost" data-toast="可以暂停、继续或取消本地处理；原件已安全保存。">管理 →</button></td>
+                </tr>
+                <tr>
+                  <td><div class="source-name"><span class="file-mark">XLSX</span><span><strong>海外项目收益模型</strong><span>原件版本 1 · 820 KB</span></span></div></td>
+                  <td><span class="status-label">处理失败</span></td>
+                  <td>未进入本体</td>
+                  <td><span class="status-label">仅盒内</span></td>
+                  <td class="mono">8 月 28 日</td>
+                  <td><button class="btn btn-ghost" data-toast="失败原因：加密工作表无法读取。可以输入密码后重试或保留原件。">查看原因 →</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="source-note">
+            <div class="source-note-cell"><strong>原件</strong><span>不可变版本保存在盒内；可以查看、替换、导出或删除。</span></div>
+            <div class="source-note-cell"><strong>依据</strong><span>页码、段落、表格或录音时间点；任何理解都能追溯。</span></div>
+            <div class="source-note-cell"><strong>理解</strong><span>只有经你确认，才进入个人本体和其他 Agent 上下文。</span></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-privacy" data-view="privacy" data-od-id="privacy-and-devices">
+          <div class="page-head">
+            <div class="page-head-copy">
+              <p class="eyebrow">边界不是一句口号</p>
+              <h1 class="page-title">隐私与设备</h1>
+              <p class="lead">你能看见每次模型调用用了什么、为什么使用、发给了谁，并随时收回后续访问。</p>
+            </div>
+            <button class="btn btn-secondary" data-open-modal="receipt">查看最近一次出盒回执</button>
+          </div>
+
+          <div class="privacy-promise">
+            <div>
+              <h2>原件始终留在你的私人记忆盒子里。</h2>
+              <p>当你选择云端模型时，知君可能发送回答当前问题所必需的上下文片段。云上没有你的原件，但必要片段可能出盒。发送前可预览，发送后有回执；限制级资料永不出盒。</p>
+            </div>
+            <div class="privacy-zero"><strong class="mono">0</strong><span>份原件曾被发送到云端</span></div>
+          </div>
+
+          <div class="subnav privacy-tabs" data-subnav-group="privacy">
+            <button class="subnav-button active" data-subview-target="privacy-ledger">出盒台账</button>
+            <button class="subnav-button" data-subview-target="privacy-agents">Agent 权限</button>
+            <button class="subnav-button" data-subview-target="privacy-devices">可信设备</button>
+            <button class="subnav-button" data-subview-target="privacy-data">导出与删除</button>
+          </div>
+
+          <div class="subview active" id="privacy-ledger" data-subview-group="privacy">
+            <div class="section-head">
+              <div><h2>最近的数据出盒</h2><p class="subtle" style="font-size: 12px;">以下均为原型示例台账。</p></div>
+              <span class="status-label">失败与状态未知也会记录</span>
+            </div>
+            <div class="ledger-list">
+              <article class="ledger-row">
+                <span class="mono">今天 09:18</span>
+                <div class="ledger-purpose"><strong>问知君 · 远川资本条款</strong><span>一次性授权 · 问题 + 3 段必要上下文</span></div>
+                <span>云模型 · 新加坡</span>
+                <span class="status-label">成功</span>
+                <button class="btn btn-ghost" data-open-modal="receipt">查看回执 →</button>
+              </article>
+              <article class="ledger-row">
+                <span class="mono">昨天 21:42</span>
+                <div class="ledger-purpose"><strong>知君 · 整理晚餐记录</strong><span>选择仅本地模型 · 未发生出盒</span></div>
+                <span>盒内模型</span>
+                <span class="status-label">本地</span>
+                <button class="btn btn-ghost" data-toast="该次任务完全在盒内处理，没有生成出盒授权或网络请求。">查看过程 →</button>
+              </article>
+              <article class="ledger-row">
+                <span class="mono">8 月 29 日</span>
+                <div class="ledger-purpose"><strong>万象 · 融资周报 Agent 试运行</strong><span>请求 2 项已确认原则；用户拒绝发送项目金额</span></div>
+                <span>云模型 · 境内</span>
+                <span class="status-label">已限制</span>
+                <button class="btn btn-ghost" data-toast="金额片段在发送前被策略阻止；台账保留了无正文的阻止证明。">查看原因 →</button>
+              </article>
+            </div>
+          </div>
+
+          <div class="subview" id="privacy-agents" data-subview-group="privacy">
+            <div class="grid-2">
+              <article class="permission-card">
+                <div class="row-between"><h3>万象 · 融资周报 Agent</h3><span class="status-label">只读 · 试运行</span></div>
+                <p class="subtle" style="margin-top: 10px; font-size: 12px;">用途：整理本周融资进展，并提示尚未闭环的沟通。</p>
+                <div class="permission-scope">
+                  <span class="tag">远川资本项目</span>
+                  <span class="tag">已确认判断原则</span>
+                  <span class="tag">本周公开日程</span>
+                </div>
+                <p class="meta" style="margin-top: 15px;">不可读取：家庭关系 · 财务原件 · 私人日记</p>
+                <div class="row" style="margin-top: 18px;">
+                  <button class="btn btn-secondary" data-toast="已打开该 Agent 的用途、范围、最近访问与每次 Context Pack。">查看每次访问</button>
+                  <button class="btn btn-danger" data-toast="已撤销后续访问。已发出的历史片段仍保留在台账中。">撤销权限</button>
+                </div>
+              </article>
+              <article class="permission-card">
+                <div class="row-between"><h3>会前准备 Agent</h3><span class="status-label">未启用</span></div>
+                <p class="subtle" style="margin-top: 10px; font-size: 12px;">拟请求：会面对象的共同经历、未闭环承诺和用户确认的沟通偏好。</p>
+                <div class="permission-scope">
+                  <span class="tag">指定人物</span>
+                  <span class="tag">最近 12 个月</span>
+                  <span class="tag">每次询问</span>
+                </div>
+                <button class="btn btn-secondary" style="margin-top: 18px;" data-toast="在启用前，知君会展示一个真实任务和最小上下文预览。">审核请求</button>
+              </article>
+            </div>
+          </div>
+
+          <div class="subview" id="privacy-devices" data-subview-group="privacy">
+            <article class="card">
+              <div class="section-head"><h2>可信设备</h2><span class="status-label">私人记忆盒子在线</span></div>
+              <div class="device-row"><div class="device-copy"><strong>这台 MacBook Pro</strong><span>本地直连 · 当前会话 · macOS</span></div><span class="status-label">正在使用</span></div>
+              <div class="device-row"><div class="device-copy"><strong>林致远的 iPhone</strong><span>受控局域网 · 最近连接：今天 08:02</span></div><button class="btn btn-ghost" data-toast="可以撤销此设备；离线待同步记录会保留到设备再次联网或被本地删除。">管理</button></div>
+              <div class="device-row"><div class="device-copy"><strong>旧办公室 iMac</strong><span>已撤销 · 2026-07-18</span></div><span class="status-label">无权访问</span></div>
+            </article>
+          </div>
+
+          <div class="subview" id="privacy-data" data-subview-group="privacy">
+            <div class="grid-2">
+              <article class="card">
+                <h2 class="card-title">把完整的自己带走</h2>
+                <p class="subtle" style="margin-top: 9px;">导出原件、已确认理解、治理历史、判断与成长记录，以及供其他 Agent 使用的可移植上下文。</p>
+                <button class="btn btn-primary" style="margin-top: 20px;" data-toast="已生成导出计划预览；真正执行前会再次确认范围、空间和恢复方式。">准备完整导出</button>
+              </article>
+              <article class="card">
+                <h2 class="card-title">备份与恢复</h2>
+                <p class="subtle" style="margin-top: 9px;">最近一次盒内备份校验：今天 03:12。恢复旧备份时，最新删除标记仍会优先生效。</p>
+                <button class="btn btn-secondary" style="margin-top: 20px;" data-toast="备份完整性正常；原型不会访问真实存储。">查看恢复能力</button>
+              </article>
+            </div>
+            <div class="danger-zone">
+              <h2 class="card-title">删除</h2>
+              <p class="subtle" style="margin-top: 7px;">删除来源会先展示受影响的理解、回答、索引和备份清理状态。不会用一句“删除成功”掩盖仍在进行的清理。</p>
+              <button class="btn btn-danger" style="margin-top: 15px;" data-open-modal="delete">查看删除流程</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="overlay" id="modal-capture" data-modal="capture" role="dialog" aria-modal="true" aria-labelledby="capture-title">
+    <div class="modal">
+      <div class="modal-head">
+        <div><h2 id="capture-title">记录此刻</h2><p>先把事情留下来。知君会在盒内整理，并把任何新理解交还给你确认。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="option-grid" style="margin-bottom: 20px;">
+          <button class="option-card selected" data-capture-type="text"><strong>一句话</strong><span>记录刚刚发生的事或一个念头</span></button>
+          <button class="option-card" data-capture-type="voice"><strong>语音</strong><span>录音留在盒内，完成后本地转写</span></button>
+          <button class="option-card" data-capture-type="photo"><strong>照片</strong><span>拍下白板、手记或现场资料</span></button>
+          <button class="option-card" data-capture-type="file"><strong>文件</strong><span>导入文档、聊天或会议材料</span></button>
+        </div>
+        <div class="field">
+          <label for="capture-text">发生了什么？</label>
+          <textarea class="textarea" id="capture-text" placeholder="例如：刚刚和远川谈完。我发现自己真正担心的不是估值，而是董事会否决权会让未来每一步都需要解释。"></textarea>
+        </div>
+        <div class="field">
+          <label>这段记录与什么有关？</label>
+          <div class="filter-row" style="margin: 0;">
+            <button class="tag active">一项判断</button>
+            <button class="tag">一个人</button>
+            <button class="tag">一个项目</button>
+            <button class="tag">只是记录</button>
+          </div>
+        </div>
+        <div class="row-between" style="padding-top: 15px; border-top: 1px solid var(--border);">
+          <span class="meta">默认：私密 · 原件仅保存在盒内</span>
+          <button class="btn btn-ghost" data-toast="隐私级别可以设为公开、私密、敏感或仅盒内。">调整隐私</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-close-modal>取消</button>
+        <button class="btn btn-primary" id="save-capture">安全保存并在盒内整理</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-decision" data-modal="decision" role="dialog" aria-modal="true" aria-labelledby="decision-title">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div><h2 id="decision-title">把这项判断留在当时</h2><p>知君可以帮助整理背景，但最终选择、理由和信心必须由你确认。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid-2">
+          <div class="field"><label for="decision-topic">判断主题</label><input class="input" id="decision-topic" value="是否接受远川资本的一票否决权" /></div>
+          <div class="field"><label for="decision-until">观察期限</label><input class="input mono" id="decision-until" value="2026-09-02 18:00" /></div>
+        </div>
+        <div class="field"><label for="decision-context">此刻你知道的背景与约束</label><textarea class="textarea" id="decision-context">公司需要增长资金；估值在可接受范围内；争议集中在董事会否决权和未来增发。当前条款没有明确退出机制。</textarea></div>
+        <div class="grid-2">
+          <div class="field"><label for="decision-choice">你目前倾向的选择</label><select class="select" id="decision-choice"><option>不直接接受，先提出边界版本</option><option>接受当前条款</option><option>拒绝本轮投资</option><option>尚未形成倾向</option></select></div>
+          <div class="field"><label for="decision-confidence">当前信心 · 68 / 100</label><input id="decision-confidence" type="range" min="0" max="100" value="68" style="width: 100%; accent-color: var(--accent);" /></div>
+        </div>
+        <div class="field"><label for="decision-reason">为什么这样判断？哪些假设最关键？</label><textarea class="textarea" id="decision-reason">关键假设：资金并非唯一来源；远川愿意调整治理边界；如果现在不说清楚，未来谈判成本会更高。</textarea></div>
+        <div class="grid-2">
+          <div class="field"><label for="decision-expected">你预期看到什么结果？</label><input class="input" id="decision-expected" value="对方愿意把否决事项缩小到增发与出售" /></div>
+          <div class="field"><label for="decision-action">下一步最小行动</label><input class="input" id="decision-action" value="明天下午前发出一页权利边界" /></div>
+        </div>
+        <div class="row-between" style="padding: 14px 0; border-top: 1px solid var(--border);">
+          <span class="meta">绑定依据：人生章程 v3 · 远川 Term Sheet v4 · 2 次相似判断</span>
+          <button class="btn btn-ghost" data-nav-jump="ask" data-close-modal>查看知君建议的历史依据 →</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-toast="判断草稿已保存在盒内，可以稍后继续。">保存草稿</button>
+        <button class="btn btn-primary" id="save-decision">确认并开始跟踪</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-correction" data-modal="correction" role="dialog" aria-modal="true" aria-labelledby="correction-title">
+    <div class="modal">
+      <div class="modal-head">
+        <div><h2 id="correction-title">纠正知君的理解</h2><p>纠正会影响后续回答和 Agent 上下文，但不会改写当时的原件。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>知君目前的理解</label><div class="card paper-panel" style="padding: 17px;"><p>在重要合作的早期，你倾向先建立信任，再讨论退出机制。</p></div></div>
+        <div class="field">
+          <label>哪一种更接近你的意思？</label>
+          <div class="option-grid">
+            <button class="option-card selected"><strong>部分正确</strong><span>保留核心，但需要补充范围或时间</span></button>
+            <button class="option-card"><strong>只是过去的我</strong><span>保留历史，不再用于描述现在</span></button>
+            <button class="option-card"><strong>情境不同</strong><span>两组依据不应该被合并解释</span></button>
+            <button class="option-card"><strong>完全错误</strong><span>拒绝这项理解，不再主动提醒</span></button>
+          </div>
+        </div>
+        <div class="field"><label for="correction-copy">你希望知君如何理解？</label><textarea class="textarea" id="correction-copy">我并不是先信任后治理。早期项目缺少谈判经验，但从 2025 年开始，我会在关系确定前明确退出边界。</textarea></div>
+        <p class="meta">提交后，旧理解将标记为“已被替代”，历史回答仍可审计，但不会再进入新的事实回答。</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-close-modal>取消</button>
+        <button class="btn btn-primary" id="save-correction">确认这次纠正</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-egress" data-modal="egress" role="dialog" aria-modal="true" aria-labelledby="egress-title">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div><h2 id="egress-title">发送前，先看清这次会出盒什么</h2><p>原件不会发送。以下问题与必要片段只用于本次回答，一次授权，用后失效。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid-3" style="margin-bottom: 22px;">
+          <div class="card" style="padding: 16px;"><span class="meta">接收方</span><strong style="display:block; margin-top:5px;">云端推理模型</strong><span class="subtle" style="font-size:10px;">Provider Profile v12</span></div>
+          <div class="card" style="padding: 16px;"><span class="meta">用途</span><strong style="display:block; margin-top:5px;">回答当前问题</strong><span class="subtle" style="font-size:10px;">不可用于其他 Agent</span></div>
+          <div class="card" style="padding: 16px;"><span class="meta">发送范围</span><strong style="display:block; margin-top:5px;">问题 + 3 段片段</strong><span class="subtle" style="font-size:10px;">原件 0 · 限制级 0</span></div>
+        </div>
+        <div class="context-fragment">
+          <span class="type-label declared">你的当前问题</span>
+          <p id="egress-question">我过去在引入外部股东时，最容易忽略什么？</p>
+        </div>
+        <div class="context-fragment">
+          <span class="type-label confirmed">必要片段 01 · 已确认事实</span>
+          <p>2022 年云岫项目中，治理条款在关系确定六个月后才补充。</p>
+          <span class="meta">来源：云岫项目董事会复盘 · 第 8 页 · 私密</span>
+        </div>
+        <div class="context-fragment">
+          <span class="type-label declared">必要片段 02 · 用户表达</span>
+          <p>“关系不是治理机制的替代品，我不该因为信任就省掉退出设计。”</p>
+          <span class="meta">来源：联营项目语音复盘 · 18:42–19:16 · 私密</span>
+        </div>
+        <div class="context-fragment">
+          <span class="type-label aspiration">必要片段 03 · 章程原则</span>
+          <p>重要承诺首先应当可逆；不可逆时，明确我愿意失去什么。</p>
+          <span class="meta">来源：人生章程 v3 · 原则 02 · 允许用于共同思考</span>
+        </div>
+        <div class="row-between" style="margin-top: 20px; padding: 16px; border: 1px solid var(--border); border-radius: 10px;">
+          <div><strong>不想让片段出盒？</strong><p class="subtle" style="font-size: 11px;">可以改为仅本地检索；回答会更简短，但资料浏览和证据仍可用。</p></div>
+          <button class="btn btn-secondary" id="local-only-answer">改为仅本地</button>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-close-modal>返回修改问题</button>
+        <button class="btn btn-primary" id="confirm-egress">一次性允许并发送</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-receipt" data-modal="receipt" role="dialog" aria-modal="true" aria-labelledby="receipt-title">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div><h2 id="receipt-title">本次出盒回执</h2><p>发送前已持久化；即使网络结果未知，也不会把它伪装成“没有发生”。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="row-between" style="padding-bottom: 18px; border-bottom: 1px solid var(--fg);">
+          <div><span class="type-label confirmed">发送成功</span><h3 class="card-title" style="margin-top: 12px;">问知君 · 分析远川资本条款</h3></div>
+          <div class="meta" style="text-align: right;">2026-09-01 09:18:26<br>一次授权 · 已消费</div>
+        </div>
+        <div class="receipt-summary" style="grid-template-columns: repeat(4, 1fr);">
+          <div class="receipt-cell"><span class="meta">原件</span><strong class="mono">0</strong></div>
+          <div class="receipt-cell"><span class="meta">文本片段</span><strong class="mono">3</strong></div>
+          <div class="receipt-cell"><span class="meta">发送字符</span><strong class="mono">742</strong></div>
+          <div class="receipt-cell"><span class="meta">结果</span><strong style="font-size:16px;">成功</strong></div>
+        </div>
+        <div class="grid-2" style="margin-top: 24px;">
+          <div>
+            <span class="meta">接收方与策略</span>
+            <div class="charter-side-item"><span>模型供应商</span><strong>云端推理模型 · 新加坡</strong></div>
+            <div class="charter-side-item"><span>保留说明</span><strong>供应商配置：不用于训练；运行日志依合同保留</strong></div>
+            <div class="charter-side-item"><span>隐私上限</span><strong>private · restricted 已阻止</strong></div>
+          </div>
+          <div>
+            <span class="meta">授权边界</span>
+            <div class="charter-side-item"><span>用途</span><strong>只回答当前问题</strong></div>
+            <div class="charter-side-item"><span>上下文范围</span><strong>云岫项目 · 联营复盘 · 章程原则 02</strong></div>
+            <div class="charter-side-item"><span>后续访问</span><strong>无 · 一次授权已失效</strong></div>
+          </div>
+        </div>
+        <div class="context-fragment" style="margin-top: 20px;">
+          <span class="meta">完整性证明</span>
+          <p class="mono" style="font-size: 11px; word-break: break-all;">PAYLOAD HASH · 7d83…a941 · MANIFEST v1 · RECEIPT 20260901-091826</p>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-toast="已标记：下次涉及联营语音时必须逐次预览。">以后限制这类片段</button>
+        <button class="btn btn-primary" data-close-modal>我知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-review-complete" data-modal="review-complete" role="dialog" aria-modal="true" aria-labelledby="review-complete-title">
+    <div class="modal">
+      <div class="modal-head">
+        <div><h2 id="review-complete-title">把观察变成一个可验证的下一步</h2><p>完成复盘必须有你的反馈或行动，不能只保存知君的长篇总结。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>你对这个模式的判断</label><select class="select"><option>值得继续观察，但还不是确定原则</option><option>这是我的真实模式</option><option>只有特定情境适用</option><option>不适用</option></select></div>
+        <div class="field"><label for="review-reflection">你自己的反思</label><textarea class="textarea" id="review-reflection">我确实会把等待解释成谨慎。但如果一步行动可逆，等待未必保护了独立性，反而让对方定义了节奏。</textarea></div>
+        <div class="field"><label for="review-action">接下来要验证的一小步</label><input class="input" id="review-action" value="任何可逆判断在 70% 把握后 24 小时内做一步真实验证" /></div>
+        <div class="field"><label for="review-window">观察到什么时候？</label><input class="input mono" id="review-window" value="2026-09-08" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-toast="复盘草稿已保存；模式仍是待验证观察。">保存草稿</button>
+        <button class="btn btn-primary" id="complete-review">确认复盘与下一步</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-outcome" data-modal="outcome" role="dialog" aria-modal="true" aria-labelledby="outcome-title">
+    <div class="modal">
+      <div class="modal-head">
+        <div><h2 id="outcome-title">记录真实结果</h2><p>结果由你确认。知君不会用事后信息改写当时的理由。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="card paper-panel" style="padding: 17px; margin-bottom: 20px;"><span class="meta">原判断 · 当时信心 72 / 100</span><p style="margin-top: 6px;">聘任周牧担任 COO；预期三个月内能够独立推进跨团队项目。</p></div>
+        <div class="field"><label for="outcome-copy">实际发生了什么？</label><textarea class="textarea" id="outcome-copy">周牧完成了海外交付重组，但在研发与销售冲突中仍需要我介入。推进能力符合预期，授权边界需要更清晰。</textarea></div>
+        <div class="field"><label>结果与预期</label><select class="select"><option>部分符合</option><option>完全符合</option><option>不符合</option><option>仍无法判断</option></select></div>
+        <div class="field"><label for="outcome-note">哪些背景值得带入复盘？</label><input class="input" id="outcome-note" value="组织没有同时明确跨团队升级机制" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-close-modal>取消</button>
+        <button class="btn btn-primary" id="save-outcome">确认结果并进入复盘</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-charter" data-modal="charter" role="dialog" aria-modal="true" aria-labelledby="charter-title">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div><h2 id="charter-title">共创人生章程的新版本</h2><p>更新会生成 v4，不覆盖 v3；过去的判断和建议仍保留当时依据。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label for="charter-vision">我想成为什么样的人？</label><textarea class="textarea" id="charter-vision">做一个能够长期合作、敢于表达边界，也始终保有独立判断的人。</textarea></div>
+        <div class="grid-2">
+          <div class="field"><label for="charter-roles">当前最重要的角色</label><input class="input" id="charter-roles" value="创业者、投资人、父亲" /></div>
+          <div class="field"><label for="charter-review-date">下一次复审</label><input class="input mono" id="charter-review-date" value="2026-12-01" /></div>
+        </div>
+        <div class="field"><label for="charter-principles">我愿意长期重申的原则</label><textarea class="textarea" id="charter-principles">不以短期增长交换长期信誉。
+重要承诺首先应当可逆。
+关系不能替代清晰的治理机制。</textarea></div>
+        <div class="grid-2">
+          <div class="field"><label for="charter-ai-boundary">不应由 AI 替我决定</label><textarea class="textarea" id="charter-ai-boundary">家庭承诺、重大投资、公开立场。</textarea></div>
+          <div class="field"><label for="charter-challenge">知君可以如何挑战我</label><textarea class="textarea" id="charter-challenge">先问反例，再给可逆建议；必要时直接指出我在回避什么。</textarea></div>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-close-modal>暂不修改</button>
+        <button class="btn btn-primary" id="save-charter">预览并确认 v4</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-source-detail" data-modal="source-detail" role="dialog" aria-modal="true" aria-labelledby="source-detail-title">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div><h2 id="source-detail-title">远川资本 Term Sheet v4</h2><p>原件、处理产物、精确依据和候选理解之间保持清楚边界。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="grid-3">
+          <div class="card" style="padding: 16px;"><span class="meta">原件</span><strong style="display:block; margin-top:5px;">版本 4 · 已校验</strong><span class="subtle" style="font-size:10px;">保存在私人记忆盒子</span></div>
+          <div class="card" style="padding: 16px;"><span class="meta">本地处理</span><strong style="display:block; margin-top:5px;">解析完成</strong><span class="subtle" style="font-size:10px;">22 页 · 11 处证据定位</span></div>
+          <div class="card" style="padding: 16px;"><span class="meta">本体状态</span><strong style="display:block; margin-top:5px;">3 项待确认</strong><span class="subtle" style="font-size:10px;">尚未成为正式理解</span></div>
+        </div>
+        <div style="margin-top: 25px;">
+          <span class="meta">处理过程</span>
+          <div class="receipt-flow">
+            <div class="flow-step"><strong>原件安全保存</strong><br>2026-09-01 08:17 · SHA-256 完整</div>
+            <div class="flow-step"><strong>盒内解析</strong><br>保留页码、段落和表格位置</div>
+            <div class="flow-step"><strong>发现候选理解</strong><br>否决事项、增发约束、出售条件</div>
+            <div class="flow-step"><strong>等待用户治理</strong><br>确认之前不进入事实回答或 Agent 上下文</div>
+          </div>
+        </div>
+        <div class="context-fragment" style="margin-top: 20px;">
+          <span class="type-label hypothesis">候选理解</span>
+          <p>远川资本要求对新增融资和公司出售保留一票否决权。</p>
+          <span class="meta">依据：第 11 页 · Protective Provisions · 表格第 2–3 行</span>
+        </div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-danger" data-open-modal="delete">查看删除影响</button>
+        <button class="btn btn-secondary" data-toast="已在可信显示会话中打开盒内原件；原型不会访问真实文件。">在盒内查看原件</button>
+        <button class="btn btn-primary" data-nav-jump="review" data-close-modal>处理候选理解</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-delete" data-modal="delete" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+    <div class="modal">
+      <div class="modal-head">
+        <div><h2 id="delete-title">删除不是一个瞬间动画</h2><p>知君会先说明影响，再分别证明逻辑删除、投影清理与备份清理。</p></div>
+        <button class="close-button" data-close-modal aria-label="关闭">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="context-fragment"><span class="meta">第一阶段 · 立即</span><p>来源停止进入检索和回答；写入删除标记。</p></div>
+        <div class="context-fragment"><span class="meta">第二阶段 · 本地清理</span><p>删除证据、孤立理解、搜索索引、图谱和旧回答投影。</p></div>
+        <div class="context-fragment"><span class="meta">第三阶段 · 备份与副本</span><p>保留无正文回执；恢复旧备份时仍优先应用最新删除标记。</p></div>
+        <div class="field" style="margin-top: 20px;"><label for="delete-confirm">输入“删除”以查看最终确认状态</label><input class="input" id="delete-confirm" placeholder="删除" /></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-secondary" data-close-modal>返回</button>
+        <button class="btn btn-danger" id="confirm-delete">预览受影响内容</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="modal-onboarding" data-modal="onboarding" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+    <div class="modal onboarding-modal">
+      <div class="onboarding-layout">
+        <aside class="onboarding-rail">
+          <div class="onboarding-brand">知君 · 初次见面</div>
+          <p style="margin-top: 9px; color: color-mix(in oklch, var(--surface) 50%, transparent); font-size: 10px;">建立的不是账号，是一份只属于你的长期理解。</p>
+          <div class="onboarding-steps">
+            <div class="onboarding-step-label active" data-onboarding-label="0"><i>01</i><span>理解知君</span></div>
+            <div class="onboarding-step-label" data-onboarding-label="1"><i>02</i><span>看清数据边界</span></div>
+            <div class="onboarding-step-label" data-onboarding-label="2"><i>03</i><span>共创人生章程</span></div>
+            <div class="onboarding-step-label" data-onboarding-label="3"><i>04</i><span>交付第一批资料</span></div>
+            <div class="onboarding-step-label" data-onboarding-label="4"><i>05</i><span>第一次被理解</span></div>
+          </div>
+        </aside>
+        <div class="onboarding-content">
+          <button class="close-button" data-close-modal aria-label="关闭" style="margin-left: auto;">×</button>
+
+          <div class="onboarding-screen active" data-onboarding-screen="0">
+            <p class="eyebrow">欢迎，林致远</p>
+            <h2 id="onboarding-title">知君会先成为一面可信的镜子。</h2>
+            <p class="lead">它把你的资料、经历、关系与判断整理成一套可核对、可纠正、可以持续成长的个人本体。它不会替你定义自己，也不会替你作决定。</p>
+            <div class="first-insight">
+              <span class="type-label confirmed">你始终拥有最终解释权</span>
+              <p>知君可以提出理解和反问；只有你的确认，才能让它成为“关于你的事实”。</p>
+            </div>
+          </div>
+
+          <div class="onboarding-screen" data-onboarding-screen="1">
+            <p class="eyebrow">原件不出盒 · 片段真实可见</p>
+            <h2>云上没有你的原件，但必要片段可能出盒。</h2>
+            <p class="lead">原件和完整资料库只保存在私人记忆盒子。使用云模型时，只发送当前任务所必需的问题与上下文片段。</p>
+            <div class="boundary-diagram">
+              <div class="boundary-box"><strong>原件</strong><span>只保存在盒内</span></div>
+              <div class="boundary-arrow">→</div>
+              <div class="boundary-box"><strong>本地整理</strong><span>解析、检索、选择片段</span></div>
+              <div class="boundary-arrow">→</div>
+              <div class="boundary-box"><strong>必要片段</strong><span>预览、授权、生成回执</span></div>
+            </div>
+          </div>
+
+          <div class="onboarding-screen" data-onboarding-screen="2">
+            <p class="eyebrow">人生章程 · 不是一次性问卷</p>
+            <h2>你想成为什么样的人？</h2>
+            <p class="lead">章程帮助知君理解你的方向、重要角色和不能替你决定的边界。以后每次修改都会形成新版本。</p>
+            <div class="field" style="margin-top: 26px;"><label>此刻最接近你的表达</label><textarea class="textarea">做一个能够长期合作、敢于表达边界，也始终保有独立判断的人。</textarea></div>
+            <div class="grid-2">
+              <div class="field"><label>最重要的角色</label><input class="input" value="创业者、投资人、父亲" /></div>
+              <div class="field"><label>知君如何挑战你</label><input class="input" value="先问反例，再给可逆建议" /></div>
+            </div>
+          </div>
+
+          <div class="onboarding-screen" data-onboarding-screen="3">
+            <p class="eyebrow">从一件真实事情开始</p>
+            <h2>选择第一批对你重要的资料。</h2>
+            <p class="lead">不追求一次搬完所有数据。先选一个真实项目、一个重要关系或一组判断记录，找到第一次可信价值。</p>
+            <div class="option-grid" style="margin-top: 26px;">
+              <button class="option-card selected"><strong>一个正在进行的项目</strong><span>会议、条款、记录与关键人物</span></button>
+              <button class="option-card"><strong>一段重要关系</strong><span>共同经历、承诺与变化</span></button>
+              <button class="option-card"><strong>过去的判断与复盘</strong><span>找到重复模式和反例</span></button>
+              <button class="option-card"><strong>先从一次访谈开始</strong><span>只回答问题，不导入文件</span></button>
+            </div>
+          </div>
+
+          <div class="onboarding-screen" data-onboarding-screen="4">
+            <p class="eyebrow">第一次被理解</p>
+            <h2>知君找到了一件值得向你确认的事。</h2>
+            <p class="lead">它连接了两个来源和两个时间点，但不会先替你下结论。</p>
+            <div class="first-insight">
+              <span class="type-label hypothesis">待验证观察 · 尚未进入本体</span>
+              <p>你并不排斥长期合作；你更在意的是，一段关系是否保留体面退出和独立判断的空间。</p>
+              <div class="understanding-actions">
+                <button class="btn btn-primary" data-toast="已确认：这是第一次“被真正理解”的时刻。">这很像我</button>
+                <button class="btn btn-secondary" data-open-modal="correction">需要修正</button>
+                <button class="btn btn-ghost" data-toast="已拒绝。它不会进入本体，也不会被包装成事实。">不，这不对</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="onboarding-nav">
+            <button class="btn btn-ghost" id="onboarding-back">← 上一步</button>
+            <span class="meta" id="onboarding-progress">1 / 5</span>
+            <button class="btn btn-primary" id="onboarding-next">继续</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">
+    <span class="toast-mark">✓</span>
+    <span><strong id="toast-title">已完成</strong><span id="toast-copy">原型状态已经更新。</span></span>
+  </div>
+
+  <script>
+    (function () {
+      var pageTitles = {
+        today: "今日",
+        ask: "问知君",
+        self: "我的本体",
+        growth: "成长",
+        review: "待确认",
+        sources: "来源",
+        privacy: "隐私与设备"
+      };
+
+      var toastTimer = null;
+      var reviewRemaining = 4;
+      var onboardingStep = 0;
+
+      function showToast(message, title) {
+        var toast = document.getElementById("toast");
+        document.getElementById("toast-title").textContent = title || "已更新";
+        document.getElementById("toast-copy").textContent = message;
+        toast.classList.add("show");
+        window.clearTimeout(toastTimer);
+        toastTimer = window.setTimeout(function () {
+          toast.classList.remove("show");
+        }, 3200);
+      }
+
+      function showView(name) {
+        var target = document.querySelector('[data-view="' + name + '"]');
+        if (!target) return;
+        document.querySelectorAll(".view").forEach(function (view) {
+          view.classList.toggle("active", view === target);
+        });
+        document.querySelectorAll("[data-nav]").forEach(function (button) {
+          var active = button.getAttribute("data-nav") === name;
+          button.classList.toggle("active", active);
+          if (active) button.setAttribute("aria-current", "page");
+          else button.removeAttribute("aria-current");
+        });
+        document.getElementById("topbar-title").textContent = pageTitles[name] || "知君";
+        document.documentElement.scrollTop = 0;
+      }
+
+      function openModal(name) {
+        var modal = document.querySelector('[data-modal="' + name + '"]');
+        if (!modal) return;
+        document.querySelectorAll(".overlay.open").forEach(function (item) {
+          if (item !== modal) item.classList.remove("open");
+        });
+        modal.classList.add("open");
+        document.body.style.overflow = "hidden";
+        var focusable = modal.querySelector("button, input, textarea, select");
+        if (focusable) window.setTimeout(function () { focusable.focus(); }, 40);
+      }
+
+      function closeModal(element) {
+        var modal = element && element.classList && element.classList.contains("overlay")
+          ? element
+          : element && element.closest ? element.closest(".overlay") : null;
+        if (!modal) return;
+        modal.classList.remove("open");
+        if (!document.querySelector(".overlay.open")) document.body.style.overflow = "";
+      }
+
+      function activateSubview(targetId) {
+        var target = document.getElementById(targetId);
+        if (!target) return;
+        var group = target.getAttribute("data-subview-group");
+        document.querySelectorAll('[data-subview-group="' + group + '"]').forEach(function (view) {
+          view.classList.toggle("active", view === target);
+        });
+        document.querySelectorAll('[data-subnav-group="' + group + '"] [data-subview-target]').forEach(function (button) {
+          button.classList.toggle("active", button.getAttribute("data-subview-target") === targetId);
+        });
+      }
+
+      function showGrowthTab(name) {
+        showView("growth");
+        var map = {
+          review: "growth-review",
+          decisions: "growth-decisions",
+          charter: "growth-charter",
+          experiments: "growth-experiments"
+        };
+        activateSubview(map[name] || "growth-review");
+      }
+
+      function updateOnboarding() {
+        document.querySelectorAll("[data-onboarding-screen]").forEach(function (screen) {
+          screen.classList.toggle("active", Number(screen.getAttribute("data-onboarding-screen")) === onboardingStep);
+        });
+        document.querySelectorAll("[data-onboarding-label]").forEach(function (label) {
+          label.classList.toggle("active", Number(label.getAttribute("data-onboarding-label")) === onboardingStep);
+        });
+        document.getElementById("onboarding-progress").textContent = String(onboardingStep + 1) + " / 5";
+        document.getElementById("onboarding-back").style.visibility = onboardingStep === 0 ? "hidden" : "visible";
+        document.getElementById("onboarding-next").textContent = onboardingStep === 4 ? "进入我的知君" : "继续";
+      }
+
+      function appendPrototypeAnswer(question, localOnly) {
+        var thread = document.getElementById("chat-thread");
+        var user = document.createElement("div");
+        user.className = "user-message";
+        user.textContent = question;
+        thread.appendChild(user);
+
+        var response = document.createElement("article");
+        response.className = "assistant-message";
+        response.innerHTML =
+          '<div class="assistant-byline"><span class="mini-seal">知</span><div><strong>知君</strong><div class="meta">' +
+          (localOnly ? '仅本地检索 · 未发生出盒' : '已获一次授权 · 回答与回执已回到盒内') +
+          '</div></div></div>' +
+          '<div class="assistant-content">' +
+          '<p class="assistant-lead">我先把它拆成三个需要你亲自判断的问题：你要保护的究竟是什么、哪些条件不可逆、明天能做的最小验证是什么。</p>' +
+          '<div class="answer-block"><div class="answer-label"><span class="type-label hypothesis">我还不能确认</span></div><p>目前没有足够依据判断对方是否愿意调整条款。我不会把谈判意愿当作事实。你可以先写下不能接受的三条边界，再用对方的真实回应更新判断。</p></div>' +
+          '<div class="assistant-actions"><button class="btn btn-ghost" data-open-modal="decision">形成判断记录</button><button class="btn btn-ghost" data-toast="下一步会继续寻找反例，而不是重复当前结论。">继续追问</button></div>' +
+          '</div>';
+        thread.appendChild(response);
+        thread.scrollTo({ top: thread.scrollHeight, behavior: "smooth" });
+        bindDynamicActions(response);
+      }
+
+      function bindDynamicActions(root) {
+        root.querySelectorAll("[data-open-modal]").forEach(function (button) {
+          button.addEventListener("click", function () { openModal(button.getAttribute("data-open-modal")); });
+        });
+        root.querySelectorAll("[data-toast]").forEach(function (button) {
+          button.addEventListener("click", function () { showToast(button.getAttribute("data-toast")); });
+        });
+      }
+
+      document.querySelectorAll("[data-nav]").forEach(function (button) {
+        button.addEventListener("click", function () { showView(button.getAttribute("data-nav")); });
+      });
+      document.querySelectorAll("[data-nav-jump]").forEach(function (button) {
+        button.addEventListener("click", function () { showView(button.getAttribute("data-nav-jump")); });
+      });
+      document.querySelectorAll("[data-growth-tab]").forEach(function (button) {
+        button.addEventListener("click", function () { showGrowthTab(button.getAttribute("data-growth-tab")); });
+      });
+      document.querySelectorAll("[data-subview-target]").forEach(function (button) {
+        button.addEventListener("click", function () { activateSubview(button.getAttribute("data-subview-target")); });
+      });
+      document.querySelectorAll("[data-open-modal]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          if (button.hasAttribute("data-close-modal")) closeModal(button);
+          openModal(button.getAttribute("data-open-modal"));
+          if (button.getAttribute("data-open-modal") === "onboarding") {
+            onboardingStep = 0;
+            updateOnboarding();
+          }
+        });
+      });
+      document.querySelectorAll("[data-close-modal]").forEach(function (button) {
+        button.addEventListener("click", function () { closeModal(button); });
+      });
+      document.querySelectorAll(".overlay").forEach(function (overlay) {
+        overlay.addEventListener("mousedown", function (event) {
+          if (event.target === overlay) closeModal(overlay);
+        });
+      });
+      document.querySelectorAll("[data-toast]").forEach(function (button) {
+        button.addEventListener("click", function () { showToast(button.getAttribute("data-toast")); });
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          var open = document.querySelector(".overlay.open");
+          if (open) closeModal(open);
+        }
+      });
+
+      document.querySelectorAll(".mode-switch button").forEach(function (button) {
+        button.addEventListener("click", function () {
+          button.parentElement.querySelectorAll("button").forEach(function (item) { item.classList.remove("active"); });
+          button.classList.add("active");
+          var labels = {
+            mirror: "镜子模式：优先还原事实与未知。",
+            mentor: "良师模式：会在有依据时提出反问和可逆建议。",
+            listen: "只听模式：不会主动给建议或形成长期理解。"
+          };
+          showToast(labels[button.getAttribute("data-mode")], "回应方式已切换");
+        });
+      });
+
+      document.querySelectorAll("[data-panel-tab]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var name = button.getAttribute("data-panel-tab");
+          document.querySelectorAll("[data-panel-tab]").forEach(function (item) { item.classList.toggle("active", item === button); });
+          document.querySelectorAll("[data-panel-pane]").forEach(function (pane) { pane.classList.toggle("active", pane.getAttribute("data-panel-pane") === name); });
+        });
+      });
+
+      document.querySelectorAll("[data-evidence]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var tab = document.querySelector('[data-panel-tab="evidence"]');
+          if (tab) tab.click();
+          var id = button.getAttribute("data-evidence");
+          var panel = document.querySelector(".evidence-panel");
+          document.querySelectorAll(".evidence-item").forEach(function (item) { item.classList.remove("highlight"); });
+          if (id !== "all") {
+            var item = document.querySelector('[data-evidence-item="' + id + '"]');
+            if (item && panel) {
+              item.classList.add("highlight");
+              panel.scrollTo({ top: item.offsetTop - 82, behavior: "smooth" });
+            }
+          } else if (panel) {
+            panel.scrollTo({ top: 0, behavior: "smooth" });
+          }
+        });
+      });
+
+      document.querySelectorAll("[data-fill-prompt]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var input = document.getElementById("ask-input");
+          input.value = button.getAttribute("data-fill-prompt");
+          input.focus();
+        });
+      });
+
+      document.getElementById("ask-send").addEventListener("click", function () {
+        var input = document.getElementById("ask-input");
+        var question = input.value.trim();
+        if (!question) {
+          input.value = "把这件事拆成我真正需要做的三个判断。";
+          question = input.value;
+        }
+        document.getElementById("egress-question").textContent = question;
+        openModal("egress");
+      });
+
+      document.getElementById("confirm-egress").addEventListener("click", function () {
+        var input = document.getElementById("ask-input");
+        var question = input.value.trim() || document.getElementById("egress-question").textContent;
+        closeModal(document.getElementById("modal-egress"));
+        appendPrototypeAnswer(question, false);
+        input.value = "";
+        showToast("本次只发送了问题与 3 段必要上下文；原件 0。", "回答与出盒回执已保存");
+      });
+
+      document.getElementById("local-only-answer").addEventListener("click", function () {
+        var input = document.getElementById("ask-input");
+        var question = input.value.trim() || document.getElementById("egress-question").textContent;
+        closeModal(document.getElementById("modal-egress"));
+        appendPrototypeAnswer(question, true);
+        input.value = "";
+        showToast("没有发生网络请求；回答仅基于盒内检索结果。", "已改为仅本地回答");
+      });
+
+      var selfLayers = {
+        observed: {
+          label: "已确认事实",
+          title: "你目前同时承担创业者、投资人和父亲三个重要角色。",
+          copy: "这项理解来自你亲自确认的人生章程，以及过去六个月持续出现的日程、项目和自我记录。角色不是永久身份；下一次章程复审时可以调整。",
+          className: "type-label confirmed"
+        },
+        declared: {
+          label: "你的明确表达",
+          title: "你认为真正的独立，不是拒绝合作，而是保留解释和退出的空间。",
+          copy: "这是你在三次复盘和人生章程访谈中的原话汇总。知君保留它为你的自我叙述，不把它包装成客观行为事实。",
+          className: "type-label declared"
+        },
+        aspirational: {
+          label: "理想目标 · 章程 v3",
+          title: "做一个能够长期合作、敢于表达边界，也始终保有独立判断的人。",
+          copy: "这是你确认的方向，不等于知君声称你已经做到了。成长建议可以与它对照，但不能把目标写成现实。",
+          className: "type-label aspiration"
+        },
+        hypothesis: {
+          label: "知君推测 · 待验证",
+          title: "在重要关系里，你可能更容易为了维持舒适而延迟表达边界。",
+          copy: "这项观察有三个支持事件，也存在一个明确反例。它仅可用于复盘，未经确认不会进入事实回答或提供给其他 Agent。",
+          className: "type-label hypothesis"
+        }
+      };
+
+      document.querySelectorAll("[data-self-layer]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          document.querySelectorAll("[data-self-layer]").forEach(function (item) { item.classList.toggle("active", item === button); });
+          var data = selfLayers[button.getAttribute("data-self-layer")];
+          var label = document.getElementById("self-detail-label");
+          label.textContent = data.label;
+          label.className = data.className;
+          document.getElementById("self-detail-title").textContent = data.title;
+          document.getElementById("self-detail-copy").textContent = data.copy;
+        });
+      });
+
+      document.querySelectorAll("[data-entity]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var entity = button.getAttribute("data-entity");
+          document.getElementById("self-detail-label").textContent = "本体对象 · 可核对";
+          document.getElementById("self-detail-label").className = "type-label confirmed";
+          document.getElementById("self-detail-title").textContent = entity + "与你的当前判断有直接关系。";
+          document.getElementById("self-detail-copy").textContent = "这里会聚合与“" + entity + "”有关的共同经历、承诺、角色、变化和证据。知君不会把关系次数变成评分，也不会替任何人定义人格。";
+        });
+      });
+
+      document.querySelectorAll("[data-review-action]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var action = button.getAttribute("data-review-action");
+          var card = document.querySelector('[data-review-card="' + button.getAttribute("data-review-target") + '"]');
+          if (action === "later") {
+            showToast("已移到稍后，不会在今天重复出现。", "保持待确认");
+            return;
+          }
+          if (card) {
+            card.style.opacity = "0";
+            card.style.transform = "translateY(6px)";
+            card.style.transition = "opacity 180ms ease, transform 180ms ease";
+            window.setTimeout(function () { card.style.display = "none"; }, 190);
+          }
+          reviewRemaining = Math.max(0, reviewRemaining - 1);
+          document.getElementById("review-count").textContent = String(reviewRemaining);
+          showToast(
+            action === "confirm" ? "这项理解已按原有层次进入本体，并保留全部依据。" : "这项理解已被拒绝，不会进入回答或 Agent 上下文。",
+            action === "confirm" ? "已确认" : "已拒绝"
+          );
+        });
+      });
+
+      document.querySelectorAll(".option-card").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var grid = button.closest(".option-grid");
+          if (!grid) return;
+          grid.querySelectorAll(".option-card").forEach(function (item) { item.classList.toggle("selected", item === button); });
+        });
+      });
+
+      document.querySelectorAll(".filter-row .tag").forEach(function (button) {
+        button.addEventListener("click", function () {
+          var row = button.closest(".filter-row");
+          if (!row) return;
+          row.querySelectorAll(".tag").forEach(function (item) { item.classList.toggle("active", item === button); });
+        });
+      });
+
+      document.getElementById("source-upload-button").addEventListener("click", function () {
+        document.getElementById("source-file-input").click();
+      });
+      document.getElementById("source-file-input").addEventListener("change", function (event) {
+        var files = Array.from(event.target.files || []);
+        if (!files.length) return;
+        files.forEach(function (file) {
+          var row = document.createElement("tr");
+          var nameCell = document.createElement("td");
+          var wrap = document.createElement("div");
+          wrap.className = "source-name";
+          var mark = document.createElement("span");
+          mark.className = "file-mark";
+          var extension = file.name.indexOf(".") > -1 ? file.name.split(".").pop().slice(0, 4).toUpperCase() : "FILE";
+          mark.textContent = extension;
+          var copy = document.createElement("span");
+          var strong = document.createElement("strong");
+          strong.textContent = file.name;
+          var small = document.createElement("span");
+          small.textContent = "刚刚安全保存 · 原型示例";
+          copy.appendChild(strong);
+          copy.appendChild(small);
+          wrap.appendChild(mark);
+          wrap.appendChild(copy);
+          nameCell.appendChild(wrap);
+          row.appendChild(nameCell);
+
+          ["已保存，等待本地处理", "尚未形成理解", "私密", "刚刚"].forEach(function (text, index) {
+            var cell = document.createElement("td");
+            if (index === 0) {
+              var status = document.createElement("span");
+              status.className = "local-seal";
+              status.textContent = text;
+              cell.appendChild(status);
+            } else {
+              cell.textContent = text;
+              if (index === 3) cell.className = "mono";
+            }
+            row.appendChild(cell);
+          });
+          var actionCell = document.createElement("td");
+          var action = document.createElement("button");
+          action.className = "btn btn-ghost";
+          action.textContent = "查看 →";
+          action.addEventListener("click", function () { openModal("source-detail"); });
+          actionCell.appendChild(action);
+          row.appendChild(actionCell);
+          document.getElementById("source-table-body").prepend(row);
+        });
+        showToast("资料已安全保存，正在进入盒内处理队列。上传成功不代表已经形成理解。", "已收到 " + String(files.length) + " 份资料");
+        event.target.value = "";
+      });
+
+      var dropZone = document.getElementById("drop-zone");
+      ["dragenter", "dragover"].forEach(function (name) {
+        dropZone.addEventListener(name, function (event) {
+          event.preventDefault();
+          dropZone.style.borderColor = "var(--fg)";
+        });
+      });
+      ["dragleave", "drop"].forEach(function (name) {
+        dropZone.addEventListener(name, function (event) {
+          event.preventDefault();
+          dropZone.style.borderColor = "";
+          if (name === "drop") showToast("拖放资料会在真实产品中安全写入盒内队列；此原型不读取文件内容。", "已识别拖放动作");
+        });
+      });
+
+      document.getElementById("onboarding-back").addEventListener("click", function () {
+        onboardingStep = Math.max(0, onboardingStep - 1);
+        updateOnboarding();
+      });
+      document.getElementById("onboarding-next").addEventListener("click", function () {
+        if (onboardingStep < 4) {
+          onboardingStep += 1;
+          updateOnboarding();
+        } else {
+          closeModal(document.getElementById("modal-onboarding"));
+          showView("today");
+          showToast("已进入示例档案。所有内容都是虚构原型数据。", "欢迎来到你的知君");
+        }
+      });
+
+      document.getElementById("save-capture").addEventListener("click", function () {
+        closeModal(document.getElementById("modal-capture"));
+        showToast("记录已安全保存，正在盒内整理。任何新理解都会先交给你确认。", "已记录此刻");
+      });
+      document.getElementById("save-decision").addEventListener("click", function () {
+        closeModal(document.getElementById("modal-decision"));
+        showGrowthTab("decisions");
+        showToast("判断已绑定人生章程 v3，并按观察期限开始跟踪。", "已开始跟踪");
+      });
+      document.getElementById("save-correction").addEventListener("click", function () {
+        closeModal(document.getElementById("modal-correction"));
+        showToast("旧理解已标记为“被替代”，不会进入后续事实回答。", "纠正已生效");
+      });
+      document.getElementById("complete-review").addEventListener("click", function () {
+        closeModal(document.getElementById("modal-review-complete"));
+        showGrowthTab("experiments");
+        showToast("模式仍保持“待验证”，下一步行动已进入观察。", "本周复盘已完成");
+      });
+      document.getElementById("save-outcome").addEventListener("click", function () {
+        closeModal(document.getElementById("modal-outcome"));
+        showGrowthTab("review");
+        showToast("真实结果已保存；当时的判断与信心没有被改写。", "可以开始复盘");
+      });
+      document.getElementById("save-charter").addEventListener("click", function () {
+        closeModal(document.getElementById("modal-charter"));
+        showToast("原型已生成章程 v4 预览；v3 和历史建议保持不变。", "新版本等待最终确认");
+      });
+      document.getElementById("confirm-delete").addEventListener("click", function () {
+        var input = document.getElementById("delete-confirm");
+        if (input.value.trim() !== "删除") {
+          showToast("请先输入“删除”，原型才会展示受影响范围。", "尚未进入删除确认");
+          return;
+        }
+        showToast("影响预览：1 份来源、3 处证据、2 项候选理解、1 段旧回答投影。尚未执行删除。", "已生成删除影响预览");
+      });
+
+      updateOnboarding();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,2083 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>知君 V3 · 对话式操作系统</title>
+  <style>
+    :root {
+      --bg: #F3EFE6;
+      --surface: #FFFCF6;
+      --fg: #1D211F;
+      --muted: #686B66;
+      --border: #D8D3C8;
+      --accent: #A6452E;
+      --serif: "Songti SC", "Noto Serif SC", STSong, SimSun, serif;
+      --sans: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --shadow: 0 20px 60px color-mix(in srgb, var(--fg) 10%, transparent);
+      --sidebar: 236px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; }
+    body {
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      outline-offset: 2px;
+    }
+    [hidden] { display: none !important; }
+
+    .app {
+      width: 100%;
+      height: 100dvh;
+      display: grid;
+      grid-template-columns: var(--sidebar) minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .sidebar {
+      position: relative;
+      z-index: 30;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      padding: 24px 18px 20px;
+      background: var(--fg);
+      color: var(--surface);
+      border-right: 1px solid color-mix(in srgb, var(--surface) 11%, transparent);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 48px;
+      padding: 0 7px;
+    }
+    .brand-seal, .ai-seal {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-family: var(--serif);
+    }
+    .brand-seal { width: 38px; height: 38px; color: var(--accent); font-size: 20px; }
+    .brand-name { font-family: var(--serif); font-size: 22px; letter-spacing: .12em; }
+    .brand-version { margin-top: 2px; color: color-mix(in srgb, var(--surface) 55%, transparent); font: 10px/1 var(--mono); letter-spacing: .12em; }
+
+    .side-context {
+      margin: 28px 7px 18px;
+      padding: 12px 0 14px;
+      border-top: 1px solid color-mix(in srgb, var(--surface) 12%, transparent);
+      border-bottom: 1px solid color-mix(in srgb, var(--surface) 12%, transparent);
+    }
+    .side-context-label { color: color-mix(in srgb, var(--surface) 50%, transparent); font-size: 11px; letter-spacing: .14em; }
+    .side-context-title { margin-top: 7px; font-family: var(--serif); font-size: 15px; }
+    .side-context-meta { margin-top: 6px; color: color-mix(in srgb, var(--surface) 55%, transparent); font-size: 11px; }
+
+    .nav { display: grid; gap: 6px; }
+    .nav-btn {
+      width: 100%;
+      min-height: 46px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: transparent;
+      color: color-mix(in srgb, var(--surface) 65%, transparent);
+      text-align: left;
+      cursor: pointer;
+      transition: background .18s ease, color .18s ease, border-color .18s ease;
+    }
+    .nav-btn:hover { background: color-mix(in srgb, var(--surface) 7%, transparent); color: var(--surface); }
+    .nav-btn.active {
+      background: color-mix(in srgb, var(--surface) 9%, transparent);
+      border-color: color-mix(in srgb, var(--surface) 11%, transparent);
+      color: var(--surface);
+    }
+    .nav-icon { width: 18px; height: 18px; display: grid; place-items: center; }
+    .nav-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+    .nav-text { font-size: 14px; }
+    .nav-mark { margin-left: auto; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); opacity: 0; }
+    .nav-btn.active .nav-mark { opacity: 1; }
+
+    .side-bottom { margin-top: auto; }
+    .box-status {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      padding: 12px;
+      border: 1px solid color-mix(in srgb, var(--surface) 12%, transparent);
+      border-radius: 12px;
+      color: color-mix(in srgb, var(--surface) 72%, transparent);
+    }
+    .status-dot { width: 7px; height: 7px; margin-top: 5px; border-radius: 50%; background: color-mix(in srgb, var(--surface) 70%, var(--fg)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--surface) 8%, transparent); }
+    .box-status strong { display: block; color: var(--surface); font-size: 12px; font-weight: 500; }
+    .box-status span { display: block; margin-top: 3px; font-size: 10px; line-height: 1.45; }
+
+    .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .topbar {
+      position: relative;
+      z-index: 20;
+      min-height: 64px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 0 24px;
+      background: color-mix(in srgb, var(--bg) 92%, transparent);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(18px);
+    }
+    .topbar-title { min-width: 0; font-family: var(--serif); font-size: 17px; }
+    .topbar-title small { margin-left: 8px; font-family: var(--sans); color: var(--muted); font-size: 11px; font-weight: 400; }
+    .topbar-spacer { flex: 1; }
+    .top-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .top-status .status-dot { margin: 0; background: var(--fg); opacity: .55; box-shadow: none; }
+    .prototype-pill { padding: 7px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font: 10px/1 var(--mono); white-space: nowrap; }
+
+    .pages { min-height: 0; flex: 1; position: relative; }
+    .page { display: none; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+    .page.active { display: flex; }
+    .workspace {
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, 1.78fr) minmax(330px, .92fr);
+    }
+    .workspace.with-threads { grid-template-columns: 238px minmax(0, 1.55fr) minmax(320px, .85fr); }
+
+    .conversation, .object-panel, .thread-rail, .governance { min-width: 0; min-height: 0; }
+    .conversation { display: flex; flex-direction: column; position: relative; background: var(--surface); }
+    .conversation-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 24px clamp(22px, 3.5vw, 54px) 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .ai-seal-wrap { position: relative; width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; }
+    .ai-seal-wrap::before, .ai-seal-wrap::after {
+      content: "";
+      position: absolute;
+      inset: 3px;
+      border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      border-radius: 50%;
+      animation: breathe 3.8s ease-in-out infinite;
+    }
+    .ai-seal-wrap::after { inset: -2px; animation-delay: -1.9s; opacity: .35; }
+    .ai-seal { width: 34px; height: 34px; color: var(--accent); background: var(--surface); font-size: 17px; position: relative; z-index: 1; }
+    @keyframes breathe { 0%, 100% { transform: scale(.96); opacity: .28; } 50% { transform: scale(1.07); opacity: .78; } }
+    .conversation-kicker { color: var(--accent); font: 10px/1.4 var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+    .conversation-title { margin: 5px 0 0; font: 500 clamp(22px, 2.2vw, 31px)/1.2 var(--serif); letter-spacing: -.01em; }
+    .conversation-meta { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; color: var(--muted); font-size: 11px; }
+    .object-state-inline { display: inline-flex; align-items: center; gap: 6px; }
+    .object-state-inline::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+
+    .timeline {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      padding: 20px clamp(22px, 3.5vw, 54px) 160px;
+      scroll-behavior: smooth;
+    }
+    .stage-line {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin: 4px 0 20px;
+      color: var(--muted);
+      font: 10px/1.5 var(--mono);
+    }
+    .stage-line::before { content: ""; width: 18px; height: 1px; background: var(--border); }
+    .stage-line.done::before { background: var(--accent); }
+    .turn {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr);
+      gap: 13px;
+      margin: 0 0 26px;
+      max-width: 760px;
+    }
+    .turn-mark {
+      width: 27px;
+      height: 27px;
+      display: grid;
+      place-items: center;
+      margin-top: 2px;
+      border: 1px solid var(--border);
+      border-radius: 50%;
+      color: var(--muted);
+      font: 11px/1 var(--serif);
+    }
+    .turn.ai .turn-mark { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); color: var(--accent); }
+    .turn-author { margin-bottom: 7px; color: var(--muted); font: 10px/1.2 var(--mono); letter-spacing: .08em; }
+    .turn-text { font: 400 15px/1.9 var(--sans); }
+    .turn-text.lead { font: 400 18px/1.85 var(--serif); }
+    .turn.user .turn-body {
+      padding: 15px 18px;
+      border-left: 2px solid var(--fg);
+      background: color-mix(in srgb, var(--bg) 50%, var(--surface));
+    }
+    .trigger-note {
+      margin: 12px 0 0;
+      padding: 10px 12px;
+      border-left: 1px solid var(--accent);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.65;
+    }
+    .question-line { display: block; margin-top: 15px; color: var(--fg); font-weight: 600; }
+    .turn-actions, .quick-intents { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
+    .text-btn, .soft-btn, .primary-btn, .danger-btn, .icon-btn {
+      min-height: 36px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform .16s ease, background .16s ease, border-color .16s ease;
+    }
+    .text-btn { padding: 0 2px; border: 0; background: transparent; color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 4px; }
+    .soft-btn { padding: 0 13px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; }
+    .soft-btn:hover { border-color: color-mix(in srgb, var(--fg) 35%, var(--border)); }
+    .primary-btn { padding: 0 15px; border: 1px solid var(--accent); background: var(--accent); color: var(--surface); font-size: 12px; }
+    .primary-btn:hover { transform: translateY(-1px); }
+    .primary-btn:disabled { cursor: not-allowed; background: var(--border); border-color: var(--border); color: var(--muted); transform: none; }
+    .danger-btn { padding: 0 15px; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-size: 12px; }
+    .icon-btn { width: 38px; padding: 0; display: grid; place-items: center; border: 1px solid var(--border); background: var(--surface); }
+    .icon-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+    .analysis-panel {
+      margin-top: 14px;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--bg) 42%, var(--surface));
+    }
+    .analysis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .analysis-cell { min-width: 0; }
+    .analysis-cell h4 { margin: 0 0 6px; color: var(--muted); font: 10px/1.3 var(--mono); letter-spacing: .1em; }
+    .analysis-cell p { margin: 0; font-size: 12px; line-height: 1.7; }
+    .evidence-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 7px; }
+    .evidence-list li { display: grid; grid-template-columns: 20px 1fr; gap: 8px; font-size: 12px; line-height: 1.55; }
+    .evidence-index { color: var(--accent); font: 10px/1.8 var(--mono); }
+
+    .field-change-event {
+      max-width: 760px;
+      margin: -4px 0 24px 41px;
+      padding: 11px 13px;
+      border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border));
+      border-radius: 10px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.55;
+    }
+    .field-change-event strong { color: var(--fg); font-weight: 600; }
+
+    .topic-chapters { max-width: 760px; margin: 10px 0 28px 41px; border-top: 1px solid var(--border); }
+    .topic-chapter { border-bottom: 1px solid var(--border); }
+    .topic-chapter summary { min-height: 58px; display: flex; align-items: center; gap: 11px; list-style: none; cursor: pointer; }
+    .topic-chapter summary::-webkit-details-marker { display: none; }
+    .chapter-num { color: var(--accent); font: 10px/1 var(--mono); }
+    .chapter-title { flex: 1; font: 15px/1.3 var(--serif); }
+    .chapter-reason { color: var(--muted); font-size: 10px; }
+    .chapter-chevron { color: var(--muted); transition: transform .18s ease; }
+    .topic-chapter[open] .chapter-chevron { transform: rotate(45deg); }
+    .chapter-body { padding: 0 0 18px 24px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+
+    .composer {
+      position: absolute;
+      left: clamp(18px, 3vw, 44px);
+      right: clamp(18px, 3vw, 44px);
+      bottom: 18px;
+      z-index: 8;
+      padding: 10px;
+      border: 1px solid color-mix(in srgb, var(--fg) 15%, var(--border));
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--surface) 93%, transparent);
+      box-shadow: 0 14px 36px color-mix(in srgb, var(--fg) 11%, transparent);
+      backdrop-filter: blur(16px);
+    }
+    .composer-row { display: flex; align-items: flex-end; gap: 9px; }
+    .composer textarea {
+      flex: 1;
+      min-width: 0;
+      min-height: 42px;
+      max-height: 110px;
+      resize: none;
+      padding: 10px 8px 7px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--fg);
+      line-height: 1.5;
+    }
+    .composer textarea::placeholder { color: color-mix(in srgb, var(--muted) 75%, transparent); }
+    .voice-btn {
+      min-width: 86px;
+      height: 42px;
+      padding: 0 11px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--bg);
+      cursor: pointer;
+      font-size: 11px;
+      user-select: none;
+      touch-action: none;
+    }
+    .voice-btn.recording { border-color: var(--accent); color: var(--accent); }
+    .send-btn { width: 42px; height: 42px; border: 0; border-radius: 11px; background: var(--fg); color: var(--surface); cursor: pointer; }
+    .send-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+    .composer-hint { display: flex; align-items: center; gap: 12px; margin: 6px 5px 0; color: var(--muted); font-size: 10px; }
+
+    .object-panel {
+      position: relative;
+      overflow: auto;
+      padding: 24px;
+      background: var(--bg);
+      border-left: 1px solid var(--border);
+    }
+    .sheet-close { display: none; position: absolute; top: 14px; right: 14px; z-index: 3; background: var(--surface); }
+    .object-eyebrow { color: var(--accent); font: 10px/1.4 var(--mono); letter-spacing: .12em; }
+    .object-title-row { display: flex; align-items: flex-start; gap: 12px; margin-top: 8px; }
+    .object-title { flex: 1; margin: 0; font: 500 22px/1.35 var(--serif); }
+    .state-badge { flex: 0 0 auto; padding: 6px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .state-badge.pending { border-style: dashed; }
+    .state-badge.confirmed { border-color: var(--accent); color: var(--accent); }
+    .object-note { margin: 12px 0 20px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .object-fields { border-top: 1px solid var(--border); }
+    .object-field {
+      position: relative;
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 14px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .object-field.changed { margin: 0 -10px; padding-left: 10px; padding-right: 10px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+    .object-field.changed::before { content: ""; position: absolute; left: 0; top: 13px; bottom: 13px; width: 2px; background: var(--accent); }
+    .field-label { color: var(--muted); font-size: 11px; }
+    .field-value { min-width: 0; font-size: 12px; line-height: 1.62; overflow-wrap: anywhere; }
+    .field-value.waiting { color: var(--muted); font-style: italic; }
+    .field-source { display: block; margin-top: 5px; color: var(--accent); font: 9px/1.4 var(--mono); }
+    .object-actions { display: grid; gap: 8px; margin-top: 18px; }
+    .object-actions .primary-btn, .object-actions .soft-btn, .object-actions .danger-btn { width: 100%; min-height: 42px; }
+    .object-footnote { margin: 13px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; text-align: center; }
+
+    .object-peek {
+      display: none;
+      position: fixed;
+      left: 10px;
+      right: 10px;
+      bottom: calc(72px + env(safe-area-inset-bottom));
+      z-index: 35;
+      min-height: 58px;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 15px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+      cursor: pointer;
+    }
+    .object-peek strong { display: block; font: 14px/1.3 var(--serif); }
+    .object-peek span { color: var(--muted); font-size: 10px; }
+    .peek-count { margin-left: auto; color: var(--accent) !important; }
+
+    .thread-rail { overflow: auto; padding: 18px 12px; background: color-mix(in srgb, var(--bg) 70%, var(--surface)); border-right: 1px solid var(--border); }
+    .thread-rail-title { padding: 0 8px 11px; color: var(--muted); font: 10px/1.4 var(--mono); letter-spacing: .1em; }
+    .thread-group { margin-bottom: 18px; }
+    .thread-group-label { margin: 0 8px 7px; color: var(--muted); font-size: 10px; }
+    .thread-btn {
+      width: 100%;
+      min-height: 64px;
+      margin-bottom: 5px;
+      padding: 11px 10px;
+      border: 1px solid transparent;
+      border-radius: 12px;
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+    }
+    .thread-btn:hover, .thread-btn.active { background: var(--surface); border-color: var(--border); }
+    .thread-btn strong { display: block; font: 14px/1.35 var(--serif); }
+    .thread-btn span { display: block; margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.35; }
+    .thread-btn .due { color: var(--accent); }
+
+    .layer-strip { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+    .layer-chip { padding: 7px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 10px; }
+    .layer-chip.current { border-color: var(--accent); color: var(--accent); }
+
+    .ontology-page-shell { width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+    .ontology-modebar {
+      flex: 0 0 54px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 7px 24px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--surface) 76%, var(--bg));
+    }
+    .ontology-mode-label { color: var(--muted); font: 10px/1.4 var(--mono); letter-spacing: .1em; }
+    .ontology-view-tabs { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+    .ontology-view-btn { min-height: 34px; padding: 0 13px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 11px; }
+    .ontology-view-btn[aria-selected="true"] { background: var(--fg); color: var(--surface); }
+    .ontology-mode-summary { margin-left: auto; color: var(--muted); font-size: 10px; }
+    .ontology-mode { flex: 1; min-width: 0; min-height: 0; display: none; }
+    .ontology-mode.is-active { display: block; }
+    #ontologyDialogueMode .workspace { height: 100%; }
+
+    .ontology-overview { height: 100%; overflow: auto; padding: 24px clamp(22px, 3.5vw, 48px) 64px; background: var(--bg); }
+    .ontology-overview-head { display: flex; align-items: flex-end; gap: 20px; max-width: 1160px; margin: 0 auto 18px; }
+    .ontology-overview-copy { flex: 1; min-width: 0; }
+    .ontology-overview-head h2 { margin: 5px 0 0; font: 500 clamp(25px, 2.6vw, 38px)/1.25 var(--serif); }
+    .ontology-overview-head p { margin: 9px 0 0; max-width: 720px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .ontology-version { flex: 0 0 auto; color: var(--muted); font: 9px/1.6 var(--mono); text-align: right; }
+    .ontology-layer-filters { max-width: 1160px; margin: 0 auto 14px; display: flex; align-items: center; gap: 7px; overflow-x: auto; padding-bottom: 2px; }
+    .ontology-filter { flex: 0 0 auto; min-height: 35px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; font-size: 10px; }
+    .ontology-filter[aria-pressed="true"] { border-color: var(--fg); background: var(--surface); color: var(--fg); }
+    .ontology-map-status { margin-left: auto; flex: 0 0 auto; color: var(--muted); font: 9px/1.4 var(--mono); }
+    .ontology-overview-grid { max-width: 1160px; min-height: 560px; margin: 0 auto; display: grid; grid-template-columns: minmax(0, 1.48fr) minmax(310px, .72fr); gap: 20px; }
+    .ontology-map-canvas {
+      position: relative;
+      min-width: 0;
+      min-height: 560px;
+      overflow: hidden;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: radial-gradient(circle at center, var(--surface) 0, var(--surface) 17%, transparent 17.2%), color-mix(in srgb, var(--surface) 72%, var(--bg));
+    }
+    .ontology-ring { position: absolute; left: 50%; top: 50%; border: 1px solid var(--border); border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+    .ontology-ring.inner { width: 330px; height: 330px; }
+    .ontology-ring.outer { width: 520px; height: 520px; border-style: dashed; opacity: .72; }
+    .ontology-links { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+    .ontology-links line { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 4; }
+    .ontology-core {
+      position: relative;
+      z-index: 3;
+      width: 136px;
+      height: 136px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--fg);
+      color: var(--surface);
+      text-align: center;
+      animation: core-breathe 5s ease-in-out infinite;
+    }
+    .ontology-core strong { display: block; font: 500 24px/1.2 var(--serif); }
+    .ontology-core span { display: block; margin-top: 5px; color: color-mix(in srgb, var(--surface) 60%, transparent); font-size: 9px; }
+    @keyframes core-breathe { 0%,100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 0%, transparent); } 50% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 7%, transparent); } }
+    .ontology-node {
+      position: absolute;
+      z-index: 4;
+      min-width: 108px;
+      min-height: 58px;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 5%, transparent);
+      text-align: left;
+      cursor: pointer;
+      transition: opacity .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .ontology-node:hover { border-color: var(--fg); }
+    .ontology-node[aria-pressed="true"] { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent); }
+    .ontology-node[data-status="pending"] { border-style: dashed; }
+    .ontology-node[data-status="reaffirm"] { border-style: dotted; border-width: 2px; }
+    .ontology-node.is-dimmed { opacity: .16; pointer-events: none; }
+    .ontology-node strong { display: block; font: 500 14px/1.35 var(--serif); }
+    .ontology-node span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+    .ontology-node.n1 { left: 6%; top: 18%; }
+    .ontology-node.n2 { right: 6%; top: 15%; }
+    .ontology-node.n3 { left: 5%; bottom: 17%; }
+    .ontology-node.n4 { right: 6%; bottom: 19%; }
+    .ontology-node.n5 { left: 50%; top: 5%; transform: translateX(-50%); }
+    .ontology-node.n6 { left: 50%; bottom: 5%; transform: translateX(-50%); }
+    .ontology-node.n6.confirmed-position { bottom: 24%; }
+    .ontology-map-legend { position: absolute; left: 16px; bottom: 13px; z-index: 5; display: flex; flex-wrap: wrap; gap: 9px 14px; color: var(--muted); font-size: 9px; }
+    .ontology-map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend-line { width: 14px; height: 0; border-top: 1px solid var(--fg); }
+    .legend-line.pending { border-top-style: dashed; }
+    .legend-line.reaffirm { border-top-style: dotted; border-top-width: 2px; }
+
+    .ontology-inspector { min-width: 0; min-height: 560px; display: flex; flex-direction: column; padding: 23px; border-top: 1px solid var(--fg); background: var(--surface); }
+    .ontology-inspector-close { display: none; }
+    .ontology-inspector-top { display: flex; align-items: center; gap: 10px; }
+    .ontology-inspector-state { display: inline-flex; padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 9px; }
+    .ontology-inspector-state.pending { border-style: dashed; color: var(--accent); }
+    .ontology-inspector-time { margin-left: auto; color: var(--muted); font: 9px/1.4 var(--mono); }
+    .ontology-inspector h3 { margin: 18px 0 0; font: 500 25px/1.45 var(--serif); }
+    .ontology-inspector-copy { margin: 15px 0 0; padding-top: 15px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.75; }
+    .ontology-inspector-evidence { margin-top: 17px; display: grid; gap: 9px; }
+    .ontology-evidence-item { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; color: var(--muted); font-size: 10px; line-height: 1.55; }
+    .ontology-inspector-actions { display: grid; gap: 8px; margin-top: auto; padding-top: 22px; }
+    .ontology-inspector-actions button { width: 100%; min-height: 40px; }
+    .ontology-inspector-foot { margin-top: 10px; color: var(--muted); font-size: 9px; line-height: 1.55; text-align: center; }
+    .ontology-entity-strip { max-width: 1160px; margin: 18px auto 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--border); }
+    .ontology-entity-cell { min-width: 0; padding: 14px 16px; background: var(--bg); }
+    .ontology-entity-cell strong { display: block; font: 500 14px/1.4 var(--serif); }
+    .ontology-entity-cell span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+
+    .governance { width: 100%; overflow: auto; padding: 28px clamp(20px, 4vw, 54px) 80px; background: var(--bg); }
+    .governance-head { max-width: 1080px; margin: 0 auto 22px; display: flex; align-items: flex-end; gap: 18px; }
+    .governance-head-copy { flex: 1; }
+    .governance h1 { margin: 6px 0 0; font: 500 clamp(27px, 3vw, 42px)/1.2 var(--serif); }
+    .governance-sub { margin: 10px 0 0; max-width: 720px; color: var(--muted); font-size: 13px; line-height: 1.75; }
+    .boundary-tabs { max-width: 1080px; margin: 0 auto 18px; display: flex; gap: 6px; overflow: auto; padding-bottom: 2px; }
+    .boundary-tab { flex: 0 0 auto; min-height: 38px; padding: 0 14px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
+    .boundary-tab.active { background: var(--fg); border-color: var(--fg); color: var(--surface); }
+    .boundary-view { display: none; max-width: 1080px; margin: 0 auto; }
+    .boundary-view.active { display: block; }
+    .boundary-banner { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; padding: 22px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); }
+    .boundary-banner h2 { margin: 0; font: 500 21px/1.4 var(--serif); }
+    .boundary-banner p { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .boundary-seal { width: 74px; height: 74px; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font: 12px/1.4 var(--serif); text-align: center; }
+    .control-list { margin-top: 16px; border: 1px solid var(--border); border-radius: 18px; overflow: hidden; background: var(--surface); }
+    .control-row { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(220px, 1.6fr) auto; gap: 18px; align-items: center; padding: 17px 20px; border-bottom: 1px solid var(--border); }
+    .control-row:last-child { border-bottom: 0; }
+    .control-title { font: 14px/1.4 var(--serif); }
+    .control-title span { display: block; margin-top: 5px; color: var(--muted); font: 10px/1.45 var(--sans); }
+    .control-detail { color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .control-actions { display: flex; gap: 7px; justify-content: flex-end; }
+    .flow-map { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
+    .flow-step { position: relative; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+    .flow-step:not(:last-child)::after { content: "→"; position: absolute; right: -10px; top: 50%; z-index: 2; width: 20px; text-align: center; color: var(--muted); background: var(--bg); }
+    .flow-step small { color: var(--accent); font: 9px/1 var(--mono); }
+    .flow-step strong { display: block; margin-top: 8px; font: 13px/1.4 var(--serif); }
+    .flow-step span { display: block; margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+
+    .mobile-nav { display: none; }
+
+    .modal-layer {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: color-mix(in srgb, var(--fg) 42%, transparent);
+      backdrop-filter: blur(8px);
+    }
+    .modal-layer.open { display: flex; }
+    .modal {
+      width: min(620px, 100%);
+      max-height: min(820px, calc(100dvh - 40px));
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .modal.wide { width: min(780px, 100%); }
+    .modal-head { display: flex; align-items: flex-start; gap: 16px; padding: 22px 24px 18px; border-bottom: 1px solid var(--border); }
+    .modal-head-copy { flex: 1; }
+    .modal-kicker { color: var(--accent); font: 9px/1.4 var(--mono); letter-spacing: .13em; }
+    .modal-title { margin: 6px 0 0; font: 500 23px/1.35 var(--serif); }
+    .modal-sub { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .modal-close { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50%; background: transparent; cursor: pointer; font-size: 18px; }
+    .ontology-inspector .ontology-inspector-close { display: none; }
+    .object-panel .sheet-close { display: none; }
+    .modal-body { padding: 20px 24px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 16px 24px 22px; border-top: 1px solid var(--border); }
+    .summary-sheet { display: grid; gap: 0; border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    .summary-row { display: grid; grid-template-columns: 125px 1fr; gap: 15px; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 12px; line-height: 1.6; }
+    .summary-row:last-child { border-bottom: 0; }
+    .summary-row span:first-child { color: var(--muted); }
+    .fragment { margin-top: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 11px; background: var(--bg); font-size: 11px; line-height: 1.65; }
+    .fragment-head { display: flex; gap: 10px; margin-bottom: 7px; color: var(--muted); font: 9px/1.4 var(--mono); }
+    .form-label { display: block; margin: 14px 0 7px; color: var(--muted); font-size: 11px; }
+    .form-input { width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--fg); }
+    textarea.form-input { min-height: 90px; resize: vertical; line-height: 1.6; }
+    .check-line { display: flex; align-items: flex-start; gap: 9px; margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+    .check-line input { margin-top: 3px; accent-color: var(--accent); }
+
+    .voice-sheet { width: min(560px, 100%); }
+    .voice-state { text-align: center; padding: 8px 0 2px; }
+    .voice-orb { width: 82px; height: 82px; display: grid; place-items: center; margin: 0 auto 16px; border: 1px solid var(--accent); border-radius: 50%; color: var(--accent); font: 22px/1 var(--serif); }
+    .voice-orb.recording { animation: voicepulse 1.2s ease-in-out infinite; }
+    @keyframes voicepulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 22%, transparent); } 50% { box-shadow: 0 0 0 15px color-mix(in srgb, var(--accent) 0%, transparent); } }
+    .wave { display: flex; justify-content: center; align-items: center; gap: 3px; height: 30px; margin: 10px 0; }
+    .wave i { width: 2px; height: 8px; background: var(--accent); animation: wave 800ms ease-in-out infinite alternate; }
+    .wave i:nth-child(2n) { animation-delay: -200ms; height: 16px; }
+    .wave i:nth-child(3n) { animation-delay: -400ms; height: 23px; }
+    @keyframes wave { to { transform: scaleY(.35); opacity: .4; } }
+    .voice-status { font: 18px/1.5 var(--serif); }
+    .voice-help { margin-top: 7px; color: var(--muted); font-size: 11px; }
+    .voice-transcript { margin-top: 18px; }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 26px;
+      z-index: 150;
+      transform: translate(-50%, 18px);
+      max-width: min(460px, calc(100vw - 30px));
+      padding: 11px 15px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--fg);
+      color: var(--surface);
+      box-shadow: var(--shadow);
+      font-size: 11px;
+      line-height: 1.5;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+    @media (max-width: 1180px) {
+      :root { --sidebar: 84px; }
+      .sidebar { padding-left: 12px; padding-right: 12px; }
+      .brand { justify-content: center; padding: 0; }
+      .brand-copy, .side-context, .nav-text, .nav-mark, .box-status div { display: none; }
+      .nav-btn { justify-content: center; padding: 0; }
+      .nav-icon, .nav-icon svg { width: 20px; height: 20px; }
+      .box-status { justify-content: center; padding: 12px 0; }
+      .workspace { grid-template-columns: minmax(0, 1.45fr) minmax(300px, .8fr); }
+      .workspace.with-threads { grid-template-columns: 190px minmax(0, 1.35fr) minmax(290px, .75fr); }
+      .conversation-head, .timeline { padding-left: 28px; padding-right: 28px; }
+    }
+
+    @media (max-width: 900px) {
+      .workspace.with-threads { grid-template-columns: 156px minmax(0, 1fr) minmax(280px, .72fr); }
+      .object-panel { padding: 20px 17px; }
+      .analysis-grid { grid-template-columns: 1fr; }
+      .object-field { grid-template-columns: 76px minmax(0, 1fr); }
+      .conversation-head { padding-top: 18px; }
+      .conversation-title { font-size: 23px; }
+      .control-row { grid-template-columns: 1fr 1fr; }
+      .control-actions { grid-column: 1 / -1; justify-content: flex-start; }
+      .ontology-overview-grid { grid-template-columns: 1fr; }
+      .ontology-inspector { min-height: auto; }
+    }
+
+    @media (max-width: 767px) {
+      body { overflow: hidden; }
+      .app { display: block; }
+      .sidebar { display: none; }
+      .main { height: 100dvh; padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
+      .topbar { min-height: 54px; padding: 0 15px; }
+      .topbar-title { font-size: 15px; }
+      .topbar-title small, .top-status, .prototype-pill { display: none; }
+      .workspace, .workspace.with-threads { display: block; height: 100%; }
+      .conversation { height: 100%; }
+      .conversation-head { padding: 14px 16px 12px; gap: 10px; }
+      .ai-seal-wrap { width: 38px; height: 38px; flex-basis: 38px; }
+      .ai-seal { width: 30px; height: 30px; font-size: 15px; }
+      .conversation-title { margin-top: 3px; font-size: 20px; }
+      .conversation-meta { margin-top: 5px; font-size: 9px; }
+      .timeline { padding: 17px 16px 258px; }
+      .turn { grid-template-columns: 25px minmax(0, 1fr); gap: 10px; margin-bottom: 22px; }
+      .turn-mark { width: 24px; height: 24px; font-size: 10px; }
+      .turn-text { font-size: 14px; line-height: 1.78; }
+      .turn-text.lead { font-size: 16px; line-height: 1.75; }
+      .field-change-event, .topic-chapters { margin-left: 35px; }
+      .chapter-reason { display: none; }
+      .composer { left: 10px; right: 10px; bottom: 8px; padding: 8px; }
+      .voice-btn { min-width: 43px; width: 43px; overflow: hidden; color: transparent; position: relative; }
+      .voice-btn::after { content: "声"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--fg); }
+      .object-panel {
+        display: none;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(66px + env(safe-area-inset-bottom));
+        z-index: 70;
+        max-height: 74dvh;
+        padding: 22px 18px calc(24px + env(safe-area-inset-bottom));
+        border-left: 0;
+        border-top: 1px solid var(--border);
+        border-radius: 22px;
+        box-shadow: 0 -18px 50px color-mix(in srgb, var(--fg) 18%, transparent);
+      }
+      .object-panel.sheet-open { display: block; }
+      .object-panel.sheet-open .sheet-close { display: grid; }
+      .object-peek { display: flex; bottom: calc(166px + env(safe-area-inset-bottom)); }
+      .page.object-open .object-peek { display: none; }
+      .page.object-open .composer { visibility: hidden; }
+      .thread-rail {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        z-index: 6;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 10px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .thread-rail-title, .thread-group-label { display: none; }
+      .thread-group { display: contents; margin: 0; }
+      .thread-btn { width: auto; min-width: max-content; min-height: 34px; margin: 0; padding: 7px 10px; border-radius: 9px; }
+      .thread-btn strong { font-family: var(--sans); font-size: 11px; font-weight: 500; }
+      .thread-btn span { display: none; }
+      .workspace.with-threads .conversation { padding-top: 48px; }
+      .mobile-nav {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 80;
+        height: calc(66px + env(safe-area-inset-bottom));
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        padding: 5px 4px env(safe-area-inset-bottom);
+        border-top: 1px solid var(--border);
+        background: color-mix(in srgb, var(--surface) 95%, transparent);
+        backdrop-filter: blur(18px);
+      }
+      .mobile-nav button { min-width: 0; border: 0; background: transparent; color: var(--muted); font-size: 9px; cursor: pointer; }
+      .mobile-nav button.active { color: var(--accent); }
+      .mobile-nav svg { display: block; width: 17px; height: 17px; margin: 0 auto 4px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+      .governance { padding: 20px 14px 100px; }
+      .governance-head { align-items: flex-start; }
+      .governance h1 { font-size: 28px; }
+      .boundary-banner { grid-template-columns: 1fr; }
+      .boundary-seal { display: none; }
+      .control-row { grid-template-columns: 1fr; gap: 9px; }
+      .control-actions { grid-column: auto; }
+      .flow-map { grid-template-columns: 1fr; }
+      .flow-step:not(:last-child)::after { content: "↓"; right: 50%; top: auto; bottom: -12px; transform: translateX(50%); background: var(--bg); }
+      .modal-layer { align-items: flex-end; padding: 0; }
+      .modal { width: 100%; max-height: 90dvh; border-radius: 22px 22px 0 0; }
+      .modal-head, .modal-body, .modal-actions { padding-left: 18px; padding-right: 18px; }
+      .summary-row { grid-template-columns: 92px 1fr; }
+      .toast { bottom: calc(80px + env(safe-area-inset-bottom)); }
+      .ontology-modebar { flex-basis: 50px; padding: 6px 12px; gap: 8px; }
+      .ontology-mode-label, .ontology-mode-summary { display: none; }
+      .ontology-view-tabs { width: 100%; }
+      .ontology-view-btn { flex: 1; }
+      .ontology-overview { padding: 17px 12px 98px; }
+      .ontology-overview-head { align-items: flex-start; margin-bottom: 14px; }
+      .ontology-overview-head h2 { font-size: 25px; }
+      .ontology-overview-head p { font-size: 11px; }
+      .ontology-version { display: none; }
+      .ontology-layer-filters { gap: 5px; }
+      .ontology-filter { min-height: 34px; padding: 0 10px; }
+      .ontology-map-status { display: none; }
+      .ontology-overview-grid { min-height: 0; display: block; }
+      .ontology-map-canvas { min-height: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 18px; place-items: stretch; }
+      .ontology-links, .ontology-ring, .ontology-map-legend { display: none; }
+      .ontology-core { position: static; grid-column: 1 / -1; justify-self: center; width: 118px; height: 118px; margin-bottom: 7px; }
+      .ontology-core strong { font-size: 21px; }
+      .ontology-node, .ontology-node.n1, .ontology-node.n2, .ontology-node.n3, .ontology-node.n4, .ontology-node.n5, .ontology-node.n6 { position: static; min-width: 0; min-height: 66px; width: 100%; transform: none; }
+      .ontology-node.is-dimmed { display: none; }
+      .ontology-inspector { display: none; }
+      .ontology-inspector.mobile-open { position: fixed; left: 8px; right: 8px; bottom: calc(66px + env(safe-area-inset-bottom)); z-index: 70; max-height: 72dvh; min-height: 0; overflow: auto; display: flex; padding: 20px 18px calc(22px + env(safe-area-inset-bottom)); border: 1px solid var(--border); border-radius: 20px; box-shadow: 0 -18px 50px color-mix(in srgb, var(--fg) 18%, transparent); }
+      .ontology-inspector.mobile-open .ontology-inspector-close { position: absolute; right: 13px; top: 13px; display: grid; }
+      .ontology-inspector.mobile-open .ontology-inspector-top { padding-right: 36px; }
+      .ontology-entity-strip { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+      .ontology-entity-cell { padding: 12px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" data-od-id="zhijun-v3-app" data-testid="zhijun-v3-app" data-prototype-version="v3">
+    <aside class="sidebar" aria-label="一级导航" data-od-id="v3-sidebar">
+      <div class="brand">
+        <div class="brand-seal" aria-hidden="true">知</div>
+        <div class="brand-copy"><div class="brand-name">知君</div><div class="brand-version">CONVERSATION OS · V3</div></div>
+      </div>
+      <div class="side-context">
+        <div class="side-context-label">当前关系</div>
+        <div class="side-context-title">致远的私人知君</div>
+        <div class="side-context-meta">共同生活第 287 天</div>
+      </div>
+      <nav class="nav">
+        <button class="nav-btn active" data-page="today" data-testid="nav-today" aria-current="page">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h5l2-7 3.2 14 2-7H21"/></svg></span><span class="nav-text">今日知君</span><span class="nav-mark"></span>
+        </button>
+        <button class="nav-btn" data-page="topics" data-testid="nav-topics">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v13H9l-4 3V4Z"/><path d="M8 8h8M8 12h5"/></svg></span><span class="nav-text">议题</span><span class="nav-mark"></span>
+        </button>
+        <button class="nav-btn" data-page="ontology" data-testid="nav-ontology">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16M7 7c3 3 7 3 10 0M7 17c3-3 7-3 10 0"/></svg></span><span class="nav-text">本体</span><span class="nav-mark"></span>
+        </button>
+        <button class="nav-btn" data-page="growth" data-testid="nav-growth">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9m7 10V5m7 14v-7"/><path d="m4 7 6-4 5 4 5-4"/></svg></span><span class="nav-text">成长</span><span class="nav-mark"></span>
+        </button>
+        <button class="nav-btn" data-page="boundary" data-testid="nav-boundary">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/><path d="m9 12 2 2 4-5"/></svg></span><span class="nav-text">数据与边界</span><span class="nav-mark"></span>
+        </button>
+      </nav>
+      <div class="side-bottom">
+        <div class="box-status"><span class="status-dot"></span><div><strong>盒内运行正常</strong><span>原件仅存本地 · 必要片段出盒需确认</span></div></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar" data-od-id="v3-topbar">
+        <div class="topbar-title" id="topbarTitle">今日知君 <small>九月一日 · 星期二</small></div>
+        <div class="topbar-spacer"></div>
+        <div class="top-status"><span class="status-dot"></span><span>盒内运行正常</span></div>
+        <div class="prototype-pill">虚构示例 · 高保真原型</div>
+      </header>
+      <div class="pages" id="pages">
+        <section class="page active" id="page-today" data-testid="view-today" data-od-id="v3-today-morning-dialogue" aria-labelledby="todayTitle">
+          <div class="workspace">
+            <section class="conversation" data-od-id="today-conversation-stage">
+              <header class="conversation-head">
+                <div class="ai-seal-wrap" data-testid="ai-presence-seal" aria-label="知君的呼吸印记"><div class="ai-seal">知</div></div>
+                <div>
+                  <div class="conversation-kicker">MORNING WITH ZHIJUN · 01 / 03</div>
+                  <h1 class="conversation-title" id="todayTitle">远川合作条款</h1>
+                  <div class="conversation-meta"><span>知君于 08:42 主动发起</span><span class="object-state-inline">判断对象 · 对话中 / 未确认</span></div>
+                </div>
+              </header>
+
+              <div class="timeline" id="todayTimeline" data-testid="conversation-timeline" aria-live="polite">
+                <div class="stage-line done" role="status" data-testid="stage-status">已在盒内完成整理 · 发现 3 个相关议题 · 原件未出盒</div>
+
+                <article class="turn ai" aria-label="知君的消息">
+                  <div class="turn-mark" aria-hidden="true">知</div>
+                  <div class="turn-body">
+                    <div class="turn-author">知君 · 08:42</div>
+                    <div class="turn-text lead">早上好，致远。昨夜我在盒内整理完三份新资料。今天有三件事值得谈，我想先从远川条款开始。</div>
+                    <div class="trigger-note" data-testid="topic-trigger-reason">为什么此刻发起：昨晚律师稿新增了董事会表决条款，与你过去强调的控制权边界有关。</div>
+                  </div>
+                </article>
+
+                <div class="stage-line done" role="status">找到 3 段与你过去判断有关的依据</div>
+
+                <article class="turn ai" aria-label="知君的消息" data-testid="today-proactive-topic">
+                  <div class="turn-mark" aria-hidden="true">知</div>
+                  <div class="turn-body" data-testid="topic-yuanchuan-terms">
+                    <div class="turn-author">知君 · 刚刚</div>
+                    <div class="turn-text">我听见你担心控制权，但还没听见你明确说出边界。<strong class="question-line" data-testid="key-question">哪一项权利一旦失去，对你来说就是不可逆的？</strong></div>
+                    <div class="quick-intents" data-testid="quick-intents">
+                      <button class="soft-btn today-quick-reply" data-value="融资、出售核心资产和更换 CEO 这三项必须保留。日常经营我可以放权，只要三项写清楚，我愿意签，大概七成把握。" data-testid="reply-decision-control-rights">融资与股权</button>
+                      <button class="soft-btn today-quick-reply" data-value="出售核心资产必须保留我的否决权。日常经营可以放权，只要这项写清楚，我愿意继续谈。">出售核心资产</button>
+                      <button class="soft-btn today-quick-reply" data-value="更换 CEO 需要保留我的同意权。除此之外可以采用多数表决。">更换 CEO</button>
+                    </div>
+                    <div class="turn-actions">
+                      <button class="text-btn analysis-toggle" id="todayAnalysisToggle" aria-expanded="false" aria-controls="todayAnalysis" data-testid="analysis-toggle-yuanchuan">展开分析</button>
+                      <button class="text-btn evidence-open" data-evidence="decision">先看三段依据</button>
+                      <button class="text-btn" data-toast="已延后到今天 14:00；今天仍只会主动提出最多三个议题。">午后提醒</button>
+                    </div>
+                    <div class="analysis-panel" id="todayAnalysis" data-testid="analysis-panel-yuanchuan" hidden>
+                      <div class="analysis-grid">
+                        <div class="analysis-cell"><h4>观察</h4><p>你区分的不是“要不要交权”，而是日常经营与不可逆事项。</p></div>
+                        <div class="analysis-cell"><h4>另一种解释</h4><p>你担心的也可能不是条款本身，而是目前对远川的信任还不足。现有材料无法排除这一点。</p></div>
+                        <div class="analysis-cell"><h4>三段盒内依据</h4><ul class="evidence-list"><li><span class="evidence-index">01</span><span>8 月 26 日项目笔记：“经营可以放权，资本结构不能含糊。”</span></li><li><span class="evidence-index">02</span><span>8 月 29 日会议转写：两次追问核心资产出售的表决方式。</span></li><li><span class="evidence-index">03</span><span>8 月 31 日律师批注：融资、更换 CEO 两处标为“需保留边界”。</span></li></ul></div>
+                        <div class="analysis-cell"><h4>仍需留意</h4><p>如果这三项权利被限定期限，你是否仍然认为边界成立？</p><h4 style="margin-top:12px">可选行动</h4><p>把三项保护性事项及触发条件整理成一页，交给律师核对。</p></div>
+                      </div>
+                      <p class="object-footnote">这里展示的是观察、依据与其他可能解释，不是知君的隐藏推理过程。</p>
+                    </div>
+                  </div>
+                </article>
+
+                <div id="todayDynamic"></div>
+
+                <div class="topic-chapters" aria-label="今天的其他主动议题">
+                  <details class="topic-chapter" data-testid="today-proactive-topic">
+                    <summary><span class="chapter-num">02</span><span class="chapter-title">COO 任命结果</span><span class="chapter-reason">30 天观察期今日到期</span><span class="chapter-chevron">＋</span></summary>
+                    <div class="chapter-body"><span data-testid="topic-trigger-reason">为什么此刻发起：你设定的 30 天观察期今天结束，已有四次周会和两次冲突记录。</span><div class="turn-actions"><button class="soft-btn" data-go-page="growth">稍后复盘</button><button class="text-btn" data-toast="已改为明天上午提醒。">明天提醒</button></div></div>
+                  </details>
+                  <details class="topic-chapter" data-testid="today-proactive-topic">
+                    <summary><span class="chapter-num">03</span><span class="chapter-title">一项关于你的新理解</span><span class="chapter-reason">三次谈判出现同一种反应</span><span class="chapter-chevron">＋</span></summary>
+                    <div class="chapter-body"><span data-testid="topic-trigger-reason">为什么此刻发起：最近三次合作谈判里，你都把“控制权”与“承担结果”放在一起谈。</span><div class="turn-actions"><button class="soft-btn" data-go-page="ontology" data-ontology-entry="dialogue">看看是什么</button><button class="text-btn" data-toast="已放入本周议题；在你确认前不会进入本体。">本周再谈</button></div></div>
+                  </details>
+                </div>
+                <button class="text-btn" data-toast="今天不再主动提出新议题；结果到期与安全提醒不受影响。">今天不再主动提醒</button>
+              </div>
+
+              <div class="composer" data-od-id="today-composer">
+                <div class="composer-row">
+                  <textarea id="todayInput" data-testid="composer-input" rows="1" placeholder="回答这个问题，或说出你真正担心的事…" aria-label="回答知君"></textarea>
+                  <button class="voice-btn" data-testid="voice-hold" aria-label="按住说话，松开后转写" aria-pressed="false">按住说话</button>
+                  <button class="send-btn" id="todaySend" data-testid="composer-send" aria-label="发送回答"><svg viewBox="0 0 24 24"><path d="m4 12 15-7-5 14-3-6-7-1Z"/><path d="m11 13 8-8"/></svg></button>
+                </div>
+                <div class="composer-hint"><span>⌘ ↵ 发送</span><span>重要内容会先形成草稿，由你确认</span></div>
+              </div>
+            </section>
+
+            <aside class="object-panel" id="todayObjectPanel" data-testid="live-object-panel" data-object-status="pending" role="complementary" aria-label="实时判断对象">
+              <div class="object-eyebrow">LIVE OBJECT · JUDGMENT</div>
+              <div class="object-title-row"><h2 class="object-title">判断草稿 · 远川合作条款</h2><span class="state-badge pending" id="decisionBadge" data-testid="object-status">未确认</span></div>
+              <p class="object-note">这张卡会随对话实时变化。字段变化不等于确认，也不会自动发给律师或任何外部人员。</p>
+              <div class="object-fields" id="decisionFields" data-testid="live-object-decision">
+                <div class="object-field" data-testid="decision-field-background"><div class="field-label">背景</div><div class="field-value">远川提出将重大事项改为董事会三分之二表决<span class="field-source">律师稿 · 08-31 · 盒内来源</span></div></div>
+                <div class="object-field"><div class="field-label">选项</div><div class="field-value">接受多数表决 / 保留保护性权利 / 延后签署<span class="field-source">知君整理 · 尚未确认</span></div></div>
+                <div class="object-field" id="decisionLeaning" data-testid="decision-field-leaning"><div class="field-label">当前倾向</div><div class="field-value waiting">等待你的回答</div></div>
+                <div class="object-field" id="decisionReason" data-testid="decision-field-reason"><div class="field-label">核心理由</div><div class="field-value waiting">等待你的回答</div></div>
+                <div class="object-field" id="decisionConfidence" data-testid="decision-field-confidence"><div class="field-label">信心</div><div class="field-value waiting">未标注</div></div>
+                <div class="object-field" data-testid="decision-field-deadline"><div class="field-label">决定期限</div><div class="field-value">9 月 3 日<span class="field-source">项目日历 · 盒内来源</span></div></div>
+                <div class="object-field" id="decisionNext" data-testid="decision-field-next-step"><div class="field-label">下一步</div><div class="field-value waiting">等待确认</div></div>
+                <div class="object-field" data-testid="decision-field-evidence"><div class="field-label">依据</div><div class="field-value">3 段本地依据 <button class="text-btn evidence-open" data-evidence="decision">查看</button><span class="field-source">原件未出盒</span></div></div>
+              </div>
+              <div class="object-actions">
+                <button class="primary-btn" id="confirmDecision" data-testid="decision-confirm" disabled>确认这项判断</button>
+                <button class="soft-btn" id="editDecision" disabled>修改卡片</button>
+                <button class="soft-btn" id="scheduleFollowup" hidden>设置结果回访</button>
+              </div>
+              <p class="object-footnote" id="decisionFootnote">尚未确认，不会进入长期判断记录。</p>
+            </aside>
+          </div>
+          <button class="object-peek" data-object-target="todayObjectPanel" data-testid="live-object-mobile-trigger" aria-label="打开实时判断对象"><span class="brand-seal" style="width:34px;height:34px;font-size:15px">判</span><span><strong>远川条款 · 判断草稿</strong><span id="todayPeekState">未确认 · 等待回答</span></span><span class="peek-count" id="todayPeekCount">0 项变化</span></button>
+        </section>
+
+        <section class="page" id="page-topics" data-testid="view-topics" data-od-id="v3-topic-threads" aria-labelledby="topicsTitle">
+          <div class="workspace with-threads">
+            <aside class="thread-rail" aria-label="持续议题">
+              <div class="thread-rail-title">持续议题 · 4</div>
+              <div class="thread-group"><div class="thread-group-label">正在判断</div>
+                <button class="thread-btn active" data-thread="yuanchuan" data-testid="thread-yuanchuan"><strong>远川合作条款</strong><span>判断 · 对话中</span></button>
+              </div>
+              <div class="thread-group"><div class="thread-group-label">结果与复盘</div>
+                <button class="thread-btn" data-thread="coo" data-testid="thread-coo-appointment"><strong>COO 任命</strong><span class="due">结果到期 · 待复盘</span></button>
+              </div>
+              <div class="thread-group"><div class="thread-group-label">关系与成长</div>
+                <button class="thread-btn" data-thread="boundary-pattern"><strong>合作边界模式</strong><span>理解 · 等待确认</span></button>
+                <button class="thread-btn" data-thread="linlan"><strong>与林岚的合作</strong><span>关系 · 等待回应</span></button>
+              </div>
+            </aside>
+
+            <section class="conversation">
+              <header class="conversation-head">
+                <div class="ai-seal-wrap"><div class="ai-seal">知</div></div>
+                <div><div class="conversation-kicker" id="topicKicker">JUDGMENT THREAD · THR-021</div><h1 class="conversation-title" id="topicsTitle">远川合作条款</h1><div class="conversation-meta"><span id="topicUpdated">今天 09:18 更新</span><span class="object-state-inline" id="topicObjectState">判断对象 · 对话中 / 未确认</span></div></div>
+              </header>
+              <div class="timeline" id="topicTimeline" data-testid="topic-conversation-timeline" aria-live="polite">
+                <div class="stage-line done">持续议题 · 首次形成于今天 08:42</div>
+                <article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 08:42</div><div class="turn-text">昨晚的律师稿改变了重大事项表决方式。我想先确认你不可让渡的边界。</div></div></article>
+                <article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 09:03</div><div class="turn-text">日常经营可以放权；融资、出售核心资产和更换 CEO 必须保留。</div></div></article>
+                <div class="field-change-event"><strong>判断对象已更新</strong> · 倾向、理由、信心和下一步来自本轮回答，仍等待你确认。</div>
+                <article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 09:04</div><div class="turn-text">我把你的边界记成了：经营权可以放，三项不可逆权利不能放。<strong class="question-line">如果对方只同意其中两项，哪一项你最不能交换？</strong></div><div class="turn-actions"><button class="soft-btn" data-toast="已记入本轮回答草稿：出售核心资产。">出售核心资产</button><button class="soft-btn" data-toast="已记入本轮回答草稿：融资权。">融资权</button><button class="text-btn evidence-open" data-evidence="decision">回看依据</button></div></div></article>
+              </div>
+              <div class="composer"><div class="composer-row"><textarea rows="1" placeholder="继续这个议题…" aria-label="继续议题"></textarea><button class="voice-btn" aria-label="按住说话，松开后转写" aria-pressed="false">按住说话</button><button class="send-btn generic-send" aria-label="发送"><svg viewBox="0 0 24 24"><path d="m4 12 15-7-5 14-3-6-7-1Z"/><path d="m11 13 8-8"/></svg></button></div><div class="composer-hint"><span>这段话只会进入当前议题</span><span>重要字段仍需确认</span></div></div>
+            </section>
+
+            <aside class="object-panel" id="topicsObjectPanel" data-testid="topic-live-object-panel" aria-label="当前议题对象">
+              <div id="topicObjectContent">
+                <div class="object-eyebrow">CURRENT OBJECT · JUDGMENT</div><div class="object-title-row"><h2 class="object-title">远川合作条款</h2><span class="state-badge pending">未确认</span></div>
+                <p class="object-note">一个议题只承接一条连续时间线；确认、结果和复盘都会回到这里。</p>
+                <div class="object-fields">
+                  <div class="object-field"><div class="field-label">对象</div><div class="field-value">判断草稿 V1</div></div>
+                  <div class="object-field"><div class="field-label">倾向</div><div class="field-value">接受多数表决，但保留三项保护性权利</div></div>
+                  <div class="object-field"><div class="field-label">证据</div><div class="field-value">3 段盒内依据<span class="field-source">原件未出盒</span></div></div>
+                  <div class="object-field"><div class="field-label">下一节点</div><div class="field-value">确认判断 → 结果回访</div></div>
+                </div>
+                <div class="object-actions"><button class="primary-btn" data-go-page="today">回到晨间判断</button><button class="soft-btn evidence-open" data-evidence="decision">查看全部依据</button></div>
+              </div>
+            </aside>
+          </div>
+          <button class="object-peek" data-object-target="topicsObjectPanel" aria-label="打开当前议题对象"><span class="brand-seal" style="width:34px;height:34px;font-size:15px">题</span><span><strong id="topicPeekTitle">远川合作条款</strong><span id="topicPeekState">判断对象 · 未确认</span></span><span class="peek-count">查看对象</span></button>
+        </section>
+
+        <section class="page" id="page-ontology" data-testid="view-ontology" data-od-id="v3-personal-ontology" aria-labelledby="ontologyOverviewTitle">
+          <div class="ontology-page-shell">
+            <div class="ontology-modebar" data-testid="ontology-view-switch">
+              <span class="ontology-mode-label">本体的两种视角</span>
+              <div class="ontology-view-tabs" role="tablist" aria-label="本体视图">
+                <button class="ontology-view-btn" role="tab" aria-selected="false" aria-controls="ontologyDialogueMode" data-ontology-mode="dialogue" data-testid="ontology-mode-conversation">对话校准 · 6</button>
+                <button class="ontology-view-btn" role="tab" aria-selected="true" aria-controls="ontologyAtlasMode" data-ontology-mode="map" data-testid="ontology-mode-map">本体全景</button>
+              </div>
+              <span class="ontology-mode-summary">对话负责写入 · 全景负责读取</span>
+            </div>
+
+            <div class="ontology-mode" id="ontologyDialogueMode" role="tabpanel" data-testid="ontology-conversation-shell">
+              <div class="workspace">
+                <section class="conversation">
+                  <header class="conversation-head">
+                    <div class="ai-seal-wrap"><div class="ai-seal">知</div></div>
+                    <div>
+                      <div class="conversation-kicker">ONTOLOGY · CANDIDATE UNDERSTANDING</div>
+                      <h1 class="conversation-title" id="ontologyTitle">一项尚未成立的理解</h1>
+                      <div class="conversation-meta"><span>原则层候选</span><span class="object-state-inline" id="ontologyInlineState">理解对象 · 等待你确认</span></div>
+                      <div class="layer-strip" aria-label="四层自我"><span class="layer-chip">事实观察 48</span><span class="layer-chip" id="declaredCount">自我表达 31</span><span class="layer-chip">理想方向 9</span><span class="layer-chip current" id="hypothesisCount">知君推测 6</span></div>
+                    </div>
+                  </header>
+                  <div class="timeline" id="ontologyTimeline" data-testid="ontology-conversation-timeline" aria-live="polite">
+                    <div class="stage-line done" role="status">已在盒内比对近期合作记录 · 找到 3 次相似反应</div>
+                    <article class="turn ai" aria-label="知君的消息" data-testid="ontology-proposed-understanding">
+                      <div class="turn-mark">知</div>
+                      <div class="turn-body">
+                        <div class="turn-author">知君 · 09:11</div>
+                        <div class="turn-text lead">我有一项尚未成立的理解：你并非抗拒别人进入决策，而是抗拒责任与权力不对称。</div>
+                        <div class="turn-text">它来自最近三次合作谈判，但我缺少一段背景。<strong class="question-line" data-testid="key-question">你第一次强烈意识到这种不对称，是在哪件事里？</strong></div>
+                        <div class="quick-intents"><button class="soft-btn" id="ontologyReply" data-testid="reply-ontology-context">讲 2021 年那次创业</button><button class="soft-btn evidence-open" data-evidence="ontology">先看依据</button><button class="text-btn" data-toast="已暂存为候选，不会进入本体，也不会在判断中引用。">暂不处理</button></div>
+                      </div>
+                    </article>
+                    <div id="ontologyDynamic"></div>
+                    <div class="topic-chapters" style="margin-top:28px">
+                      <details class="topic-chapter"><summary><span class="chapter-num">治理</span><span class="chapter-title">查看全部待确认理解</span><span class="chapter-reason">共 6 项候选</span><span class="chapter-chevron">＋</span></summary><div class="chapter-body">候选理解会留在各自议题里提出；这里提供集中查看、纠正和拒绝入口。当前原型聚焦本条理解。</div></details>
+                      <details class="topic-chapter"><summary><span class="chapter-num">说明</span><span class="chapter-title">四层自我如何区分</span><span class="chapter-reason">事实不是愿望，推测不是定义</span><span class="chapter-chevron">＋</span></summary><div class="chapter-body">事实观察来自可追溯经历；自我表达是你亲口确认的说法；理想方向描述你想成为谁；知君推测必须由你确认，未确认前不能当作关于你的事实。</div></details>
+                    </div>
+                  </div>
+                  <div class="composer"><div class="composer-row"><textarea id="ontologyInput" rows="1" placeholder="补充一段背景，或直接修正知君…" aria-label="补充本体背景"></textarea><button class="voice-btn" aria-label="按住说话，松开后转写" aria-pressed="false">按住说话</button><button class="send-btn" id="ontologySend" aria-label="发送背景"><svg viewBox="0 0 24 24"><path d="m4 12 15-7-5 14-3-6-7-1Z"/><path d="m11 13 8-8"/></svg></button></div><div class="composer-hint"><span>你的补充只会修改候选</span><span>确认前不会进入本体</span></div></div>
+                </section>
+
+                <aside class="object-panel" id="ontologyObjectPanel" data-testid="live-object-understanding" data-object-status="pending" aria-label="实时理解对象">
+                  <div class="object-eyebrow">LIVE OBJECT · UNDERSTANDING</div>
+                  <div class="object-title-row"><h2 class="object-title">候选理解 · 尚未进入本体</h2><span class="state-badge pending" id="understandingBadge">待确认</span></div>
+                  <p class="object-note" id="ontologyObjectNote">未经你确认，不会作为“关于你的事实”被使用，也不会提供给其他 Agent。</p>
+                  <div class="object-fields">
+                    <div class="object-field" data-testid="understanding-field-layer"><div class="field-label">层次</div><div class="field-value">原则层 · 知君推测</div></div>
+                    <div class="object-field" id="understandingContent" data-testid="understanding-field-content"><div class="field-label">理解</div><div class="field-value">你抗拒的不是共同决策，而是责任与权力不对称<span class="field-source">知君推测 · 尚未确认</span></div></div>
+                    <div class="object-field" id="understandingScope"><div class="field-label">适用范围</div><div class="field-value waiting">尚不明确</div></div>
+                    <div class="object-field" id="understandingEvidence" data-testid="understanding-field-evidence"><div class="field-label">依据</div><div class="field-value">3 次合作谈判 <button class="text-btn evidence-open" data-evidence="ontology">查看</button><span class="field-source">盒内来源</span></div></div>
+                    <div class="object-field" id="understandingStrength"><div class="field-label">证据充分度</div><div class="field-value">3 / 5</div></div>
+                    <div class="object-field" data-testid="understanding-field-privacy"><div class="field-label">隐私范围</div><div class="field-value">仅知君<span class="field-source">不提供给其他 Agent</span></div></div>
+                  </div>
+                  <div class="object-actions" id="understandingActions">
+                    <button class="primary-btn" id="confirmUnderstanding" data-testid="understanding-confirm" disabled>确认进入本体</button>
+                    <button class="soft-btn" id="correctUnderstanding" data-testid="understanding-correct" disabled>修改措辞</button>
+                    <button class="danger-btn" id="rejectUnderstanding" data-testid="understanding-reject" disabled>不是这样</button>
+                  </div>
+                  <p class="object-footnote" id="understandingFootnote">状态：候选理解 · 等待你的解释</p>
+                </aside>
+              </div>
+              <button class="object-peek" data-object-target="ontologyObjectPanel" aria-label="打开候选理解对象"><span class="brand-seal" style="width:34px;height:34px;font-size:15px">我</span><span><strong>原则层 · 候选理解</strong><span id="ontologyPeekState">未进入本体 · 等待背景</span></span><span class="peek-count" id="ontologyPeekCount">0 项变化</span></button>
+            </div>
+
+            <div class="ontology-mode is-active" id="ontologyAtlasMode" role="tabpanel" data-testid="ontology-visualization">
+              <div class="ontology-overview">
+                <header class="ontology-overview-head">
+                  <div class="ontology-overview-copy"><div class="conversation-kicker">PERSONAL ONTOLOGY · LIVING VIEW</div><h2 id="ontologyOverviewTitle">这是知君目前理解的你，不是对你的定义。</h2><p>人物、角色、项目、原则与判断方法共同围绕“当前的我”。环的位置表达确认状态，不表达人格强弱；每个节点都能回到时间、依据和对话。</p></div>
+                  <div class="ontology-version">本体 V3<br>更新于今天 09:11<br>虚构示例</div>
+                </header>
+
+                <div class="ontology-layer-filters" data-testid="ontology-layer-filters" role="group" aria-label="筛选四层自我">
+                  <button class="ontology-filter" aria-pressed="true" data-ontology-layer="all" data-testid="ontology-filter-all">全部 · 94</button>
+                  <button class="ontology-filter" aria-pressed="false" data-ontology-layer="observed" data-testid="ontology-filter-observed">事实观察 · 48</button>
+                  <button class="ontology-filter" aria-pressed="false" data-ontology-layer="declared" data-testid="ontology-filter-declared">自我表达 · <span id="mapDeclaredCount">31</span></button>
+                  <button class="ontology-filter" aria-pressed="false" data-ontology-layer="aspirational" data-testid="ontology-filter-aspirational">理想方向 · 9</button>
+                  <button class="ontology-filter" aria-pressed="false" data-ontology-layer="hypothesis" data-testid="ontology-filter-hypothesis">知君推测 · <span id="mapHypothesisCount">6</span></button>
+                  <span class="ontology-map-status" id="ontologyMapStatus" data-testid="ontology-map-status" role="status" aria-live="polite">显示 6 个代表性对象</span>
+                </div>
+
+                <div class="ontology-overview-grid">
+                  <div class="ontology-map-canvas" data-testid="ontology-map" role="group" aria-label="林致远个人本体关系年轮">
+                    <svg class="ontology-links" viewBox="0 0 800 560" preserveAspectRatio="none" aria-hidden="true"><line x1="400" y1="280" x2="120" y2="135"/><line x1="400" y1="280" x2="680" y2="125"/><line x1="400" y1="280" x2="120" y2="430"/><line x1="400" y1="280" x2="680" y2="425"/><line x1="400" y1="280" x2="400" y2="65"/><line x1="400" y1="280" x2="400" y2="505"/></svg>
+                    <div class="ontology-ring inner" aria-hidden="true"></div><div class="ontology-ring outer" aria-hidden="true"></div>
+                    <div class="ontology-core" data-testid="ontology-map-core"><span><strong>林致远</strong>当前的我 · 2026</span></div>
+                    <button class="ontology-node n1" data-testid="ontology-node" data-entity-id="roles" data-layer="observed" data-status="confirmed" aria-pressed="true" aria-label="创业者与父亲，事实观察，已确认"><strong>创业者 · 父亲</strong><span>当前角色 · 已确认</span></button>
+                    <button class="ontology-node n2" data-testid="ontology-node" data-entity-id="linlan" data-layer="observed" data-status="confirmed" aria-pressed="false" aria-label="林岚，事实观察，已确认"><strong>林岚</strong><span>朋友 · 合作者</span></button>
+                    <button class="ontology-node n3" data-testid="ontology-node" data-entity-id="yuanchuan" data-layer="observed" data-status="confirmed" aria-pressed="false" aria-label="远川资本，事实观察，已确认"><strong>远川资本</strong><span>当前项目 · 已确认</span></button>
+                    <button class="ontology-node n4" data-testid="ontology-node" data-entity-id="independence" data-layer="declared" data-status="confirmed" aria-pressed="false" aria-label="独立判断，自我表达，已确认"><strong>独立判断</strong><span>自我表达 · 已确认</span></button>
+                    <button class="ontology-node n5" data-testid="ontology-node" data-entity-id="collaboration" data-layer="aspirational" data-status="reaffirm" aria-pressed="false" aria-label="长期合作，理想方向，需要重申"><strong>长期合作</strong><span>理想方向 · 需重申</span></button>
+                    <button class="ontology-node n6" id="responsibilityNode" data-testid="ontology-node" data-entity-id="responsibility" data-layer="hypothesis" data-status="pending" aria-pressed="false" aria-label="责任与决定权，知君推测，尚未进入本体"><strong>责任与决定权</strong><span id="responsibilityNodeState">知君推测 · 未进入本体</span></button>
+                    <div class="ontology-map-legend" data-testid="ontology-map-legend"><span><i class="legend-line"></i>实线 · 已确认</span><span><i class="legend-line reaffirm"></i>点线 · 需重申</span><span><i class="legend-line pending"></i>虚线 · 尚未进入本体</span></div>
+                  </div>
+
+                  <aside class="ontology-inspector" id="ontologyInspector" data-testid="ontology-inspector" aria-labelledby="ontologyInspectorTitle">
+                    <button class="modal-close ontology-inspector-close" id="ontologyInspectorClose" data-testid="ontology-inspector-close" aria-label="关闭本体节点详情">×</button>
+                    <div class="ontology-inspector-top"><span class="ontology-inspector-state" id="ontologyInspectorState" data-testid="ontology-inspector-state">已确认事实</span><span class="ontology-inspector-time" id="ontologyInspectorTime">最近重申 · 18 天前</span></div>
+                    <h3 id="ontologyInspectorTitle" data-testid="ontology-inspector-title">你目前同时承担创业者、投资人和父亲三个重要角色。</h3>
+                    <p class="ontology-inspector-copy" id="ontologyInspectorCopy">这项理解来自你亲自确认的人生章程，以及过去六个月持续出现的日程、项目和自我记录。角色不是永久身份；下一次章程复审时可以调整。</p>
+                    <div class="ontology-inspector-evidence" id="ontologyInspectorEvidence" data-testid="ontology-inspector-evidence"><div class="ontology-evidence-item" data-testid="ontology-evidence-item"><span class="evidence-index">01</span><span>人生章程 V3 · “当前最重要的三个角色”</span></div><div class="ontology-evidence-item" data-testid="ontology-evidence-item"><span class="evidence-index">02</span><span>2026 年度自述 · 1 月 7 日语音记录</span></div><div class="ontology-evidence-item" data-testid="ontology-evidence-item"><span class="evidence-index">03</span><span>近 180 天确认事件 · 角色上下文</span></div></div>
+                    <div class="ontology-inspector-actions"><button class="soft-btn evidence-open" id="ontologyOverviewEvidence" data-evidence="ontology-node" data-testid="ontology-inspector-evidence-count">查看 3 条盒内依据</button><button class="primary-btn" id="ontologyCalibrate" data-testid="ontology-calibrate">就此和知君校准</button></div>
+                    <p class="ontology-inspector-foot" id="ontologyInspectorFoot">查看不会改变状态；修正、重申或撤回都需要明确确认。</p>
+                  </aside>
+                </div>
+
+                <div class="ontology-entity-strip" aria-label="本体对象分类"><div class="ontology-entity-cell"><strong>人物与关系</strong><span>共同经历、承诺与变化</span></div><div class="ontology-entity-cell"><strong>项目与组织</strong><span>角色、目标与历史判断</span></div><div class="ontology-entity-cell"><strong>事件与时间线</strong><span>发生过什么，依据在哪里</span></div><div class="ontology-entity-cell"><strong>原则与主题</strong><span>你确认过的判断方法</span></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page" id="page-growth" data-testid="view-growth" data-od-id="v3-growth-review-dialogue" aria-labelledby="growthTitle">
+          <div class="workspace">
+            <section class="conversation">
+              <header class="conversation-head">
+                <div class="ai-seal-wrap"><div class="ai-seal">知</div></div>
+                <div>
+                  <div class="conversation-kicker">GROWTH REVIEW · THR-014</div>
+                  <h1 class="conversation-title" id="growthTitle">COO 任命 · 结果复盘</h1>
+                  <div class="conversation-meta"><span data-testid="outcome-due">30 天观察期已结束</span><span class="object-state-inline" id="growthInlineState">复盘对象 · 到期 / 未确认</span></div>
+                  <div class="layer-strip"><span class="layer-chip current">本次复盘</span><span class="layer-chip">人生章程 V3</span><span class="layer-chip">判断结果 12</span><span class="layer-chip">行动实验 4</span></div>
+                </div>
+              </header>
+              <div class="timeline" id="growthTimeline" data-testid="growth-conversation-timeline" aria-live="polite">
+                <div class="stage-line done" role="status">观察期已结束 · 已汇总 4 次周会与 2 次冲突记录</div>
+                <article class="turn ai" aria-label="知君的消息">
+                  <div class="turn-mark">知</div>
+                  <div class="turn-body">
+                    <div class="turn-author">知君 · 09:24</div>
+                    <div class="turn-text lead">30 天到了。沈禾连续四周准时推进，但两次关键冲突仍由你收尾。</div>
+                    <div class="turn-text">我先不急着判断她是否胜任。<strong class="question-line" data-testid="key-question">哪一个结果最出乎你意料？</strong></div>
+                    <div class="quick-intents"><button class="soft-btn" id="growthReply" data-testid="review-reply">我的介入</button><button class="soft-btn" data-toast="已把“冲突处理”放入回答草稿。">冲突处理</button><button class="soft-btn" data-toast="已把“推进速度”放入回答草稿。">推进速度</button></div>
+                    <div class="turn-actions"><button class="text-btn analysis-toggle" id="growthAnalysisToggle" aria-expanded="false" aria-controls="growthAnalysis" data-testid="review-analysis-toggle">展开完整分析</button><button class="text-btn evidence-open" data-evidence="growth">查看六段记录</button></div>
+                    <div class="analysis-panel" id="growthAnalysis" data-testid="review-analysis-panel" hidden>
+                      <div class="analysis-grid">
+                        <div class="analysis-cell"><h4>观察</h4><p>沈禾在节奏和跟进上表现稳定；冲突处理尚未形成独立样本。</p></div>
+                        <div class="analysis-cell"><h4>另一种解释</h4><p>当前结果可能主要反映你的授权方式，而不是沈禾的能力上限。</p></div>
+                        <div class="analysis-cell"><h4>已知依据</h4><ul class="evidence-list"><li><span class="evidence-index">01</span><span>四次周会均按时完成议题与责任人确认。</span></li><li><span class="evidence-index">02</span><span>第一次冲突由你在会议中直接接管。</span></li><li><span class="evidence-index">03</span><span>第二次冲突中，沈禾已提出方向，你先给出最终决定。</span></li></ul></div>
+                        <div class="analysis-cell"><h4>仍不确定</h4><p>当冲突涉及关键客户或现金流风险时，她能否独立完成取舍。</p><h4 style="margin-top:12px">建议实验</h4><p>连续 14 天不临场接管；仅在合规、现金流或关键客户流失风险触发时介入。</p></div>
+                      </div>
+                      <p class="object-footnote">以上是对现有记录的归纳与替代解释，不是对你或沈禾的定论。</p>
+                    </div>
+                  </div>
+                </article>
+                <div id="growthDynamic"></div>
+              </div>
+              <div class="composer"><div class="composer-row"><textarea id="growthInput" rows="1" placeholder="说说真实结果，或者你当时为何介入…" aria-label="补充复盘结果"></textarea><button class="voice-btn" aria-label="按住说话，松开后转写" aria-pressed="false">按住说话</button><button class="send-btn" id="growthSend" aria-label="发送复盘"><svg viewBox="0 0 24 24"><path d="m4 12 15-7-5 14-3-6-7-1Z"/><path d="m11 13 8-8"/></svg></button></div><div class="composer-hint"><span>结果事实与知君解释会分开保存</span><span>实验必须由你确认</span></div></div>
+            </section>
+
+            <aside class="object-panel" id="growthObjectPanel" data-testid="live-object-review" data-object-status="pending" aria-label="实时复盘对象">
+              <div class="object-eyebrow">LIVE OBJECT · REVIEW</div>
+              <div class="object-title-row"><h2 class="object-title">结果复盘 · COO 任命</h2><span class="state-badge pending" id="reviewBadge">待复盘</span></div>
+              <p class="object-note">复盘回到原判断，而不是另开一次聊天。知君的解释只有在你确认后才会成为成长记录。</p>
+              <div class="object-fields">
+                <div class="object-field"><div class="field-label">原判断</div><div class="field-value">让沈禾独立主持周会，可以观察她真实的带队能力<span class="field-source">8 月 1 日 · 已确认判断</span></div></div>
+                <div class="object-field"><div class="field-label">观察期</div><div class="field-value">8 月 1 日—8 月 31 日</div></div>
+                <div class="object-field" data-testid="review-field-observation"><div class="field-label">已知结果</div><div class="field-value">连续四周准时推进；两次关键冲突由你收尾<span class="field-source">周会记录 · 盒内来源</span></div></div>
+                <div class="object-field" id="reviewFeedback" data-testid="review-field-feedback"><div class="field-label">你的反馈</div><div class="field-value waiting">等待你的回答</div></div>
+                <div class="object-field" id="reviewConclusion"><div class="field-label">初步结论</div><div class="field-value waiting">等待你的反馈</div></div>
+                <div class="object-field" id="reviewAlternative" data-testid="review-field-alternative"><div class="field-label">其他解释</div><div class="field-value waiting">尚未填写</div></div>
+                <div class="object-field" id="reviewExperiment" data-testid="review-field-experiment"><div class="field-label">行动实验</div><div class="field-value waiting">尚未形成</div></div>
+                <div class="object-field" id="reviewWindow" data-testid="review-field-window"><div class="field-label">观察期限</div><div class="field-value waiting">尚未设置</div></div>
+              </div>
+              <div class="object-actions"><button class="primary-btn" id="createExperiment" data-testid="experiment-confirm" disabled>形成行动实验</button><button class="soft-btn" id="backToTopic" data-testid="return-to-topic" hidden>回到「COO 任命」议题</button></div>
+              <p class="object-footnote" id="reviewFootnote">状态：结果到期 · 等待你的复盘</p>
+            </aside>
+          </div>
+          <button class="object-peek" data-object-target="growthObjectPanel" aria-label="打开复盘对象"><span class="brand-seal" style="width:34px;height:34px;font-size:15px">复</span><span><strong>COO 任命 · 复盘</strong><span id="growthPeekState">结果到期 · 等待反馈</span></span><span class="peek-count" id="growthPeekCount">0 项变化</span></button>
+        </section>
+
+        <section class="page" id="page-boundary" data-testid="view-boundaries" data-od-id="v3-data-boundary-controls" aria-labelledby="boundaryTitle">
+          <div class="governance">
+            <header class="governance-head">
+              <div class="governance-head-copy"><div class="conversation-kicker">DATA &amp; BOUNDARIES</div><h1 id="boundaryTitle">原件在盒内，必要片段可能出盒</h1><p class="governance-sub">知君先在本地检索原件。调用你选择的云端模型时，只发送回答当前问题所必需的片段。每次发送都可以预览接收方、用途和精确内容；自然语言中的“可以”不会代替你的授权。</p></div>
+            </header>
+            <div class="boundary-tabs" role="tablist" aria-label="数据与边界分类">
+              <button class="boundary-tab active" role="tab" aria-selected="true" data-boundary="sources" data-testid="boundary-tab-sources">来源</button>
+              <button class="boundary-tab" role="tab" aria-selected="false" data-boundary="egress" data-testid="boundary-tab-egress">出盒与回执</button>
+              <button class="boundary-tab" role="tab" aria-selected="false" data-boundary="agents" data-testid="boundary-tab-permissions">Agent 权限</button>
+              <button class="boundary-tab" role="tab" aria-selected="false" data-boundary="devices" data-testid="boundary-tab-devices">设备、导出与删除</button>
+            </div>
+
+            <div class="boundary-view active" id="boundary-sources" role="tabpanel">
+              <div class="boundary-banner"><div><h2>来源由你管理，解释必须能回到来源</h2><p>原件、版本和处理状态属于直接控制面。知君可以解释一条来源如何被使用，但不能替你完成删除或改变隐私等级。</p></div><div class="boundary-seal">盒内<br>原件</div></div>
+              <div class="flow-map" aria-label="数据处理路径"><div class="flow-step"><small>01</small><strong>原件</strong><span>只存私人记忆盒子</span></div><div class="flow-step"><small>02</small><strong>本地解析与检索</strong><span>形成可追溯片段</span></div><div class="flow-step"><small>03</small><strong>精确片段预览</strong><span>接收方、用途、内容</span></div><div class="flow-step"><small>04</small><strong>你明确允许</strong><span>一次授权，一次回执</span></div></div>
+              <div class="control-list">
+                <div class="control-row"><div class="control-title">远川合作协议_律师稿_v3.docx<span>08-31 23:18 · 高敏感</span></div><div class="control-detail">已安全保存 · 本地处理完成 · 形成 4 个候选理解，尚未确认</div><div class="control-actions"><button class="soft-btn evidence-open" data-evidence="decision">查看来源</button><button class="soft-btn" data-toast="知君：这份来源被用于远川条款议题的三段依据。">让知君解释</button></div></div>
+                <div class="control-row"><div class="control-title">COO 周会记录 · 八月<span>4 次会议 · 内部</span></div><div class="control-detail">已安全保存 · 本地处理完成 · 关联 COO 任命判断</div><div class="control-actions"><button class="soft-btn evidence-open" data-evidence="growth">查看来源</button><button class="soft-btn" data-toast="隐私等级修改会先展示对既有授权的影响。">修改边界</button></div></div>
+                <div class="control-row"><div class="control-title">创业复盘_2021.md<span>2021-11-09 · 仅知君</span></div><div class="control-detail">已安全保存 · 仅用于一项待确认的原则层理解</div><div class="control-actions"><button class="soft-btn evidence-open" data-evidence="ontology">查看来源</button><button class="soft-btn" data-toast="这条来源保持“仅知君”，不会提供给其他 Agent。">查看使用范围</button></div></div>
+              </div>
+            </div>
+
+            <div class="boundary-view" id="boundary-egress" role="tabpanel">
+              <div class="boundary-banner"><div><h2>每次出盒之前，看见究竟要发送什么</h2><p>当前有一份拟发送清单等待你决定。原件数量始终为 0；你也可以改为仅使用盒内模型回答。</p></div><div class="boundary-seal">一次<br>授权</div></div>
+              <div class="control-list">
+                <div class="control-row"><div class="control-title">远川条款 · 展开判断分析<span>今天 09:04 · 待批准</span></div><div class="control-detail">接收方：Claude Sonnet · 用途：生成替代解释 · 3 个必要片段 / 612 字 · 原件 0</div><div class="control-actions"><button class="primary-btn" id="openEgressPreview" data-testid="egress-open-preview">预览并决定</button></div></div>
+                <div class="control-row"><div class="control-title">COO 任命 · 周复盘<span>08-25 18:20 · 已完成</span></div><div class="control-detail">接收方：DeepSeek V3 · 2 个必要片段 / 428 字 · 一次性授权已结束</div><div class="control-actions"><button class="soft-btn" id="openReceipt">查看回执</button></div></div>
+                <div class="control-row"><div class="control-title">合作边界理解<span>08-19 10:12 · 仅本地</span></div><div class="control-detail">未调用云端模型 · 所有片段留在盒内</div><div class="control-actions"><button class="soft-btn" data-toast="这次只使用了盒内检索与本地模型，没有片段出盒。">查看说明</button></div></div>
+              </div>
+            </div>
+
+            <div class="boundary-view" id="boundary-agents" role="tabpanel">
+              <div class="boundary-banner"><div><h2>Agent 只获得完成任务所需的最小上下文</h2><p>权限按对象范围、用途和时效求交。即使你在对话里说“让万象看看”，也只会形成一份授权草稿。</p></div><div class="boundary-seal">最小<br>上下文</div></div>
+              <div class="control-list">
+                <div class="control-row"><div class="control-title">万象 · 专属 Agent 构建<span>未授权 · 有一份请求</span></div><div class="control-detail">请求读取：已确认判断原则、公开职业背景；用途：生成“投前判断助手”；时效：一次</div><div class="control-actions"><button class="primary-btn" id="openAgentPermission" data-testid="permission-authorize">查看授权影响</button></div></div>
+                <div class="control-row"><div class="control-title">会议准备 Agent<span>已授权 · 9 月 15 日到期</span></div><div class="control-detail">可读：公开人物关系、已确认承诺；不可读：私人日记、财务原件、候选理解</div><div class="control-actions"><button class="soft-btn" id="revokeAgent" data-testid="permission-revoke">撤销前预览</button></div></div>
+                <div class="control-row"><div class="control-title">投资备忘录 Agent<span>已停用</span></div><div class="control-detail">历史访问 6 次 · 后续访问已撤销 · 回执保留在盒内</div><div class="control-actions"><button class="soft-btn" data-toast="已停用 Agent 无法读取新上下文；历史回执仍可审计。">查看历史</button></div></div>
+              </div>
+            </div>
+
+            <div class="boundary-view" id="boundary-devices" role="tabpanel">
+              <div class="boundary-banner"><div><h2>设备、导出和遗忘由你直接控制</h2><p>导出与删除不会因为一段对话自动发生。永久删除前必须查看关联议题、派生理解和不可恢复范围。</p></div><div class="boundary-seal">最终<br>控制权</div></div>
+              <div class="control-list">
+                <div class="control-row"><div class="control-title">半人马私人记忆盒子 · 书房<span>当前设备 · 在线</span></div><div class="control-detail">最后验证：今天 08:36 · 本地存储正常 · 恢复密钥已配置</div><div class="control-actions"><button class="soft-btn" data-toast="设备详情：连接正常，最近 24 小时无异常访问。">设备详情</button></div></div>
+                <div class="control-row"><div class="control-title">完整导出<span>由你保管的可迁移副本</span></div><div class="control-detail">预计包含：原件、确认理解、判断与复盘、权限回执；生成前再次确认存放位置</div><div class="control-actions"><button class="soft-btn" data-toast="已形成导出草稿；原型不会生成真实文件。">准备导出</button></div></div>
+                <div class="control-row"><div class="control-title">删除演示档案<span>永久操作 · 不可由对话代替</span></div><div class="control-detail">会影响 128 份来源、94 项已确认理解、12 条判断和 4 个 Agent 授权</div><div class="control-actions"><button class="danger-btn" id="openDeletePreview" data-testid="delete-open">查看删除影响</button></div></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="移动端一级导航" data-od-id="v3-mobile-nav">
+    <button class="active" data-page="today"><svg viewBox="0 0 24 24"><path d="M4 12h5l2-7 3.2 14 2-7H21"/></svg>今日</button>
+    <button data-page="topics"><svg viewBox="0 0 24 24"><path d="M5 4h14v13H9l-4 3V4Z"/></svg>议题</button>
+    <button data-page="ontology"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/></svg>本体</button>
+    <button data-page="growth"><svg viewBox="0 0 24 24"><path d="M5 19V9m7 10V5m7 14v-7"/></svg>成长</button>
+    <button data-page="boundary"><svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6l-7-3Z"/></svg>边界</button>
+  </nav>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <div class="modal-layer" id="decisionConfirmModal" data-testid="decision-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="decisionConfirmTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">EXPLICIT CONFIRMATION</div><h2 class="modal-title" id="decisionConfirmTitle">确认后将发生什么</h2><p class="modal-sub">确认不会自动发送给律师或任何外部人员。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>创建对象</span><strong>判断版本 V1</strong></div><div class="summary-row"><span>持续议题</span><strong>远川合作条款 · THR-021</strong></div><div class="summary-row"><span>当前倾向</span><strong>接受多数表决，但保留三项保护性权利</strong></div><div class="summary-row"><span>关联依据</span><strong>3 段盒内依据</strong></div><div class="summary-row"><span>外部动作</span><strong>无出盒、无发送、无日历写入</strong></div></div><label class="check-line"><input type="checkbox" id="decisionConfirmCheck">我确认这准确表达了我现在的判断，并知道以后可以修订。</label></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>返回修改</button><button class="primary-btn" id="decisionConfirmSubmit" data-testid="decision-confirm-submit" disabled>确认并进入议题</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="followupModal" role="dialog" aria-modal="true" aria-labelledby="followupTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">RESULT FOLLOW-UP</div><h2 class="modal-title" id="followupTitle">你希望我什么时候回来问结果？</h2><p class="modal-sub">回访会回到同一个持续议题，不另开一段无关联对话。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><label class="form-label" for="followupSelect">回访时间</label><select class="form-input" id="followupSelect" data-testid="followup-select"><option value="9 月 8 日">7 天后 · 9 月 8 日</option><option value="签署后第二天">签署后第二天</option><option value="9 月 15 日">9 月 15 日</option></select><p class="object-note">原型不会写入真实日历。正式产品会在执行前再次展示设备与通知范围。</p></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>稍后设置</button><button class="primary-btn" id="followupConfirm" data-testid="followup-confirm">确认回访</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="evidenceModal" role="dialog" aria-modal="true" aria-labelledby="evidenceTitle">
+    <div class="modal wide"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">LOCAL EVIDENCE · ORIGINALS STAY IN BOX</div><h2 class="modal-title" id="evidenceTitle">盒内依据</h2><p class="modal-sub" id="evidenceSub">以下是原型中的虚构片段；查看不会触发出盒。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div><div class="modal-body" id="evidenceBody"></div><div class="modal-actions"><button class="primary-btn" data-modal-close>看完了</button></div></div>
+  </div>
+
+  <div class="modal-layer" id="understandingConfirmModal" role="dialog" aria-modal="true" aria-labelledby="understandingConfirmTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">ONTOLOGY CONFIRMATION</div><h2 class="modal-title" id="understandingConfirmTitle">确认进入原则层？</h2><p class="modal-sub">这仍是一项可修订理解，不是给你的永久标签。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>理解</span><strong>承担最终结果时，需要拥有与责任相称的决定权</strong></div><div class="summary-row"><span>适用范围</span><strong>由你承担最终责任的合作</strong></div><div class="summary-row"><span>依据</span><strong>4 条盒内来源</strong></div><div class="summary-row"><span>隐私范围</span><strong>仅知君 · 不提供给其他 Agent</strong></div></div><label class="check-line"><input type="checkbox" id="understandingConfirmCheck">以后知君可以在相关判断中引用它，但必须同时展示具体依据。</label></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>返回</button><button class="primary-btn" id="understandingConfirmSubmit" disabled>确认进入本体</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="understandingCorrectModal" role="dialog" aria-modal="true" aria-labelledby="understandingCorrectTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">DIRECT REVISION</div><h2 class="modal-title" id="understandingCorrectTitle">你希望改哪一部分？</h2><p class="modal-sub">修正会生成候选 V2，不会静默覆盖原版本。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><label class="form-label" for="understandingCorrection">修订后的适用范围</label><textarea class="form-input" id="understandingCorrection">只适用于由我承担最终责任、且失败成本主要由我承担的合作。</textarea></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>取消</button><button class="primary-btn" id="understandingCorrectionSave">保存为候选 V2</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="understandingRejectModal" role="dialog" aria-modal="true" aria-labelledby="understandingRejectTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">REJECT CANDIDATE</div><h2 class="modal-title" id="understandingRejectTitle">不采用这项理解？</h2><p class="modal-sub">拒绝后不会进入本体，也不会在未来作为你的原则被引用。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><label class="form-label" for="rejectReason">原因（可选）</label><select class="form-input" id="rejectReason"><option>结论不对</option><option>证据不足</option><option>只在特定时期成立</option><option>不想说明</option></select><p class="object-note">相关原始记录仍按原有规则保留；你可以在来源控制面单独处理原件。</p></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>返回再看</button><button class="danger-btn" id="understandingRejectSubmit">拒绝并停止沿用</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="experimentModal" role="dialog" aria-modal="true" aria-labelledby="experimentTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">ACTION EXPERIMENT</div><h2 class="modal-title" id="experimentTitle">确认十四天行动实验</h2><p class="modal-sub">实验会回到「COO 任命」议题；不会自动通知沈禾或写入外部日历。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>实验动作</span><strong>由沈禾独立主持两次争议会议</strong></div><div class="summary-row"><span>你的边界</span><strong>除合规、现金流、关键客户流失三条红线外不介入</strong></div><div class="summary-row"><span>观察信号</span><strong>是否提出选项、完成取舍并跟进结果</strong></div><div class="summary-row"><span>观察期限</span><strong>9 月 2 日—9 月 16 日</strong></div><div class="summary-row"><span>回访</span><strong>9 月 17 日 · 同一议题</strong></div></div><label class="check-line"><input type="checkbox" id="experimentConfirmCheck">我确认这个边界可执行，并愿意观察自己的介入行为。</label></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>返回修改</button><button class="primary-btn" id="experimentConfirmSubmit" disabled>确认并设置回访</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="egressModal" data-testid="egress-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="egressTitle">
+    <div class="modal wide"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">BOUNDARY PREVIEW · ONE-TIME GRANT</div><h2 class="modal-title" id="egressTitle">本次将发送哪些必要片段</h2><p class="modal-sub">未点击“只允许这一次”之前，不会向接收方发送任何内容。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>接收方</span><strong data-testid="egress-recipient">Claude Sonnet · 你选择的云端模型</strong></div><div class="summary-row"><span>用途</span><strong data-testid="egress-purpose">为“远川合作条款”生成替代解释</strong></div><div class="summary-row"><span>必要片段</span><strong>3 段 / 612 字</strong></div><div class="summary-row"><span>原件数量</span><strong data-testid="egress-original-count">0</strong></div><div class="summary-row"><span>隐私等级</span><strong>高敏感 · 每次询问</strong></div><div class="summary-row"><span>授权时效</span><strong>本次调用，用后结束</strong></div></div>
+        <div data-testid="egress-fragments"><div class="fragment"><div class="fragment-head"><span>片段 01</span><span>项目笔记 · 8 月 26 日</span></div>“经营可以放权，资本结构不能含糊。不可逆事项需要明确保护。”</div><div class="fragment"><div class="fragment-head"><span>片段 02</span><span>会议转写 · 8 月 29 日</span></div>仅包含关于核心资产出售表决方式的 186 字上下文，不含整段录音。</div><div class="fragment"><div class="fragment-head"><span>片段 03</span><span>律师批注 · 8 月 31 日</span></div>仅包含融资与更换 CEO 两处批注，不包含完整协议。</div></div>
+        <label class="check-line"><input type="checkbox" id="egressConfirmCheck">我已查看接收方、用途和具体片段，仅允许本次使用。</label>
+      </div><div class="modal-actions"><button class="soft-btn" id="localOnlyAnswer" data-testid="egress-cancel">改为仅本地回答</button><button class="primary-btn" id="egressAllowOnce" data-testid="egress-allow-once" disabled>只允许这一次</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="receiptModal" role="dialog" aria-modal="true" aria-labelledby="receiptTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">EGRESS RECEIPT</div><h2 class="modal-title" id="receiptTitle">08-25 周复盘出盒回执</h2><p class="modal-sub">回执保存在盒内，授权已随单次调用结束。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div><div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>状态</span><strong>成功 · 已结束</strong></div><div class="summary-row"><span>接收方</span><strong>DeepSeek V3</strong></div><div class="summary-row"><span>发送</span><strong>2 段 / 428 字 / 原件 0</strong></div><div class="summary-row"><span>用途</span><strong>形成周复盘草稿</strong></div><div class="summary-row"><span>后续权限</span><strong>无</strong></div></div></div><div class="modal-actions"><button class="primary-btn" data-modal-close>关闭回执</button></div></div>
+  </div>
+
+  <div class="modal-layer" id="agentPermissionModal" data-testid="permission-impact-dialog" role="dialog" aria-modal="true" aria-labelledby="agentPermissionTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">AGENT CONTEXT GRANT</div><h2 class="modal-title" id="agentPermissionTitle">允许万象读取哪些最小上下文</h2><p class="modal-sub">这是一次任务授权，不是读取整盒数据的通行证。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>Agent</span><strong>万象 · 专属 Agent 构建</strong></div><div class="summary-row"><span>用途</span><strong>生成“投前判断助手”的配置草稿</strong></div><div class="summary-row"><span>可以读取</span><strong>7 项已确认判断原则、公开职业背景</strong></div><div class="summary-row"><span>明确不可读</span><strong>家庭关系、财务原件、私人日记、所有候选理解</strong></div><div class="summary-row"><span>时效</span><strong>一次任务 · 完成后自动结束</strong></div></div><label class="check-line"><input type="checkbox" id="agentPermissionCheck">我确认以上对象范围、用途和时效，不授权读取其他内容。</label></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>取消</button><button class="primary-btn" id="agentPermissionSubmit" data-testid="permission-authorize-submit" disabled>明确授权这一次</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="revokeAgentModal" role="dialog" aria-modal="true" aria-labelledby="revokeAgentTitle">
+    <div class="modal"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">REVOKE PREVIEW</div><h2 class="modal-title" id="revokeAgentTitle">撤销会议准备 Agent 的后续访问？</h2><p class="modal-sub">撤销立即生效；过去已生成的本地回执不会被删除。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div><div class="modal-body"><div class="summary-sheet"><div class="summary-row"><span>立即失效</span><strong>公开人物关系、已确认承诺的后续读取</strong></div><div class="summary-row"><span>仍会保留</span><strong>盒内审计回执 11 条</strong></div></div></div><div class="modal-actions"><button class="soft-btn" data-modal-close>保留权限</button><button class="danger-btn" id="revokeAgentSubmit">确认撤销</button></div></div>
+  </div>
+
+  <div class="modal-layer" id="deleteModal" data-testid="delete-impact-dialog" role="dialog" aria-modal="true" aria-labelledby="deleteTitle">
+    <div class="modal wide"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">IRREVERSIBLE ACTION</div><h2 class="modal-title" id="deleteTitle">永久删除演示档案</h2><p class="modal-sub">这是高保真交互演示，不会删除真实数据；正式产品中此动作不可恢复。</p></div><button class="modal-close" data-modal-close aria-label="关闭">×</button></div>
+      <div class="modal-body"><div class="summary-sheet" data-testid="delete-impact-summary"><div class="summary-row"><span>原件</span><strong>128 份来源及全部历史版本</strong></div><div class="summary-row"><span>个人本体</span><strong>94 项已确认理解、6 项候选理解</strong></div><div class="summary-row"><span>成长</span><strong>12 条判断、8 次复盘、4 个行动实验</strong></div><div class="summary-row"><span>议题</span><strong>21 条持续议题及全部对话对象</strong></div><div class="summary-row"><span>Agent</span><strong>撤销 4 个授权；盒内审计回执一并删除</strong></div></div><label class="form-label" for="deleteConfirmInput">输入“永久删除知君档案”以继续</label><input class="form-input" id="deleteConfirmInput" data-testid="delete-confirm-input" autocomplete="off"><label class="check-line"><input type="checkbox" id="deleteImpactCheck">我已查看全部影响，并理解这项操作不可恢复。</label></div>
+      <div class="modal-actions"><button class="soft-btn" data-modal-close>取消删除</button><button class="danger-btn" id="deleteSubmit" data-testid="delete-submit" disabled>永久删除知君档案</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" id="voiceModal" role="dialog" aria-modal="true" aria-labelledby="voiceTitle">
+    <div class="modal voice-sheet"><div class="modal-head"><div class="modal-head-copy"><div class="modal-kicker">VOICE DRAFT · IMPORTANT TEXT CONFIRMATION</div><h2 class="modal-title" id="voiceTitle">语音只形成可编辑草稿</h2></div><button class="modal-close" data-modal-close aria-label="取消语音">×</button></div>
+      <div class="modal-body"><div class="voice-state"><div class="voice-orb" id="voiceOrb">声</div><div class="wave" id="voiceWave" hidden><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="voice-status" id="voiceStatus" data-testid="voice-state" data-state="idle" role="status" aria-live="polite">准备录音</div><div class="voice-help" id="voiceHelp">按住页面中的语音按钮开始</div></div><div class="voice-transcript" id="voiceTranscriptArea" hidden><label class="form-label" for="voiceTranscript">实时转写 · 提交前可编辑</label><textarea class="form-input" id="voiceTranscript" data-testid="voice-transcript">日常经营我可以放权。融资、出售核心资产和更换 CEO 必须保留，只要三项写清楚，我愿意签，大概七成把握。</textarea></div></div>
+      <div class="modal-actions"><button class="soft-btn" id="voiceCancel" data-testid="voice-cancel">取消</button><button class="soft-btn" id="voiceEdit" data-testid="voice-edit" hidden>编辑文字</button><button class="primary-btn" id="voiceConfirm" data-testid="voice-confirm-send" hidden>确认文字并发送</button></div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      'use strict';
+
+      const PrototypeState = {
+        TopicThread: {
+          currentId: 'THR-021',
+          items: [
+            { id: 'THR-021', type: 'judgment', title: '远川合作条款', trigger: '律师稿新增重大事项表决条款', status: 'dialogue', objectId: 'JDG-021', updatedAt: '2026-09-01T09:18:00+08:00' },
+            { id: 'THR-014', type: 'growth', title: 'COO 任命', trigger: '30 天观察期到期', status: 'review_due', objectId: 'REV-014', updatedAt: '2026-09-01T09:24:00+08:00' },
+            { id: 'THR-018', type: 'ontology', title: '合作边界模式', trigger: '三次谈判出现相似反应', status: 'pending_confirmation', objectId: 'UND-018', updatedAt: '2026-09-01T09:11:00+08:00' },
+            { id: 'THR-007', type: 'relationship', title: '与林岚的合作', trigger: '9 月 5 日前需要回应邀请', status: 'waiting_reply', objectId: 'REL-007', updatedAt: '2026-08-31T20:14:00+08:00' }
+          ]
+        },
+        DialogueMessage: {
+          today: [
+            { role: 'assistant', type: 'proactive', text: '今天有三件事值得谈，我想先从远川条款开始。', evidenceCount: 3, expandable: true, suggestedChanges: [] }
+          ]
+        },
+        LiveObject: {
+          decision: { id: 'JDG-021', type: 'judgment', status: 'pending', confirmed: false, changedFields: [], evidenceCount: 3 },
+          understanding: { id: 'UND-018', type: 'understanding', status: 'pending', confirmed: false, changedFields: [], evidenceCount: 3 },
+          review: { id: 'REV-014', type: 'review', status: 'due', confirmed: false, changedFields: [], evidenceCount: 6 }
+        },
+        VoiceDraft: { state: 'idle', transcript: '', edited: false, confirmed: false, targetId: null },
+        BoundaryPreview: { recipient: 'Claude Sonnet', purpose: '生成远川条款的替代解释', fragments: 3, originalCount: 0, privacy: '高敏感', grantedOnce: false }
+      };
+
+      const $ = (selector, root = document) => root.querySelector(selector);
+      const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const esc = (value) => String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+      const pageLabels = {
+        today: ['今日知君', '九月一日 · 星期二'],
+        topics: ['议题', '四条持续线程'],
+        ontology: ['本体', '这是理解，不是定义'],
+        growth: ['成长', '判断、结果与复盘'],
+        boundary: ['数据与边界', '原件在盒内']
+      };
+      const ontologyNodeData = {
+        roles: { name: '创业者 · 父亲', layer: 'observed', layerLabel: '事实观察', status: 'confirmed', statusLabel: '已确认事实', time: '最近重申 · 18 天前', title: '你目前同时承担创业者、投资人和父亲三个重要角色。', copy: '这项理解来自你亲自确认的人生章程，以及过去六个月持续出现的日程、项目和自我记录。角色不是永久身份；下一次章程复审时可以调整。', scope: '当前身份与角色', prompt: '这三个角色里，最近哪个角色正在要求你作出最多改变？', evidence: ['人生章程 V3 · “当前最重要的三个角色”', '2026 年度自述 · 1 月 7 日语音记录', '近 180 天确认事件 · 角色上下文'] },
+        linlan: { name: '林岚', layer: 'observed', layerLabel: '事实观察', status: 'confirmed', statusLabel: '已确认关系', time: '昨天 20:14 更新', title: '林岚同时是你认识八年的朋友，也是当前最重要的潜在合作方之一。', copy: '这里聚合你们的共同经历、尚未闭环的承诺和当前合作边界，不把互动次数变成关系评分，也不替林岚定义人格。', scope: '人物与关系', prompt: '在朋友和合作方两个角色之间，你最希望先保护哪一种关系？', evidence: ['2022 年云岫并购 · 首次共同项目', '2025 年合作恢复 · 两次会谈记录', '2026 年南岸家办邀请 · 昨日晚餐记录'] },
+        yuanchuan: { name: '远川资本', layer: 'observed', layerLabel: '事实观察', status: 'confirmed', statusLabel: '当前项目', time: '今天 08:42 更新', title: '远川资本是你当前最接近形成长期承诺的合作项目。', copy: '它与“控制权边界”“可逆性”和“关系不能替代治理”三项已确认内容相连。当前条款判断仍在持续议题中。', scope: '项目与组织', prompt: '如果这次合作最终没有成立，你希望自己至少守住哪一项原则？', evidence: ['远川合作协议律师稿 V3', '8 月 29 日项目会议转写', '远川合作条款 · 持续议题 THR-021'] },
+        independence: { name: '独立判断', layer: 'declared', layerLabel: '自我表达', status: 'confirmed', statusLabel: '你的明确表达', time: '42 天前确认', title: '你认为真正的独立，不是拒绝合作，而是保留解释和退出的空间。', copy: '这是你在三次复盘和人生章程访谈中的原话汇总。知君把它保留为你的自我叙述，不包装成客观行为事实。', scope: '原则与主题', prompt: '今天的你还认同“独立首先意味着保留退出空间”吗？', evidence: ['人生章程 V3 · 独立判断', '2025 年联营复盘', '2026 年远川项目笔记'] },
+        collaboration: { name: '长期合作', layer: 'aspirational', layerLabel: '理想方向', status: 'reaffirm', statusLabel: '方向 · 需要重申', time: '章程复审还有 12 天', title: '做一个能够长期合作、敢于表达边界，也始终保有独立判断的人。', copy: '这是你确认过的方向，不等于你已经做到了。它最近受到两段新合作经历影响，因此需要在下一次章程复审时重申。', scope: '人生章程 · 理想方向', prompt: '如果长期合作与独立判断发生拉扯，你希望哪条边界先被说清？', evidence: ['人生章程 V3 · 长期合作', '本季度两次合作复盘', '章程复审提醒 · 9 月 13 日'] },
+        responsibility: { name: '责任与决定权', layer: 'hypothesis', layerLabel: '知君推测', status: 'pending', statusLabel: '尚未进入本体', time: '今天 09:11 形成', title: '当你承担最终结果时，你需要拥有与责任相称的决定权。', copy: '这是知君根据三次合作谈判形成的候选理解。它有支持依据，但仍缺少你的背景解释；在你明确确认之前，不能被当作关于你的事实。', scope: '原则层候选', prompt: '你第一次强烈意识到责任与决定权不对称，是在哪件事里？', evidence: ['远川律师稿 · 8 月 31 日', '南岸合作笔记 · 5 月 14 日', '合伙人会谈 · 2025 年 12 月 3 日'] }
+      };
+      let activePage = 'today';
+      let selectedOntologyNodeId = 'roles';
+      let ontologyFilter = 'all';
+      let ontologyNodeFocusedBeforeSheet = null;
+      let lastFocused = null;
+      let toastTimer = null;
+      let voiceTimer = null;
+      let voiceStartedAt = 0;
+      let voiceButton = null;
+
+      function showToast(message) {
+        const toast = $('#toast');
+        toast.textContent = message;
+        toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove('show'), 2800);
+      }
+
+      function scrollTimeline(element) {
+        if (!element) return;
+        requestAnimationFrame(() => element.scrollTo({ top: element.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }));
+      }
+
+      function switchPage(name) {
+        if (!pageLabels[name]) return;
+        activePage = name;
+        $$('.page').forEach(page => page.classList.toggle('active', page.id === `page-${name}`));
+        $$('[data-page]').forEach(button => {
+          const active = button.dataset.page === name;
+          button.classList.toggle('active', active);
+          if (active) button.setAttribute('aria-current', 'page'); else button.removeAttribute('aria-current');
+        });
+        const [title, sub] = pageLabels[name];
+        $('#topbarTitle').innerHTML = `${title} <small>${sub}</small>`;
+        $$('.object-panel.sheet-open').forEach(panel => panel.classList.remove('sheet-open'));
+        $$('.page.object-open').forEach(page => page.classList.remove('object-open'));
+        const page = $(`#page-${name}`);
+        const timeline = $('.timeline', page);
+        if (timeline) timeline.scrollTop = 0;
+      }
+
+      function closeOntologyInspector() {
+        const inspector = $('#ontologyInspector');
+        if (!inspector) return;
+        inspector.classList.remove('mobile-open');
+        $('#page-ontology')?.classList.remove('ontology-inspector-open');
+        if (ontologyNodeFocusedBeforeSheet && document.contains(ontologyNodeFocusedBeforeSheet)) ontologyNodeFocusedBeforeSheet.focus();
+        ontologyNodeFocusedBeforeSheet = null;
+      }
+
+      function switchOntologyMode(mode, options = {}) {
+        const targetId = mode === 'dialogue' ? 'ontologyDialogueMode' : 'ontologyAtlasMode';
+        $$('.ontology-mode').forEach(panel => panel.classList.toggle('is-active', panel.id === targetId));
+        $$('[data-ontology-mode]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.ontologyMode === mode)));
+        if (mode === 'map') {
+          $$('.object-panel.sheet-open').forEach(panel => panel.classList.remove('sheet-open'));
+          $('#page-ontology')?.classList.remove('object-open');
+          selectOntologyNode(selectedOntologyNodeId, null, false);
+        } else {
+          closeOntologyInspector();
+          if (options.focusInput) setTimeout(() => $('#ontologyInput')?.focus(), 0);
+        }
+      }
+
+      function selectOntologyNode(id, trigger = null, openSheet = true) {
+        const data = ontologyNodeData[id];
+        if (!data) return;
+        selectedOntologyNodeId = id;
+        $$('.ontology-node').forEach(node => node.setAttribute('aria-pressed', String(node.dataset.entityId === id)));
+        const state = $('#ontologyInspectorState');
+        state.textContent = data.statusLabel;
+        state.className = `ontology-inspector-state${data.status === 'pending' ? ' pending' : ''}`;
+        $('#ontologyInspectorTime').textContent = data.time;
+        $('#ontologyInspectorTitle').textContent = data.title;
+        $('#ontologyInspectorCopy').textContent = data.copy;
+        $('#ontologyInspectorEvidence').innerHTML = data.evidence.map((item, index) => `<div class="ontology-evidence-item" data-testid="ontology-evidence-item"><span class="evidence-index">${String(index + 1).padStart(2, '0')}</span><span>${esc(item)}</span></div>`).join('');
+        $('#ontologyOverviewEvidence').textContent = `查看 ${data.evidence.length} 条盒内依据`;
+        $('#ontologyInspectorFoot').textContent = data.status === 'pending' ? '尚未进入本体。查看与讨论不会改变状态，只有你的明确确认才会使它进入内环。' : '查看不会改变状态；修正、重申或撤回都需要明确确认。';
+        if (openSheet && trigger && matchMedia('(max-width: 767px)').matches) {
+          ontologyNodeFocusedBeforeSheet = trigger;
+          $('#ontologyInspector').classList.add('mobile-open');
+          $('#page-ontology').classList.add('ontology-inspector-open');
+          setTimeout(() => $('#ontologyInspectorClose').focus(), 0);
+        }
+      }
+
+      function filterOntology(layer) {
+        ontologyFilter = layer;
+        $$('.ontology-filter').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.ontologyLayer === layer)));
+        const nodes = $$('.ontology-node');
+        nodes.forEach(node => { node.hidden = node.dataset.status === 'rejected' || (layer !== 'all' && node.dataset.layer !== layer); });
+        const visible = nodes.filter(node => !node.hidden);
+        const labels = { all: '全部层次', observed: '事实观察', declared: '自我表达', aspirational: '理想方向', hypothesis: '知君推测' };
+        $('#ontologyMapStatus').textContent = `显示 ${visible.length} 项${labels[layer]}`;
+        const selected = nodes.find(node => node.dataset.entityId === selectedOntologyNodeId);
+        if (selected && selected.hidden && visible[0]) selectOntologyNode(visible[0].dataset.entityId, null, false);
+        closeOntologyInspector();
+      }
+
+      function renderDialogueObjectForNode(data) {
+        const pending = data.status === 'pending';
+        $('#ontologyObjectPanel').dataset.objectStatus = pending ? 'pending' : 'confirmed';
+        $('.object-title', $('#ontologyObjectPanel')).textContent = pending ? `候选理解 · ${data.name}` : `理解对象 · ${data.name}`;
+        $('#understandingBadge').textContent = data.statusLabel;
+        $('#understandingBadge').className = `state-badge ${pending ? 'pending' : 'confirmed'}`;
+        $('#ontologyObjectNote').textContent = pending ? '未经你确认，不会作为“关于你的事实”被使用，也不会提供给其他 Agent。' : '这项理解已有确认版本。你可以在对话中重申或提出修正，旧版本不会被静默覆盖。';
+        $('[data-testid="understanding-field-layer"] .field-value').textContent = `${data.scope} · ${data.layerLabel}`;
+        $('#understandingContent .field-value').innerHTML = `${esc(data.title)}<span class="field-source">${pending ? '知君推测 · 尚未确认' : data.statusLabel}</span>`;
+        $('#understandingScope .field-value').classList.remove('waiting');
+        $('#understandingScope .field-value').textContent = data.scope;
+        $('#understandingEvidence .field-value').innerHTML = `${data.evidence.length} 条盒内依据 <button class="text-btn evidence-open" data-evidence="ontology-node">查看</button><span class="field-source">原件未出盒</span>`;
+        $('#understandingStrength .field-value').textContent = pending ? '3 / 5 · 待你解释' : '已有确认版本';
+        if (pending) {
+          const enabled = PrototypeState.LiveObject.understanding.changedFields.length > 0;
+          $('#understandingActions').innerHTML = `<button class="primary-btn" id="confirmUnderstanding" data-testid="understanding-confirm" data-action="confirm-understanding" ${enabled ? '' : 'disabled'}>确认进入本体</button><button class="soft-btn" id="correctUnderstanding" data-testid="understanding-correct" data-action="correct-understanding" ${enabled ? '' : 'disabled'}>修改措辞</button><button class="danger-btn" id="rejectUnderstanding" data-testid="understanding-reject" data-action="reject-understanding" ${enabled ? '' : 'disabled'}>不是这样</button>`;
+          $('#understandingFootnote').textContent = enabled ? '状态：候选理解 · 等待你的确认' : '状态：候选理解 · 等待你的解释';
+        } else {
+          $('#understandingActions').innerHTML = '<button class="soft-btn" data-action="correct-understanding">提出修正</button><button class="soft-btn" data-action="show-ontology-map">回到本体全景</button>';
+          $('#understandingFootnote').textContent = `${data.statusLabel} · ${data.time} · 可修订`;
+        }
+      }
+
+      function calibrateSelectedOntology() {
+        const data = ontologyNodeData[selectedOntologyNodeId];
+        if (!data) return;
+        closeOntologyInspector();
+        renderDialogueObjectForNode(data);
+        $('#ontologyTitle').textContent = `校准：${data.name}`;
+        $('#ontologyInlineState').textContent = `${data.layerLabel} · ${data.statusLabel}`;
+        $$('#page-ontology [data-testid="key-question"]').forEach(node => node.removeAttribute('data-testid'));
+        $('#ontologyDynamic').innerHTML = `<div class="field-change-event" data-testid="ontology-calibration-context"><strong>已从本体全景带回：${esc(data.name)}</strong> · 当前状态为“${esc(data.statusLabel)}”，打开对话没有改变它。</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 本体校准</div><div class="turn-text">我把这项理解连同它的版本和依据带回来了。<strong class="question-line" data-testid="key-question">${esc(data.prompt)}</strong></div></div></article>`;
+        $('#ontologyInput').value = `我想校准「${data.name}」：`;
+        switchOntologyMode('dialogue', { focusInput: true });
+        scrollTimeline($('#ontologyTimeline'));
+      }
+
+      function openModal(id, trigger = document.activeElement) {
+        const layer = typeof id === 'string' ? document.getElementById(id) : id;
+        if (!layer) return;
+        lastFocused = trigger;
+        layer.classList.add('open');
+        document.body.dataset.modalOpen = 'true';
+        const focusable = $('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])', layer);
+        if (focusable) setTimeout(() => focusable.focus(), 0);
+      }
+
+      function closeModal(layer) {
+        const target = layer && layer.classList && layer.classList.contains('modal-layer') ? layer : $('.modal-layer.open');
+        if (!target) return;
+        target.classList.remove('open');
+        if (!$('.modal-layer.open')) delete document.body.dataset.modalOpen;
+        if (target.id === 'voiceModal' && PrototypeState.VoiceDraft.state !== 'confirmed') resetVoice();
+        if (lastFocused && document.contains(lastFocused)) lastFocused.focus();
+      }
+
+      function setChangedField(id, html, source = '来自你刚才的回答 · 尚未确认') {
+        const field = document.getElementById(id);
+        if (!field) return;
+        const value = $('.field-value', field);
+        value.classList.remove('waiting');
+        value.innerHTML = `${html}<span class="field-source" data-testid="field-source-label">${source}</span>`;
+        field.classList.add('changed');
+        field.dataset.changed = 'true';
+        field.dataset.source = source.includes('回答') || source.includes('自述') ? 'user' : 'zhijun-inference';
+      }
+
+      function answerDecision(text) {
+        if (!text || PrototypeState.LiveObject.decision.confirmed) return;
+        $$('#page-today [data-testid="key-question"]').forEach(node => node.removeAttribute('data-testid'));
+        const firstAnswer = PrototypeState.LiveObject.decision.changedFields.length === 0;
+        PrototypeState.LiveObject.decision.changedFields = ['leaning', 'reason', 'confidence', 'nextStep'];
+        PrototypeState.LiveObject.decision.status = 'pending';
+        setChangedField('decisionLeaning', '接受多数表决，但保留三项保护性权利');
+        setChangedField('decisionReason', '日常经营可以放权；不可逆事项必须保留制衡');
+        setChangedField('decisionConfidence', text.includes('七成') || text.includes('7') ? '7 / 10' : '暂定 7 / 10');
+        setChangedField('decisionNext', '请律师起草三项保护性事项清单', '知君建议 · 待你确认');
+        $('#confirmDecision').disabled = false;
+        $('#editDecision').disabled = false;
+        $('#todayPeekState').textContent = '未确认 · 等待你核对';
+        $('#todayPeekCount').textContent = '4 项变化';
+
+        const dynamic = $('#todayDynamic');
+        dynamic.innerHTML = `<article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 刚刚</div><div class="turn-text">${esc(text)}</div></div></article>
+          <div class="field-change-event" data-testid="field-change-marker"><strong>判断卡已实时更新 4 个字段</strong> · 倾向、理由和信心来自你的回答；下一步是知君建议。状态仍为“未确认”。</div>
+          <article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 刚刚</div><div class="turn-text">我把你的边界记成了：经营权可以放，三项不可逆权利不能放。<strong class="question-line" data-testid="key-question">这准确吗？</strong></div><div class="turn-actions"><button class="primary-btn" data-action="confirm-decision">确认这项判断</button><button class="soft-btn" data-action="focus-decision-edit">修改卡片</button><button class="text-btn" data-toast="这项判断仍保持未确认；你可以继续补充。">还不是</button></div></div></article>`;
+        if (firstAnswer && matchMedia('(max-width: 767px)').matches) setTimeout(() => { const panel = $('#todayObjectPanel'); panel.classList.add('sheet-open'); panel.closest('.page')?.classList.add('object-open'); }, 350);
+        scrollTimeline($('#todayTimeline'));
+      }
+
+      function confirmDecision() {
+        PrototypeState.LiveObject.decision.status = 'confirmed';
+        PrototypeState.LiveObject.decision.confirmed = true;
+        $('#todayObjectPanel').dataset.objectStatus = 'confirmed';
+        $('#decisionBadge').textContent = '已确认 V1';
+        $('#decisionBadge').className = 'state-badge confirmed';
+        $('#decisionFootnote').textContent = '已由你确认 · 2026-09-01 09:18 · 可随时修订';
+        $('#confirmDecision').hidden = true;
+        $('#editDecision').hidden = true;
+        $('#scheduleFollowup').hidden = false;
+        $('#todayPeekState').textContent = '已确认 V1 · 等待设置回访';
+        $('#todayPeekCount').textContent = '已形成对象';
+        $('#todayDynamic').insertAdjacentHTML('beforeend', `<div class="field-change-event"><strong>判断版本 V1 已形成</strong> · 已进入「远川合作条款」持续议题；未触发任何出盒或外发。</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 刚刚</div><div class="turn-text">判断已经成立。<strong class="question-line">你希望我什么时候回来问结果？</strong></div><div class="turn-actions"><button class="primary-btn" data-action="open-followup">设置结果回访</button><button class="soft-btn" data-go-page="topics">进入持续议题</button></div></div></article>`);
+        threadViews.yuanchuan.state = '判断对象 · 已确认 V1 / 等待结果';
+        threadViews.yuanchuan.peek = '已确认 V1 · 等待结果';
+        threadViews.yuanchuan.object = `<div class="object-eyebrow">CURRENT OBJECT · JUDGMENT V1</div><div class="object-title-row"><h2 class="object-title">远川合作条款</h2><span class="state-badge confirmed">已确认 V1</span></div><p class="object-note">判断已经成立；后续结果和复盘会继续回到这条议题。</p><div class="object-fields"><div class="object-field"><div class="field-label">倾向</div><div class="field-value">接受多数表决，但保留三项保护性权利<span class="field-source">由你确认 · 09:18</span></div></div><div class="object-field"><div class="field-label">依据</div><div class="field-value">3 段盒内依据</div></div><div class="object-field"><div class="field-label">下一节点</div><div class="field-value">设置结果回访</div></div></div><div class="object-actions"><button class="soft-btn" data-go-page="today">查看判断详情</button><button class="soft-btn evidence-open" data-evidence="decision">查看全部依据</button></div>`;
+        closeModal($('#decisionConfirmModal'));
+        scrollTimeline($('#todayTimeline'));
+        showToast('判断 V1 已确认；没有触发出盒或外发。');
+      }
+
+      function answerOntology(text) {
+        if (!text || ['confirmed', 'rejected'].includes(PrototypeState.LiveObject.understanding.status)) return;
+        selectedOntologyNodeId = 'responsibility';
+        const candidate = ontologyNodeData.responsibility;
+        candidate.title = '当你承担最终结果时，需要拥有与责任相称的决定权；你接受共同决策，但拒绝责任归你、方向却可被他人随时改变。';
+        candidate.copy = '你补充的 2021 年创业经历把理解从“想控制”修正为“责任与决定权需要一致”。它仍是候选；新背景只增加依据，不会替代你的确认。';
+        candidate.scope = '由你承担最终责任的合作';
+        if (!candidate.evidence.includes('2021 年创业经历 · 本轮用户自述')) candidate.evidence.push('2021 年创业经历 · 本轮用户自述');
+        $$('#page-ontology [data-testid="key-question"]').forEach(node => node.removeAttribute('data-testid'));
+        PrototypeState.LiveObject.understanding.changedFields = ['content', 'scope', 'evidence', 'strength'];
+        setChangedField('understandingContent', '当你承担最终结果时，需要拥有与责任相称的决定权；你接受共同决策，但拒绝责任归你、方向却可被他人随时改变', '由知君根据本轮自述重写 · 尚未确认');
+        setChangedField('understandingScope', '由你承担最终责任的合作', '来自你刚才的自述 · 尚未确认');
+        setChangedField('understandingEvidence', '4 条依据 · 新增“2021 年创业经历”', '3 条盒内来源 + 1 条用户自述');
+        setChangedField('understandingStrength', '4 / 5', '知君评估 · 待你确认');
+        $('#confirmUnderstanding').disabled = false;
+        $('#correctUnderstanding').disabled = false;
+        $('#rejectUnderstanding').disabled = false;
+        $('#ontologyPeekState').textContent = '候选理解 · 等待你核对';
+        $('#ontologyPeekCount').textContent = '4 项变化';
+        $('#understandingFootnote').textContent = '状态：候选理解 · 等待你的确认';
+        $('#ontologyDynamic').innerHTML = `<article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 刚刚</div><div class="turn-text">${esc(text)}</div></div></article><div class="field-change-event" data-testid="field-change-marker"><strong>候选理解已更新 4 个字段</strong> · 理解、适用范围、依据和充分度发生变化，但仍未进入本体。</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 刚刚</div><div class="turn-text">这段经历改变了理解的重心：你守的不是控制本身，而是责任与决定权的一致。<strong class="question-line" data-testid="key-question">现在这句话更接近你吗？</strong></div><div class="turn-actions"><button class="primary-btn" data-action="confirm-understanding">确认进入本体</button><button class="soft-btn" data-action="correct-understanding">修改措辞</button><button class="danger-btn" data-action="reject-understanding">不是这样</button></div></div></article>`;
+        if (matchMedia('(max-width: 767px)').matches) setTimeout(() => { const panel = $('#ontologyObjectPanel'); panel.classList.add('sheet-open'); panel.closest('.page')?.classList.add('object-open'); }, 350);
+        scrollTimeline($('#ontologyTimeline'));
+      }
+
+      function confirmUnderstanding() {
+        PrototypeState.LiveObject.understanding.status = 'confirmed';
+        PrototypeState.LiveObject.understanding.confirmed = true;
+        const understanding = ontologyNodeData.responsibility;
+        understanding.layer = 'declared';
+        understanding.layerLabel = '自我表达';
+        understanding.status = 'confirmed';
+        understanding.statusLabel = '已确认原则';
+        understanding.time = '刚刚由你确认';
+        understanding.title = '当你承担最终结果时，你需要拥有与责任相称的决定权。';
+        understanding.copy = '这是你结合 2021 年创业经历明确确认的原则：你接受共同决策，但拒绝责任归你、方向却可被他人随时改变。它是可修订的自我表达，不是永久标签。';
+        understanding.scope = '由你承担最终责任的合作';
+        $('#ontologyObjectPanel').dataset.objectStatus = 'confirmed';
+        $('#understandingBadge').textContent = '已确认 V1';
+        $('#understandingBadge').className = 'state-badge confirmed';
+        $('#ontologyObjectNote').textContent = '已进入原则层。它仍可修订，且只在展示具体依据时被引用。';
+        $('#understandingActions').innerHTML = '<button class="primary-btn" data-action="show-ontology-map">看看它在本体中的位置</button><button class="soft-btn" data-go-page="topics">回到相关议题</button>';
+        $('#understandingFootnote').textContent = '确认人：你 · 2026-09-01 09:26 · 隐私范围：仅知君';
+        $('#ontologyInlineState').textContent = '理解对象 · 已确认 V1';
+        $('#ontologyPeekState').textContent = '已确认 V1 · 可随时修订';
+        $('#ontologyPeekCount').textContent = '已进入本体';
+        $('#hypothesisCount').textContent = '知君推测 5';
+        $('#declaredCount').textContent = '自我表达 32';
+        $('#mapHypothesisCount').textContent = '5';
+        $('#mapDeclaredCount').textContent = '32';
+        const node = $('#responsibilityNode');
+        node.dataset.layer = 'declared';
+        node.dataset.status = 'confirmed';
+        node.classList.add('confirmed-position');
+        node.hidden = false;
+        node.setAttribute('aria-label', '责任与决定权，自我表达，已确认原则');
+        $('#responsibilityNodeState').textContent = '自我表达 · 已确认';
+        selectedOntologyNodeId = 'responsibility';
+        filterOntology('all');
+        selectOntologyNode('responsibility', null, false);
+        $('#ontologyDynamic').insertAdjacentHTML('beforeend', '<div class="field-change-event" data-testid="ontology-confirmed-position"><strong>已进入原则层 · 本体 V1</strong> · 节点已从信任边界外移入确认环；以后引用时仍会展示具体证据。<div class="turn-actions"><button class="soft-btn" data-action="show-ontology-map">看看它在本体中的位置</button></div></div>');
+        closeModal($('#understandingConfirmModal'));
+        scrollTimeline($('#ontologyTimeline'));
+        showToast('理解已由你确认并进入原则层。');
+      }
+
+      function rejectUnderstanding() {
+        PrototypeState.LiveObject.understanding.status = 'rejected';
+        const understanding = ontologyNodeData.responsibility;
+        understanding.status = 'rejected';
+        understanding.statusLabel = '已拒绝 · 未进入本体';
+        $('#ontologyObjectPanel').dataset.objectStatus = 'rejected';
+        $('#understandingBadge').textContent = '已拒绝';
+        $('#understandingBadge').className = 'state-badge';
+        $('#ontologyObjectNote').textContent = '这项理解未进入本体，未来不会作为你的原则被引用。原始来源仍按既有规则保留。';
+        $('#understandingActions').innerHTML = '<button class="soft-btn" data-toast="你可以重新打开候选，但需要重新确认。">重新考虑</button>';
+        $('#understandingFootnote').textContent = `已拒绝 · 原因：${esc($('#rejectReason').value)}`;
+        $('#ontologyInlineState').textContent = '理解对象 · 已拒绝 / 未进入本体';
+        $('#ontologyPeekState').textContent = '已拒绝 · 未进入本体';
+        $('#ontologyPeekCount').textContent = '停止沿用';
+        $('#hypothesisCount').textContent = '知君推测 5';
+        $('#mapHypothesisCount').textContent = '5';
+        const node = $('#responsibilityNode');
+        node.hidden = true;
+        node.dataset.status = 'rejected';
+        if (selectedOntologyNodeId === 'responsibility') {
+          selectedOntologyNodeId = 'roles';
+          selectOntologyNode('roles', null, false);
+        }
+        filterOntology(ontologyFilter);
+        closeModal($('#understandingRejectModal'));
+        showToast('已拒绝；这项理解没有进入本体。');
+      }
+
+      function answerGrowth(text) {
+        if (!text || PrototypeState.LiveObject.review.confirmed) return;
+        $$('#page-growth [data-testid="key-question"]').forEach(node => node.removeAttribute('data-testid'));
+        PrototypeState.LiveObject.review.status = 'reviewing';
+        PrototypeState.LiveObject.review.changedFields = ['feedback', 'conclusion', 'alternative', 'experiment', 'window'];
+        setChangedField('reviewFeedback', '第二次冲突中，我可能过早接管', '来自你刚才的自述 · 尚未确认');
+        setChangedField('reviewConclusion', '沈禾推进稳定；冲突处理能力仍证据不足', '知君归纳 · 待你确认');
+        setChangedField('reviewAlternative', '两次收尾可能反映授权被中断，不能直接证明她无法处理冲突', '知君提出的其他解释 · 待你确认');
+        setChangedField('reviewExperiment', '两次会议、三条介入红线、十四天', '知君建议 · 实验草稿');
+        setChangedField('reviewWindow', '9 月 2 日—9 月 16 日 · 9 月 17 日回访', '知君建议 · 待你确认');
+        $('#reviewBadge').textContent = '复盘中';
+        $('#reviewFootnote').textContent = '状态：复盘中 · 实验尚未确认';
+        $('#createExperiment').disabled = false;
+        $('#growthInlineState').textContent = '复盘对象 · 对话中 / 未确认';
+        $('#growthPeekState').textContent = '复盘中 · 等待确认实验';
+        $('#growthPeekCount').textContent = '5 项变化';
+        $('#growthDynamic').innerHTML = `<article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 刚刚</div><div class="turn-text">${esc(text)}</div></div></article><div class="field-change-event" data-testid="field-change-marker"><strong>复盘卡已更新 5 个字段</strong> · 用户反馈与来源事实分开；替代解释和实验仍等待你确认。</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 刚刚</div><div class="turn-text">我听见的重点不是“她行不行”，而是你是否给了这个判断成立所需的空间。现在更诚实的结论是：证据不足。<strong class="question-line" data-testid="key-question">下一轮，你愿意用什么边界约束自己的介入？</strong></div><div class="turn-actions"><button class="primary-btn" data-action="create-experiment">只在三条红线触发时介入</button><button class="soft-btn" data-action="create-experiment">先观察 14 天</button><button class="text-btn analysis-toggle" aria-expanded="false" aria-controls="growthAnalysis" data-mirror-toggle="growthAnalysisToggle">展开完整分析</button></div></div></article>`;
+        if (matchMedia('(max-width: 767px)').matches) setTimeout(() => { const panel = $('#growthObjectPanel'); panel.classList.add('sheet-open'); panel.closest('.page')?.classList.add('object-open'); }, 350);
+        scrollTimeline($('#growthTimeline'));
+      }
+
+      function confirmExperiment() {
+        PrototypeState.LiveObject.review.status = 'confirmed_experiment';
+        PrototypeState.LiveObject.review.confirmed = true;
+        $('#growthObjectPanel').dataset.objectStatus = 'confirmed';
+        $('#reviewBadge').textContent = '实验已确认';
+        $('#reviewBadge').className = 'state-badge confirmed';
+        $('#reviewFootnote').textContent = '行动实验已确认 · 9 月 17 日回到同一议题复盘';
+        $('#createExperiment').hidden = true;
+        $('#backToTopic').hidden = false;
+        $('#growthInlineState').textContent = '复盘对象 · 已确认实验';
+        $('#growthPeekState').textContent = '实验已确认 · 9 月 17 日回访';
+        $('#growthPeekCount').textContent = '已回到议题';
+        $('#growthDynamic').insertAdjacentHTML('beforeend', '<div class="field-change-event"><strong>行动实验已确认</strong> · 9 月 2 日开始，9 月 17 日回到「COO 任命」议题复盘；未通知沈禾，也未写入外部日历。</div>');
+        threadViews.coo.updated = '今天 09:36 · 已形成行动实验';
+        threadViews.coo.state = '实验对象 · 已确认 / 进行中';
+        threadViews.coo.peek = '行动实验 · 9 月 17 日回访';
+        threadViews.coo.timeline = `<div class="stage-line done" data-testid="current-topic-id">持续议题 THR-014 · 判断、结果、复盘和实验连续保留</div><div class="topic-chapters" style="margin-left:0"><details class="topic-chapter" open><summary><span class="chapter-num">08-01</span><span class="chapter-title">判断成立</span><span class="chapter-reason">让沈禾独立主持周会</span><span class="chapter-chevron">＋</span></summary><div class="chapter-body">观察真实的推进与带队能力 · 由你确认</div></details><details class="topic-chapter" open><summary><span class="chapter-num">09-01</span><span class="chapter-title">首轮结果复盘</span><span class="chapter-reason">证据不足，不急于定论</span><span class="chapter-chevron">＋</span></summary><div class="chapter-body">你补充：第二次冲突可能是自己过早接管。知君提出授权被中断这一替代解释。</div></details><details class="topic-chapter" open><summary><span class="chapter-num">09-02</span><span class="chapter-title">行动实验开始</span><span class="chapter-reason">两次会议 · 三条红线 · 十四天</span><span class="chapter-chevron">＋</span></summary><div class="chapter-body">除合规、现金流、关键客户流失风险外不介入。9 月 17 日在这里复盘。</div></details></div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 刚刚</div><div class="turn-text">实验已经回到原议题。<strong class="question-line">下一次见面前，你要不要先把三条红线告诉沈禾？</strong></div><div class="turn-actions"><button class="soft-btn" data-toast="已形成沟通草稿；不会自动通知沈禾。">先形成沟通草稿</button><button class="soft-btn" data-toast="保持当前实验，不增加外部动作。">先不说</button></div></div></article>`;
+        threadViews.coo.object = `<div class="object-eyebrow">CURRENT OBJECT · ACTION EXPERIMENT</div><div class="object-title-row"><h2 class="object-title">COO 任命 · 十四天实验</h2><span class="state-badge confirmed">已确认</span></div><p class="object-note">这不是一份建议清单，而是有边界、有信号、有期限的可观察实验。</p><div class="object-fields"><div class="object-field"><div class="field-label">动作</div><div class="field-value">由沈禾独立主持两次争议会议</div></div><div class="object-field"><div class="field-label">介入红线</div><div class="field-value">合规、现金流、关键客户流失</div></div><div class="object-field"><div class="field-label">观察信号</div><div class="field-value">提出选项、完成取舍、跟进结果</div></div><div class="object-field"><div class="field-label">回访</div><div class="field-value">9 月 17 日 · 同一议题</div></div></div><div class="object-actions"><button class="soft-btn" data-go-page="growth">查看本次复盘</button></div>`;
+        closeModal($('#experimentModal'));
+        scrollTimeline($('#growthTimeline'));
+        showToast('行动实验已确认，并关联回原「COO 任命」议题。');
+      }
+
+      const threadViews = {
+        yuanchuan: {
+          id: 'THR-021', kicker: 'JUDGMENT THREAD · THR-021', title: '远川合作条款', updated: '今天 09:18 更新', state: '判断对象 · 对话中 / 未确认', peek: '判断对象 · 未确认',
+          timeline: `<div class="stage-line done">持续议题 · 首次形成于今天 08:42</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 08:42</div><div class="turn-text">昨晚的律师稿改变了重大事项表决方式。我想先确认你不可让渡的边界。</div></div></article><article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 09:03</div><div class="turn-text">日常经营可以放权；融资、出售核心资产和更换 CEO 必须保留。</div></div></article><div class="field-change-event"><strong>判断对象已更新</strong> · 倾向、理由、信心和下一步来自本轮回答，仍等待你确认。</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 09:04</div><div class="turn-text">我把你的边界记成了：经营权可以放，三项不可逆权利不能放。<strong class="question-line">如果对方只同意其中两项，哪一项你最不能交换？</strong></div><div class="turn-actions"><button class="soft-btn" data-toast="已记入本轮回答草稿：出售核心资产。">出售核心资产</button><button class="soft-btn" data-toast="已记入本轮回答草稿：融资权。">融资权</button><button class="text-btn evidence-open" data-evidence="decision">回看依据</button></div></div></article>`,
+          object: `<div class="object-eyebrow">CURRENT OBJECT · JUDGMENT</div><div class="object-title-row"><h2 class="object-title">远川合作条款</h2><span class="state-badge ${PrototypeState.LiveObject.decision.confirmed ? 'confirmed' : 'pending'}">${PrototypeState.LiveObject.decision.confirmed ? '已确认 V1' : '未确认'}</span></div><p class="object-note">一个议题只承接一条连续时间线；确认、结果和复盘都会回到这里。</p><div class="object-fields"><div class="object-field"><div class="field-label">对象</div><div class="field-value">判断${PrototypeState.LiveObject.decision.confirmed ? '版本 V1' : '草稿 V1'}</div></div><div class="object-field"><div class="field-label">倾向</div><div class="field-value">接受多数表决，但保留三项保护性权利</div></div><div class="object-field"><div class="field-label">证据</div><div class="field-value">3 段盒内依据<span class="field-source">原件未出盒</span></div></div><div class="object-field"><div class="field-label">下一节点</div><div class="field-value">${PrototypeState.LiveObject.decision.confirmed ? '等待结果回访' : '确认判断 → 结果回访'}</div></div></div><div class="object-actions"><button class="primary-btn" data-go-page="today">回到晨间判断</button><button class="soft-btn evidence-open" data-evidence="decision">查看全部依据</button></div>`
+        },
+        coo: {
+          id: 'THR-014', kicker: 'GROWTH THREAD · THR-014', title: 'COO 任命', updated: '今天 09:24 · 结果到期', state: '复盘对象 · 到期 / 未确认', peek: '结果到期 · 待复盘',
+          timeline: `<div class="stage-line done" data-testid="outcome-due">30 天观察期今天结束 · 原判断仍有效</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 今天 09:24</div><div class="turn-text lead">你设定的观察期到了。四次周会推进稳定，两次冲突仍由你收尾。</div><div class="turn-text"><strong class="question-line">现在开始复盘，还是先延后到今晚？</strong></div><div class="turn-actions"><button class="primary-btn" data-go-page="growth" data-testid="start-review">开始结果复盘</button><button class="soft-btn" data-toast="已延后到今天 19:30，同一议题保持不变。">今晚提醒</button></div></div></article>`,
+          object: `<div class="object-eyebrow">CURRENT OBJECT · REVIEW DUE</div><div class="object-title-row"><h2 class="object-title">COO 任命</h2><span class="state-badge pending">结果到期</span></div><p class="object-note">原判断、结果、复盘和下一轮实验属于同一个议题。</p><div class="object-fields"><div class="object-field"><div class="field-label">原判断</div><div class="field-value">让沈禾独立主持周会，观察真实带队能力<span class="field-source">8 月 1 日 · 已确认</span></div></div><div class="object-field"><div class="field-label">观察期</div><div class="field-value">8 月 1 日—8 月 31 日</div></div><div class="object-field"><div class="field-label">结果</div><div class="field-value">四次准时推进 · 两次冲突由你收尾</div></div><div class="object-field"><div class="field-label">下一节点</div><div class="field-value">结果复盘</div></div></div><div class="object-actions"><button class="primary-btn" data-go-page="growth">进入复盘</button></div>`
+        },
+        'boundary-pattern': {
+          id: 'THR-018', kicker: 'ONTOLOGY THREAD · THR-018', title: '合作边界模式', updated: '今天 09:11 更新', state: '理解对象 · 候选 / 未确认', peek: '候选理解 · 未进入本体',
+          timeline: `<div class="stage-line done">三次合作谈判出现相似表达</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 09:11</div><div class="turn-text">我怀疑你守的不是控制本身，而是责任与决定权的一致。但这还不是事实。<strong class="question-line">你愿意补充最早的一段背景吗？</strong></div><div class="turn-actions"><button class="primary-btn" data-go-page="ontology" data-ontology-entry="dialogue">回到本体确认</button><button class="soft-btn evidence-open" data-evidence="ontology">查看三次依据</button></div></div></article>`,
+          object: `<div class="object-eyebrow">CURRENT OBJECT · UNDERSTANDING</div><div class="object-title-row"><h2 class="object-title">责任与决定权一致</h2><span class="state-badge pending">候选</span></div><p class="object-note">未经你确认，不会进入本体，也不会在其他判断中被当作你的原则。</p><div class="object-fields"><div class="object-field"><div class="field-label">层次</div><div class="field-value">原则层 · 知君推测</div></div><div class="object-field"><div class="field-label">依据</div><div class="field-value">3 次合作谈判</div></div><div class="object-field"><div class="field-label">下一节点</div><div class="field-value">补充背景 → 确认 / 修正 / 拒绝</div></div></div><div class="object-actions"><button class="primary-btn" data-go-page="ontology" data-ontology-entry="dialogue">处理这项理解</button></div>`
+        },
+        linlan: {
+          id: 'THR-007', kicker: 'RELATIONSHIP THREAD · THR-007', title: '与林岚的合作', updated: '昨天 20:14 更新', state: '关系对象 · 等待回应', peek: '关系议题 · 等待回应',
+          timeline: `<div class="stage-line done">9 月 5 日前需要回应邀请</div><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 昨天 20:14</div><div class="turn-text">你愿意深入参与，但不想成为机构的一部分。林岚又是你认识八年的朋友。<strong class="question-line">这次最需要先讲清的是角色边界，还是关系边界？</strong></div><div class="turn-actions"><button class="soft-btn" data-toast="已形成回答草稿：先讲角色边界。">角色边界</button><button class="soft-btn" data-toast="已形成回答草稿：先讲关系边界。">关系边界</button></div></div></article>`,
+          object: `<div class="object-eyebrow">CURRENT OBJECT · RELATIONSHIP</div><div class="object-title-row"><h2 class="object-title">与林岚的合作</h2><span class="state-badge pending">等待回应</span></div><p class="object-note">人物关系只呈现共同经历、承诺与待澄清边界，不给对方做人格评分。</p><div class="object-fields"><div class="object-field"><div class="field-label">共同经历</div><div class="field-value">认识 8 年 · 42 次有记录互动</div></div><div class="object-field"><div class="field-label">待回应</div><div class="field-value">南岸家办投委会邀请 · 9 月 5 日</div></div><div class="object-field"><div class="field-label">未闭环</div><div class="field-value">新加坡信托材料 · 逾期 12 天</div></div></div><div class="object-actions"><button class="soft-btn" data-toast="已生成会面准备草稿；不会自动发给林岚。">准备下次谈话</button></div>`
+        }
+      };
+
+      function selectThread(key) {
+        const view = threadViews[key];
+        if (!view) return;
+        PrototypeState.TopicThread.currentId = view.id;
+        $$('.thread-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.thread === key));
+        $('#topicKicker').textContent = view.kicker;
+        $('#topicsTitle').textContent = view.title;
+        $('#topicUpdated').textContent = view.updated;
+        $('#topicObjectState').textContent = view.state;
+        $('#topicTimeline').innerHTML = view.timeline;
+        $('#topicObjectContent').innerHTML = view.object;
+        $('#topicPeekTitle').textContent = view.title;
+        $('#topicPeekState').textContent = view.peek;
+        $('#topicTimeline').dataset.currentTopicId = view.id;
+        $('#topicTimeline').setAttribute('data-testid', `topic-conversation-timeline current-topic-id`);
+      }
+
+      const evidenceContent = {
+        decision: {
+          title: '远川条款 · 三段盒内依据', sub: '精确片段来自虚构原件；查看不触发云端调用。',
+          body: `<div class="fragment"><div class="fragment-head"><span>依据 01</span><span>8 月 26 日 · 项目笔记</span></div>“经营可以放权，资本结构不能含糊。” <span class="field-source">原件定位：第 3 段 · 盒内</span></div><div class="fragment"><div class="fragment-head"><span>依据 02</span><span>8 月 29 日 · 会议转写</span></div>你两次追问核心资产出售的表决方式。<span class="field-source">原件定位：18:42—19:16 · 盒内</span></div><div class="fragment"><div class="fragment-head"><span>依据 03</span><span>8 月 31 日 · 律师批注</span></div>融资、更换 CEO 两处被你标为“需保留边界”。<span class="field-source">原件定位：第 6 页、第 9 页 · 盒内</span></div>`
+        },
+        ontology: {
+          title: '合作边界模式 · 三次相似反应', sub: '以下只能支持一项候选理解，不能替代你的确认。',
+          body: `<div class="fragment"><div class="fragment-head"><span>2026-08-31</span><span>远川律师稿</span></div>你把“最终责任”与“三项保护性权利”放在同一句批注里。</div><div class="fragment"><div class="fragment-head"><span>2026-05-14</span><span>南岸合作笔记</span></div>你接受共同投票，但要求承担结果的一方拥有最终否决窗口。</div><div class="fragment"><div class="fragment-head"><span>2025-12-03</span><span>合伙人会谈</span></div>你明确说过：“权力可以共享，结果不能只由一个人兜底。”</div>`
+        },
+        growth: {
+          title: 'COO 任命 · 六段观察记录', sub: '事实记录与知君解释分开呈现。',
+          body: `<div class="fragment"><div class="fragment-head"><span>事实记录</span><span>4 次周会</span></div>四次会议均按时完成议题、责任人和下一步确认。</div><div class="fragment"><div class="fragment-head"><span>事实记录</span><span>2 次冲突</span></div>第一次由你直接接管；第二次沈禾已提出处理方向，你先给出最终决定。</div><div class="fragment"><div class="fragment-head"><span>知君解释</span><span>待确认</span></div>当前结果可能同时反映沈禾的能力与授权被中断，无法只归因于其中一方。</div>`
+        }
+      };
+
+      function openEvidence(key, trigger) {
+        let content = evidenceContent[key] || evidenceContent.decision;
+        if (key === 'ontology-node') {
+          const data = ontologyNodeData[selectedOntologyNodeId];
+          content = {
+            title: `${data.name} · ${data.evidence.length} 条盒内依据`,
+            sub: `${data.layerLabel} · ${data.statusLabel}。查看来源不会改变本体状态。`,
+            body: data.evidence.map((item, index) => `<div class="fragment"><div class="fragment-head"><span>依据 ${String(index + 1).padStart(2, '0')}</span><span>盒内来源 · 虚构示例</span></div>${esc(item)}<span class="field-source">原件未出盒 · 版本可追溯</span></div>`).join('')
+          };
+        }
+        $('#evidenceTitle').textContent = content.title;
+        $('#evidenceSub').textContent = content.sub;
+        $('#evidenceBody').innerHTML = content.body;
+        openModal('evidenceModal', trigger);
+      }
+
+      function beginVoice(button, event) {
+        if (PrototypeState.VoiceDraft.state === 'recording') return;
+        if (event) event.preventDefault();
+        voiceButton = button;
+        const composer = button.closest('.composer');
+        const target = $('textarea', composer);
+        PrototypeState.VoiceDraft = { state: 'recording', transcript: '', edited: false, confirmed: false, targetId: target ? target.id : null };
+        voiceStartedAt = Date.now();
+        button.classList.add('recording');
+        button.setAttribute('aria-pressed', 'true');
+        $('#voiceOrb').classList.add('recording');
+        $('#voiceWave').hidden = false;
+        $('#voiceStatus').textContent = '录音中 · 松开后转写';
+        $('#voiceStatus').dataset.state = 'recording';
+        $('#voiceHelp').textContent = '重要内容不会在松手时直接提交';
+        $('#voiceTranscriptArea').hidden = true;
+        $('#voiceEdit').hidden = true;
+        $('#voiceConfirm').hidden = true;
+        const transcriptByPage = {
+          today: '日常经营我可以放权。融资、出售核心资产和更换 CEO 必须保留，只要三项写清楚，我愿意签，大概七成把握。',
+          ontology: '2021 年那次创业最明显。问题不在别人参与，而在谁承担结果，谁就应该有相称的决定权。',
+          growth: '最意外的是我自己。第二次冲突她其实能处理，是我没忍住先接管了。',
+          topics: '我想继续把这件事的边界说清楚。'
+        };
+        PrototypeState.VoiceDraft.transcript = transcriptByPage[activePage] || transcriptByPage.today;
+        $('#voiceTranscript').value = PrototypeState.VoiceDraft.transcript;
+        openModal('voiceModal', button);
+        voiceTimer = setInterval(() => {
+          const elapsed = Math.max(1, Math.floor((Date.now() - voiceStartedAt) / 1000));
+          $('#voiceHelp').textContent = `已录制 00:${String(elapsed).padStart(2, '0')} · 松开后进入文字确认`;
+        }, 500);
+      }
+
+      function endVoice(cancelled = false) {
+        if (PrototypeState.VoiceDraft.state !== 'recording') return;
+        clearInterval(voiceTimer);
+        if (voiceButton) {
+          voiceButton.classList.remove('recording');
+          voiceButton.setAttribute('aria-pressed', 'false');
+        }
+        $('#voiceOrb').classList.remove('recording');
+        $('#voiceWave').hidden = true;
+        if (cancelled) {
+          $('#voiceStatus').textContent = '录音已取消';
+          $('#voiceStatus').dataset.state = 'idle';
+          $('#voiceHelp').textContent = '没有生成消息或对象变化';
+          PrototypeState.VoiceDraft.state = 'idle';
+          setTimeout(() => closeModal($('#voiceModal')), 500);
+          return;
+        }
+        PrototypeState.VoiceDraft.state = 'transcribing';
+        $('#voiceStatus').textContent = '正在盒内转写…';
+        $('#voiceStatus').dataset.state = 'transcribing';
+        $('#voiceHelp').textContent = '转写完成后仍需你确认文字';
+        setTimeout(() => {
+          if (PrototypeState.VoiceDraft.state !== 'transcribing') return;
+          PrototypeState.VoiceDraft.state = 'review';
+          $('#voiceStatus').textContent = '转写完成 · 等待文字确认';
+          $('#voiceStatus').dataset.state = 'review';
+          $('#voiceHelp').textContent = '你可以直接编辑，再明确提交';
+          $('#voiceTranscriptArea').hidden = false;
+          $('#voiceEdit').hidden = false;
+          $('#voiceConfirm').hidden = false;
+        }, 720);
+      }
+
+      function resetVoice() {
+        clearInterval(voiceTimer);
+        if (voiceButton) {
+          voiceButton.classList.remove('recording');
+          voiceButton.setAttribute('aria-pressed', 'false');
+        }
+        PrototypeState.VoiceDraft.state = 'idle';
+        $('#voiceOrb').classList.remove('recording');
+        $('#voiceWave').hidden = true;
+        $('#voiceStatus').textContent = '准备录音';
+        $('#voiceStatus').dataset.state = 'idle';
+        $('#voiceHelp').textContent = '按住页面中的语音按钮开始';
+        voiceButton = null;
+      }
+
+      function confirmVoice() {
+        const text = $('#voiceTranscript').value.trim();
+        if (!text) return;
+        const target = PrototypeState.VoiceDraft.targetId ? document.getElementById(PrototypeState.VoiceDraft.targetId) : null;
+        PrototypeState.VoiceDraft.state = 'confirmed';
+        PrototypeState.VoiceDraft.transcript = text;
+        PrototypeState.VoiceDraft.confirmed = true;
+        $('#voiceStatus').textContent = '文字已确认';
+        $('#voiceStatus').dataset.state = 'confirmed';
+        if (target) target.value = text;
+        closeModal($('#voiceModal'));
+        if (target && target.id === 'todayInput') answerDecision(text);
+        else if (target && target.id === 'ontologyInput') answerOntology(text);
+        else if (target && target.id === 'growthInput') answerGrowth(text);
+        else if (target) {
+          const timeline = $('.timeline', target.closest('.conversation'));
+          if (timeline) {
+            timeline.insertAdjacentHTML('beforeend', `<article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 语音文字已确认</div><div class="turn-text">${esc(text)}</div></div></article>`);
+            scrollTimeline(timeline);
+          }
+        }
+        resetVoice();
+        showToast('语音文字已由你确认并发送。');
+      }
+
+      function genericSend(button) {
+        const composer = button.closest('.composer');
+        const input = $('textarea', composer);
+        const text = input.value.trim();
+        if (!text) return;
+        const conversation = button.closest('.conversation');
+        const timeline = $('.timeline', conversation);
+        timeline.insertAdjacentHTML('beforeend', `<article class="turn user" aria-label="你的消息"><div class="turn-mark">我</div><div class="turn-body"><div class="turn-author">你 · 刚刚</div><div class="turn-text">${esc(text)}</div></div></article><article class="turn ai" aria-label="知君的消息"><div class="turn-mark">知</div><div class="turn-body"><div class="turn-author">知君 · 刚刚</div><div class="turn-text">我已把这段话留在当前议题中。<strong class="question-line">你希望它修改当前对象，还是只作为背景保留？</strong></div><div class="turn-actions"><button class="soft-btn" data-toast="已形成对象字段草稿，仍需确认。">修改对象草稿</button><button class="soft-btn" data-toast="已作为背景保留，不改变对象状态。">只作背景</button></div></div></article>`);
+        input.value = '';
+        scrollTimeline(timeline);
+      }
+
+      // Navigation and global delegated actions
+      document.addEventListener('click', event => {
+        const pageButton = event.target.closest('[data-page], [data-go-page]');
+        if (pageButton) {
+          const page = pageButton.dataset.page || pageButton.dataset.goPage;
+          switchPage(page);
+          if (page === 'ontology') switchOntologyMode(pageButton.dataset.ontologyEntry || (pageButton.dataset.page ? 'map' : 'dialogue'));
+          return;
+        }
+        const toastButton = event.target.closest('[data-toast]');
+        if (toastButton) { showToast(toastButton.dataset.toast); return; }
+        const closeButton = event.target.closest('[data-modal-close]');
+        if (closeButton) { closeModal(closeButton.closest('.modal-layer')); return; }
+        const evidenceButton = event.target.closest('.evidence-open');
+        if (evidenceButton) { openEvidence(evidenceButton.dataset.evidence, evidenceButton); return; }
+        const action = event.target.closest('[data-action]');
+        if (action) {
+          const name = action.dataset.action;
+          if (name === 'confirm-decision') openModal('decisionConfirmModal', action);
+          if (name === 'focus-decision-edit') { $('#todayInput').focus(); showToast('继续说出要修改的部分，卡片会先保持未确认。'); }
+          if (name === 'open-followup') openModal('followupModal', action);
+          if (name === 'confirm-understanding') openModal('understandingConfirmModal', action);
+          if (name === 'correct-understanding') openModal('understandingCorrectModal', action);
+          if (name === 'reject-understanding') openModal('understandingRejectModal', action);
+          if (name === 'create-experiment') openModal('experimentModal', action);
+          if (name === 'show-ontology-map') { switchPage('ontology'); switchOntologyMode('map'); selectOntologyNode('responsibility', null, false); }
+          return;
+        }
+        const peek = event.target.closest('.object-peek');
+        if (peek) {
+          const panel = document.getElementById(peek.dataset.objectTarget);
+          if (panel) { panel.classList.add('sheet-open'); panel.closest('.page')?.classList.add('object-open'); }
+          return;
+        }
+        const sheetClose = event.target.closest('[data-sheet-close]');
+        if (sheetClose) { const panel = sheetClose.closest('.object-panel'); panel.classList.remove('sheet-open'); panel.closest('.page')?.classList.remove('object-open'); return; }
+      });
+
+      $$('.nav-btn, .mobile-nav button').forEach(button => button.addEventListener('click', () => { switchPage(button.dataset.page); if (button.dataset.page === 'ontology') switchOntologyMode('map'); }));
+      $$('.thread-btn').forEach(button => button.addEventListener('click', () => selectThread(button.dataset.thread)));
+      $$('[data-ontology-mode]').forEach(button => button.addEventListener('click', () => switchOntologyMode(button.dataset.ontologyMode)));
+      $$('.ontology-filter').forEach(button => button.addEventListener('click', () => filterOntology(button.dataset.ontologyLayer)));
+      $$('.ontology-node').forEach(button => button.addEventListener('click', () => selectOntologyNode(button.dataset.entityId, button, true)));
+      $('#ontologyCalibrate').addEventListener('click', calibrateSelectedOntology);
+      $('#ontologyInspectorClose').addEventListener('click', closeOntologyInspector);
+      $$('.boundary-tab').forEach(tab => tab.addEventListener('click', () => {
+        $$('.boundary-tab').forEach(item => { const active = item === tab; item.classList.toggle('active', active); item.setAttribute('aria-selected', String(active)); });
+        $$('.boundary-view').forEach(view => view.classList.toggle('active', view.id === `boundary-${tab.dataset.boundary}`));
+      }));
+
+      $$('.analysis-toggle').forEach(button => button.addEventListener('click', () => {
+        const targetId = button.getAttribute('aria-controls');
+        const panel = document.getElementById(targetId);
+        if (!panel) return;
+        const opening = panel.hidden;
+        panel.hidden = !opening;
+        button.setAttribute('aria-expanded', String(opening));
+        button.textContent = opening ? '收起分析' : (targetId === 'growthAnalysis' ? '展开完整分析' : '展开分析');
+      }));
+
+      document.addEventListener('click', event => {
+        const mirror = event.target.closest('[data-mirror-toggle]');
+        if (!mirror) return;
+        const origin = document.getElementById(mirror.dataset.mirrorToggle);
+        if (origin) origin.click();
+        mirror.setAttribute('aria-expanded', origin ? origin.getAttribute('aria-expanded') : 'false');
+        mirror.textContent = origin && origin.getAttribute('aria-expanded') === 'true' ? '收起完整分析' : '展开完整分析';
+      });
+
+      $$('.today-quick-reply').forEach(button => button.addEventListener('click', () => answerDecision(button.dataset.value)));
+      $('#todaySend').addEventListener('click', () => { const input = $('#todayInput'); answerDecision(input.value.trim()); input.value = ''; });
+      $('#todayInput').addEventListener('keydown', event => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') $('#todaySend').click(); });
+      $('#confirmDecision').addEventListener('click', event => openModal('decisionConfirmModal', event.currentTarget));
+      $('#editDecision').addEventListener('click', () => { $('#todayInput').focus(); showToast('说出要修改的字段；对象仍保持未确认。'); });
+      $('#scheduleFollowup').addEventListener('click', event => openModal('followupModal', event.currentTarget));
+      $('#decisionConfirmCheck').addEventListener('change', event => { $('#decisionConfirmSubmit').disabled = !event.target.checked; });
+      $('#decisionConfirmSubmit').addEventListener('click', confirmDecision);
+      $('#followupConfirm').addEventListener('click', () => {
+        const date = $('#followupSelect').value;
+        $('#decisionFootnote').textContent = `已由你确认 · 已安排 ${date} 回访 · 同一议题`;
+        $('#todayPeekState').textContent = `已确认 · ${date} 回访`;
+        $('#todayDynamic').insertAdjacentHTML('beforeend', `<div class="field-change-event" data-testid="followup-status"><strong>结果回访已安排：${esc(date)}</strong> · 届时回到同一个「远川合作条款」议题。</div>`);
+        closeModal($('#followupModal'));
+        scrollTimeline($('#todayTimeline'));
+        showToast(`已安排 ${date} 回访。`);
+      });
+
+      $('#ontologyReply').addEventListener('click', () => answerOntology('2021 年那次创业最明显。投资人要求我对结果兜底，却保留随时改方向的权力。问题不在别人参与，而在谁承担结果，谁就应该有相称的决定权。'));
+      $('#ontologySend').addEventListener('click', () => { const input = $('#ontologyInput'); answerOntology(input.value.trim()); input.value = ''; });
+      $('#confirmUnderstanding').addEventListener('click', event => openModal('understandingConfirmModal', event.currentTarget));
+      $('#correctUnderstanding').addEventListener('click', event => openModal('understandingCorrectModal', event.currentTarget));
+      $('#rejectUnderstanding').addEventListener('click', event => openModal('understandingRejectModal', event.currentTarget));
+      $('#understandingConfirmCheck').addEventListener('change', event => { $('#understandingConfirmSubmit').disabled = !event.target.checked; });
+      $('#understandingConfirmSubmit').addEventListener('click', confirmUnderstanding);
+      $('#understandingCorrectionSave').addEventListener('click', () => {
+        const correction = $('#understandingCorrection').value.trim();
+        if (!correction) return;
+        ontologyNodeData.responsibility.scope = correction;
+        ontologyNodeData.responsibility.copy = `你直接把适用范围修订为：“${correction}”。这仍是候选 V2；修订本身不会使它进入本体。`;
+        ontologyNodeData.responsibility.status = 'pending';
+        ontologyNodeData.responsibility.statusLabel = '候选 V2 · 尚未进入本体';
+        setChangedField('understandingScope', esc(correction), '用户直接修订 · 候选 V2 · 尚未确认');
+        $('#understandingFootnote').textContent = '状态：候选 V2 · 等待你再次确认';
+        $('#ontologyPeekState').textContent = '候选 V2 · 等待确认';
+        closeModal($('#understandingCorrectModal'));
+        showToast('已保存为候选 V2；仍未进入本体。');
+      });
+      $('#understandingRejectSubmit').addEventListener('click', rejectUnderstanding);
+
+      $('#growthReply').addEventListener('click', () => answerGrowth('最意外的是我自己。第二次冲突她其实能处理，是我没忍住先接管了。'));
+      $('#growthSend').addEventListener('click', () => { const input = $('#growthInput'); answerGrowth(input.value.trim()); input.value = ''; });
+      $('#createExperiment').addEventListener('click', event => openModal('experimentModal', event.currentTarget));
+      $('#experimentConfirmCheck').addEventListener('change', event => { $('#experimentConfirmSubmit').disabled = !event.target.checked; });
+      $('#experimentConfirmSubmit').addEventListener('click', confirmExperiment);
+      $('#backToTopic').addEventListener('click', () => { switchPage('topics'); selectThread('coo'); });
+
+      $('#openEgressPreview').addEventListener('click', event => openModal('egressModal', event.currentTarget));
+      $('#openReceipt').addEventListener('click', event => openModal('receiptModal', event.currentTarget));
+      $('#egressConfirmCheck').addEventListener('change', event => { $('#egressAllowOnce').disabled = !event.target.checked; });
+      $('#egressAllowOnce').addEventListener('click', () => {
+        PrototypeState.BoundaryPreview.grantedOnce = true;
+        closeModal($('#egressModal'));
+        showToast('已只允许本次调用；完成后权限自动结束并生成回执。');
+      });
+      $('#localOnlyAnswer').addEventListener('click', () => { closeModal($('#egressModal')); showToast('已改为仅本地回答；没有片段出盒。'); });
+      $('#openAgentPermission').addEventListener('click', event => openModal('agentPermissionModal', event.currentTarget));
+      $('#agentPermissionCheck').addEventListener('change', event => { $('#agentPermissionSubmit').disabled = !event.target.checked; });
+      $('#agentPermissionSubmit').addEventListener('click', () => { closeModal($('#agentPermissionModal')); showToast('万象已获得本次最小上下文授权；完成后自动结束。'); });
+      $('#revokeAgent').addEventListener('click', event => openModal('revokeAgentModal', event.currentTarget));
+      $('#revokeAgentSubmit').addEventListener('click', () => { closeModal($('#revokeAgentModal')); showToast('后续访问已撤销；盒内历史回执仍保留。'); });
+      $('#openDeletePreview').addEventListener('click', event => openModal('deleteModal', event.currentTarget));
+      function updateDeleteEnabled() { $('#deleteSubmit').disabled = !($('#deleteConfirmInput').value.trim() === '永久删除知君档案' && $('#deleteImpactCheck').checked); }
+      $('#deleteConfirmInput').addEventListener('input', updateDeleteEnabled);
+      $('#deleteImpactCheck').addEventListener('change', updateDeleteEnabled);
+      $('#deleteSubmit').addEventListener('click', () => { closeModal($('#deleteModal')); showToast('原型演示完成：没有删除任何真实数据。'); });
+
+      $$('.voice-btn').forEach(button => {
+        button.addEventListener('pointerdown', event => beginVoice(button, event));
+        button.addEventListener('pointercancel', () => endVoice(true));
+        button.addEventListener('keydown', event => { if ((event.key === ' ' || event.key === 'Enter') && PrototypeState.VoiceDraft.state !== 'recording') beginVoice(button, event); });
+        button.addEventListener('keyup', event => { if ((event.key === ' ' || event.key === 'Enter') && PrototypeState.VoiceDraft.state === 'recording') endVoice(false); });
+      });
+      document.addEventListener('pointerup', () => endVoice(false));
+      $('#voiceEdit').addEventListener('click', () => { PrototypeState.VoiceDraft.edited = true; $('#voiceTranscript').focus(); $('#voiceTranscript').select(); });
+      $('#voiceConfirm').addEventListener('click', confirmVoice);
+      $('#voiceCancel').addEventListener('click', () => { resetVoice(); closeModal($('#voiceModal')); showToast('语音草稿已取消，没有产生对象变化。'); });
+
+      $$('.generic-send').forEach(button => button.addEventListener('click', () => genericSend(button)));
+
+      // Mobile bottom-sheet close controls are created once for all live objects.
+      $$('.object-panel').forEach(panel => {
+        const close = document.createElement('button');
+        close.className = 'modal-close sheet-close';
+        close.type = 'button';
+        close.dataset.sheetClose = '';
+        close.setAttribute('aria-label', '关闭对象卡');
+        close.textContent = '×';
+        panel.prepend(close);
+      });
+
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          const open = $$('.modal-layer.open').at(-1);
+          if (open) { closeModal(open); return; }
+          const ontologySheet = $('#ontologyInspector.mobile-open');
+          if (ontologySheet) { closeOntologyInspector(); return; }
+          const sheet = $('.object-panel.sheet-open');
+          if (sheet) { sheet.classList.remove('sheet-open'); sheet.closest('.page')?.classList.remove('object-open'); return; }
+        }
+        if (event.key === 'Tab') {
+          const open = $$('.modal-layer.open').at(-1);
+          if (!open) return;
+          const focusables = $$('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex="0"]', open).filter(node => !node.hidden && node.offsetParent !== null);
+          if (!focusables.length) return;
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+          else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+        }
+      });
+
+      // Prevent accidental horizontal drift and expose the prototype contract for QA.
+      $('.app').dataset.prototypeVersion = 'v3';
+      $('.app').dataset.testid = 'zhijun-v3-app';
+      selectThread('yuanchuan');
+    })();
+  </script>
+</body>
+</html>

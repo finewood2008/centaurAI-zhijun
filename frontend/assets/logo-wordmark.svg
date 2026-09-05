@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="160" viewBox="0 0 700 160" role="img" aria-labelledby="title">
+  <title id="title">CentaurAI 私有记忆库</title>
+  <g fill="none" stroke="#17233C" stroke-width="17" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M120 42C108 27 94 20 76 20C43 20 20 47 20 80C20 113 43 140 76 140C94 140 108 133 120 118"/>
+    <path d="M52 124L81 38L112 124M64 92H101"/>
+  </g>
+  <g fill="#17233C">
+    <text x="155" y="99" font-family="Inter, Noto Sans, Arial, sans-serif" font-size="62" font-weight="800" letter-spacing="-2">CentaurAI</text>
+    <text x="480" y="96" font-family="Noto Sans CJK SC, PingFang SC, Microsoft YaHei, sans-serif" font-size="35" font-weight="600" letter-spacing="2">私有记忆库</text>
+  </g>
+</svg>
