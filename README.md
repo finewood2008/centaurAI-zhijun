@@ -16,9 +16,11 @@
 
 Electron SDK 与 data-engine 的后续集成调研见 [技术架构图](docs/development/ARCHITECTURE-0905.md)、[集成方案](docs/development/INTEGRATION-0905.md) 和 [二次审核记录](docs/development/REVIEW-0905.md)，其中区分了当前实现、接口缺口及建议实施步骤。
 
-进入实施前的接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。这些是待实现设计，尚未接通正式 SDK 业务链路。
+接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L，本地模拟可运行；正式 SDK 业务身份链路尚未接通。
 
 分配具体开发工作时使用 [详细开发任务清单](docs/development/DEVELOPMENT-TASKS-0905.md)，包含任务编号、角色、文件、依赖、实施步骤、估算与验收。
+
+体验独立桌面：安装 `frontend/mindos-web` 和 `frontend/shell` 依赖后，在仓库根执行 `rtk proxy bash start-desktop.sh --simulation`。页面持续标记合成数据；省略参数则显示正式配置未就绪。启动方式和测试见 [桌面说明](frontend/shell/README.md)，本轮实现与限制见 [M0实施记录](docs/development/M0-IMPLEMENTATION-0906.md)。原有完整产品的本机 Web 开发入口如下，和新桌面分开运行。
 
 ## 主要入口
 
@@ -89,9 +91,9 @@ curl -s -X POST http://127.0.0.1:8618/api/agent/clients -H 'X-Requested-By: cent
 curl -s -X POST http://127.0.0.1:8618/v1/agent/context-pack -H "Authorization: Bearer agk_…" -H 'Content-Type: application/json' -d '{"purpose":"帮用户整理本周计划"}'
 ```
 
-## 桌面薄壳、安装到主屏、盒子部署
+## 独立桌面、安装到主屏、盒子部署
 
-- 桌面：`cd frontend/shell && npm install && npm start`（只加载本机 `/mindos/`，没有 preload 与 IPC 桥）。
+- 桌面：仓库根执行 `rtk proxy bash start-desktop.sh --simulation`，使用独立页面、preload 与受控 IPC，体验合成资料流程。默认未配置模式不连接真实服务；完整产品功能仍使用上面的 Web 入口。
 - 手机 / 平板：浏览器打开 `/mindos/` 可「添加到主屏幕」（PWA 清单），语音输入在 Chromium 系浏览器可用。
 - 盒子：`deploy/box.env.example` 是环境变量样例（数据根、生产模式、本地模型、网关开关）。
 
@@ -105,6 +107,9 @@ curl -s -X POST http://127.0.0.1:8618/v1/agent/context-pack -H "Authorization: B
 
 ```
 frontend/mindos-web/            Vue 3 + TypeScript + Vite；SSE 客户端 src/services/sse.ts
+frontend/mindos-web/src/desktop/ 独立 M0-L 页面与状态控制，不导入旧 Web 路由/API
+frontend/shell/                 Electron 37.10.3 宿主、preload、安全协议与 runtime
+frontend/shared/desktop-contract.ts  桌面公开接口的唯一类型源
 frontend/mindos-web/src/services/{chatStream,matters}.ts  发送恢复编排与事项/成果API
 backend/server.py               FastAPI 入口（仅绑定 127.0.0.1:8618，写路由要求 loopback + CSRF 头）
 backend/mindos/zhijun/          对话 agent：provider · gate · persona · context · extract · jobs · projection · turn · confirm
@@ -118,7 +123,7 @@ backend/{parser,embedder,watcher,vector_store}.py   资料摄取、解析、嵌�
 
 ## 现状与边界
 
-- P1「能聊、能记、能认」、P2「能商量、会回访」、P3「像良师」、P4「可带走、可安装」已实现：多轮流式对话、从对话抽取理解、对话内一键确认、我的本体、建档对话、投影、商量模式与判断草稿、到期提醒、回访记结果与复盘引导、整合器与裁决、张力提醒、资料 → 理解、导出与全量删除、给其他 Agent 的上下文包、可带走开关、语音输入、PWA 清单、桌面薄壳、盒子 profile。**承诺提醒、议题线程、移动端离线采集、录音转写、盒子硬件通讯、旧面退役尚未实现**，见 `docs/product/ZHIJUN_REDESIGN_V2.md` §10–§11。
+- 既有 Web 产品 P1「能聊、能记、能认」、P2「能商量、会回访」、P3「像良师」、P4「可带走、可安装」已实现：多轮流式对话、从对话抽取理解、对话内一键确认、我的本体、建档对话、投影、商量模式与判断草稿、到期提醒、回访记结果与复盘引导、整合器与裁决、张力提醒、资料 → 理解、导出与全量删除、给其他 Agent 的上下文包、可带走开关、语音输入、PWA 清单、盒子 profile。独立桌面现为 M0-L 模拟资料流程，上述完整产品功能尚未全部迁入新桌面。**承诺提醒、议题线程、移动端离线采集、录音转写、盒子硬件通讯、旧面退役尚未实现**，见 `docs/product/ZHIJUN_REDESIGN_V2.md` §10–§11。
 - 真实模型（Ollama / OpenAI 兼容 / Anthropic）的通道代码有单元测试，但抽取质量需要在真实模型上评测后再放开默认。
 - 持续事项、可编辑成果和有限发送恢复已同步；它们不等于完整议题线程/承诺任务系统，也尚未适配 Electron SDK。SDK 鉴权桥、流式通道、目录隔离等前置问题继续按集成方案推进。
 - 旧的资料管理、知识卡片、搜索、图谱页面仍可通过 URL 访问（`/materials`、`/knowledge`、`/search`、`/graph`），不再出现在侧栏；`/api/mindos/qa` 单轮问答接口保留给 Agent 网关。

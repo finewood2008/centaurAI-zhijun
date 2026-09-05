@@ -1,8 +1,8 @@
 # 知君 Electron SDK 与 data-engine 集成方案
 
-> 状态：技术方案草案，尚未实施 SDK / data-engine 业务集成。日期：2026-09-05（同步产品源 `22dc9a3` 后复核）。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，原审核见 [审核记录](REVIEW-0905.md)，本次更新及验证见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
+> 状态：M0-L 独立桌面已实现；正式 SDK / data-engine 业务集成未完成。更新日期：2026-09-06。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)，原调研审核见 [审核记录](REVIEW-0905.md)，产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
 
-实施规格入口：[桌面接口合同与 M0](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移](DOMAIN-INTEGRATION-0905.md)、[工作包与交付依赖](INTEGRATION-WORKPACKAGES-0905.md)。本文维护源码事实与总体方案，配套规格维护拟实现接口和验收，正式应用/跨仓合同未冻结的字段按 D01–D05 跟踪。
+实施规格入口：[桌面接口合同与 M0](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移](DOMAIN-INTEGRATION-0905.md)、[工作包与交付依赖](INTEGRATION-WORKPACKAGES-0905.md)。本文维护源码事实与总体方案，配套规格维护完整目标接口和验收，已实现部分以 M0 实施记录及当前源码为准；正式应用/跨仓合同未冻结的字段按 D01–D05 跟踪。
 
 实施任务已进一步拆分为 [详细开发任务清单](DEVELOPMENT-TASKS-0905.md)，可按任务 ID 分配、提交和验收；估算为人日范围，不代表已承诺排期。
 
@@ -15,15 +15,15 @@
 - [x] 形成当前/目标架构图、连接时序、接口矩阵及分阶段集成方案。
 - [x] 复核所有关键结论的源码依据、文档链接及待确认项。
 
-初次调研只修改文档；本次按用户要求同步了上游业务代码，并据此修订本方案、架构图和相关合同。SDK、OS 与 data-engine 工作区仍只读，尚未开始跨仓业务集成。验收要求：区分已实现与建议设计；解释 SDK 和服务端之间的边界；列出不能直接替换的接口与传输能力；为下一轮实施定义依赖、受影响文件、验证步骤与完成条件。
+初次调研只修改文档，随后已同步上游业务代码。2026-09-06 按开发任务落实独立桌面 M0-L：main/preload/runtime、独立 Vue 入口、资料策略、显式模拟适配器与测试；SDK、OS 与 data-engine 工作区仍只读，尚未开始正式跨仓业务联调。验收区分本地模拟、真实连接和领域迁移；未接入正式身份时保持能力关闭，不将模拟通过计为盒端业务完成。
 
-文档验证：原调研完成两路独立审核；本次另审核后端、前端及运行设施，并补齐事项/成果与恢复流程。最新源码、测试与图示验证统一记录在上游同步记录，避免把此前 97 处链接检查或旧测试数量当成本次结果。渲染工具位于临时目录，未改工程依赖。
+验证记录分开维护：上游同步的后端、前端及事项/成果回归见同步记录；本轮新增宿主、资料控制器、策略与 Electron E2E 见 M0 实施记录。不沿用此前文档链接或产品测试数量作为本轮桌面验证结果；本轮已明确锁定宿主 Electron 依赖。
 
 ## 调研基线
 
 | 仓库 | 分支 / HEAD | 本次观察范围 |
 | --- | --- | --- |
-| 知君 | `dev/first-integrate-check-0905` / `94239a1`；产品源 `22dc9a3` | 已提交上游 2 个提交、76 个文件增量和本地文稿保护修复；本轮在此基础上细化规格，不改业务代码 |
+| 知君 | `dev/first-integrate-check-0905`；开发起点 `ee8cd96`，产品同步提交 `94239a1` / 产品源 `22dc9a3` | 上游 2 个提交、76 个文件增量及文稿保护修复已保留；本轮在详细任务基线上实现 M0-L，当前提交以 Git 为准 |
 | Connectivity SDK | `dev/integrate-sdk-20260902` / `819831c` | 二次审核时工作区干净；Electron 1.2.0、auth、配网包与 release 已进入当前提交 |
 | data-engine | `dev/integrate-sdk-20260902` / `ec2854e` | **HEAD + 未提交修改**；上传、模型运行时等文件有改动，`pocket_uploads.py` 未跟踪 |
 | OS / Remote Agent（仅补查连接和鉴权） | `dev/integrate-sdk-20260902` / `9f7354e` | 二次审核时工作区干净；不是本轮实施目标 |
@@ -32,7 +32,7 @@
 
 尤其需要区分仓库状态与二进制来源：现有 sidecar manifest 仍记录构建于 `2026-09-05T01:07:11.563Z`，源提交 `a13d7e5`、`dirty:true`，输入摘要 `97e3d55adf5de789d0111c79d70fe4c7188eef9f94251ef27f2af9c78daf731b`。不能因 SDK / OS 工作区变干净，就将这些二进制认定为当前 OS HEAD 的可重建产物。实施前须重新构建或逐项核对 source-inputs，固定 SDK、sidecar、Agent、服务端的提交/归档哈希与合同版本。[S10]
 
-本次产品同步期间再次只读核验相邻三个仓库，以上 SDK/OS/data-engine 基线、身份桥缺口和上传协议漂移均未变化。新增事项/成果与聊天发送恢复来自知君产品上游，不代表相邻 SDK 已支持这些能力。
+2026-09-06 开发期间再次只读核验相邻三个仓库，以上 SDK/OS/data-engine HEAD、身份桥缺口和上传协议漂移均未变化。六平台 sidecar 的二进制与压缩包共 12 项哈希均匹配 manifest；Electron/contracts tgz 对应的 14 个 dist 文件与本地 dist 一致，最小主进程 SDK 装配片段通过内存类型检查。这些检查未运行 SDK 或连接设备，也未解决 dirty 构建来源。上游事项/成果与聊天发送恢复仍不代表 SDK 已支持这些能力。
 
 ## 1. 先决定什么，再开始集成
 
@@ -42,19 +42,21 @@
 
 该交付现命名为 M0：业务操作仅 `materials.list`，暴露字段、query、连接phase/generation、取消边界与错误体已在桌面规格中明确。现有 onboarding guard 不属于 M0；事项/聊天/上传待后续交付开放。M0 的模拟合同验收和正式盒端验收分别记录，不将前者代替后者。
 
-本轮规格复核补充一个资料合同差异：data-engine 当前列表/摄取服务已产生 `queued`，参考 PC request/response policy 仍只有另外四种状态。知君主进程不能原样复制该枚举，应按桌面规格同时补齐 query、响应投影及页面状态，并在 M0 验证含排队资料的列表。
+其中 M0-L 已实现：Electron 37.10.3 独立宿主经 `zhijun://desktop/desktop.html` 加载独立 Vue 构建；窄 preload 调用主进程 runtime，主进程负责代次、读调度和资料投影。默认 `unconfigured` 无认证适配器，不发起真实连接；开发者显式启用 `simulation` 才使用合成账号/设备/资料，打包应用禁用模拟。该入口不启动 Python，不访问或回退到 PC `8618`。D02 正式认证、D03 业务桥、D05 固定发布组合及真机验收仍未完成。[A28] [A29] [A30] [A31]
+
+资料合同差异已在 M0-L 落实：data-engine 列表/摄取服务已产生 `queued`，参考 PC 策略仍只有另外四种状态；知君 query、响应投影及页面筛选已包含 `queued`。本地模拟覆盖排队资料，真实盒端响应兼容性仍须联调验证。
 
 | 优先级 | 已确认问题 | 对实施的影响 |
 | --- | --- | --- |
-| P0 | 新薄壳与根桌面启动器指向不同产品入口 | 先统一到知君 `frontend/shell`，防止接进旧 renderer |
+| 已解决（M0-L） | 原薄壳与根桌面启动器指向不同产品入口 | 根脚本与 frontend desktop 命令已统一到 `frontend/shell`，新入口不加载旧 renderer / Python 后端 |
 | P0 | data-engine 缺失知君核心领域路由 | 先定盒端模块承载与接口归属；仅替换 BASE 必然不够 |
 | P0 | SDK P2P ticket 与 data-engine 会话 gate 没有已实现的衔接 | 建立可信身份桥并实测；不得开启 local-debug 冒充生产鉴权 |
 | P0 | 现有 folders 未按设备隔离，知君隐私保护还改动了基础 QA / 上传路径 | 首轮收窄资料返回；领域迁移需包含保护策略扩展点，不能只搬 routers |
 | P0 | SDK 无逐帧流 / 单请求取消 | 知君聊天需新协议或持久任务轮询适配，不能原样复用 `streamPost` |
 | P0 | sidecar 仍记录旧 dirty 源码，服务端上传协议仍未提交 | 固定源码与实际交付物的对应关系，不能只记 npm 版本 |
 | P1 | 客户端分片上传与服务端新增路由不一致 | 先统一协议与白名单，再实现普通上传、附件及媒体 |
-| P1 | renderer 持票、直连 fetch 与新版 SDK 边界不同 | 三个网络入口都必须改造；凭据、票据、签名留在主进程/可信端 |
-| P1 | 配网包要求 Electron 37，知君当前是 Electron 33 | 若首期包含 BLE，需升级运行时并回归；仅业务连接不自动引入配网包 |
+| P1 | 保留 Web 产品的 renderer 持票、直连 fetch 与 SDK 边界不同 | M0-L 独立入口已不导入这些路径；完整产品接入时仍须改造三处网络入口 |
+| 运行时已升级；BLE待办 | 新 shell 已锁定 Electron 37.10.3；旧 frontend 包仍有未使用的 Electron 33 开发依赖 | 新启动链解析 shell 自身版本；未引入配网包，BLE、固件协议和目标平台仍须另验收 |
 | P1 | 现有敏感草稿无账号/设备命名空间；领域隔离尚需逐表审计 | 在引入多账号/多设备前补齐，不把局部请求 gate 当成端到端隔离 |
 | P1 | 存在会话总流量、次数、并发与总时限 | 分片和轮询必须纳入预算，不能仅检查单请求 2 MiB |
 
@@ -71,7 +73,7 @@
 | `@nexusaos/device-provisioning-uni` | 1.0.1 | 配网编排依赖；额外需要 `@noble/hashes ^1.7.1`，离线 tgz 不含所有依赖 |
 | Go sidecar | 本地 `electron-sidecars-1.2.0` | 六平台产物单独交付；manifest 记录 Go 源提交 `a13d7e5` 且 dirty；不能当作生产签名版本 |
 
-第一阶段只安装 Connectivity 与必要的账号管理依赖。知君的新宿主包仍可使用 CommonJS，但 SDK 是 ESM，需像参考实现一样使用动态 `import()`，或明确把宿主迁到 ESM；不要在 CommonJS 中直接 `require()` 新 SDK。[S1] [D2]
+M0-L 只锁定 Electron 37.10.3，尚未安装 Connectivity 或账号管理包。后续正式集成只引入必要依赖。当前宿主使用 CommonJS，SDK 是 ESM，接入时需使用动态 `import()`，或明确将宿主迁到 ESM；不要在 CommonJS 中直接 `require()` 新 SDK。[S1] [D2]
 
 发布安装包时 sidecar 放在 `process.resourcesPath/sidecar/`、ASAR 外，并按安装包目标映射 `x64 → amd64`、`win32 → windows`。Gateway/ICE 信任参数和二进制路径由主进程的受信配置决定。签名会改变文件哈希，应分别保存签名前与签名后的 manifest。[S2]
 
@@ -94,14 +96,14 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 
 ### 2.3 preload 与 renderer 边界
 
-建议提供账号动作、设备列表/选择、连接快照、已审核业务 request、未来 stream/cancel 及上传动作；这是**应用拟定义接口**，不是声称 SDK 已提供这些方法。
+当前应用已实现 `window.zhijunDesktop`：快照/订阅、登录动作、列设备、连接/断开/退出、`materials.list` 和本地读结果取消；这是**应用自有接口**，不是 SDK 已提供这些方法。主进程仅在显式模拟环境下装配合成 adapter；未来正式 Consumer、SDK、stream 和上传仍待开发。[A29] [A30]
 
 - 验证 IPC sender、主 frame 和准确应用 URL，拒绝外部页面或子 frame。
 - 保留 `contextIsolation:true`、`sandbox:true`、`nodeIntegration:false`、`webSecurity:true`，不要复制旧 `frontend/main.js` 的 `webSecurity:false`。
 - renderer 不指定 host、sidecar 路径、应用 ID、任意 headers 或任意远程 API；主进程按方法/路径/字段/响应校验。
 - 旧 `__MINDOS_ACCESS__.getTicket()`、renderer `sessionToken` 仅属于现有 Web/旧宿主路线，新的 desktop bundle 不依赖它。
-- 现有 `getOnboardingProgress()` 路由守卫必须等身份与设备连接完成再执行，避免未连接时反复建档请求。
-- Desktop 与 Web 在构建入口选 transport；SDK 不支持普通浏览器/H5，把包 import 进 Vue 不能产生浏览器直连能力。
+- M0-L 不加载现有 `getOnboardingProgress()` 路由守卫；后续引入完整产品路由时必须等身份与设备连接完成再执行。
+- Desktop 与 Web 已采用独立构建入口；完整产品统一 transport 仍待后续实现。SDK 不支持普通浏览器/H5，把包 import 进 Vue 不能产生浏览器直连能力。
 
 ## 3. 鉴权是当前最早需要打通的服务端断点
 
@@ -113,7 +115,7 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 | SDK 连接 ticket | 绑定设备、应用、平台、scope、purpose 的 P2P 会话建立 | SDK main → sidecar；不是逐请求业务 Bearer |
 | `X-MindOS-Session` | data-engine 受保护业务路由的会话 | 要求先用专用 Connectivity JWT 单次交换，再传业务 session；不能直接使用登录 access token 或 SDK ticket |
 
-本次桌面 Agent → data-engine 的受保护调用链使用盒内 loopback；其[服务端 gate][D4]在非开发模式验证 `X-MindOS-Session` 并建立设备上下文，写请求另要 `X-Requested-By: centaur-vdb`。服务端另有非 loopback App Token 的有限资料只读例外，不适用于这条 Agent 链路，也不提供所需设备上下文。[交换入口][D5]是 `POST /api/mindos/connectivity/sessions/exchange`，使用 `Authorization: Bearer <专用 Connectivity JWT>`；返回 sessionToken/sessionId/deviceId/accountId/clientId/epochGeneration/expiresAt。该 JWT 经 Consumer JWKS 验签，校验 issuer/audience，并要求 `account_id / client_id / device_id / scope / nonce / epoch_generation / connect_before / exp / iat / nbf` 等字段。不是任意 Consumer access token。[D11]
+拟接入的 Agent → data-engine 受保护调用链使用盒内 loopback；其[服务端 gate][D4]在非开发模式验证 `X-MindOS-Session` 并建立设备上下文，写请求另要 `X-Requested-By: centaur-vdb`。服务端另有非 loopback App Token 的有限资料只读例外，不适用于这条 Agent 链路，也不提供所需设备上下文。[交换入口][D5]是 `POST /api/mindos/connectivity/sessions/exchange`，使用 `Authorization: Bearer <专用 Connectivity JWT>`；返回 sessionToken/sessionId/deviceId/accountId/clientId/epochGeneration/expiresAt。该 JWT 经 Consumer JWKS 验签，校验 issuer/audience，并要求 `account_id / client_id / device_id / scope / nonce / epoch_generation / connect_before / exp / iat / nbf` 等字段。不是任意 Consumer access token。[D11]
 
 guard 是按路由注册的，不能说整个 `/api/mindos/*` 前缀都统一受保护。例如 `/api/mindos/validate` 未挂上述 gate，不可用其成功证明鉴权；它与受保护的分片文件预检 `/api/mindos/uploads/validate` 也不是同一合同。[D4] [D8]
 
@@ -293,12 +295,12 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 
 ## 6. 分阶段工作包、依赖与验收
 
-下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。M0桌面类型定义只是 [文档样例](contracts/desktop-contract-v1.ts)，通过类型检查也不代表preload、SDK适配或业务身份桥已实现。
+下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。[早期文档样例](contracts/desktop-contract-v1.ts) 保留设计背景，当前实现类型在 [frontend/shared/desktop-contract.ts](../../frontend/shared/desktop-contract.ts)。M0-L 已落实 preload、runtime 和资料页面；SDK 适配、正式认证和业务身份桥尚未实现，不能只凭类型检查判定完成。
 
 | 阶段 | 工作与受影响文件（拟） | 前置依赖 | 完成标准 |
 | --- | --- | --- | --- |
 | P0 合同冻结 | 本文；SDK/sidecar版本清单；应用注册；身份桥；接口、归属与限额矩阵 | SDK、Admin、Agent、后端负责人确认可实施版本 | 记录方法/路径/query/body/header/响应/错误/身份/限额；目录与同盒多账号边界明确；未提交特性有固定交付物 |
-| P1 知君桌面骨架 | `frontend/shell/{package.json,main.js,preload.cjs}`；`src/main-desktop.ts`、desktop router、Vite 配置；根 `start-desktop.sh` | 确定宿主目录与Electron版本 | 启动知君新UI；无Python子进程；不加载旧renderer；未连接显示登录/连接页 |
+| P1 知君桌面骨架（M0-L已落实） | `frontend/shell/{package.json,main.js,preload.cjs,security.cjs,launch.cjs}`、`runtime/`；`src/main-desktop.ts`、`src/desktop/`、独立 Vite 配置；根 `start-desktop.sh` | 已选 shell 和 Electron 37.10.3；完整产品路由仍属后续工作 | 独立资料 UI、默认未配置及显式模拟流程已实现；无 Python / 旧 renderer / 本机 HTTP 回退，验证见 M0 实施记录 |
 | P2 身份与已有资料 API 竖切 | `shell/electron/consumer/*`、`connectivity/*`、`security/*`；Agent/服务端身份桥（跨仓） | P0应用授权、凭据适配与返回字段隔离检查；P1宿主、真实测试盒子 | 登录、选盒子、正式 session 下资料分页读取、断开/重连；不暴露未隔离 folders；无本机HTTP回退 |
 | P3 统一网络层与状态隔离 | `services/transports/*`、`api.ts`、`taskRouting.ts`、`chatStream.ts`、`matters.ts`、`main.ts`；请求策略/health调度/草稿 | P2证明鉴权和传输 | 三处网络入口统一；stream未就绪关闭入口；保留有限重预览语义；路由等待连接；草稿/恢复缓存/迟到结果按身份隔离 |
 | P4 盒端领域基础 | 知君领域及依赖模块提取；data-engine router/worker/schema/保护策略适配；work_*表、分页/清除及Agent策略 | 领域承载、Claim事实源、owner/device合同确定；第5.2节清单完成 | schema升级/恢复、worker唯一；本体/事项/成果读写及保护测试；历史预算/幂等/清除合同通过；global-only能力明确；完整闭环待P5 |
@@ -329,13 +331,13 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 
 现有知君回归使用 `npm run typecheck`、`npm run build`、全部 `tests/*.test.mjs`；新后端入口为 `scripts/run_tests.py --isolated-modules <selectors> -- -q`，旧 `run_isolated_qa.py` 仍可保留独立报告。conftest 只强制数据根，测试外层还应隔离 secret store 并清除独立 metadata/gbrain/MCP 路径覆盖，详见 [本机运行](local-runtime.md)。原迁移的 32 个前端文件、150 项后端测试及原 E2E 自动确认断言失败属于历史结果；本次同步有独立的 37 个前端文件、36 个后端模块等验证记录，不能混用，也不是 SDK 真机集成通过。[迁移记录](MIGRATION.md) [本次验证](UPSTREAM-SYNC-0905.md)
 
-本次同步执行了隔离产品回归，但没有登录真实账号、连接盒子、发布 SDK 或部署服务。SDK 文档中的实测记录包括 Direct 超时和 TARGET_NOT_ALLOWED，跨平台构建也不等于真机连通通过。[S8]
+上游同步执行了隔离产品回归；本轮新增宿主/资料测试、独立桌面构建和 Electron 模拟 E2E 的结果另见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。两轮均没有登录真实账号、连接盒子、发布 SDK 或部署服务。SDK 文档中的实测记录包括 Direct 超时和 TARGET_NOT_ALLOWED，跨平台构建也不等于真机连通通过。[S8]
 
 ## 7. 首期建议与待确认项
 
 当前SDK合同强制Direct-only，不提供可任选的relay策略。推荐首期先支持当前开发机对应的 macOS ARM64与已绑定在线盒子；配网、跨平台签名和完整模型管理不与第一条资料读取链路绑定。此为减少外部依赖的实施建议，尚未成为用户确认的产品范围。
 
-正式联调、发布组合冻结或领域迁移前需要落实下列输入（对应桌面规格 D01–D05）。这些输入未齐备时，仍可先写宿主骨架、注入式adapter、模拟合同和隔离迁移测试；真实连接和运行库迁移保持不放行：
+正式联调、发布组合冻结或领域迁移前需要落实下列输入（对应桌面规格 D01–D05）。M0-L 已在这些输入尚未齐备时完成本地宿主、注入式 adapter 与模拟合同实施；仍可继续隔离研发，真实连接和运行库迁移保持不放行：
 
 1. **领域部署**：知君领域模块并入盒端 data-engine，还是盒端独立服务？推荐前者，并通过服务适配层保留边界。
 2. **应用身份与归属**：知君 applicationId、purpose、requestedScopes、允许设备/路径/限额、Consumer/Gateway地址与安全存储 namespace；同盒多账号、设备转让、目录归属与个人Claim事实源。
@@ -356,6 +358,10 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 路径以相邻工作区布局为准，`#L` 为本次调研的源码定位，不是固定远端永久链接。
 
 [A1]: ../../frontend/shell/README.md#L1
+[A28]: ../../frontend/shell/main.js
+[A29]: ../../frontend/shell/preload.cjs
+[A30]: ../../frontend/shell/runtime/desktop-runtime.cjs
+[A31]: ../../frontend/mindos-web/vite.desktop.config.ts
 [A2]: ../../frontend/mindos-web/src/services/api.ts#L1182
 [A3]: ../../backend/mindos/conversations.py#L344
 [A4]: ../../backend/mindos/ontology.py#L397

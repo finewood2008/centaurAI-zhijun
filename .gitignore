@@ -49,6 +49,7 @@ watch_folder/*
 .remote-mcp-test/
 # 前端构建产物，由源码构建生成，不应入库
 frontend/mindos-web/dist/
+frontend/mindos-web/dist-desktop/
 
 # Codeup/IDE build artifacts
 # Build and Release Folders

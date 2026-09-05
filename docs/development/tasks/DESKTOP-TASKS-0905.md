@@ -1,14 +1,14 @@
 # 桌面宿主与前端开发任务
 
-日期：2026-09-06；文件后缀沿用 0905 集成基线。返回[开发任务总表](../DEVELOPMENT-TASKS-0905.md)。依据：[桌面接口规格](../DESKTOP-CONTRACT-0905.md)、[接口类型样例](../contracts/desktop-contract-v1.ts)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。**以下 23 个任务全部未开始；复选框表示未来实施步骤，不代表已经交付。新增事项分页、幂等和清除页面也仅为开发方案，尚未实现或开放。**
+日期：2026-09-06；文件后缀沿用 0905 集成基线。返回[开发任务总表](../DEVELOPMENT-TASKS-0905.md)。依据：[桌面接口规格](../DESKTOP-CONTRACT-0905.md)、[接口类型样例](../contracts/desktop-contract-v1.ts)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。**2026-09-06：DESK-01/02/03/09/10/11/12/13/14 已实现并通过 M0-L，记为“本地通过待外部验收”；原任务尚未覆盖的步骤保留未勾选。DESK-08 仅完成本地有界清理，记为实施中。DESK-04–07、15–23 未开始；正式 SDK、身份桥、事项、聊天、上传和发布未交付。**
 
 里程碑复用总表：M0-L 为本地合同通过，M0-R 为正式只读闭环，M1 为领域与聊天。P0 为首条 M0 必需，P1 为完整业务。估算为建议开发投入，S=0.5–1、M=1–2、L=2–4 人日，包含对应局部验证和一次评审修订，不含外部注册、设备等待和未知兼容问题导致的额外返工；不能直接相加作为交付日期。
 
-“硬依赖”指本任务整体验收前必须满足；“可先做”限定在草案或 fake adapter 上的局部工作。正式登录、连接、资料读取不能以模拟结果关闭。所有拟新增路径均为设计位置，实施时由 owner 确定真实测试入口并回填证据，不假设已有 `test:m0` 命令。
+“硬依赖”指本任务整体验收前必须满足；“可先做”限定在草案或 fake adapter 上的局部工作。正式登录、连接、资料读取不能以模拟结果关闭。未实现任务的拟新增路径仍为设计位置；已实现任务在下文回填实际映射。[本轮实施与验证记录](../M0-IMPLEMENTATION-0906.md)区分 L1 单元、L2 真实 Electron 加模拟适配器、未验 L3 真机及 L4 安装包。真实 Electron 运行不等于真实 SDK/盒子集成。
 
 ## 源码定位与分工
 
-已核对现状：[薄壳](../../../frontend/shell/main.js)轮询本机后端；[根启动器](../../../start-desktop.sh)仍启动旧 Electron；[Web 路由](../../../frontend/mindos-web/src/router/index.ts)执行 onboarding guard；[api.ts](../../../frontend/mindos-web/src/services/api.ts)、[sse.ts](../../../frontend/mindos-web/src/services/sse.ts)、[taskRouting.ts](../../../frontend/mindos-web/src/services/taskRouting.ts)各有网络入口；[事项服务](../../../frontend/mindos-web/src/services/matters.ts)有 `pendingConversations`，回复恢复及编辑器另有内存和浏览器缓存。
+原编制时的薄壳及根启动链已替换：[独立宿主](../../../frontend/shell/main.js)加载 `zhijun://desktop/desktop.html`，[根启动器](../../../start-desktop.sh)构建并启动新 shell，不启动 Python 或轮询本机后端。以下仍为旧 Web 路径：[Web 路由](../../../frontend/mindos-web/src/router/index.ts)执行 onboarding guard；[api.ts](../../../frontend/mindos-web/src/services/api.ts)、[sse.ts](../../../frontend/mindos-web/src/services/sse.ts)、[taskRouting.ts](../../../frontend/mindos-web/src/services/taskRouting.ts)各有网络入口；[事项服务](../../../frontend/mindos-web/src/services/matters.ts)有 `pendingConversations`，回复恢复及编辑器另有内存和浏览器缓存。
 
 宿主 owner 独占 `frontend/shell/main.js`、shell 依赖/锁文件、启动器与主进程装配；安全 owner 独占 preload/IPC；状态 owner 独占主进程状态机。各 adapter 以端口接入，由宿主 owner 合并装配修改。前端入口 owner 独占 Vite/desktop 路由；transport owner 独占 `api.ts/taskRouting.ts/sse.ts/chatStream.ts`；缓存任务分别独占指定组件。共享文件不能由两个并行任务同时编辑，应先合并前置任务再接力。
 
@@ -18,52 +18,58 @@
 
 ### DESK-01：建立独立 desktop 构建和启动链
 
-**元数据：** WP-01；M0-L；P0；桌面宿主 owner；M；未开始。
+**元数据：** WP-01；M0-L；P0；桌面宿主 owner；M；本地通过待外部验收（M0-L）。
 
 **硬依赖：** BASE-01。**可先做：** 核对现有入口与受控静态资源方案，无需等待正式账号。
 
-**路径：** 现有 `frontend/shell/{main.js,package.json,package-lock.json}`、`start-desktop.sh`；拟新增 `frontend/shell/electron/bootstrap/`。Vite/页面入口交给 DESK-12。
+**实际路径：** `frontend/shell/{main.js,launch.cjs,package.json,package-lock.json}`、`start-desktop.sh`；资源处理位于 `frontend/shell/security.cjs`，未另建 bootstrap 目录。
 
-- [ ] 将启动目标固定到新 shell，移除该链路对旧 `frontend/main.js`、BackendRpc 和 Python 启动的依赖。
-- [ ] 实现开发与构建产物加载配置，缺少资源时显示明确错误，停止旧本机后端轮询。
+- [x] 将启动目标固定到新 shell，移除该链路对旧 `frontend/main.js`、BackendRpc 和 Python 启动的依赖。
+- [x] 实现开发与构建产物加载配置，缺少资源时显示明确错误，停止旧本机后端轮询。
 - [ ] 固定依赖/Node/Electron 兼容范围，保留隔离开关与 fake adapter 显式注入位置。
 - [ ] 添加启动与缺资源组件用例；记录实际新增脚本及启动方式。
 
 **验收：** 正向冷启动加载独立入口；负向在 8618 无服务、资源缺失时不启动 Python、不请求旧后端、不回退旧 UI；默认不带 `--no-sandbox`。**交付证据：** 入口 diff、依赖锁、启动截图、脱敏进程树与故障用例结果。完整打包签名另属 WP-10。
 
+**2026-09-06 交付与差额：** 冷启动及缺正式配置分支通过真实 Electron L2；Electron 锁定 37.10.3，当前开发 Node 23.11.0。缺资源有明确退出代码，资源不存在/越界通过安全单测，但尚未独立自动化删除入口再冷启动场景；其他 Node/Electron/平台兼容范围与签名安装包未验。
+
 <a id="desk-02"></a>
 
 ### DESK-02：实现窄 preload 和 IPC 安全边界
 
-**元数据：** WP-01；M0-L；P0；安全 owner；M；未开始。
+**元数据：** WP-01；M0-L；P0；安全 owner；M；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-01。**可先做：** 按接口样例编写运行时校验与 fake handler。
 
-**路径：** 拟新增 `frontend/shell/preload.cjs`、`frontend/shell/electron/security/`、`frontend/shell/electron/ipc/`；`main.js` 装配由宿主 owner 完成。
+**实际路径：** `frontend/shell/preload.cjs`、`security.cjs`、`runtime/desktop-runtime.cjs`、`tests/security.test.cjs`；由 `main.js` 装配，未另建 security/ipc 子目录。
 
-- [ ] 只公开 `zhijunDesktop` v1 方法、公开快照与本地 unsubscribe；剥离 Electron event 对象。
-- [ ] 校验 sender WebContents、主 frame、精确受信应用 URL，拒绝相似域名前缀及任意导航。
-- [ ] 对 context、callId、操作参数执行运行时 schema 校验；限制重复在途 callId。
-- [ ] 保持 contextIsolation、sandbox、禁用 Node；禁止 renderer 注入 URL/headers/token/宿主路径。
+- [x] 只公开 `zhijunDesktop` v1 方法、公开快照与本地 unsubscribe；剥离 Electron event 对象。
+- [x] 校验 sender WebContents、主 frame、精确受信应用 URL，拒绝相似域名前缀及任意导航。
+- [x] 对 context、callId、操作参数执行运行时 schema 校验；限制重复在途 callId。
+- [x] 保持 contextIsolation、sandbox、禁用 Node；禁止 renderer 注入 URL/headers/token/宿主路径。
 
 **验收：** 正向有效调用进入对应 handler；负向伪 sender、子 frame、外部页面、任意 header/URL/未知字段均在 SDK 调用前拒绝；没有通用 IPC 或 fetch 暴露。**交付证据：** 白名单、preload 导出快照及恶意调用测试结果。
+
+**2026-09-06 交付与差额：** 精确 sender/主 frame/URL、窄白名单、字段校验及订阅通过 L1；L2 核对实际 sandbox/contextIsolation/Node 权限并拒绝注入字段。未装配真实 SDK，调用前拒绝的证据限于 adapter 边界。
 
 <a id="desk-03"></a>
 
 ### DESK-03：实现主进程连接状态与代次控制
 
-**元数据：** WP-02；M0-L；P0；状态 owner；L；未开始。
+**元数据：** WP-02；M0-L；P0；状态 owner；L；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-02。**可先做：** 纯状态机无需真实登录/连接。
 
-**路径：** 拟新增 `frontend/shell/electron/session/`；依据接口样例，非直接把文档 TS 当运行时实现。
+**实际路径：** `frontend/shell/runtime/desktop-runtime.cjs`、`runtime/adapters.cjs`、`tests/runtime.test.cjs` 及 `frontend/shared/desktop-contract.ts`。
 
-- [ ] 实现全部 phase、主进程 generation 与生命周期内全局递增 sequence。
-- [ ] beginSignIn/connect/disconnect/signOut 先校验旧代次，再生成新代次及内部 operation token。
-- [ ] 统一公开快照、订阅、capabilities；connect 成功只能 authorizing，业务桥通过才 ready。
-- [ ] 为新登录、切设备、断开、退出、会话失效实现旧调用失效通知与资源清理端口。
+- [x] 实现全部 phase、主进程 generation 与生命周期内全局递增 sequence。
+- [x] beginSignIn/connect/disconnect/signOut 先校验旧代次，再生成新代次及内部 operation token。
+- [x] 统一公开快照、订阅、capabilities；connect 成功只能 authorizing，业务桥通过才 ready。
+- [x] 为新登录、切设备、断开、退出、会话失效实现旧调用失效通知与资源清理端口。
 
 **验收：** 正向完整状态转换可重放；负向两次登录/连接交错、退出后旧认证或 refresh 迟到不恢复凭据/连接；renderer 无法指定更高代次，未 ready 的 materialsRead 为 false。**交付证据：** 状态转移表、虚拟时钟竞态测试及事件序列。
+
+**2026-09-06 交付与差额：** 状态/代次、错误 binding、登录/连接抢占、退出及旧读失效通过 deferred Promise 和有界计时 L1，L2 模拟流程通过。正式 refresh/store 未实现，不能代替 DESK-05 刷新旋转验收；本轮未采用虚拟时钟。
 
 <a id="desk-04"></a>
 
@@ -137,11 +143,11 @@
 
 ### DESK-08：实现断开、退出与宿主进程回收
 
-**元数据：** WP-02；M0-R；P0；宿主 owner；M；未开始。
+**元数据：** WP-02；M0-R；P0；宿主 owner；M；实施中（仅本地有界清理）。
 
 **硬依赖：** DESK-03、DESK-05、DESK-07。**可先做：** fake close/watchdog 的有界清理测试。
 
-**路径：** 拟新增 `frontend/shell/electron/session/shutdown.*`；宿主 owner 修改 `main.js` 生命周期与单实例控制。
+**实际局部路径：** `frontend/shell/runtime/desktop-runtime.cjs`、`frontend/shell/main.js`；有界清理与单实例已实现，未创建真实 native host。
 
 - [ ] 显式断开保留登录，退出清凭据与身份临时状态，二者首先使旧代次失效。
 - [ ] 有界关闭 session/native host，处理窗口关闭、重复退出和异常 sidecar。
@@ -150,107 +156,121 @@
 
 **验收：** 正向连接/关闭两轮后进程数量恢复基线；负向 close 卡住、刷新晚到和重复退出均不会永久 pending 或残留可用旧凭据；一次读取消不触发该全局关闭。**交付证据：** 关闭上限、故障注入结果及脱敏进程树。
 
+**2026-09-06 交付与差额：** 已实现本地断开保留合成身份、退出清理、close 超时/迟到/重复控制、单实例，L2 确认本次宿主退出。正式安全存储、refresh、SDK/sidecar 未接入，含这些能力的完整步骤仍不勾选；宿主退出不能证明真实 SDK 无残留。
+
 <a id="desk-09"></a>
 
 ### DESK-09：实现资料 query 校验和操作映射
 
-**元数据：** WP-04；M0-L；P0；请求策略 owner；M；未开始。
+**元数据：** WP-04；M0-L；P0；请求策略 owner；M；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-02，以及 BASE-04 的草案/合成 fixture 子交付；M0-L 不要求 BASE-04 正式冻结或其上游注册任务完成。**可先做：** 依据当前草案编写纯 query validator；真实放行由 DESK-15 依赖完整 BASE-04。
 
-**路径：** 拟新增 `frontend/shell/electron/connectivity/materials-request-policy.*`。
+**实际路径：** `frontend/shell/runtime/materials.cjs` 的 query 校验及固定请求构造器；测试为 `tests/materials.test.cjs`。
 
-- [ ] 将唯一业务操作 materials.list 映射固定 GET `/api/mindos/materials`，GET 不带 body。
-- [ ] 校验 limit 1–50、offset 0–10000、keyword trim 后 1–100 字符、type/status 枚举；包含 queued。
-- [ ] 拒绝重复 query、空值、未知字段及 folder/tag/archived/recycled 筛选。
+- [x] 将唯一业务操作 materials.list 映射固定 GET `/api/mindos/materials`，GET 不带 body。
+- [x] 校验 limit 1–50、offset 0–10000、keyword trim 后 1–100 字符、type/status 枚举；包含 queued。
+- [x] 拒绝重复 query、空值、未知字段及 folder/tag/archived/recycled 筛选。
 - [ ] 只由 main 填写受控头与 D03 身份机制，不接受 renderer 身份字段。
 
 **验收：** 正向边界值及 queued 筛选得到确定请求；负向小数、超限、重复参数、路径/头注入与未开放筛选在 SDK 调用前拒绝。**交付证据：** 参数矩阵、请求快照和拒绝时零 SDK 调用断言。
+
+**2026-09-06 交付与差额：** 草案 query、queued、未知字段/越界/路径注入已验证；请求仅含固定 GET/path/Accept，不接受 renderer 身份头。D03 身份机制缺失，最后一步整体保留未勾选；BASE-04 尚未正式冻结。
 
 <a id="desk-10"></a>
 
 ### DESK-10：实现资料响应投影与安全错误映射
 
-**元数据：** WP-04；M0-L；P0；响应策略 owner；M；未开始。
+**元数据：** WP-04；M0-L；P0；响应策略 owner；M；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-09，以及 BASE-04 的草案/合成 fixture 子交付；M0-L 不要求 BASE-04 正式冻结。**可先做：** 使用合成原始 body 验证限额/字段；真实放行由 DESK-15 依赖完整 BASE-04。
 
-**路径：** 拟新增 `frontend/shell/electron/connectivity/{materials-response-policy,public-error}.*`。
+**实际路径：** `frontend/shell/runtime/materials.cjs`、`runtime/public-error.cjs`、`tests/materials.test.cjs`。
 
-- [ ] 在 JSON 解码和投影前限制原始 body 为 256 KiB；超限整体拒绝，不返回部分列表。
-- [ ] 校验条数、total 安全整数、分页回显、hasMore 和字段长度；接受 queued，拒绝未知状态。
-- [ ] 仅保留规定条目与分页字段，删除顶层 folders、条目 folder/folderId、路径/正文/previewUrl。
-- [ ] 返回 Promise Result 对应的安全错误；可保留已确认 status/code/traceId，不猜测丢失的 401 原因。
+- [x] 在 JSON 解码和投影前限制原始 body 为 256 KiB；超限整体拒绝，不返回部分列表。
+- [x] 校验条数、total 安全整数、分页回显、hasMore 和字段长度；接受 queued，拒绝未知状态。
+- [x] 仅保留规定条目与分页字段，删除顶层 folders、条目 folder/folderId、路径/正文/previewUrl。
+- [x] 返回 Promise Result 对应的安全错误；可保留已确认 status/code/traceId，不猜测丢失的 401 原因。
 
 **验收：** 正向同一 validator 接受 fake/真实响应；负向超限、恶意文件名、错误类型、分页不一致均有界拒绝；巨大 folders 不能经“删后变小”绕过预算。**交付证据：** 字节边界测试、公开 JSON 快照及日志敏感字段断言。
+
+**2026-09-06 交付与差额：** 256 KiB 解码前限制、字段/分页/UTF-8/状态校验、目录/正文剔除及安全错误通过 L1，L2 通过实际 preload 的最小投影。当前只用合成响应运行同一生产 validator，无正式服务响应或服务端目录隔离证据；不从未知 HTTP 正文猜测身份错误。
 
 <a id="desk-11"></a>
 
 ### DESK-11：实现读调度、去重和取消结算
 
-**元数据：** WP-04；M0-L；P0；调度 owner；L；未开始。
+**元数据：** WP-04；M0-L；P0；调度 owner；L；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-03、DESK-10。**可先做：** fake request 延迟/失败/永不返回的时序模型。
 
-**路径：** 拟新增 `frontend/shell/electron/connectivity/read-scheduler.*`；状态机对接由状态 owner 合并。
+**实际路径：** `frontend/shell/runtime/read-scheduler.cjs`、`runtime/desktop-runtime.cjs` 及 `tests/{read-scheduler,runtime}.test.cjs`。
 
 - [ ] 限制 2 个真实在途读、8 个排队读；按主体/代次/规范化 query 去重，健康检查共用额度。
-- [ ] 排队、发出、投影交付各校验 generation；超额立即给出确定错误，M0 不自动重试。
-- [ ] cancelRead 只影响同 sender/代次/目标调用，取消一个订阅不影响其余订阅。
-- [ ] 取消立即且仅结算一次 READ_CANCELLED；代次失效结算旧 Promise，真实 SDK 完成才释放已发出槽。
+- [x] 排队、发出、投影交付各校验 generation；超额立即给出确定错误，M0 不自动重试。
+- [x] cancelRead 只影响同 sender/代次/目标调用，取消一个订阅不影响其余订阅。
+- [x] 取消立即且仅结算一次 READ_CANCELLED；代次失效结算旧 Promise，真实 SDK 完成才释放已发出槽。
 
 **验收：** 正向去重请求只发一次并服务未取消订阅；负向快速取消/重复取消/迟到完成不会突破 2/8、双重结算或永久 pending；SDK1.2 不支持单读 abort 时绝不使用 session.close。**交付证据：** 调度计数、Promise 结算断言、取消与切代次压力用例。
+
+**2026-09-06 交付与差额：** 2 在途/8 排队、同主体 query 去重、独立订阅取消、超时保留在途槽及代次结算通过 L1。当前不做健康轮询，健康检查共用额度未实际接线，第一步保留剩余；真实 SDK 完成/watchdog 行为仍待 DESK-07/08/15。
 
 <a id="desk-12"></a>
 
 ### DESK-12：实现独立入口、状态页和快照订阅
 
-**元数据：** WP-01/WP-04；M0-L；P0；前端入口 owner；M；未开始。
+**元数据：** WP-01/WP-04；M0-L；P0；前端入口 owner；M；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-01、DESK-02、DESK-03。**可先做：** 依据 v1 fake host 开发各状态页。
 
-**路径：** 拟新增 `frontend/mindos-web/src/main-desktop.ts`、`src/router/desktop.ts`、`src/desktop/` 与 desktop HTML；现有 Vite 配置及必要 package scripts 由本任务独占。
+**实际路径：** `frontend/mindos-web/{desktop.html,vite.desktop.config.ts}`、`src/main-desktop.ts`、`src/desktop/{DesktopApp.vue,controller.ts,desktop.css}`；采用单页及未知 hash 拒绝，未新增 desktop router 或引入旧 Web router。
 
-- [ ] 建立 desktop 构建入口和独立路由，不导入旧 main 的会话 provision/onboarding guard。
-- [ ] 实现登录、选设备、连接/授权中、错误和断开操作，只呈现合同中的 M0 能力。
-- [ ] 先 subscribe 再 getSnapshot，按 sequence 合并；调用携带当前 generation，组件卸载取消订阅。
-- [ ] 明确 Web/Desktop 构建选择，host 缺失时失败而非回退 fetch；开发模拟状态有明确标识。
+- [x] 建立 desktop 构建入口和独立单页/未知 hash 拒绝，不导入旧 main 的会话 provision/onboarding guard。
+- [x] 实现登录、选设备、连接/授权中、错误和断开操作，只呈现合同中的 M0 能力。
+- [x] 先 subscribe 再 getSnapshot，按 sequence 合并；调用携带当前 generation，组件卸载取消订阅。
+- [x] 明确 Web/Desktop 构建选择，host 缺失时失败而非回退 fetch；开发模拟状态有明确标识。
 
 **验收：** 正向所有 phase 能操作且快照逆序不闪回旧状态；负向未连接、IPC 不可用、手输聊天/建档路由不触发旧网络调用；Web 构建无 SDK/Electron 包。**交付证据：** 页面状态截图、网络零调用断言、构建边界检查结果。
+
+**2026-09-06 交付与差额：** 各 phase 有显示/操作，逆序快照和旧初始化失败已回归，真实 Electron 模拟链通过。未知模式保持 unconfigured，模拟持续标记。E2E 网络断言只覆盖 firstWindow 返回并安装 request 监听后的动作，不证明更早启动流量；早期边界另由 CSP、session 阻断和入口依赖审查支撑。
 
 <a id="desk-13"></a>
 
 ### DESK-13：实现 M0 资料列表与分页状态
 
-**元数据：** WP-04；M0-L；P0；资料页面 owner；M；未开始。
+**元数据：** WP-04；M0-L；P0；资料页面 owner；M；本地通过待外部验收（M0-L）。
 
 **硬依赖：** DESK-10、DESK-11、DESK-12。**可先做：** fake 合同页面，可与宿主策略并行。
 
-**路径：** 拟新增 `src/desktop/MaterialsPage.vue`、`src/services/transports/desktop-materials.ts`（均在 `frontend/mindos-web/`）；旧 `RawMaterialsPage.vue` 仅参考，不直接复用其目录/详情请求。
+**实际路径：** `frontend/mindos-web/src/desktop/{DesktopApp.vue,controller.ts}`；未单列 MaterialsPage/通用 transport，旧 RawMaterialsPage 不进入桌面构建。
 
-- [ ] 显示审核字段，默认 20 条，支持允许的 keyword/type/status 筛选及 queued 文案。
-- [ ] 实现分页、空态、只读用户重试与超限/拒绝提示；筛选变化重置 offset。
-- [ ] 按主体/代次/查询保存当前列表，切换/断开同步清理，旧 Promise 只结算不回写新页面。
-- [ ] 页面卸载取消本地读投递；不开放详情、目录、上传、删除或固定周期列表轮询。
+- [x] 显示审核字段，默认 20 条，支持允许的 keyword/type/status 筛选及 queued 文案。
+- [x] 实现分页、空态、只读用户重试与超限/拒绝提示；筛选变化重置 offset。
+- [x] 按主体/代次/查询保存当前列表，切换/断开同步清理，旧 Promise 只结算不回写新页面。
+- [x] 页面卸载取消本地读投递；不开放详情、目录、上传、删除或固定周期列表轮询。
 
 **验收：** 正向空页、多页和 queued 筛选正确；负向 A 设备慢响应晚于切 B 后不得显示 A 行，目录/预览字段不可见，超限结果不显示半页；连续刷新受 DESK-11 限制。**交付证据：** 分页 fixture、状态切换截图与迟到回包用例。
+
+**2026-09-06 交付与差额：** L2 验证 47 条合成资料的 20/20/7 分页、queued 筛选、换盒和退出清空；L1 验证筛选取消、旧回包/错误不回写及卸载不关会话。空态和错误已实现，全部类型/空页/超限 UI 尚未逐一做 L2；真实资料仍待 DESK-15。
 
 <a id="desk-14"></a>
 
 ### DESK-14：建立 M0 隔离合同与故障回归集
 
-**元数据：** WP-05；M0-L；P0；测试 owner；L；未开始。
+**元数据：** WP-05；M0-L；P0；测试 owner；L；本地通过待外部验收（M0-L）。
 
 **硬依赖：** BASE-05、DESK-02、DESK-03、DESK-11、DESK-13。**可先做：** BASE-05 后建立 fixture、断言和故障矩阵；正式 auth 任务未完成时只运行 fake 局部层。DESK-08 的关闭合同先以 fake 端口覆盖，真实 OS/SDK 清理由 DESK-15 合流验收。
 
-**路径：** 拟新增 `frontend/shell/tests/`、`frontend/mindos-web/tests/desktop-*.test.mjs`；测试 owner 独占用例，业务修复回交模块 owner。
+**实际路径：** `frontend/shell/tests/{security,runtime,materials,read-scheduler}.test.cjs`、`tests/electron.e2e.cjs`、`frontend/mindos-web/tests/desktop-ui.test.mjs`；运行入口为 shell `npm test`/`npm run test:e2e` 和 Web `npm run test:all`。
 
-- [ ] 将接口规格 M0-01–10 分配到 IPC、状态机、adapter 与页面层，列出无法由 fake 证明的真机项。
+- [x] 将接口规格 M0-01–10 分配到 IPC、状态机、adapter 与页面层，列出无法由 fake 证明的真机项。
 - [ ] 使用临时凭据 store/状态目录和合成资料，模拟认证/桥拒绝、乱序回包、超时、断开、超限。
 - [ ] 增加进程/订阅/Promise 泄漏断言，覆盖 2/8 调度、queued、原始 256 KiB 上限。
-- [ ] 固定测试入口和可复现实例，运行受影响的现有前端回归与构建边界检查。
+- [x] 固定测试入口和可复现实例，运行受影响的现有前端回归与构建边界检查。
 
 **验收：** 正向隔离集可重复运行且通过；负向不存在访问用户运行库、真实凭据或默认 supervisor 的路径；故意移除代次或 sender 校验时对应测试失败。**交付证据：** 实际命令、测试结果、fixture 来源及 L1/L2 与未验 L3 清单。
+
+**2026-09-06 交付与差额：** 最终合流记录：shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个桌面 controller 子测试）、真实 Electron L2 3 项及双构建通过，详见实施记录。E2E 使用临时 userData 并关闭自建宿主；无正式 credential store，未做移除校验器的 mutation 测试或 native/sidecar 清理验收。订阅与 Promise 局部断言不等于完整内存泄漏证明，第二/三步保留差额。
 
 <a id="desk-15"></a>
 
@@ -413,4 +433,4 @@
 
 每个任务交付 PR/提交、实际测试文件与命令、结果摘要、未验项以及影响的合同版本。M0-L 与 M0-R 分别记录，不能用文档或 fake 测试状态代替正式环境通过。服务端桥、领域迁移、流和上传的实现任务见总表；本文件不擅自增加信任头、正式 ID 或流式 SDK API。
 
-建议并行：DESK-03 状态机、DESK-09/10 策略、DESK-12 页面按共享类型同步；正式注册等待期间推进这些局部任务。DESK-16→17 由同一 transport owner 接力，DESK-18 完成后 DESK-19/20 可并行。DESK-21→22→23 依服务端冻结合同接力，事项服务和编辑器共享文件遵守上述 owner 边界。装配与共用锁文件修改统一回交宿主 owner；M0 仍需 DESK-14/15 合流验证，新增事项页面另进入总表 M1 验收。
+本轮已完成 DESK-03 状态机、DESK-09/10 策略、DESK-12 页面按共享类型的本地合流；下一步补齐 BASE-02/03/04 和正式 DESK-04–08 的输入与实现。DESK-16→17 由同一 transport owner 接力，DESK-18 完成后 DESK-19/20 可并行。DESK-21→22→23 依服务端冻结合同接力，事项服务和编辑器共享文件遵守上述 owner 边界。装配与共用锁文件修改统一回交宿主 owner；M0 仍需 DESK-14/15 合流验证，新增事项页面另进入总表 M1 验收。

@@ -27,7 +27,9 @@
     "test:zhijun-p3": "node --experimental-strip-types tests/proposals.test.mjs",
     "test:zhijun-p4": "node --experimental-strip-types tests/speech.test.mjs",
     "test:zhijun-map": "node --experimental-strip-types tests/selfmap.test.mjs",
-    "test:zhijun-viz": "node --experimental-strip-types tests/timeline.test.mjs && node --experimental-strip-types tests/provenance-graph.test.mjs"
+    "test:zhijun-viz": "node --experimental-strip-types tests/timeline.test.mjs && node --experimental-strip-types tests/provenance-graph.test.mjs",
+    "build:desktop": "vue-tsc -b && vite build --config vite.desktop.config.ts",
+    "test:desktop": "node --experimental-strip-types --test tests/desktop-ui.test.mjs"
   },
   "dependencies": {
     "@types/markdown-it": "^14.2.0",

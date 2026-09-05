@@ -1,79 +1,78 @@
-// 知君桌面薄壳：一个 BrowserWindow 加载 http://127.0.0.1:8618/mindos/。
-// 没有 preload、没有通用 fetch 桥、webSecurity 保持默认开启；后端不在时显示提示页并自动重试。
-const { app, BrowserWindow, shell } = require('electron')
+'use strict'
+const { app, BrowserWindow, ipcMain, protocol, session } = require('electron')
+const path = require('node:path')
+const { access } = require('node:fs/promises')
+const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
+const { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, isEntryUrl,
+  createInvokeHandler, createAssetHandler } = require('./security.cjs')
 
-const BASE = process.env.ZHIJUN_BASE_URL || 'http://127.0.0.1:8618'
-const SMOKE = process.env.ZHIJUN_SHELL_SMOKE === '1'
-// 远程桌面 / 无 GPU 的机器上 GPU 进程会崩，冒烟与 ZHIJUN_SHELL_NOGPU=1 时禁用硬件加速。
-if (SMOKE || process.env.ZHIJUN_SHELL_NOGPU === '1') {
-  app.disableHardwareAcceleration()
-  app.commandLine.appendSwitch('disable-gpu')
-}
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'zhijun', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+])
+app.setName('知君桌面')
+// Tests use new temporary directories; development uses a separate app profile.
+app.setPath('userData', process.env.ZHIJUN_DESKTOP_USER_DATA
+  ? path.resolve(process.env.ZHIJUN_DESKTOP_USER_DATA)
+  : path.join(app.getPath('appData'), 'zhijun-desktop'))
+if (process.env.ZHIJUN_SHELL_NOGPU === '1') app.disableHardwareAcceleration()
 
-function waitingPage() {
-  return 'data:text/html;charset=utf-8,' + encodeURIComponent(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>知君</title>
-  <style>body{font-family:-apple-system,"PingFang SC",sans-serif;background:#FFFCF6;color:#1D211F;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
-  .card{max-width:420px;text-align:center}.seal{display:inline-block;border:2px solid #A6452E;color:#A6452E;font-family:"Songti SC",serif;font-size:28px;padding:4px 10px;margin-bottom:16px}
-  code{background:#F3EFE6;padding:2px 6px;border-radius:4px}</style></head>
-  <body><div class="card"><div class="seal">知</div><h2>正在等待本机的知君服务</h2><p>请先启动后端：<code>./start-backend.sh</code></p><p>地址：<code>${BASE}/mindos/</code>，每 3 秒重试一次。</p></div></body></html>`)
-}
-
-async function backendReady() {
-  try {
-    const res = await fetch(`${BASE}/api/health`, { headers: { 'X-Requested-By': 'centaur-vdb' } })
-    return res.ok
-  } catch {
-    return false
+const mode = !app.isPackaged && process.env.ZHIJUN_DESKTOP_MODE === 'simulation'
+  ? 'simulation' : 'unconfigured'
+const runtime = createDesktopRuntime({ mode })
+const assetRoot = path.resolve(__dirname, '../mindos-web/dist-desktop')
+let window
+let quitting = false
+const unsubscribe = runtime.subscribe(snapshot => {
+  if (window && !window.isDestroyed() && isEntryUrl(window.webContents.getURL())) {
+    window.webContents.send(SNAPSHOT_CHANNEL, snapshot)
   }
-}
+})
 
 async function createWindow() {
-  const win = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 900,
-    minHeight: 600,
-    title: '知君',
-    backgroundColor: '#FFFCF6',
-    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
+  await access(path.join(assetRoot, 'desktop.html'))
+  const isolatedSession = session.fromPartition('zhijun-desktop-m0')
+  isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  isolatedSession.setPermissionCheckHandler(() => false)
+  isolatedSession.on('will-download', event => event.preventDefault())
+  isolatedSession.webRequest.onBeforeRequest(
+    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'file://*/*'] },
+    (_details, callback) => callback({ cancel: true }),
+  )
+  await isolatedSession.protocol.handle('zhijun', createAssetHandler(assetRoot))
+  window = new BrowserWindow({
+    width: 1200, height: 820, minWidth: 760, minHeight: 580,
+    title: '知君', backgroundColor: '#FFFCF6',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'), session: isolatedSession,
+      contextIsolation: true, sandbox: true, nodeIntegration: false,
+      webSecurity: true, webviewTag: false,
+    },
   })
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith(BASE)) return { action: 'allow' }
-    shell.openExternal(url)
-    return { action: 'deny' }
-  })
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(BASE)) {
-      event.preventDefault()
-      shell.openExternal(url)
-    }
-  })
-
-  let loaded = false
-  const tryLoad = async () => {
-    if (loaded || win.isDestroyed()) return
-    if (await backendReady()) {
-      loaded = true
-      await win.loadURL(`${BASE}/mindos/`)
-      if (SMOKE) {
-        console.log('ZHIJUN_SHELL_SMOKE: loaded ' + win.webContents.getURL())
-        setTimeout(() => app.quit(), 500)
-      }
-    } else {
-      if (win.webContents.getURL() === '') await win.loadURL(waitingPage())
-      if (SMOKE) {
-        console.log('ZHIJUN_SHELL_SMOKE: backend not ready, showed waiting page')
-        setTimeout(() => app.quit(), 500)
-        return
-      }
-      setTimeout(tryLoad, 3000)
-    }
-  }
-  await tryLoad()
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, url) => { if (!isEntryUrl(url)) event.preventDefault() })
+  window.webContents.on('will-attach-webview', event => event.preventDefault())
+  window.webContents.on('render-process-gone', () => app.quit())
+  ipcMain.handle(INVOKE_CHANNEL, createInvokeHandler(runtime, () => window?.webContents))
+  await window.loadURL(ENTRY_URL)
 }
 
-app.whenReady().then(createWindow)
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => { if (window && !window.isDestroyed()) { window.show(); window.focus() } })
+  app.whenReady().then(createWindow).catch(() => {
+    console.error('知君桌面启动失败，请先在 frontend/mindos-web 执行 npm run build:desktop，并检查桌面构建产物。')
+    app.exit(1)
+  })
+}
 app.on('window-all-closed', () => app.quit())
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow()
+app.on('before-quit', event => {
+  if (quitting) return
+  event.preventDefault()
+  quitting = true
+  unsubscribe()
+  ipcMain.removeHandler(INVOKE_CHANNEL)
+  const deadline = setTimeout(() => app.exit(0), 2500)
+  const finish = () => { clearTimeout(deadline); app.quit() }
+  Promise.resolve().then(() => runtime.dispose()).then(finish, finish)
 })

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06",
+  "milestone": "M0-L",
+  "realDeviceValidated": false,
+  "clientSourceBase": "ee8cd96d3b8e46be067132a10e7217ec1c55a997",
+  "development": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "23.11.0",
+    "electron": "37.10.3",
+    "typescript": "5.9.3",
+    "vite": "5.4.21",
+    "playwright": "1.62.1"
+  },
+  "sources": {
+    "connectivitySdk": {
+      "commit": "819831c143aa2ea269b979eac2297124054436f6",
+      "dirty": false
+    },
+    "osAgent": {
+      "commit": "9f7354ea4ff9d156cde33277a2de17e1eb36119f",
+      "dirty": false
+    },
+    "dataEngine": {
+      "commit": "ec2854e8e56008571115cf637e9d27b63fbf1322",
+      "dirty": true,
+      "releaseInputApproved": false
+    }
+  },
+  "sdkAudit": {
+    "runtimeDependencyInstalled": false,
+    "electronVersion": "1.2.0",
+    "electronTgzSha256": "0637f4c3cbc309bc96e3be553b47b31e8a36279e1d6230fa7a0831a69b84bcea",
+    "contractsVersion": "1.0.1",
+    "contractsTgzSha256": "2a553d79061c8947fa234f42b69e905ebc6c9e964cae66fc0f4f2935c677cf41",
+    "sidecarArtifactsVerified": 12,
+    "sidecarManifestDirtyInput": true,
+    "cleanRebuildVerified": false,
+    "releaseSigningVerified": false
+  },
+  "production": {
+    "enabled": false,
+    "missing": [
+      "D02: independent application registration, Consumer login configuration and secure storage namespace",
+      "D03: trusted Agent to data-engine identity bridge and deployed route authorization",
+      "BASE-04: approved material ownership and bounded server projection",
+      "D05: traceable clean sidecar input and production release matrix",
+      "DESK-15: authorized real devices and cross-account/device acceptance"
+    ]
+  }
+}

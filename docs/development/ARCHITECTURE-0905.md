@@ -1,8 +1,8 @@
 # 知君当前架构与 Electron / data-engine 目标架构
 
-日期：2026-09-05（已同步产品源 `22dc9a3` 后复核）。本文基于本地源码调研，配套实施步骤见 [集成方案](INTEGRATION-0905.md)，原审核见 [审核记录](REVIEW-0905.md)，本次变更和验证见 [上游同步记录](UPSTREAM-SYNC-0905.md)。图中标注「待实现」的部分是建议设计，不代表现有能力。
+更新日期：2026-09-06，已落实独立桌面 M0-L。产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。配套步骤见 [集成方案](INTEGRATION-0905.md)，原调研审核见 [审核记录](REVIEW-0905.md)。第 3 节描述当前实现，第 5、6 节保留正式 SDK / 盒端集成目标。
 
-进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。三份规格细化本图的责任边界，当前均为设计稿，未开始业务集成。
+进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。桌面宿主、窄 IPC、资料策略和模拟流程已落地；正式 SDK / Consumer 身份、业务身份桥和盒端领域迁移仍待实现。
 
 具体文件归属、开发步骤、跨仓依赖和里程碑验收见 [详细开发任务](DEVELOPMENT-TASKS-0905.md)；任务完成状态与架构设计状态分别记录。
 
@@ -20,27 +20,39 @@
 
 | 工程 | 当前实际内容 | 集成中的职责 |
 | --- | --- | --- |
-| `nexusaos-centuarai-zhijun` | Vue 3 / TS / Vite；知君 Electron 薄壳；旧 Electron 应用；完整 FastAPI 后端 | 产品页面、交互及知君领域逻辑的来源 |
+| `nexusaos-centuarai-zhijun` | Vue 3 / TS / Vite；独立 Electron 37.10.3 宿主与 M0-L 页面；保留旧 Electron 源码及完整 FastAPI 后端 | 桌面主进程 / preload / 资料模拟流程已实现；产品领域代码供后续盒端迁移 |
 | `nexusaos-centuarai-conn-sdks` | 合同、Electron 主进程 facade、认证刷新助手、sidecar 桥、桌面配网包 | 受控连接能力；不承载知君业务或任意 URL 代理 |
 | `nexusaos-data-engine` | 盒端资料/知识/检索/模型服务；已有远程 Electron 客户端参考实现 | 盒端基础数据能力和宿主集成参考；不能直接替代知君后端 |
 | 外部依赖：Admin / Gateway / Remote Agent / OS Core | 账号与设备授权、信令和连接执行、盒端能力转发、Go 传输实现 | 端到端联调不可缺少；本轮没有修改或部署这些系统 |
 
-二次审核时 SDK / OS 工作区已干净，HEAD 分别为 `819831c` / `9f7354e`；data-engine 仍有未提交修改。现有 sidecar manifest 仍记录旧提交 `a13d7e5` 加 dirty 源码，不能将其等同当前 OS HEAD；完整版本基线见集成方案。
+2026-09-06 只读复核时 SDK / OS 工作区干净，HEAD 分别为 `819831c` / `9f7354e`；data-engine 为 `ec2854e` 加未提交修改。现有 sidecar manifest 仍记录旧提交 `a13d7e5` 加 dirty 源码，不能将其等同当前 OS HEAD；完整版本基线见集成方案。
 
 ## 3. 知君当前架构
 
 ```mermaid
 flowchart TB
-  subgraph entry[当前入口]
+  subgraph entry[现有产品与开发入口]
     browser[浏览器 Web]
-    shell[知君薄壳 frontend/shell/main.js]
-    legacy[旧桌面 frontend/main.js]
+    legacy[保留的旧桌面源码 frontend/main.js]
   end
-  shell -->|加载本机 /mindos/| vue
   browser --> vue
   legacy --> oldui[旧 renderer/index.html]
   legacy --> rpc[BackendRpc 启动 Python / stdio]
   oldui --> rpc
+  subgraph desktop[已实现：独立桌面 M0-L]
+    launch[start-desktop.sh / shell launch.cjs]
+    shell[Electron 37.10.3 main]
+    protocol[zhijun 协议 / CSP / 资源与窗口限制]
+    desktopui[独立 Vue dist-desktop / 资料页面]
+    preload[窄 preload / 精确 sender 与主 frame 校验]
+    runtime[主进程 runtime / 代次 / 调度 / 资料投影]
+    closed[默认 unconfigured：真实连接关闭]
+    simulated[显式 simulation：合成账号 / 盒子 / 资料]
+    launch --> shell --> protocol --> desktopui
+    desktopui --> preload --> runtime
+    runtime --> closed
+    runtime --> simulated
+  end
   subgraph product[知君 Vue 应用]
     vue[今日来信 / 事情与成果 / 对话 / 本体 / 判断]
     api[api.ts：JSON 与 multipart]
@@ -76,11 +88,11 @@ flowchart TB
   end
 ```
 
-三处容易误判的现状：
+当前桌面与保留产品路线的边界：
 
-1. README 推荐的知君桌面是 `frontend/shell`，只打开后端页面，没有 preload。根 `start-desktop.sh` 却进入 `frontend` 启动上一代应用，后者启动 Python 并加载旧 UI。集成时必须统一入口。[Z1] [Z2]
-2. `api.ts`、`sse.ts`、`taskRouting.ts` 各自有网络调用；只替换 `api.ts` 会留下 SSE 和授权路径直连。旧票据桥还会将 ticket 投放到 renderer，与新 SDK 的主进程持有边界不同。[Z3] [Z4] [Z5]
-3. 现有 Vue 用 `/mindos/` history 路由及绝对资源 base；改为 Electron 本地资源加载时，需要独立 desktop 构建和 hash 路由或受控应用协议，不能直接 `loadFile(dist/index.html)` 后假定可用。[Z6]
+1. 根 `start-desktop.sh` 与 `frontend/package.json` 的 desktop 命令已统一到 `frontend/shell`。新宿主加载 `zhijun://desktop/desktop.html`，不启动 Python，不等待或回退到 PC 的 `8618`；旧 `frontend/main.js` 只保留源码，不参与新启动链。[Z1] [Z2] [Z17]
+2. 新桌面的 `window.zhijunDesktop` 已提供窄方法和状态订阅；main 验证窗口、主 frame、精确入口 URL、参数及资料响应。默认 `unconfigured` 不创建认证适配器；仅开发显式 `simulation` 使用合成数据，打包应用禁用模拟。SDK、凭据存储与正式桥尚未接入。[Z18] [Z19] [Z20]
+3. 新入口通过 `vite.desktop.config.ts` 独立生成 `dist-desktop`，使用受控资源协议和有限 hash 页面状态，不加载旧 router、onboarding guard 或票据桥。保留的 Web `/mindos/` 产品仍使用 `api.ts`、`sse.ts`、`taskRouting.ts` 三处网络入口；后续完整产品接入时仍需统一它们，不能把 M0-L 当成全部页面已迁移。[Z3] [Z4] [Z5] [Z6] [Z21]
 
 新增 `matters.ts` 复用 `routingRequest`；`chatStream.ts` 编排预览与 SSE，没有新增第四套传输。它只在尚未收到事件、命中特定 409 且用户未取消时重新预览一次，并复用 requestId；不自动重放来源变化、500、断网或已开始的流。`backendConnection` 的 Web 后端状态也不是 SDK 连接快照，桌面接入需映射到主进程状态。[Z14] [Z15]
 
@@ -168,7 +180,7 @@ flowchart TB
   zj --> model
 ```
 
-图中没有将 PC 的 `127.0.0.1:8618` 作为正式依赖。该地址在目标部署中属于盒内 data-engine；本地 Web 开发可以保留独立入口，但桌面断连时不得回退到本机旧数据库。[D1] [D2]
+本图及配套 SVG 保留完整正式集成的目标含义；其中「待实现」指完整目标能力，M0-L 已实现的窄 preload、局部状态管理和资料策略见第 3 节，不能据此声称 SDK 或业务身份桥已接通。图中没有将 PC 的 `127.0.0.1:8618` 作为正式依赖。该地址在目标部署中属于盒内 data-engine；当前 M0-L 已无本机 HTTP 回退，本地 Web 开发保留独立入口。[D1] [D2]
 
 ### 5.1 责任与数据归属
 
@@ -184,27 +196,33 @@ flowchart TB
 
 服务端也须补归属：当前 data-engine 的 folders/计数/目录删除未按设备隔离，资料只读首轮不能直接透出这些字段。`device:<deviceId>` 不区分同盒账号，而可选 Claim 域另按 owner + device 保存；设备共享与转让、个人画像归属须先定合同。架构图表达目标责任，不代表这些隔离条件已实现，证据和验收见集成方案第 5.3 节。
 
-### 5.2 推荐模块布局（全部是拟新增或拟调整）
+### 5.2 当前实现与后续模块布局
 
 ```text
 frontend/
-  shell/                         # 保留为知君唯一桌面宿主包
-    main.js                      # 窗口、连接生命周期、退出回收
-    preload.cjs                  # 窄 IPC bridge
-    electron/
+  shared/desktop-contract.ts     # 已实现：renderer / 主进程边界类型
+  shell/                         # 已实现：独立知君桌面宿主包
+    main.js                      # 已实现：窗口、协议、IPC、退出回收
+    preload.cjs                  # 已实现：窄 IPC bridge
+    security.cjs                 # 已实现：sender、资源路径、CSP
+    launch.cjs                   # 已实现：启动参数、Electron 环境与信号转发
+    runtime/                     # 已实现：代次、调度、资料策略、模拟 adapter
+    electron/                    # 以下正式集成目录仍拟新增
       consumer/                  # 账号与设备 API、安全凭据适配
       connectivity/              # SDK 装配、会话、请求/响应策略
       security/                  # renderer 来源、CSP、sidecar 校验
   mindos-web/
-    src/main-desktop.ts          # 先登录/选择/连接，再进入业务路由
-    src/router/desktop.ts        # 桌面路由；连接就绪前不调用建档 API
+    src/main-desktop.ts          # 已实现：独立 M0-L 入口
+    src/desktop/                # 已实现：控制器、资料 UI、有限 hash 状态
+    vite.desktop.config.ts      # 已实现：独立构建，不复制 public 资源
+    src/router/desktop.ts        # 后续完整产品路由，当前尚未加入
     src/services/transports/     # Web 与 Desktop 显式分离
     src/services/api.ts          # 现有领域类型与方法逐步复用
     src/services/sse.ts          # 依赖统一 stream 端口
     src/services/taskRouting.ts  # 接统一 request 端口
     src/services/chatStream.ts   # 保留有限重预览与requestId，不重放已开始的流
     src/services/matters.ts      # 新事项/成果DTO与revision，仍经统一request端口
-    dist-desktop/               # 独立生成产物
+    dist-desktop/               # 已实现：独立生成产物，不提交 Git
 ```
 
 `frontend/shell` 的包边界和打包白名单须明确包含构建好的 `dist-desktop`，不能把整个仓库、旧 renderer 或 Python 依赖打进 PC 包。data-engine 已有类似的独立构建和包边界测试，可提取模式并适配知君页面，不直接覆盖其产品 UI。[D2] [D3]
@@ -212,6 +230,8 @@ frontend/
 ### 5.3 首个交付 M0 与实施入口
 
 M0 固定为正式登录、选择已绑定盒子、连接并完成业务身份桥、资料分页只读、断开/重连。新宿主的窄接口及类型样例见桌面接口规格；业务调用不让 renderer 指定任意 path/header。SDK connect 成功只代表进入 authorizing，真实身份桥成功才允许进入 ready，资料读取仍需单独验收。
+
+2026-09-06 已落地的是 M0-L 本地实施子集：实际 Electron/main/preload/runtime 与 Vue 页面，通过显式模拟 adapter 验证登录、两台合成盒子切换、资料分页/筛选、退出、代次和公开字段。未配置模式关闭真实能力；模拟 `authorize` 不是正式鉴权。D02 认证输入与实现、D03 可信身份桥、D05 固定发布组合和真机验收仍待完成，验证范围见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。
 
 资料公开投影仅保留标识、文件名、类型、状态、创建时间和分页信息；顶层 folders 及条目 folder/folderId 均不透出。聊天、事项写入、附件、模型管理、BLE 与现有建档 guard 在 M0 不开放。后续领域迁移按独立模块方案准备，D01–D05 决策明确之前可推进隔离骨架/模拟合同，不能将模拟通过计为真实联调完成。
 
@@ -269,6 +289,11 @@ sequenceDiagram
 
 [Z1]: ../../frontend/shell/main.js#L1
 [Z2]: ../../start-desktop.sh#L1
+[Z17]: ../../frontend/package.json
+[Z18]: ../../frontend/shell/preload.cjs
+[Z19]: ../../frontend/shell/security.cjs
+[Z20]: ../../frontend/shell/runtime/desktop-runtime.cjs
+[Z21]: ../../frontend/mindos-web/vite.desktop.config.ts
 [Z3]: ../../frontend/mindos-web/src/services/api.ts#L1
 [Z4]: ../../frontend/mindos-web/src/services/sse.ts#L1
 [Z5]: ../../frontend/mindos-web/src/services/taskRouting.ts#L34
