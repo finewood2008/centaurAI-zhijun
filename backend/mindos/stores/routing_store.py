@@ -200,8 +200,15 @@ class RoutingStore:
         return [job for job in self.conversation_jobs(conversation_id, task)
                 if job["state"] == "done" and (job.get("result") or {}).get("state") == "paused"]
 
+    @staticmethod
+    def recoverable_job(job):
+        return job["state"] == "failed" or (job["state"] == "done" and (job.get("result") or {}).get("state") == "paused")
+
+    def recoverable_jobs(self, conversation_id, task=None):
+        return [job for job in self.conversation_jobs(conversation_id, task) if self.recoverable_job(job)]
+
     def resume_jobs(self, conversation_id, task, *, local_only=False):
-        """Requeue every current pause once, retaining its original owner/job ID.
+        """Requeue current pauses/failures once, retaining their original job IDs.
 
         This does not grant anything: the worker reconstructs and checks the
         current request again. The active-owner unique index and transaction
@@ -212,12 +219,12 @@ class RoutingStore:
             db.execute("BEGIN IMMEDIATE")
             for row in self._conversation_jobs(db, conversation_id, task):
                 job = self.ontology._job(row)
-                if job["state"] != "done" or (job.get("result") or {}).get("state") != "paused":
+                if not self.recoverable_job(job):
                     continue
                 if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (task, job["ownerId"])).fetchone():
                     continue
                 payload = {**job["payload"], "localOnly": bool(local_only)}
-                changed = db.execute("UPDATE ontology_jobs SET state='queued',payload_json=?,priority=MAX(priority,8),attempts=0,lease_owner=NULL,lease_until=NULL,finished_at=NULL,updated_at=? WHERE job_id=? AND state='done'",
+                changed = db.execute("UPDATE ontology_jobs SET state='queued',payload_json=?,priority=MAX(priority,8),attempts=0,lease_owner=NULL,lease_until=NULL,finished_at=NULL,updated_at=? WHERE job_id=? AND state IN ('done','failed')",
                                      (json.dumps(payload, ensure_ascii=False), now, job["jobId"]))
                 if changed.rowcount:
                     resumed.append(job["jobId"])

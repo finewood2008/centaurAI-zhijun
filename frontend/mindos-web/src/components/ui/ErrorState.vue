@@ -1,29 +1,43 @@
 <script setup lang="ts">
 // 错误状态：请求失败时给出可执行的重试入口。
 import { AlertTriangle } from 'lucide-vue-next'
+import { computed, watch } from 'vue'
+import { backendConnection, backendNoticeActive, isNetworkError, markBackendDisconnected } from '@/shared/backendConnection'
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     message?: string
     retryLabel?: string
     showRetry?: boolean
+    recoverOnReconnect?: boolean
   }>(),
   {
     message: '加载失败，请稍后重试',
     retryLabel: '重试',
     showRetry: true,
+    recoverOnReconnect: false,
   },
 )
 
 const emit = defineEmits<{ (e: 'retry'): void }>()
+const networkError = computed(() => isNetworkError(props.message))
+const hideNetworkError = computed(() => networkError.value && backendNoticeActive.value)
+const displayMessage = computed(() => networkError.value
+  ? backendConnection.value === 'connected' ? '连接已恢复，可以重新打开这部分内容。' : '暂时无法连接知君，请稍后重试。'
+  : props.message)
+watch(() => props.message, message => { if (isNetworkError(message)) markBackendDisconnected() }, { immediate: true })
+watch(backendConnection, (state, previous) => {
+  // Opt-in for read-only reloads; generic retry handlers may submit or refresh.
+  if (state === 'connected' && previous === 'disconnected' && props.recoverOnReconnect && networkError.value) emit('retry')
+})
 </script>
 
 <template>
-  <div class="ws-error">
+  <div v-if="!hideNetworkError" class="ws-error" role="alert">
     <span class="ws-error__icon" aria-hidden="true">
       <AlertTriangle :size="26" />
     </span>
-    <div class="ws-error__message">{{ message }}</div>
+    <div class="ws-error__message">{{ displayMessage }}</div>
     <button
       v-if="showRetry"
       type="button"

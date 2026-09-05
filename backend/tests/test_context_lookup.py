@@ -77,6 +77,16 @@ class LookupValidationTests(unittest.TestCase):
         self.assertEqual(lookup.citation_receipt(context, "没有声称引用") ["citedRefs"], [])
         self.assertEqual(lookup.citation_receipt(None, "[p1]")["citationAudit"]["invalidRefs"], ["p1"])
 
+    def test_citation_markers_are_removed_only_from_derived_reading_text(self):
+        raw = "产品方向 [p2][p10][p0][p01]。材料依据 [m1][m0][m007]；普通 [x] 保留。"
+        self.assertEqual(lookup.strip_citation_markers(raw), "产品方向。材料依据；普通 [x] 保留。")
+        self.assertEqual(lookup.strip_citation_markers("Use [p1] because it matters."), "Use because it matters.")
+        receipt = lookup.citation_receipt({"background": [{"citationId": "p2"}], "evidence": []}, raw)
+        self.assertEqual(receipt["citedRefs"], ["p2"])
+        self.assertEqual(receipt["citationAudit"]["invalidRefs"], ["p10", "p0", "p01", "m1", "m0", "m007"])
+        plain = "用户写下的普通文本 ，以及尾部空格  "
+        self.assertEqual(lookup.strip_citation_markers(plain), plain)
+
 
 class LookupGuardedTests(unittest.TestCase):
     setUp = harness.RoutingTests.setUp

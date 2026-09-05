@@ -16,6 +16,7 @@ from ..stores.ontology_store import OntologyStore
 from ..stores.reply_assist_store import ReplyAssistStore
 from ..uploads import _device_scope_of
 from .gate import provider_gate, ProviderBusyError
+from .context_lookup import strip_citation_markers
 from .provider import ChatRequest, ProviderError
 
 CONTROLS = {"rephrase": "请换一种更简单、具体的说法，一次只问一个问题。",
@@ -89,7 +90,7 @@ def build_request(messages, previous_texts=None):
     # Do not end the request with an assistant turn: that invites continuation in
     # the assistant's voice. Give the dialogue as labelled data and an explicit task.
     context = {"对话记录（仅作参考）": [
-        {"说话人": "用户" if m["role"] == "user" else "知君", "内容": m["content"]}
+        {"说话人": "用户" if m["role"] == "user" else "知君", "内容": strip_citation_markers(m["content"]) if m["role"] == "assistant" else m["content"]}
         for m in messages
     ], "上一组候选（不要重复）": previous_texts or []}
     return ChatRequest(system=SYSTEM, messages=[{"role": "user", "content":
@@ -172,8 +173,21 @@ def suggest(conversation_id: str, req: SuggestRequest, request: Request):
     store = ReplyAssistStore(convs)
     ident = "reply_" + digest([conversation_id, req.requestId])[:24]
     previous = store.get(req.previousBatchId) if req.previousBatchId else None
+    previous_excluded = False
     if req.previousBatchId:
-        validate_batch(router, previous)
+        # A previous group is only a deduplication hint, never required context.
+        # A new explicit generation can proceed without stale suggestions, but
+        # must not read them or discard the latest reply's own source checks.
+        if not previous or previous["conversationId"] != conversation_id:
+            fail("REPLY_BATCH_NOT_FOUND", "候选不存在或不属于这段对话", 404)
+        try:
+            validate_batch(router, previous)
+        except HTTPException as exc:
+            code = exc.detail.get("code") if isinstance(exc.detail, dict) else None
+            if exc.status_code != 409 or code not in {"REPLY_CONTEXT_CHANGED", "REPLY_SOURCE_CHANGED", "SOURCE_CHANGED", "SOURCE_UNAVAILABLE", "SOURCE_LIMIT"}:
+                raise
+            previous = None
+            previous_excluded = True
     provider = router.provider(req.localOnly)
     # Only the target reply is required. Other protected history is not silently added.
     refs, messages, excluded = [], [], []
@@ -221,6 +235,7 @@ def suggest(conversation_id: str, req: SuggestRequest, request: Request):
                  "formatVersion": FORMAT_VERSION,
                  "messageId": req.messageId, "contextRevision": revision, "mode": router.mode,
                  "previousBatchId": req.previousBatchId, "localOnly": req.localOnly,
+                 "previousBatchExcluded": previous_excluded,
                  "candidates": [{"id": f"{ident}_{i}", "text": t} for i, t in enumerate(texts)],
                  "model": guarded.model, "external": guarded.external, "service": preview["service"],
                  "charterBasis": preview.get("charterBasis"),

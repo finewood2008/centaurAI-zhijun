@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // 顶栏：移动端菜单按钮 + 当前页标题。只有后端不可用时才出现一条提示；其他时候什么都不说。
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu } from 'lucide-vue-next'
 import { api } from '@/services/api'
+import { backendConnection, backendNoticeActive, connectionNoticeMounted, markBackendConnected, markBackendDisconnected } from '@/shared/backendConnection'
 
 const emit = defineEmits<{ (e: 'toggle-menu'): void }>()
 
@@ -14,23 +15,47 @@ const title = computed(() => {
   return typeof t === 'string' ? t : '知君'
 })
 
-const backendState = ref<'loading' | 'ok' | 'error'>('loading')
-const backendDetail = ref('')
+const checking = ref(false)
+let alive = true
+let timer: ReturnType<typeof setTimeout> | undefined
+let request: AbortController | null = null
 
 async function checkHealth() {
-  backendState.value = 'loading'
+  if (checking.value || !alive) return
+  checking.value = true
+  request = new AbortController()
+  const timeout = setTimeout(() => request?.abort(), 5000)
   try {
-    await api.health()
-    backendState.value = 'ok'
-    backendDetail.value = ''
-  } catch (e) {
-    backendState.value = 'error'
-    backendDetail.value = e instanceof Error ? e.message : '无法连接后端服务'
+    await api.health(request.signal)
+    if (alive) markBackendConnected()
+  } catch {
+    if (alive) markBackendDisconnected()
+  } finally {
+    clearTimeout(timeout)
+    request = null
+    checking.value = false
+    if (alive) {
+      clearTimeout(timer)
+      timer = setTimeout(checkHealth, backendConnection.value === 'disconnected' ? 5000 : 30000)
+    }
   }
 }
 
+watch(backendConnection, state => {
+  if (state === 'disconnected' && !checking.value) {
+    clearTimeout(timer)
+    timer = setTimeout(checkHealth, 1000)
+  }
+})
 onMounted(() => {
-  checkHealth()
+  connectionNoticeMounted.value = true
+  void checkHealth()
+  window.addEventListener('online', checkHealth)
+})
+onBeforeUnmount(() => {
+  alive = false; clearTimeout(timer); request?.abort()
+  connectionNoticeMounted.value = false
+  window.removeEventListener('online', checkHealth)
 })
 </script>
 
@@ -47,9 +72,9 @@ onMounted(() => {
 
     <h1 class="ws-topbar__title">{{ title }}</h1>
 
-    <div v-if="backendState === 'error'" class="ws-topbar__alert" role="alert">
-      <span>知君的后端没有响应{{ backendDetail ? `：${backendDetail}` : '' }}</span>
-      <button type="button" class="ws-topbar__retry" @click="checkHealth">重试</button>
+    <div v-if="backendNoticeActive" class="ws-topbar__alert" role="status" aria-live="polite">
+      <span>知君暂时未连接，你可以保留当前输入。</span>
+      <button type="button" class="ws-topbar__retry" :disabled="checking" @click="checkHealth">{{ checking ? '正在重连…' : '重新连接' }}</button>
     </div>
   </header>
 </template>
@@ -59,8 +84,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  height: 56px;
-  padding: 0 24px;
+  min-height: 56px;
+  padding: 8px 24px;
+  box-sizing: border-box;
   background: var(--ws-body-bg, #fffcf6);
   border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
   flex-shrink: 0;
@@ -68,6 +94,7 @@ onMounted(() => {
 
 .ws-topbar__menu {
   display: none;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   width: 34px;
@@ -105,11 +132,12 @@ onMounted(() => {
   border-radius: 3px;
   color: var(--ws-danger-color, #a6452e);
   font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  line-height: 1.5;
 }
+.ws-topbar__alert span { overflow-wrap: anywhere; }
 .ws-topbar__retry {
+  flex-shrink: 0;
   border: none;
   background: transparent;
   color: inherit;
@@ -121,7 +149,7 @@ onMounted(() => {
 
 @media (max-width: 767px) {
   .ws-topbar {
-    padding: 0 12px;
+    padding: 8px 12px;
     gap: 8px;
   }
   .ws-topbar__menu {

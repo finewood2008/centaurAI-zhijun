@@ -1,5 +1,7 @@
 # 在线理解与本地资料协作（2026-09-04）
 
+> 2026-09-05 已按上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476` 复核；本轮变化见文末同步补充，原测试与部署内容保留为历史记录。
+
 ## 使用方式
 
 设置页分为「日常对话与理解」和「本地文件处理」。配置在线服务并不等于同意外发；用户仍需在新会话默认设置或当前对话的「启用在线理解」中明确确认。
@@ -51,3 +53,18 @@
 ## 本机运行依赖检查
 
 恢复了原配置的 `BAAI/bge-small-zh-v1.5` 嵌入模型缓存（仅用于本地索引，不是第二个在线模型）。配置文件来自 Hugging Face；权重通过 ModelScope 的同名仓库下载，并核对 SHA-256 与 Hugging Face 发布一致：`354763b9b1357bc9c44f62c6be2276321081ed2567773608c0d0785b61d5a026`。禁网加载和合成文本编码返回 `(1, 512)`。本地 Ollama 服务也已恢复监听 `127.0.0.1:11434`。
+
+
+## 2026-09-05 同步补充：工作来源与恢复
+
+核对源码：上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`。上述模型名称、机器状态、备份与测试数值属于 2026-09-04 原实施记录，不表示本次环境仍使用同一配置或已经复测。
+
+1. 来源解析新增 `matter` 与 `artifact`。服务端读取同设备事项/成果、精确版本及其 sources；成果还要求所属事项存在。保存成果、编辑正文或切换绑定均不会自动确认画像、修改章程或授予外发权限。版本为 `digest([id, revision, sources])`，编辑后原授权不能直接解释为新版本授权。
+2. 当前事项只有在自身来源授权通过后才能扩展检索；它作为独立可引用的工作记录，不当作人格背景。模型实际调用前比对 `contextPlan.matterBinding` 的 matterId 与绑定 revision，不符返回 `ROUTE_CHANGED`。本轮 `ContextPlan` 和补查指纹也包含事项绑定/版本信息，不能复用旧事项的预览或补查。
+3. 来源 parents 缺失、非列表或含无效 kind/id 时标记 `source_invalid`，后续检查返回 `SOURCE_UNAVAILABLE`。不会把未知依赖当成“没有来源限制”。历史 assistant 正文中的旧 `[pN]` / `[mN]` 在进入模型前清理，但内部 `_sourceRef` 冻结清理前的原始消息版本；清理显示标识不改来源归属或旧消息。
+4. `routing` 状态的 pending 聚合新增失败任务：`failedCount`、`state:paused|failed|mixed`，失败原因只返回受控文案，避免泄露原始 provider 错误。`resume` 同时恢复暂停和失败任务，返回 `jobIds/jobId/queuedCount/pendingCount`；复用原 job ID，事务内避免同 owner 已排队/运行时再次入队。恢复不授权，worker 仍重新构建并检查当前模型、资料与章程。
+5. 前端 `prepareChatRoute` 与 `routedTask` 在 HTTP 409 且 code 为 `ROUTE_CHANGED` 或 `PREVIEW_EXPIRED` 时最多额外重建一次预览；总循环仍有上限。重建会重新走缺失授权/章程冲突流程，不表示自动批准，也不将其他来源错误都视为可重试。聊天预览、grant、章程例外和等待窗口贯穿 AbortSignal。
+
+聊天发送端的 `streamChat` 另只允许在收到首个流事件之前，针对上述两类 HTTP 409 重新预览并重发一次，沿用请求标识及来源且要求仍在当前会话。流开始后、网络失败、取消或来源变化不自动重播；不能把两层各自的受限恢复写成对所有错误的统一重试。
+
+完整事项 API 见 [接口契约第 19 节](zhijun-api-contract.md#19-事项与成果合同--版本-work-2026-09-05)。实现核对：[routing.py](../../backend/mindos/zhijun/routing.py)、[routing_routes.py](../../backend/mindos/routing_routes.py)、[routing_store.py](../../backend/mindos/stores/routing_store.py)、[taskRouting.ts](../../frontend/mindos-web/src/services/taskRouting.ts)。新增回归入口 `test_routing_source_snapshots`、`test_routing_backlog` 与 `chat-stream.test.mjs`，本段不声明它们已由本次同步执行。

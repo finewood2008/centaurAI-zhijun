@@ -1,5 +1,7 @@
 # 低压力回复辅助（2026-09-04）
 
+> 2026-09-05 已按上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476` 复核；本轮变化见文末同步补充，原测试与部署内容保留为历史记录。
+
 ## 体验
 
 - 普通对话、首次认识、回访共用最新完整回复下的一行入口：「换个说法」「先放一放」「帮我开个头」。前两项只填入请求；第三项由用户主动触发一次模型生成。不会自动发消息或每轮预生成。
@@ -42,3 +44,16 @@
 - 展开提示为「你可以这样回答」，仍然选择后填入、修改后手动发送。
 - 相关回归 136 项及 16 个子测试通过，前端构建与追加/撤销测试通过。`scripts/reply_assistance_smoke.py` 使用独立临时库与固定虚构案例测试实际模型；在线 4 组结果均为用户回答并通过格式检查，本地测试仍有问句被校验拒绝。格式检查不能保证观点无偏或所有细节都有依据，用户选择与画像确认保持分开。
 - 测试结果在 `data/diagnostics/task-routing/reply-assistance-*-v2.json`，未读取真实会话、画像或原文件。上线前再次备份三库至 `*.pre-reply-answer-fix-20260904-172313.db`，完整性均为 `ok`。
+
+
+## 2026-09-05 同步补充：失效候选与输入恢复
+
+核对源码：上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`。以上上线、真实模型及备份/回归数字保留为历史实施记录，本次同步没有据此执行模型调用、备份恢复或复测。
+
+- `previousBatchId` 仅是新一组候选的去重提示。旧批次不存在或不属于该会话仍返回 `REPLY_BATCH_NOT_FOUND`（404）。同会话旧批次遇到指定的 409 来源/上下文失效码（`REPLY_CONTEXT_CHANGED`、`REPLY_SOURCE_CHANGED`、`SOURCE_CHANGED`、`SOURCE_UNAVAILABLE`、`SOURCE_LIMIT`）时，明确发起的新生成可排除旧候选，保存 `previousBatchExcluded:true`，但不能跳过最新回复自身的来源检查。其他错误继续拒绝。
+- 候选请求中 assistant 参考正文清理旧 `[pN]` / `[mN]` 引用标识，减少跨轮引用混淆；来源检查仍基于原消息快照，不将清理后的正文伪装成原始版本。事项/成果经统一 ContextPlan 参与时，也继承各自的绑定、版本和授权条件。
+- 前端将来源过期、来源链超限、上下文/候选变化等标记为回复辅助恢复状态。失效的显示候选清除，用户可明确“重新生成回答”；当前输入及其来源不清除，不会自动换成无来源文本发送。新增候选不能直接叠加到仍待处理的旧辅助输入。
+- 输入保存 `text/origin/undo`，发送失败后保留之后继续输入的文字；同问题且来源可合并、总长不超过 4000 字时才合并恢复。不同问题、来源数量受限或超长时保留为独立未发送草稿，供用户切换；不能为合并成功丢掉来源。未修改的辅助片段可撤销，已改写片段不自动删除。
+- 现有 `zhijun.reply-input.<conversationId>` 和新增 `zhijun.reply-failed.<conversationId>` 位于 sessionStorage，仍未按账号/设备分区；刷新恢复和对话内恢复不能替代下一步 Electron 集成的身份清理。
+
+核对入口：[reply_assistance.py](../../backend/mindos/zhijun/reply_assistance.py)、[useReplyRecovery.ts](../../frontend/mindos-web/src/composables/useReplyRecovery.ts)、[replyAssistance.ts](../../frontend/mindos-web/src/shared/replyAssistance.ts)、[Composer.vue](../../frontend/mindos-web/src/components/conversation/Composer.vue)。新增/扩展测试入口包括 `test_reply_assistance`、`reply-recovery.test.mjs` 和 `chat-send-recovery.e2e.mjs`；未在本子任务运行。

@@ -1180,7 +1180,7 @@ export interface ModelActionResponse {
 }
 
 export const api = {
-  health: () => request<HealthInfo>('/health'),
+  health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),
   // 后端同一套导入校验规则（与 mindos.validation.validate_import 一致）。
   // P1 前端本地校验用于即时反馈；P2 “开始上传”前将用此接口批量复核，避免仅依赖浏览器。
@@ -2096,6 +2096,9 @@ export interface ContextItem {
 }
 export interface ContextPlan {
   revision: string
+  matterBinding?: { matterId: string | null; revision: number }
+  matterSuspended?: { matterId: string; revision: number } | null
+  matterHistoryAfterSeq?: number
   focus?: Record<string, unknown>
   background: ContextItem[]
   evidence: ContextItem[]

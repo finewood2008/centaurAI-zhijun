@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 from ..stores.conversation_store import ConversationError, ConversationNotFoundError, ConversationStore
 from ..stores.ontology_store import normalize_text
+from .context_lookup import strip_citation_markers
 from .provider import ChatProvider, ChatRequest
 
 logger = logging.getLogger(__name__)
@@ -136,8 +137,9 @@ def build_draft_request(user_texts: list[str], assistant_texts: list[str], prev_
     lines.append("对话记录（只有用户的话可作为 choice/rationale/confidence/expectedOutcome 的来源）：")
     for i, text in enumerate(user_texts[-8:], start=1):
         lines.append(f"用户{i}：{text.strip()}")
-    if assistant_texts:
-        lines.append(f"知君最近一句：{assistant_texts[-1].strip()[:400]}")
+    assistant_text = strip_citation_markers(assistant_texts[-1]).strip() if assistant_texts else ""
+    if assistant_text:
+        lines.append(f"知君最近一句：{assistant_text[:400]}")
     return ChatRequest(
         system=_DRAFT_SYSTEM,
         messages=[{"role": "user", "content": "\n".join(lines)}],
@@ -145,7 +147,7 @@ def build_draft_request(user_texts: list[str], assistant_texts: list[str], prev_
         temperature=0.0,
         json_schema=DRAFT_SCHEMA,
         effort="low",
-        debug={"task": "decision_draft", "userTexts": list(user_texts), "assistantText": assistant_texts[-1] if assistant_texts else ""},
+        debug={"task": "decision_draft", "userTexts": list(user_texts), "assistantText": assistant_text},
     )
 
 

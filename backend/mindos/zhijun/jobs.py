@@ -15,6 +15,7 @@ from ..stores.conversation_store import ConversationStore
 from ..stores.ontology_store import OntologyStore
 from . import extract, projection
 from .gate import provider_gate
+from .context_lookup import strip_citation_markers
 from .provider import ProviderError, build_provider
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ def _model_summary(messages: list[dict], provider=None) -> tuple[str, list[str],
         return summary, points, "extractive"
     from .provider import ChatRequest
 
-    transcript = "\n".join(f"{'用户（AI 辅助表达，不作为独立人格证据）' if (m.get('meta') or {}).get('replyAssistance') else '用户' if m['role'] == 'user' else '知君'}：{(m.get('content') or '').strip()[:300]}" for m in messages[-24:] if m.get("role") in ("user", "assistant") and (m.get("meta") or {}).get("replyAssistance", {}).get("kind") != "control")
+    transcript = "\n".join(f"{'用户（AI 辅助表达，不作为独立人格证据）' if (m.get('meta') or {}).get('replyAssistance') else '用户' if m['role'] == 'user' else '知君'}：{(strip_citation_markers(m.get('content')) if m['role'] == 'assistant' else (m.get('content') or '')).strip()[:300]}" for m in messages[-24:] if m.get("role") in ("user", "assistant") and (m.get("meta") or {}).get("replyAssistance", {}).get("kind") != "control")
     from .routing import GuardedProvider
     if isinstance(provider, GuardedProvider):
         provider.refs = [provider.router.ref("message", m["id"]) for m in messages[-24:] if m.get("role") in ("user", "assistant")]

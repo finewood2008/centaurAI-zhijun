@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // 单条消息：user 为纯文本气泡；assistant 用 markdown-it（html:false）渲染后再把
 // 认识论标记替换成文字徽章；system 为居中的系统备注（如「你确认了：…」）。
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
 import type { MessageRole, MessageStatus } from '@/services/api'
-import { decorateLabels } from '@/shared/labels'
+import { decorateLabels, stripContextCitations } from '@/shared/labels'
 
 const props = defineProps<{
   role: MessageRole
@@ -12,11 +12,21 @@ const props = defineProps<{
   status?: MessageStatus
   streaming?: boolean
   pendingLabel?: string
+  allowSave?: boolean
 }>()
 
-const emit = defineEmits<{ (e: 'cite', index: number): void }>()
+const emit = defineEmits<{ (e: 'cite', index: number): void; (e: 'save'): void }>()
+const body = ref<HTMLElement | null>(null)
+const copyNotice = ref('')
+async function copy() {
+  try { await navigator.clipboard.writeText(body.value?.innerText || props.content); copyNotice.value = '已复制' }
+  catch { copyNotice.value = '复制未完成，请选中正文复制' }
+}
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
+// pN 是服务端核验来源所需的内部编号。只过滤普通正文 token，代码块和
+// 行内代码中的字面量保持原样；完整来源仍在消息下方的依据区查看。
+md.renderer.rules.text = (tokens, idx) => md.utils.escapeHtml(stripContextCitations(tokens[idx].content))
 
 const html = computed(() => {
   if (props.role !== 'assistant') return ''
@@ -46,8 +56,11 @@ function onClick(e: MouseEvent) {
     </div>
     <div v-if="role === 'user'" class="zj-msg__body zj-msg__body--plain">{{ content }}</div>
     <!-- eslint-disable-next-line vue/no-v-html -->
-    <div v-else class="zj-msg__body zj-prose" @click="onClick" v-html="html" />
+    <div v-else ref="body" class="zj-msg__body zj-prose" @click="onClick" v-html="html" />
     <span v-if="role === 'assistant' && streaming" class="zj-msg__cursor" aria-hidden="true" />
+    <div v-if="role === 'assistant' && status === 'complete' && !streaming && allowSave" class="zj-msg__actions">
+      <button type="button" @click="copy">复制</button><button type="button" @click="emit('save')">留下文稿</button><span role="status">{{ copyNotice }}</span>
+    </div>
   </div>
 </template>
 
@@ -100,11 +113,14 @@ function onClick(e: MouseEvent) {
   color: var(--ws-danger-color, #a6452e);
 }
 .zj-msg__body {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.75;
   color: var(--ws-text-primary-color, #1d211f);
   word-break: break-word;
 }
+.zj-msg__actions{display:flex;align-items:center;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:12px;color:var(--ws-text-secondary-color,#686b66)}
+.zj-msg__actions button{font:inherit;min-height:30px;border:0;background:transparent;color:inherit;cursor:pointer;padding:0 2px}
+.zj-msg__actions button:hover{color:var(--ws-primary-color,#a6452e)}
 .zj-msg__body--plain {
   white-space: pre-wrap;
 }
