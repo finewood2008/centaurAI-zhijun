@@ -4,6 +4,8 @@
 
 进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。三份规格细化本图的责任边界，当前均为设计稿，未开始业务集成。
 
+具体文件归属、开发步骤、跨仓依赖和里程碑验收见 [详细开发任务](DEVELOPMENT-TASKS-0905.md)；任务完成状态与架构设计状态分别记录。
+
 可直接打开或用于评审的 [目标架构 SVG](assets/architecture-0905.svg) 已从第 5 节 Mermaid 图导出；第 3、4、5、6 节分别为当前架构、业务关系、目标部署和连接时序。
 
 ## 1. 结论
