@@ -214,6 +214,12 @@ class RoutingStore:
         current request again. The active-owner unique index and transaction
         keep concurrent clicks from creating another generation for one turn.
         """
+        from zhijun_worker.background import register
+        with self.ontology._connect() as db:
+            candidates = [self.ontology._job(row) for row in self._conversation_jobs(db, conversation_id, task)]
+        for candidate in candidates:
+            if self.recoverable_job(candidate):
+                register(candidate["jobId"], task)
         now, resumed = time.time(), []
         with self.ontology._lock, self.ontology._connect() as db:
             db.execute("BEGIN IMMEDIATE")

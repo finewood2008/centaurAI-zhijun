@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { createProductSessionStorage, isDesktopProduct } from '@/shared/productScope'
+const productStorage = createProductSessionStorage()
 // 输入区：Enter 发送、Shift+Enter 换行（提示只出现一次）；「深入」「我在考虑…」是两枚开关 chip；
 // 麦克风在输入框里；字数只在快到上限时才出现。语音只填入输入框，永远不自动发送。
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -9,6 +11,7 @@ import { DOC_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS } from '@/features/i
 import BaseButton from '@/components/ui/BaseButton.vue'
 import { useToast } from '@/composables/useToast'
 import { intentHint } from '@/shared/decisionDraft'
+import { createVoiceRecording, type VoiceState } from '@/services/voiceRecording'
 import { createRecognizer, mergeTranscript, speechSupported, splitResults } from '@/shared/speech'
 
 const props = defineProps<{
@@ -47,18 +50,18 @@ const failedDrafts = ref<InputDraft[]>([])
 const failedDraftCache = new Map<string, InputDraft[]>()
 function readFailed(id: string): InputDraft[] {
   if (failedDraftCache.has(id)) return failedDraftCache.get(id)!
-  try { const saved = JSON.parse(sessionStorage.getItem(failedKey(id)) || '[]'); return Array.isArray(saved) ? saved.filter(d => d && typeof d.text === 'string') : [] }
+  try { const saved = JSON.parse(productStorage.getItem(failedKey(id)) || '[]'); return Array.isArray(saved) ? saved.filter(d => d && typeof d.text === 'string') : [] }
   catch { return [] }
 }
 function saveFailed(id: string, values: InputDraft[]) {
   failedDraftCache.set(id, values)
   if (id === (props.conversationId || LANDING_DRAFT)) failedDrafts.value = values
-  try { sessionStorage.setItem(failedKey(id), JSON.stringify(values)) } catch { /* The current mounted draft remains readable. */ }
+  try { productStorage.setItem(failedKey(id), JSON.stringify(values)) } catch { /* The current mounted draft remains readable. */ }
 }
 function storedDraft(id: string) {
   if (inputDrafts.has(id)) return inputDrafts.get(id)
   try {
-    const saved = JSON.parse(sessionStorage.getItem(draftKey(id)) || 'null')
+    const saved = JSON.parse(productStorage.getItem(draftKey(id)) || 'null')
     if (saved && typeof saved.text === 'string' && saved.text.length <= 4000) return saved as InputDraft
   } catch { /* Storage may be unavailable; typing still works. */ }
 }
@@ -72,8 +75,8 @@ watch(() => props.conversationId, (next, previous) => {
 watch([text, expression, undo], () => {
   const id = props.conversationId || LANDING_DRAFT
   try {
-    if (text.value) sessionStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value, undo: undo.value }))
-    else sessionStorage.removeItem(draftKey(id))
+    if (text.value) productStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value, undo: undo.value }))
+    else productStorage.removeItem(draftKey(id))
   } catch { /* Do not block the composer if local storage is full. */ }
 }, { deep: true })
 watch(text, value => { if (!value.trim()) { expression.value = undefined; undo.value = undefined } })
@@ -94,7 +97,7 @@ function undoInsertion() {
 }
 function applyDraft(id: string, draft: InputDraft) {
   inputDrafts.set(id, draft)
-  try { sessionStorage.setItem(draftKey(id), JSON.stringify(draft)) } catch { /* Preserve the in-memory copy if storage is unavailable. */ }
+  try { productStorage.setItem(draftKey(id), JSON.stringify(draft)) } catch { /* Preserve the in-memory copy if storage is unavailable. */ }
   if (id === (props.conversationId || LANDING_DRAFT)) { text.value = draft.text; expression.value = draft.origin; undo.value = draft.undo }
 }
 function restoreSubmission(value: string, origin: ReplyAssistanceInput | undefined, conversationId: string | null) {
@@ -118,6 +121,7 @@ function switchFailedDraft() {
 }
 const filesInput = ref<HTMLInputElement | null>(null)
 const addOpen = ref(false)
+const audioInput = ref<HTMLInputElement | null>(null)
 const acceptFiles = [...DOC_EXTENSIONS, ...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS].join(',')
 function onFiles(e: Event) {
   const input = e.target as HTMLInputElement
@@ -158,7 +162,7 @@ const effectivePlaceholder = computed(() => {
 
 function send() {
   const content = text.value.trim()
-  if ((!content && !props.hasAttachments) || props.streaming || props.uploading || blocked.value) return
+  if ((!content && !props.hasAttachments) || props.streaming || props.uploading || blocked.value || voiceState.value !== 'idle') return
   if (content.length > MAX) return
   lastSubmission = { conversationId: props.conversationId, text: text.value, origin: expression.value, undo: undo.value }
   emit('send', content, deep.value ? 'deep' : 'brief', deliberate.value ? 'deliberate' : 'chat', expression.value)
@@ -176,13 +180,25 @@ function onKeydown(e: KeyboardEvent) {
 
 // ---- 语音输入（浏览器 Web Speech；只填入输入框，永远不自动发送）
 const toast = useToast()
-const voiceAvailable = speechSupported()
+const desktopAudioUpload = isDesktopProduct()
+const voiceAvailable = desktopAudioUpload || speechSupported()
+const voiceState = ref<VoiceState>('idle')
 const listening = ref(false)
 let recognizer: any = null
 let baseText = ''
 let finalText = ''
+const boxVoice = desktopAudioUpload ? createVoiceRecording({
+  onState(value) { voiceState.value = value; listening.value = value === 'recording' },
+  onText(value) {
+    text.value = text.value.trim() ? text.value + '\n' + value : value
+    textareaRef.value?.focus({ preventScroll: true })
+  },
+  onError(message) { toast({ type: 'error', message }) },
+}) : null
+watch(() => props.conversationId, () => boxVoice?.cancel())
 
 function stopVoice() {
+  boxVoice?.cancel()
   if (recognizer) {
     try {
       recognizer.stop()
@@ -226,12 +242,18 @@ function startVoice() {
 }
 
 function toggleVoice() {
+  if (boxVoice) {
+    if (voiceState.value === 'recording') { void boxVoice.finish(); return }
+    if (voiceState.value !== 'idle') return
+    if (!props.streaming && !blocked.value) void boxVoice.start()
+    return
+  }
   if (props.streaming || blocked.value) return
   if (listening.value) stopVoice()
   else startVoice()
 }
 
-onBeforeUnmount(stopVoice)
+onBeforeUnmount(() => { stopVoice(); boxVoice?.dispose() })
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
@@ -291,22 +313,30 @@ defineExpose({
         class="zj-composer__voice"
         :class="{ 'is-on': listening }"
         :aria-pressed="listening"
-        :aria-label="listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        :aria-label="desktopAudioUpload ? listening ? '停止录音并由盒子转写' : '录音并由盒子转写' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
         :disabled="streaming || blocked"
-        :title="listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        :title="desktopAudioUpload ? '盒子转写：最长 120 秒，只填入草稿，不自动发送' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
         @click="toggleVoice"
       >
         <component :is="listening ? MicOff : Mic" :size="16" aria-hidden="true" />
       </button>
     </div>
+    <p v-if="desktopAudioUpload && voiceState !== 'idle'" class="zj-composer__voice-status" role="status">
+      {{ voiceState === 'requesting' ? '正在请求麦克风权限…' : voiceState === 'recording' ? '正在录音，最长 120 秒。停止后由盒子转写，仅填入草稿。' : '正在由盒子转写…' }}
+      <button v-if="voiceState === 'recording'" type="button" @click="boxVoice?.finish()">停止并转写</button>
+      <button type="button" @click="boxVoice?.cancel()">取消</button>
+    </p>
     <div class="zj-composer__bar">
       <div class="zj-composer__add" @keydown.esc="addOpen = false">
         <button type="button" class="zj-composer__chip" aria-label="添加文件" :aria-expanded="addOpen" :disabled="disabled || uploading" @click="addOpen = !addOpen"><Plus :size="17" /></button>
         <div v-if="addOpen" class="zj-composer__add-menu">
           <button type="button" @click="filesInput?.click()">上传文件</button>
+          <button v-if="desktopAudioUpload" type="button" @click="audioInput?.click()">上传音频到盒子处理</button>
+          <span v-if="desktopAudioUpload">可点麦克风录音交给盒子转写，也可上传已有录音。</span>
           <button type="button" @click="emit('pick-materials'); addOpen = false">选择已有资料</button>
           <span>也可以拖入文件或粘贴截图</span>
         </div>
+        <input v-if="desktopAudioUpload" ref="audioInput" type="file" multiple hidden :accept="AUDIO_EXTENSIONS.join(',')" aria-label="上传音频到盒子处理" @change="onFiles" />
         <input ref="filesInput" type="file" multiple hidden :accept="acceptFiles" aria-label="上传聊天文件" @change="onFiles" />
       </div>
       <button
@@ -337,7 +367,7 @@ defineExpose({
       <BaseButton v-if="streaming" variant="secondary" size="sm" class="zj-composer__send" @click="emit('stop')">
         <Square :size="14" aria-hidden="true" />停止
       </BaseButton>
-      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || uploading || (!text.trim() && !hasAttachments)" @click="send">
+      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || uploading || voiceState !== 'idle' || (!text.trim() && !hasAttachments)" @click="send">
         <Send :size="14" aria-hidden="true" />发送
       </BaseButton>
     </div>
@@ -413,6 +443,8 @@ defineExpose({
   line-height: 1.6;
   resize: vertical;
 }
+.zj-composer__voice-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--ws-text-secondary-color); margin:8px 0; }
+.zj-composer__voice-status button { border:1px solid var(--ws-border-color); border-radius:6px; padding:4px 8px; background:transparent; color:inherit; cursor:pointer; }
 .zj-composer__field.has-voice {
   padding-right: 40px;
 }

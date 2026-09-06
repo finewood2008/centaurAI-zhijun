@@ -1,3 +1,4 @@
+import { onProductScopeReset } from '../shared/productScope.ts'
 // 应用级响应式 Toast store：
 // ToastHost 渲染此列表；任何模块（含 main.ts 全局错误处理）都可直接 pushToast，无需组件上下文。
 import { reactive } from 'vue'
@@ -17,6 +18,7 @@ export interface ToastItem {
 }
 
 const toasts = reactive<ToastItem[]>([])
+onProductScopeReset(() => { toasts.splice(0) })
 let seq = 0
 
 const AUTO_CLOSE_MS = 2500

@@ -187,7 +187,7 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     imports = ChatImportStore(conv_store)
     if not managed and payload.get("conversationId") and imports.has_imports(payload["conversationId"]):
         return {"state": "skipped", "reason": "file_discussion_requires_explicit_action"}
-    if kind == "extract_material" and job["ownerId"] in imports.protected_ids():
+    if kind == "extract_material" and payload.get("materialId", job["ownerId"]) in imports.protected_ids():
         return {"state": "skipped", "reason": "file_is_not_personal_assertion"}
     if kind == "extract_turn":
         conversation_id = payload.get("conversationId")
@@ -328,7 +328,7 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     if kind == "extract_material":
         from . import materials
 
-        result = materials.run(job["ownerId"], store=store)
+        result = materials.run(payload.get("materialId", job["ownerId"]), store=store, expected_version=payload.get("version"))
         if result.get("created"):
             enqueue_projection(store=store)
         return result
@@ -406,7 +406,7 @@ class OntologyWorker:
             pass
         last_scan = 0.0
         while not self._stop_event.is_set():
-            if time.time() - last_scan >= _NUDGE_SCAN_INTERVAL:
+            if not os.environ.get("ZHIJUN_WORKSPACE_ID") and time.time() - last_scan >= _NUDGE_SCAN_INTERVAL:
                 last_scan = time.time()
                 try:
                     enqueue_nudge_scan(store=store)
@@ -426,10 +426,23 @@ class OntologyWorker:
             self.process(job, owner, store=store, conv_store=conv_store)
 
     def process(self, job: dict, owner: str, *, store: OntologyStore, conv_store: ConversationStore) -> None:
+        from zhijun_worker.capabilities import CapabilityError
         job_id = job["jobId"]
         try:
-            result = run_job(job, store=store, conv_store=conv_store)
-            store.finish_job(job_id, owner, result=result)
+            from zhijun_worker.background import activated, finish
+            with activated(job_id):
+                try:
+                    result = run_job(job, store=store, conv_store=conv_store)
+                    store.finish_job(job_id, owner, result=result)
+                except ProviderError as exc:
+                    if not exc.retryable:
+                        finish(job_id)
+                    raise
+                except Exception:
+                    finish(job_id)
+                    raise
+                else:
+                    finish(job_id)
         except ProviderError as exc:
             store.fail_job(
                 job_id,
@@ -441,6 +454,9 @@ class OntologyWorker:
             )
             if exc.retryable:
                 time.sleep(0.5)
+        except CapabilityError as exc:
+            store.fail_job(job_id, owner, failure_class="business", error_code=exc.code,
+                           error_detail="中央能力拒绝或资料版本已变化，请重新核对", retry=False)
         except Exception as exc:  # noqa: BLE001
             logger.warning("本体任务失败 %s: %s", job.get("kind"), type(exc).__name__)
             store.fail_job(job_id, owner, failure_class="infrastructure", error_code=type(exc).__name__, error_detail=str(exc)[:300], retry=False)

@@ -17,7 +17,9 @@ function validateConfig(value) {
     const c = value.connectivity;
     requireConfig(plain(c) && Object.keys(c).length === 8 && ['applicationId', 'purpose', 'requestedScopes', 'gatewayHost', 'iceHost', 'sidecarPath', 'sidecarSha256', 'profile'].every(key => Object.hasOwn(c, key)));
     requireConfig(identifier(c.applicationId) && identifier(c.purpose) && c.profile === 'SOVEREIGN_DIRECT_ONLY');
-    requireConfig(Array.isArray(c.requestedScopes) && c.requestedScopes.length > 0 && c.requestedScopes.length <= 32
+    const purposes = { 'mindos-person-data-pc': 'person-data.read', 'zhijun-desktop': 'zhijun.workspace' };
+    requireConfig(Object.hasOwn(purposes, c.applicationId) && c.purpose === purposes[c.applicationId]);
+    requireConfig(Array.isArray(c.requestedScopes) && c.requestedScopes.length === 1 && c.requestedScopes[0] === 'remote.p2p' && c.requestedScopes.length <= 32
       && c.requestedScopes.every(identifier) && new Set(c.requestedScopes).size === c.requestedScopes.length);
     for (const key of ['gatewayHost', 'iceHost']) requireConfig(typeof c[key] === 'string' && /^(?=.{1,253}$)[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*$/.test(c[key]));
     requireConfig(typeof c.sidecarPath === 'string' && path.isAbsolute(c.sidecarPath) && !/[\r\n\0]/.test(c.sidecarPath)

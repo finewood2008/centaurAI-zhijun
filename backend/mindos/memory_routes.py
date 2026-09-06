@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .stores.conversation_store import ConversationStore
 from .stores.memory_store import MemoryStore
 from .stores.ontology_store import OntologyStore, OntologyConflictError, OntologyError
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun import memory
 
 

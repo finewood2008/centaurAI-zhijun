@@ -79,7 +79,9 @@ async function prepare({ releaseDirectory, outputDirectory, platform = process.p
   await ensureDirectory(path.join(output, 'sidecar'));
   await ensureDirectory(sidecarDirectory);
   await put(sidecarPath, bytes, 0o700, expected);
-  const configPath = path.join(output, 'zhijun-product.json');
+  // v1 remains opt-in through ZHIJUN_DESKTOP_CONFIG; never rewrite it during
+  // preparation for the separately registered full-workspace application.
+  const configPath = path.join(output, 'zhijun-product-v2.json');
   const configBytes = Buffer.from(JSON.stringify(config, null, 2) + '\n');
   await put(configPath, configBytes, 0o600, sha256(configBytes));
   return { configPath, applicationId: binding.applicationId, purpose: binding.purpose,

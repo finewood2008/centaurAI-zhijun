@@ -14,7 +14,7 @@ from ..stores.alignment_store import digest
 from ..stores.conversation_store import ConversationStore, utc_now
 from ..stores.ontology_store import OntologyStore
 from ..stores.reply_assist_store import ReplyAssistStore
-from ..uploads import _device_scope_of
+from ..domain_scope import _device_scope_of
 from .gate import provider_gate, ProviderBusyError
 from .context_lookup import strip_citation_markers
 from .provider import ChatRequest, ProviderError

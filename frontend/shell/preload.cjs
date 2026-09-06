@@ -18,6 +18,17 @@ contextBridge.exposeInMainWorld('zhijunDesktop', Object.freeze({
   connect: (context, deviceId) => invoke('connect', context, deviceId),
   disconnect: context => invoke('disconnect', context),
   signOut: context => invoke('signOut', context),
+  product: Object.freeze({ ...Object.fromEntries(['start', 'poll', 'cancel', 'uploadCreate', 'uploadChunk', 'uploadComplete', 'uploadStatus', 'uploadCancel', 'blobRead', 'save', 'openMedia', 'closeMedia']
+    .map(method => [method, (context, input) => invoke(`product.${method}`, context, input)])),
+    requestMicrophone(context) {
+      // Preload owns this user-activation check; renderer cannot request an OS
+      // permission by scheduling the public method from an untrusted timer.
+      if (!globalThis.navigator?.userActivation?.isActive) return Promise.resolve({ ok: false,
+        generation: context?.expectedGeneration ?? 0,
+        error: { code: 'OPERATION_NOT_ALLOWED', message: '请点击录音按钮后再允许麦克风。', recovery: 'none' } })
+      return invoke('product.requestMicrophone', context)
+    },
+  }),
   materials: Object.freeze({ list: (context, query) => invoke('materials.list', context, query) }),
   cancelRead: (context, targetCallId) => invoke('cancelRead', context, targetCallId),
 }))

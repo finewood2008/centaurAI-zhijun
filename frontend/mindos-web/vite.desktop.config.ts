@@ -8,6 +8,7 @@ export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   base: './',
   publicDir: false,
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   plugins: [vue(), entryBoundary('desktop')],
   build: {
     outDir: 'dist-desktop',

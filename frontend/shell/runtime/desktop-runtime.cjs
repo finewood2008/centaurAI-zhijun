@@ -4,10 +4,12 @@ const { DesktopError, toPublicError } = require('./public-error.cjs');
 const { normalizeMaterialsQuery, buildMaterialsRequest, projectMaterialsResponse } = require('./materials.cjs');
 const { createReadScheduler } = require('./read-scheduler.cjs');
 const { createSimulationAdapter } = require('./adapters.cjs');
+const { createProductSession, productMethods } = require('./product-session.cjs');
 const { validatePassword } = require('../production/consumer-client.cjs');
 
 const ARG_COUNTS = { getSnapshot: 0, signInWithPassword: 2, beginSignIn: 1, listDevices: 1, connect: 2,
-  disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2 };
+  disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2,
+  ...Object.fromEntries(productMethods.map(method => [`product.${method}`, method === 'requestMicrophone' ? 1 : 2])) };
 const CALL_ID = /^[A-Za-z0-9_-]{8,100}$/;
 const plain = (value) => value !== null && typeof value === 'object'
   && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
@@ -21,7 +23,7 @@ function assert(condition, code = 'INVALID_REQUEST') {
   if (!condition) throw new DesktopError(code);
 }
 
-function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 15000 } = {}) {
+function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 15000, productHost = {} } = {}) {
   assert(['unconfigured', 'simulation', 'production'].includes(mode));
   assert(mode !== 'production' || adapter, 'CONFIGURATION_REQUIRED');
   assert(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 120000);
@@ -33,6 +35,8 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   let accountId = null;
   let deviceId = null;
   let session = null;
+  let productSession = null;
+  let workspaceId = null;
   let publicError;
   let devices = [];
   let devicesRevision = 0;
@@ -42,6 +46,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   const pending = new Set();
   const closing = new Set();
   const adapterCalls = new Set();
+  const productBudget = { active: new Set() };
   let signingOut = null;
 
   function callAdapter(fn) {
@@ -67,9 +72,9 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
 
   function snapshot() {
     const result = { protocolVersion: 1, environment: mode, generation, sequence, phase,
-      subject: accountId ? { accountId, ...(deviceId ? { deviceId } : {}) } : null,
-      capabilities: { materialsRead: phase === 'ready', streamChat: false,
-        uploads: false, matters: false, provisioning: false } };
+      subject: accountId ? { accountId, ...(deviceId ? { deviceId } : {}), ...(workspaceId ? { workspaceId } : {}) } : null,
+      capabilities: { materialsRead: phase === 'ready', product: phase === 'ready' && Boolean(productSession), streamChat: phase === 'ready' && Boolean(productSession),
+        uploads: phase === 'ready' && Boolean(productSession), matters: phase === 'ready' && Boolean(productSession), provisioning: false } };
     if (publicError && phase !== 'ready') result.error = { ...publicError };
     return result;
   }
@@ -90,6 +95,9 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   function ensureCurrent(value) { assert(isCurrent(value), 'STALE_GENERATION'); }
   function invalidate() {
     generation += 1;
+    productSession?.close();
+    productSession = null;
+    workspaceId = null;
     devicesRevision += 1;
     scheduler.invalidate();
     for (const cancel of [...waits]) cancel(new DesktopError('STALE_GENERATION'));
@@ -238,13 +246,25 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
           throw new DesktopError('CONTRACT_MISMATCH');
         }
         session = connected;
+        connected.onFailure?.(error => failure(error, gen));
+        ensureCurrent(gen);
         publish('authorizing');
         const proof = await bounded(callAdapter(() => connected.authorize()), gen);
         ensureCurrent(gen);
         assert(plain(proof) && proof.accountId === binding.accountId && proof.deviceId === binding.deviceId, 'ACCESS_DENIED');
+        if (proof.product === true) {
+          assert(typeof proof.workspaceId === 'string' && /^[a-f0-9]{64}$/.test(proof.workspaceId), 'CONTRACT_MISMATCH');
+          workspaceId = proof.workspaceId;
+          productSession = createProductSession({ session: connected, isCurrent: () => isCurrent(gen) && session === connected,
+            host: productHost, budget: productBudget, timeoutMs: Math.min(timeoutMs, 12000), onTerminal: error => failure(error, gen) });
+        }
         publish('ready');
         return snapshot();
       } catch (error) { failure(error, gen); throw error; }
+    }
+    if (operation.startsWith('product.')) {
+      assert(phase === 'ready' && session && productSession, 'SESSION_NOT_READY');
+      return productSession.invoke(operation.slice(8), input);
     }
     if (operation === 'materials.list') {
       assert(phase === 'ready' && session, 'SESSION_NOT_READY');
@@ -325,7 +345,11 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     devices = [];
     phase = 'signed_out';
   }
-  return { invoke, snapshot, subscribe, dispose };
+  async function mediaResponse(request) {
+    if (phase !== 'ready' || !productSession) return new Response(null, { status: 403 });
+    return productSession.mediaResponse(request);
+  }
+  return { invoke, snapshot, subscribe, dispose, mediaResponse };
 }
 
 module.exports = { createDesktopRuntime };

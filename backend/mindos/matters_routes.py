@@ -10,7 +10,7 @@ from .chat_imports import require_conversation
 from .stores.conversation_store import ConversationStore
 from .stores.matters_store import MattersStore
 from .stores.ontology_store import OntologyStore, OntologyConflictError
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 
 
 Status = Literal["active", "paused", "completed"]

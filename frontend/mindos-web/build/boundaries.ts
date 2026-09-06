@@ -12,7 +12,11 @@ export function entryBoundary(target: 'web' | 'desktop'): Plugin {
           || id.includes('/node_modules/electron/')
           || /(?:^|:)electron(?:$|\/)/.test(id)
         const desktop = id.includes('/src/desktop/') || id.includes('/src/main-desktop.ts')
-        const legacyWeb = /\/src\/(?:main\.ts|router\/|services\/(?:api|sse|taskRouting)\.ts)/.test(id)
+        const legacyWeb = /\/src\/(?:main\.ts|router\/index\.ts)$/.test(id)
+        if (target === 'desktop' && /\/src\/services\/(?:api|sse|taskRouting)\.ts$/.test(id)) {
+          const code = this.getModuleInfo(raw)?.code ?? ''
+          if (/\bfetch\s*\(/.test(code)) this.error(`Direct renderer networking in product service: ${id}`)
+        }
         if (native || (target === 'web' ? desktop : legacyWeb)) {
           this.error(`Unexpected module in ${target} entry: ${id}`)
         }

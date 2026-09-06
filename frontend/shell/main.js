@@ -1,5 +1,5 @@
 'use strict'
-const { app, BrowserWindow, ipcMain, protocol, session, safeStorage } = require('electron')
+const { app, BrowserWindow, ipcMain, protocol, session, safeStorage, dialog, systemPreferences } = require('electron')
 const path = require('node:path')
 const { access } = require('node:fs/promises')
 const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
@@ -8,6 +8,7 @@ const { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, isEntryUrl,
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'zhijun', privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: 'zhijun-media', privileges: { standard: true, secure: true, stream: true } },
 ])
 app.setName('知君桌面')
 // Tests use new temporary directories; development uses a separate app profile.
@@ -19,6 +20,7 @@ if (process.env.ZHIJUN_SHELL_NOGPU === '1') app.disableHardwareAcceleration()
 const mode = !app.isPackaged && process.env.ZHIJUN_DESKTOP_MODE === 'simulation'
   ? 'simulation' : 'unconfigured'
 let runtime
+let microphone
 let unsubscribe = () => {}
 const assetRoot = path.resolve(__dirname, '../mindos-web/dist-desktop')
 let window
@@ -35,21 +37,26 @@ async function createWindow() {
     config, directory: app.getPath('userData'), safeStorage,
     bridge: require('./production/business-bridge.cjs').createBusinessBridge(),
   }) : undefined
-  runtime = createDesktopRuntime({ mode: config ? 'production' : mode, adapter })
+  microphone = require('./runtime/microphone-permission.cjs').createMicrophonePermission({ getContents: () => window?.webContents, systemPreferences })
+  runtime = createDesktopRuntime({ mode: config ? 'production' : mode, adapter,
+    productHost: { save: require('./runtime/native-save.cjs').createNativeSave({ dialog, getWindow: () => window }),
+      requestMicrophone: owner => microphone.request(owner), revokeMicrophone: owner => microphone.revoke(owner) },
+  })
   unsubscribe = runtime.subscribe(snapshot => {
     if (window && !window.isDestroyed() && isEntryUrl(window.webContents.getURL())) {
       window.webContents.send(SNAPSHOT_CHANNEL, snapshot)
     }
   })
   const isolatedSession = session.fromPartition('zhijun-desktop-m0')
-  isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  isolatedSession.setPermissionCheckHandler(() => false)
+  isolatedSession.setPermissionRequestHandler(microphone.permissionRequest)
+  isolatedSession.setPermissionCheckHandler(microphone.check)
   isolatedSession.on('will-download', event => event.preventDefault())
   isolatedSession.webRequest.onBeforeRequest(
     { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'file://*/*'] },
     (_details, callback) => callback({ cancel: true }),
   )
   await isolatedSession.protocol.handle('zhijun', createAssetHandler(assetRoot))
+  await isolatedSession.protocol.handle('zhijun-media', request => runtime.mediaResponse(request))
   window = new BrowserWindow({
     width: 1200, height: 820, minWidth: 760, minHeight: 580,
     title: '知君', backgroundColor: '#FFFCF6',
@@ -61,6 +68,7 @@ async function createWindow() {
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event, url) => { if (!isEntryUrl(url)) event.preventDefault() })
+  window.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => { if (isMainFrame && !isInPlace) microphone.revoke() })
   window.webContents.on('will-attach-webview', event => event.preventDefault())
   window.webContents.on('render-process-gone', () => app.quit())
   ipcMain.handle(INVOKE_CHANNEL, createInvokeHandler(runtime, () => window?.webContents))
@@ -81,6 +89,7 @@ app.on('before-quit', event => {
   if (quitting) return
   event.preventDefault()
   quitting = true
+  microphone?.dispose()
   unsubscribe()
   ipcMain.removeHandler(INVOKE_CHANNEL)
   const deadline = setTimeout(() => app.exit(0), 2500)

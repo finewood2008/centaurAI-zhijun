@@ -5,8 +5,9 @@ const ENTRY_URL = 'zhijun://desktop/desktop.html'
 const INVOKE_CHANNEL = 'zhijun:invoke'
 const SNAPSHOT_CHANNEL = 'zhijun:snapshot'
 const OPERATIONS = new Set(['getSnapshot', 'beginSignIn', 'signInWithPassword', 'listDevices', 'connect',
-  'disconnect', 'signOut', 'materials.list', 'cancelRead'])
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+  'disconnect', 'signOut', 'materials.list', 'cancelRead',
+  ...require('./runtime/product-session.cjs').productMethods.map(method => `product.${method}`)])
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: zhijun-media:; media-src zhijun-media:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src zhijun-media:"
 
 function isEntryUrl(value) {
   try { const url = new URL(value); url.hash = ''; return url.href === ENTRY_URL } catch { return false }
@@ -26,6 +27,7 @@ function createInvokeHandler(runtime, getContents) {
     if (typeof operation !== 'string' || !OPERATIONS.has(operation) || !Array.isArray(args) || args.length > 2) {
       return denied(runtime, 'INVALID_REQUEST')
     }
+    if (operation === 'product.requestMicrophone' && !contents.isFocused()) return denied(runtime)
     return runtime.invoke(operation, args, contents.id)
   }
 }
@@ -35,7 +37,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 // Only bundled assets are readable; this is not a general file proxy.
 function createAssetHandler(assetRoot) {
   return async request => {
-    const headers = { 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store' }
+    const headers = { 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'no-store', 'Permissions-Policy': 'microphone=(self), camera=(), display-capture=()' }
     try {
       const url = new URL(request.url)
       if (!['GET', 'HEAD'].includes(request.method) || url.protocol !== 'zhijun:' ||

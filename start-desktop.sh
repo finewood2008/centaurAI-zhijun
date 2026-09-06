@@ -20,7 +20,7 @@ if [ "${1:-}" = --real ]; then
     node -e 'require("./frontend/shell/production/config.cjs").loadConfig(process.env.ZHIJUN_DESKTOP_CONFIG).catch(() => { console.error("指定的桌面配置无效"); process.exitCode = 1; })'
   else
     node frontend/shell/scripts/prepare-real.cjs
-    export ZHIJUN_DESKTOP_CONFIG="$SCRIPT_DIR/data/desktop/zhijun-product.json"
+    export ZHIJUN_DESKTOP_CONFIG="$SCRIPT_DIR/data/desktop/zhijun-product-v2.json"
   fi
   unset ZHIJUN_DESKTOP_MODE
   set --

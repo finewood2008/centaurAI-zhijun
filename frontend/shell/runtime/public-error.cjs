@@ -13,8 +13,11 @@ const DEFINITIONS = Object.freeze({
   ACCESS_DENIED: ['当前身份无权访问该资源，请核验权限。', 'user_reconnect'],
   SESSION_EXPIRED: ['业务会话已失效，请重新连接。', 'user_reconnect'],
   TRANSPORT_UNAVAILABLE: ['设备连接暂不可用。', 'user_reconnect'],
-  REQUEST_TIMEOUT: ['读取超时，可手动重试。', 'user_read'],
+  WRITE_OUTCOME_UNKNOWN: ['连接中断，尚不能确认本次操作是否已在盒端完成。请先检查结果，再决定是否重试。', 'none'],
+  REQUEST_TIMEOUT: ['请求超时，可手动检查任务状态。', 'user_read'],
   RESOURCE_EXHAUSTED: ['读取请求过多，请稍后重试。', 'user_read'],
+  RATE_LIMITED: ['请求暂时过于频繁，本次请求未执行，请稍后重试。', 'user_read'],
+  SESSION_QUOTA_EXHAUSTED: ['当前连接的请求或数据额度已用尽，或不足以完成本次传输。请先检查未完成操作，再断开并重新连接。', 'user_reconnect'],
   CONTRACT_MISMATCH: ['设备返回的数据不符合接口合同。', 'none'],
   RESPONSE_TOO_LARGE: ['设备返回的数据超过允许大小。', 'none'],
   REMOTE_ERROR: ['设备未能完成请求。', 'user_read'],
@@ -27,6 +30,8 @@ class DesktopError extends Error {
     super(DEFINITIONS[safeCode][0]);
     this.name = 'DesktopError';
     this.code = safeCode;
+    // Internal evidence only. Never copied to renderer error objects.
+    if (metadata.definitelyNotSent === true) this.definitelyNotSent = true;
     if (Number.isInteger(metadata.httpStatus) && metadata.httpStatus >= 100 && metadata.httpStatus <= 599) {
       this.httpStatus = metadata.httpStatus;
     }

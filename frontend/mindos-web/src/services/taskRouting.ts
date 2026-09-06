@@ -1,9 +1,12 @@
+import { isDesktopProduct, onProductScopeReset } from '../shared/productScope.ts'
+import { transportRequest } from './transport.ts'
 import { shallowRef } from 'vue'
 import { buildHeaders, throwApiError } from './api'
 import { reportReplyFailure } from '@/composables/useReplyRecovery'
 
 export interface RoutePreview {
   revision: string; conversationId: string; purpose: string; purposeLabel: string
+  deConsentRequired?: boolean
   service: { id: string; name: string; model: string; external: boolean }
   missing: string[]; blocked: string[]; reason: string
   sources: Array<{ key: string; title: string; text: string; version: string; blocked: string; kind: string }>
@@ -14,8 +17,17 @@ export interface RoutePreview {
   charterConflict?: { code: string; detail: string; charterId: string; charterVersion: number; clauses: Array<{ id: string; version: number; text: string; control: string }>; canOverride: boolean; exceptionKey: string; notice?: string } | null
   charterUnresolved?: Array<{ id: string; text: string; reason: string }>
 }
+export function needsDeConsent(preview: RoutePreview): boolean {
+  return isDesktopProduct() && preview.service.external && preview.deConsentRequired === true
+}
+function consentKeys(preview: RoutePreview, choice: RouteChoice): string[] | undefined {
+  // DE receipts cover this exact request, including every source, even when the list is empty.
+  return needsDeConsent(preview) ? preview.sources.map(source => source.key) : choice.keys
+}
 export type RouteChoice = { action: 'allow' | 'local' | 'omit' | 'cancel' | 'exception'; keys?: string[] }
 export const routeQuestion = shallowRef<{ preview: RoutePreview; allowOmit: boolean; done: (choice: RouteChoice) => void } | null>(null)
+
+onProductScopeReset(() => { routeQuestion.value?.done({ action: 'cancel' }); routeQuestion.value = null })
 
 export function askRoute(preview: RoutePreview, allowOmit = false, signal?: AbortSignal): Promise<RouteChoice> {
   routeQuestion.value?.done({ action: 'cancel' })
@@ -33,7 +45,7 @@ export function askRoute(preview: RoutePreview, allowOmit = false, signal?: Abor
 }
 
 export async function routingRequest<T = any>(path: string, method = 'GET', data?: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`/api${path}`, { method, headers: buildHeaders({ headers: { 'Content-Type': 'application/json' } }),
+  const res = await transportRequest(`/api${path}`, { method, headers: buildHeaders({ headers: { 'Content-Type': 'application/json' } }),
     body: data === undefined ? undefined : JSON.stringify(data), signal })
   if (!res.ok) await throwApiError(res)
   return res.json()
@@ -65,12 +77,12 @@ export async function prepareChatRoute(id: string, body: Record<string, unknown>
         }
         return null
       }
-      if (!preview.service.external || !preview.missing.length) return { ...data, routeRevision: preview.revision }
+      if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) return { ...data, routeRevision: preview.revision }
       const choice = await askRoute(preview, true, signal)
       if (choice.action === 'cancel') return null
       if (choice.action === 'local') data = { ...data, localOnly: true }
       else if (choice.action === 'omit') data = { ...data, omitSources: true }
-      else await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: choice.keys }, signal)
+      else if (choice.action === 'allow') await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: consentKeys(preview, choice) }, signal)
     } catch (error) {
       if (!signal?.aborted && !refreshed && canRefreshRoute(error)) { refreshed = true; continue }
       reportReplyFailure(id, data.replyAssistance, error)
@@ -97,13 +109,13 @@ export async function routedTask<T>(id: string, path: string, body: object, sign
         }
         throw new Error('已取消本次处理，工作稿与输入均保留。')
       }
-      if (!preview.service.external || !preview.missing.length) {
+      if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) {
         return await routingRequest<T>(path, 'POST', { ...data, routeRevision: preview.revision }, signal)
       }
       const choice = await askRoute(preview, false, signal)
       if (choice.action === 'cancel') throw new Error('已取消生成，已填写的内容没有变化。')
       if (choice.action === 'local') data = { ...data, localOnly: true }
-      else await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: choice.keys }, signal)
+      else if (choice.action === 'allow') await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: consentKeys(preview, choice) }, signal)
     } catch (error) {
       if (!signal?.aborted && !refreshed && canRefreshRoute(error)) { refreshed = true; continue }
       throw error

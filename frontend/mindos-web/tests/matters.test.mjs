@@ -48,7 +48,9 @@ function setup() {
     async updateArtifact(id,data) { calls.push(['save-document',id,clone(data)]); const artifact = state.artifacts.find(a => a.id === id); assert.equal(data.expectedRevision,artifact.revision); Object.assign(artifact,{ title:data.title,markdown:data.markdown,revision:artifact.revision+1,userEdited:true }); return clone(artifact) },
   }
   new Function('require','exports',code)(id => {
+    if (id.includes('productScope')) return { onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
     if (id === 'vue') return { ...Vue,onBeforeUnmount:fn => cleanups.push(fn) }
+    if (id.includes('services/productFiles')) return { saveProductText: async (...args) => { calls.push(['export', ...args]) } }
     if (id.includes('services/matters')) return api
     if (id.includes('shared/matters')) return helpers
     if (id.includes('useToast')) return { useToast:() => () => {} }
@@ -134,6 +136,7 @@ function setup() {
   const exports = {}, mounts = [], cleanups = [], calls = [], pushed = []
   const homeCode = await componentCode('MattersHome')
   new Function('require','exports',homeCode)(id => {
+    if (id.includes('productScope')) return { onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
     if (id === 'vue') return { ...Vue,onMounted:fn => mounts.push(fn),onBeforeUnmount:fn => cleanups.push(fn) }
     if (id === 'vue-router') return { useRouter:() => ({ push:path => pushed.push(path) }) }
     if (id.includes('services/matters')) return { listMatters:async status => { calls.push(['list',status]); return { items:[record('matter-a')] } },continueMatter:async value => { calls.push(['continue',value.id]); return value.conversationId } }
@@ -152,6 +155,7 @@ function setup() {
   const exports = {}, calls = []
   let fresh = record('matter-service','fresh-conversation'), failBind = true
   new Function('require','exports',serviceCode)(id => {
+    if (id.includes('productScope')) return { onProductScopeReset: () => () => {} }
     if (id === './api') return { createConversation:async data => { calls.push(['create-conversation',data]); return { id:'new-conversation' } } }
     if (id === './taskRouting') return { routingRequest:async (path,method = 'GET',data) => {
       calls.push([method,path,data])

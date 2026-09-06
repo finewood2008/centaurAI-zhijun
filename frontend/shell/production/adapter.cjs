@@ -29,10 +29,12 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
       if (current.accountId !== binding.accountId) throw new DesktopError('AUTHENTICATION_REQUIRED');
       const runtime = await runtimeFactory({ config: config.connectivity, consumer: client });
       if (expected !== epoch) { await runtime.close(); throw new DesktopError('STALE_GENERATION'); }
-      let session; let authorization; let closed = false;
+      let session; let authorization; let closed = false; let failureListener; let pendingFailure;
+      const lifetime = new AbortController();
       const close = async () => {
         if (closed) return;
         closed = true;
+        lifetime.abort();
         try { await authorization?.close?.(); } finally {
           try { await runtime.close(); } finally { closers.delete(close); }
         }
@@ -43,21 +45,28 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
         if (expected !== epoch) throw new DesktopError('STALE_GENERATION');
       } catch (error) { await close(); throw error instanceof DesktopError ? error : new DesktopError('TRANSPORT_UNAVAILABLE'); }
       return Object.freeze({
+        onFailure(listener) { failureListener = listener; if (pendingFailure && !closed) listener(pendingFailure); },
         async authorize() {
           if (closed || expected !== epoch) throw new DesktopError('SESSION_NOT_READY');
-          const value = await bridge.authorize({ session, subject: { accountId: current.accountId, clientId: current.clientId,
-            deviceId: binding.deviceId }, applicationId: config.connectivity.applicationId });
+          const value = await bridge.authorize({ session, signal: lifetime.signal, subject: { accountId: current.accountId, clientId: current.clientId,
+            deviceId: binding.deviceId }, applicationId: config.connectivity.applicationId,
+            onFailure(error) { if (!closed && expected === epoch) { pendingFailure = error; failureListener?.(error); } },
+          });
           if (closed || expected !== epoch) { await value?.close?.(); throw new DesktopError('STALE_GENERATION'); }
           authorization = value;
           if (!value || value.accountId !== binding.accountId || value.deviceId !== binding.deviceId
             || typeof value.request !== 'function') throw new DesktopError('ACCESS_DENIED');
-          return { accountId: value.accountId, deviceId: value.deviceId };
+          return { accountId: value.accountId, deviceId: value.deviceId, ...(value.product === true ? { product: true, workspaceId: value.workspaceId } : {}) };
         },
-        async request(request) {
+        get managesRequestQueue() { return authorization?.managesRequestQueue === true; },
+        reserveTransfer(value) { if (closed || !authorization || expected !== epoch) throw new DesktopError('SESSION_NOT_READY'); return authorization.reserveTransfer?.(value); },
+        releaseTransfer(value) { authorization?.releaseTransfer?.(value); },
+        async request(request, options) {
           if (closed || !authorization || expected !== epoch) throw new DesktopError('SESSION_NOT_READY');
           // The bridge owns business credentials. Renderer only chooses an approved operation.
           return authorization.request({ method: request.method, relative_path: request.path,
-            headers: Object.fromEntries(Object.entries(request.headers).map(([key, value]) => [key, [value]])) });
+            headers: Object.fromEntries(Object.entries(request.headers).map(([key, value]) => [key, [value]])),
+            ...(request.body === undefined ? {} : { body: request.body }) }, options);
         },
         close,
       });

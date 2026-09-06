@@ -1,3 +1,4 @@
+import type { ProductDesktop } from './product-contract';
 /** Public, credential-free desktop IPC types. Runtime validation lives in shell/runtime. */
 export type Generation = number;
 
@@ -19,8 +20,11 @@ export type PublicErrorCode =
   | 'ACCESS_DENIED'
   | 'SESSION_EXPIRED'
   | 'TRANSPORT_UNAVAILABLE'
+  | 'WRITE_OUTCOME_UNKNOWN'
   | 'REQUEST_TIMEOUT'
   | 'RESOURCE_EXHAUSTED'
+  | 'RATE_LIMITED'
+  | 'SESSION_QUOTA_EXHAUSTED'
   | 'CONTRACT_MISMATCH'
   | 'RESPONSE_TOO_LARGE'
   | 'REMOTE_ERROR'
@@ -46,9 +50,10 @@ export type Phase = 'signed_out' | 'authenticating' | 'selecting_device'
 
 export interface M0Capabilities {
   readonly materialsRead: boolean;
-  readonly streamChat: false;
-  readonly uploads: false;
-  readonly matters: false;
+  readonly streamChat: boolean;
+  readonly product: boolean;
+  readonly uploads: boolean;
+  readonly matters: boolean;
   readonly provisioning: false;
 }
 
@@ -64,12 +69,12 @@ interface SnapshotBase {
 export type DesktopSnapshot =
   | (SnapshotBase & Readonly<{
       phase: 'ready';
-      subject: Readonly<{ accountId: string; deviceId: string }>;
+      subject: Readonly<{ accountId: string; deviceId: string; workspaceId?: string }>;
       capabilities: M0Capabilities & Readonly<{ materialsRead: true }>;
     }>)
   | (SnapshotBase & Readonly<{
       phase: Exclude<Phase, 'ready'>;
-      subject: Readonly<{ accountId: string; deviceId?: string }> | null;
+      subject: Readonly<{ accountId: string; deviceId?: string; workspaceId?: string }> | null;
       capabilities: M0Capabilities & Readonly<{ materialsRead: false }>;
       error?: PublicError;
     }>);
@@ -127,6 +132,7 @@ export interface ZhijunDesktopV1 {
   connect(context: CallContext, deviceId: string): Promise<Result<DesktopSnapshot>>;
   disconnect(context: CallContext): Promise<Result<DesktopSnapshot>>;
   signOut(context: CallContext): Promise<Result<DesktopSnapshot>>;
+  readonly product: ProductDesktop;
   readonly materials: Readonly<{
     list(context: CallContext, query: MaterialsQuery): Promise<Result<MaterialsPage>>;
   }>;
@@ -135,4 +141,3 @@ export interface ZhijunDesktopV1 {
     Readonly<{ delivery: 'suppressed' | 'not_found'; remoteCancellation: 'not_supported' }>
   >>;
 }
-

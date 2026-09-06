@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import chat_imports as svc
 from .stores.chat_import_store import ChatImportStore
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun.reply_assistance import ReplyInput
 
 
@@ -85,7 +85,14 @@ def create_import(conversation_id: str, req: ImportCreate, request: Request):
     return svc.batch_view(batch, store)
 
 
-async def upload_import_file(conversation_id: str, batch_id: str, file_id: str, request: Request, file: UploadFile = File(...)):
+async def upload_import_file(conversation_id: str, batch_id: str, file_id: str, request: Request, file: UploadFile | None = File(None)):
+    import os
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.attachments import upload_import
+        from starlette.concurrency import run_in_threadpool
+        return await run_in_threadpool(upload_import, conversation_id, batch_id, file_id, request)
+    if file is None:
+        raise svc.error("FILE_REQUIRED", "请选择文件", 422)
     from .services import ingestion
     from .uploads import _receive_upload
 
@@ -153,7 +160,7 @@ def seal_import(conversation_id: str, batch_id: str, request: Request):
 
 
 def retry_file(conversation_id: str, batch_id: str, file_id: str, request: Request):
-    from .uploads import mindos_upload_resume, mindos_upload_retry
+    from zhijun_worker.attachments import resume_or_retry
     store, batch = batch_for(conversation_id, batch_id, request)
     if batch["state"] == "replying":
         raise svc.error("IMPORT_BUSY", "反馈正在生成中")
@@ -161,9 +168,9 @@ def retry_file(conversation_id: str, batch_id: str, file_id: str, request: Reque
     if not item or not item["materialId"]:
         raise svc.error("IMPORT_FILE_NOT_FOUND", "请重新选择并上传原文件", 404)
     if item["state"] == "paused":
-        mindos_upload_resume(item["materialId"], request)
+        resume_or_retry(item["materialId"], "resume", request)
     elif item["state"] in {"failed", "empty"}:
-        mindos_upload_retry(item["materialId"], request=request)
+        resume_or_retry(item["materialId"], "retry", request)
     else:
         raise svc.error("RETRY_NOT_ALLOWED", "这个文件不需要重试")
     store.update(batch_id, "queued")
@@ -171,7 +178,7 @@ def retry_file(conversation_id: str, batch_id: str, file_id: str, request: Reque
 
 
 def retry_import(conversation_id: str, batch_id: str, request: Request):
-    from .uploads import mindos_upload_resume, mindos_upload_retry
+    from zhijun_worker.attachments import resume_or_retry
 
     store, batch = batch_for(conversation_id, batch_id, request)
     if batch["state"] == "replying":
@@ -180,9 +187,9 @@ def retry_import(conversation_id: str, batch_id: str, request: Request):
         return svc.batch_view(batch, store)
     for item in svc.batch_view(batch, store)["files"]:
         if item["materialId"] and item["state"] == "paused":
-            mindos_upload_resume(item["materialId"], request)
+            resume_or_retry(item["materialId"], "resume", request)
         elif item["materialId"] and item["state"] in {"failed", "empty"}:
-            mindos_upload_retry(item["materialId"], request=request)
+            resume_or_retry(item["materialId"], "retry", request)
     store.update(batch_id, "queued")
     return svc.batch_view(store.get(batch_id), store)
 

@@ -1,3 +1,4 @@
+import { onProductScopeReset } from '../shared/productScope.ts'
 import { createConversation } from './api'
 import { routingRequest } from './taskRouting'
 
@@ -31,6 +32,7 @@ export const updateArtifact = (id: string, data: { requestId: string; expectedRe
 
 /** Called only by an explicit user action. Opening an existing matter never makes a model request. */
 const pendingConversations = new Map<string, string>()
+onProductScopeReset(() => pendingConversations.clear())
 export async function continueMatter(matter: Matter, requestId: string): Promise<string> {
   const fresh = await getMatter(matter.id)
   if (fresh.conversationId) { pendingConversations.delete(matter.id); return fresh.conversationId }

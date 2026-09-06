@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { saveProductText } from '@/services/productFiles'
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -20,23 +21,12 @@ const exporting = ref(false)
 const exportSections = ref<Section[]>([])
 const exportOpen = ref(false)
 
-function downloadJson(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 
 async function doExport(sections?: Section[]) {
   exporting.value = true
   try {
     const data = await exportOntology({ sections })
-    downloadJson(data, exportFileName())
+    await saveProductText(exportFileName(), JSON.stringify(data, null, 2), 'application/json')
     toast({ type: 'success', message: `已导出 ${data.claims.length} 条已确认理解、${data.entities.length} 个实体` })
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '导出失败' })

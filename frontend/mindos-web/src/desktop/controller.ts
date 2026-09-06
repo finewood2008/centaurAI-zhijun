@@ -35,7 +35,10 @@ export class DesktopController {
   private activeRead: CallContext | null = null
   private readonly bridge: ZhijunDesktopV1 | undefined
 
-  constructor(bridge: ZhijunDesktopV1 | undefined) {
+  private readonly options: { materials?: boolean }
+
+  constructor(bridge: ZhijunDesktopV1 | undefined, options: { materials?: boolean } = {}) {
+    this.options = options
     this.bridge = bridge
     this.state = {
       snapshot: null, hostAvailable: bridge?.protocolVersion === 1,
@@ -90,7 +93,7 @@ export class DesktopController {
     if (snapshot.phase === 'selecting_device' && (changedScope || previous?.phase !== snapshot.phase)) {
       void this.loadDevices()
     }
-    if (snapshot.phase === 'ready' && (changedScope || previous?.phase !== 'ready')) {
+    if (this.options.materials !== false && snapshot.phase === 'ready' && (changedScope || previous?.phase !== 'ready')) {
       void this.readPage()
     }
   }

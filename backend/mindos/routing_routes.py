@@ -9,7 +9,7 @@ from .stores.conversation_store import ConversationStore
 from .stores.ontology_store import OntologyStore
 from .stores.routing_store import RoutingStore
 from .stores.chat_import_store import ChatImportStore
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun.provider import build_provider, ProviderError
 from .zhijun.routing import Router, check_service, fail, prepare_chat
 from .zhijun.reply_assistance import ReplyInput
@@ -216,7 +216,7 @@ def grant(conversation_id: str, req: Grant, request: Request):
     p = r.store.get_preview(req.revision, r.cid)
     if not p:
         fail("PREVIEW_EXPIRED", "预览已过期，请重新核对")
-    r.authorize(p, req.keys)
+    r.authorize({**p, "revision": req.revision}, req.keys)
     return {"granted": req.keys}
 
 
@@ -240,6 +240,10 @@ def charter_exception(conversation_id: str, req: CharterException, request: Requ
 def revoke(conversation_id: str, req: Revoke, request: Request):
     r = router_for(conversation_id, request)
     r.store.revoke(r.scope, req.key)
+    import os
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.consent import revoke as revoke_de
+        revoke_de(req.key)
     return {"revoked": True, "notice": "已停止后续使用；无法收回已经发送的内容"}
 
 

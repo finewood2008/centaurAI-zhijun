@@ -247,7 +247,7 @@ def _utc_iso(value: datetime | None) -> str | None:
 
 
 def get_charter(request: Request = None):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     from .stores.charter_draft_store import CharterDraftStore
     scope = _device_scope_of(request)
     history = GrowthStore.instance().charter_history(scope)
@@ -256,7 +256,7 @@ def get_charter(request: Request = None):
 
 def create_charter(req: CharterCreate, request: Request = None):
     try:
-        from .uploads import _device_scope_of
+        from .domain_scope import _device_scope_of
         current = GrowthStore.instance().current_charter(_device_scope_of(request))
         from .stores.charter_draft_store import FIELDS
         payload = req.model_dump()
@@ -299,7 +299,7 @@ def create_decision(req: DecisionCreate, *, charter_basis=_UNSPECIFIED_CHARTER, 
 
 
 def create_decision_endpoint(req: DecisionCreate, request: Request):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return create_decision(req, scope=_device_scope_of(request))
 
 

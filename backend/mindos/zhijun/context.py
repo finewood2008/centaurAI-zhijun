@@ -70,6 +70,12 @@ def _fit(lines: list[str], budget: int) -> list[str]:
 def _material_evidence(user_text: str, limit: int = 4, device_scope: str = "global") -> list:
     if os.environ.get("ZHIJUN_MATERIAL_EVIDENCE", "1").strip().lower() in ("0", "false", "no"):
         return []
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        if not user_text.strip():
+            return []
+        from types import SimpleNamespace
+        from zhijun_worker.capabilities import require
+        return [SimpleNamespace(**item) for item in require().call("materials.evidence", {"query": user_text[:1000], "limit": min(limit, 12)})]
     try:
         from .. import qa as _qa  # 延迟导入：拉起 embedder / vector_store，缺模型时直接跳过
 

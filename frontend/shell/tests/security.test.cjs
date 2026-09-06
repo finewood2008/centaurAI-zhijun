@@ -9,7 +9,8 @@ const { ENTRY_URL, CSP, isEntryUrl, createInvokeHandler, createAssetHandler } = 
 
 test('IPC checks the exact window, main frame, origin, and operation before dispatch', async () => {
   const calls = []
-  const contents = { id: 7, isDestroyed: () => false, mainFrame: { url: ENTRY_URL } }
+  let focused = false
+  const contents = { id: 7, isDestroyed: () => false, isFocused: () => focused, mainFrame: { url: ENTRY_URL } }
   const runtime = { snapshot: () => ({ generation: 3 }), invoke: (...args) => { calls.push(args); return { ok: true } } }
   const handler = createInvokeHandler(runtime, () => contents)
   const event = { sender: contents, senderFrame: contents.mainFrame }
@@ -30,6 +31,10 @@ test('IPC checks the exact window, main frame, origin, and operation before disp
   assert.equal((await handler(event, 'fetch', ['http://127.0.0.1:8618'])).error.code, 'INVALID_REQUEST')
   assert.equal((await handler(event, 'getSnapshot', {})).error.code, 'INVALID_REQUEST')
   assert.equal(calls.length, 1)
+  assert.equal((await handler(event, 'product.requestMicrophone', [{}])).error.code, 'ACCESS_DENIED')
+  focused = true
+  assert.equal((await handler(event, 'product.requestMicrophone', [{}])).ok, true)
+  assert.deepEqual(calls[1], ['product.requestMicrophone', [{}], 7])
   assert.equal(isEntryUrl(ENTRY_URL + '#materials'), true)
   assert.equal(isEntryUrl('invalid'), false)
 })
@@ -48,6 +53,7 @@ test('asset protocol serves only build files, rejects traversal/symlinks and set
   assert.equal(entry.status, 200)
   assert.equal(entry.headers.get('Content-Security-Policy'), CSP)
   assert.equal(entry.headers.get('X-Content-Type-Options'), 'nosniff')
+  assert.equal(entry.headers.get('Permissions-Policy'), 'microphone=(self), camera=(), display-capture=()')
   assert.match(await entry.text(), /synthetic/)
   assert.equal((await serve(new Request('zhijun://desktop/assets/entry-a.js'))).status, 200)
   for (const url of ['zhijun://evil/desktop.html', 'file:///desktop.html',
@@ -69,11 +75,18 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
     removeListener: (channel, listener) => { assert.equal(callbacks.get(channel), listener); removed++; callbacks.delete(channel) },
   }
   const script = await readFile(path.join(__dirname, '../preload.cjs'), 'utf8')
-  vm.runInNewContext(script, { require(name) {
+  const navigator = { userActivation: { isActive: false } }
+  vm.runInNewContext(script, { navigator, require(name) {
     assert.equal(name, 'electron')
     return { contextBridge: { exposeInMainWorld: (name, value) => { assert.equal(name, 'zhijunDesktop'); api = value } }, ipcRenderer: fakeIpc }
   } })
-  assert.deepEqual(Object.keys(api).sort(), ['protocolVersion', 'getSnapshot', 'subscribe', 'beginSignIn', 'signInWithPassword', 'listDevices', 'connect', 'disconnect', 'signOut', 'materials', 'cancelRead'].sort())
+  assert.deepEqual(Object.keys(api).sort(), ['protocolVersion', 'getSnapshot', 'subscribe', 'beginSignIn', 'signInWithPassword', 'listDevices', 'connect', 'disconnect', 'signOut', 'materials', 'product', 'cancelRead'].sort())
+  assert.deepEqual(Object.keys(api.product).sort(), ['start', 'poll', 'cancel', 'uploadCreate', 'uploadChunk', 'uploadComplete', 'uploadStatus', 'uploadCancel', 'blobRead', 'save', 'openMedia', 'closeMedia', 'requestMicrophone'].sort())
+  assert.equal(Object.isFrozen(api.product), true)
+  const microphone = await api.product.requestMicrophone({ callId: 'microphone-denied-1', expectedGeneration: 3 })
+  assert.equal(microphone.error.code, 'OPERATION_NOT_ALLOWED')
+  assert.equal(microphone.generation, 3)
+  assert.equal(invocations.length, 0)
   const received = []
   const unsubscribe = api.subscribe((...args) => received.push(args))
   const snapshot = { phase: 'signed_out' }
@@ -84,4 +97,13 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
   assert.equal(invocations[0][0], 'zhijun:invoke')
   assert.equal(invocations[0][1], 'materials.list')
   assert.equal(invocations[0][2].length, 2)
+  navigator.userActivation.isActive = true
+  const context = { callId: 'microphone-active-1', expectedGeneration: 3 }
+  await api.product.requestMicrophone(context)
+  assert.equal(invocations[1][1], 'product.requestMicrophone')
+  assert.equal(invocations[1][2].length, 1)
+  assert.equal(invocations[1][2][0], context)
+  navigator.userActivation.isActive = false
+  assert.equal((await api.product.requestMicrophone(context)).error.code, 'OPERATION_NOT_ALLOWED')
+  assert.equal(invocations.length, 2)
 })

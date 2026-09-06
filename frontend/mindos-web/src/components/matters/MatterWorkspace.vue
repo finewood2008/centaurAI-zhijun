@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { saveProductText } from '@/services/productFiles'
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
@@ -149,9 +150,8 @@ async function copyDocument() {
   catch { error.value = '复制未完成，可以在正文中选中复制，或下载 Markdown。' }
 }
 function download() {
-  const url = URL.createObjectURL(new Blob([markdown.value], { type: 'text/markdown;charset=utf-8' }))
-  const link = document.createElement('a'); link.href = url; link.download = cleanFilename(documentTitle.value); link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  void saveProductText(cleanFilename(documentTitle.value), markdown.value, 'text/markdown;charset=utf-8')
+    .catch(e => toast({ type: 'error', message: e instanceof Error ? e.message : '保存失败' }))
 }
 function saveFromReply(message: { id: string; content: string }) { pendingMessage.value = message; kind.value = 'freeform'; void show() }
 defineExpose({ saveFromReply, show })

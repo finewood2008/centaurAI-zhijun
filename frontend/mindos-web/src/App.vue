@@ -6,7 +6,9 @@ import RoutingConsent from '@/components/conversation/RoutingConsent.vue'
 
 <template>
   <ToastHost>
-    <MainLayout />
+    <MainLayout>
+      <template v-if="$slots.topbar" #topbar="controls"><slot name="topbar" v-bind="controls" /></template>
+    </MainLayout>
     <RoutingConsent />
   </ToastHost>
 </template>

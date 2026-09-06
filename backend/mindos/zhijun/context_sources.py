@@ -221,6 +221,18 @@ def material_candidates(router, queries):
         return []
     from ..chat_imports import read_ref, require_material
     results = []
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require
+        for query in queries[:3]:
+            for hit in require().call("materials.evidence", {"query": query[:1000], "limit": 12}):
+                if hit.get("source_type") != "material" or not hit.get("material_id"):
+                    continue
+                record = require_material(hit["material_id"], router.scope)
+                record, snapshot, body = read_ref({"materialId": record["materialId"], "version": record["versionNumber"]}, router.scope)
+                item = _material_item(router, record, snapshot, body, hit.get("snippet", ""), float(hit.get("score", 0)))
+                if item:
+                    results.append(item)
+        return sorted(results, key=lambda item: (-item["score"], item["ref"]["id"]))[:80]
     qa = sys.modules.get("mindos.qa")
     encoder = getattr(sys.modules.get("embedder"), "_text_model", None)
     if qa is not None and encoder is not None:

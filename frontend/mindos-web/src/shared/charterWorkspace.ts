@@ -1,3 +1,4 @@
+import { saveProductText } from '../services/productFiles.ts'
 import type { CharterClause, CharterWorkspace, GrowthCharter } from '../services/api'
 
 export const charterKinds: Record<CharterClause['kind'], string> = {
@@ -33,11 +34,8 @@ export function renderCharterClauses(clauses: CharterClause[]): string {
   }
   return [...sections].map(([section, texts]) => `## ${section}\n\n${texts.join('\n\n')}`).join('\n\n')
 }
-export function downloadCharterMarkdown(text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }))
-  const anchor = document.createElement('a')
-  anchor.href = url; anchor.download = '人生章程.md'; anchor.click()
-  URL.revokeObjectURL(url)
+export function downloadCharterMarkdown(text: string): Promise<void> {
+  return saveProductText('人生章程.md', text, 'text/markdown;charset=utf-8')
 }
 export function cloneClauses(clauses: CharterClause[]): CharterClause[] {
   return JSON.parse(JSON.stringify(clauses))

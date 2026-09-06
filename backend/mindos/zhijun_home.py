@@ -415,7 +415,7 @@ def generate_home_brief(expected_hash: str, *, store: OntologyStore | None = Non
 
 
 def home_overview(request: Request = None):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return build_home_overview(scope=_device_scope_of(request))
 
 

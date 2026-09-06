@@ -1,3 +1,4 @@
+import { transportRequest } from './transport'
 // SSE 流式客户端：POST + fetch + ReadableStream。
 //
 // 不能用 EventSource——它只支持 GET 且无法带 X-Requested-By / X-MindOS-Session，
@@ -24,7 +25,7 @@ export async function streamPost(
   const headers = buildHeaders()
   headers.set('Content-Type', 'application/json')
   headers.set('Accept', 'text/event-stream')
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await transportRequest(`${API_BASE}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body ?? {}),

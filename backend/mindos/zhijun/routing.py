@@ -467,7 +467,23 @@ class Router:
                    "charterUnresolved": charter["unresolved"],
                    "excluded": excluded or [], "request": asdict(request),
                    "reason": "按任务与来源授权；没有本地意图分类调用" if provider.external else "本地处理；复杂理解能力可能有限"}
-        return self.store.preview(payload)
+        import os
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            from zhijun_worker.consent import receipt
+            from zhijun_worker.capabilities import CapabilityError
+            payload["deConsentRequired"] = False
+            if provider.external:
+                try:
+                    receipt(payload, provider)
+                except CapabilityError as exc:
+                    if exc.code != "MODEL_EGRESS_CONSENT_REQUIRED":
+                        raise
+                    payload["deConsentRequired"] = True
+        result = self.store.preview(payload)
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            from zhijun_worker.capabilities import require
+            require().call("domain.preview.register", {"preview": result, "configurationRevision": provider.configuration_revision})
+        return result
 
     def authorize(self, preview, keys):
         if self.mode != preview["mode"]:
@@ -481,8 +497,13 @@ class Router:
             if s["blocked"] or fresh[s["key"]]["blocked"] or fresh[s["key"]]["version"] != s["version"]:
                 fail("SOURCE_CHANGED", "来源已变化或不可恢复，请重新预览")
         service = preview["service"]["id"]
-        if service_info(self.provider())["id"] != service:
+        provider = self.provider()
+        if service_info(provider)["id"] != service:
             fail("ONLINE_SERVICE_CHANGED", "接收服务已变化")
+        import os
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            from zhijun_worker.consent import issue
+            issue(preview, keys, provider)
         files = [s["materialRef"] for s in selected if s["kind"] == "material"]
         if files:
             ChatImportStore(self.convs).grant(files, service)

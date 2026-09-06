@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 from datetime import datetime, timezone
@@ -37,6 +38,17 @@ def require_conversation(conversation_id: str, scope: str, store: ChatImportStor
 
 
 def require_material(material_id: str, scope: str) -> dict:
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require, CapabilityError
+        try:
+            record = require().call("materials.get", {"materialId": material_id})
+        except CapabilityError as exc:
+            if exc.status not in {404, 409, 410}:
+                raise
+            raise error("ATTACHMENT_UNAVAILABLE", "文件不可用或不属于当前工作区", 404) from None
+        if not record or record.get("status") == "deleted" or record.get("recycled"):
+            raise error("ATTACHMENT_UNAVAILABLE", "文件不可用或不属于当前工作区", 404)
+        return record
     from .services import ingestion
 
     record = ingestion.status_of(material_id, device_scope=scope)
@@ -49,6 +61,8 @@ def service_info(provider=None) -> dict:
     from .zhijun.provider import build_provider
 
     provider = provider or build_provider()
+    if hasattr(provider, "service_id"):
+        return {"id": provider.service_id, "name": provider.name, "model": provider.model, "external": provider.external}
     external = bool(provider.external)
     base = getattr(provider, "_base_url", "")
     base = base if isinstance(base, str) else ""
@@ -61,6 +75,9 @@ def service_info(provider=None) -> dict:
 
 
 def local_provider(*, num_ctx: int = 4096, timeout: float | None = None):
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.model import CapabilityProvider
+        return CapabilityProvider(local_only=True)
     from .runtime_config_provider import get_provider
     from .zhijun.provider import OllamaProvider
 
@@ -70,6 +87,17 @@ def local_provider(*, num_ctx: int = 4096, timeout: float | None = None):
 
 
 def read_ref(ref: dict, scope: str) -> tuple[dict, dict, str]:
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require, CapabilityError
+        try:
+            value = require().call("materials.read_ref", {"materialId": ref["materialId"], "version": ref["version"]})
+        except CapabilityError as exc:
+            if exc.status not in {404, 409, 410}:
+                raise
+            raise error("ATTACHMENT_VERSION_CHANGED" if exc.status == 409 else "ATTACHMENT_UNAVAILABLE", "文件版本已变化或正文不可用", exc.status) from None
+        if value["record"]["versionNumber"] != ref["version"]:
+            raise error("ATTACHMENT_VERSION_CHANGED", "文件版本已变化")
+        return value["record"], value["snapshot"], value["text"]
     from .material_snapshot_saga import MaterialSnapshotSaga
     from .stores.material_pipeline_store import MaterialPipelineStore
 
@@ -101,6 +129,9 @@ def unique_refs(refs: list[dict]) -> list[dict]:
 
 
 def find_duplicate(store: ChatImportStore, scope: str, digest: str, size: int) -> dict | None:
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require
+        return require().call("materials.find_duplicate", {"sha256": digest, "size": size})
     from .services import ingestion
 
     known = store.duplicate(scope, digest)
@@ -207,6 +238,22 @@ def file_view(item: dict, scope: str) -> dict:
             "version": item["version"], "state": item["state"], "error": item["error"]}
     if not item["material_id"]:
         return view
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require, CapabilityError
+        try:
+            value = require().call("materials.processing", {"materialId": item["material_id"]})
+        except CapabilityError as exc:
+            if exc.status not in {404, 409, 410}:
+                raise
+            return {**view, "state": "unavailable", "error": "文件已删除或版本不可用"}
+        record = value["record"]
+        if value.get("jobState") == "paused":
+            return {**view, "state": "paused", "error": "读取任务已暂停"}
+        if record["versionNumber"] != item["version"]:
+            return {**view, "state": "unavailable", "error": "文件版本已变化"}
+        status = record["status"]
+        state = ("ready" if value.get("hasText") else "empty") if status == "available" else {"failed": "failed", "processing": "reading"}.get(status, "saved")
+        return {**view, "state": state, "error": None if state not in {"empty", "failed"} else "文件暂无可用正文"}
     try:
         from .services import ingestion
         record = require_material(item["material_id"], scope)
@@ -329,7 +376,16 @@ def start_worker():
                 for batch in store.batches():
                     if _stop.is_set():
                         return
-                    process_batch(batch, store)
+                    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+                        if batch["state"] not in {"queued", "waiting"}:
+                            continue
+                        from zhijun_worker.background import activated, finish
+                        with activated(batch["id"]):
+                            process_batch(batch, store)
+                            if store.get(batch["id"])["state"] not in {"queued", "waiting", "replying"}:
+                                finish(batch["id"])
+                    else:
+                        process_batch(batch, store)
             except Exception as exc:
                 logger.warning("Chat import worker: %s", type(exc).__name__)
 

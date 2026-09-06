@@ -9,7 +9,7 @@ from .chat_imports import require_conversation, service_info
 from .stores.alignment_store import AlignmentStore
 from .stores.conversation_store import ConversationStore
 from .stores.ontology_store import OntologyStore, OntologyConflictError, OntologyNotFoundError, OntologyError
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun import alignment
 from .zhijun.provider import build_provider, ProviderError
 

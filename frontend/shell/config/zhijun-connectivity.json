@@ -1,6 +1,6 @@
 {
-  "applicationId": "mindos-person-data-pc",
-  "purpose": "person-data.read",
+  "applicationId": "zhijun-desktop",
+  "purpose": "zhijun.workspace",
   "requestedScopes": ["remote.p2p"],
   "gatewayHost": "gateway.remote.qeeshu.com",
   "iceHost": "gateway.remote.qeeshu.com",

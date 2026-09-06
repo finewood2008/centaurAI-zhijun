@@ -38,6 +38,13 @@ async function openApp(t, mode, productConfig) {
 
 test('default app boots independently, keeps real access closed, and exposes no Node privileges', async t => {
   const { application, page } = await openApp(t, '')
+  // A real click traverses the isolated preload, but this disconnected fixture
+  // cannot reach any OS microphone API. Replace those APIs before the click.
+  await application.evaluate(({ systemPreferences }) => {
+    globalThis.__microphoneCalls = 0
+    systemPreferences.getMediaAccessStatus = () => { globalThis.__microphoneCalls++; throw Error('unexpected microphone probe') }
+    systemPreferences.askForMediaAccess = async () => { globalThis.__microphoneCalls++; throw Error('unexpected microphone prompt') }
+  })
   await expect(page.getByTestId('environment')).toContainText('正式连接尚未配置')
   await page.getByTestId('sign-in').click()
   await expect(page.getByTestId('error')).toBeVisible()
@@ -54,6 +61,23 @@ test('default app boots independently, keeps real access closed, and exposes no 
   assert.equal(JSON.stringify(result.invalid).includes('synthetic-secret'), false)
   assert.equal(result.node, 'undefined'); assert.equal(result.process, 'undefined')
   assert.equal(result.broadFetch, 'undefined')
+  await page.evaluate(async () => {
+    const snapshot = await window.zhijunDesktop.getSnapshot()
+    const button = document.createElement('button')
+    button.id = 'test-explicit-microphone'
+    button.textContent = '权限隔离测试'
+    button.addEventListener('click', () => {
+      window.__microphoneResult = window.zhijunDesktop.product.requestMicrophone({
+        callId: 'e2e-microphone-click', expectedGeneration: snapshot.data.generation,
+      })
+    })
+    document.body.appendChild(button)
+  })
+  await page.locator('#test-explicit-microphone').click()
+  const microphone = await page.evaluate(() => window.__microphoneResult)
+  assert.equal(microphone.error.code, 'CONFIGURATION_REQUIRED', 'explicit activation reaches only the unconfigured-runtime gate')
+  assert.equal(await application.evaluate(() => globalThis.__microphoneCalls), 0)
+  await page.locator('#test-explicit-microphone').evaluate(button => button.remove())
   const preferences = await application.evaluate(({ BrowserWindow }) => {
     const p = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences()
     return { sandbox: p.sandbox, contextIsolation: p.contextIsolation, nodeIntegration: p.nodeIntegration, webSecurity: p.webSecurity }
@@ -61,31 +85,27 @@ test('default app boots independently, keeps real access closed, and exposes no 
   assert.deepEqual(preferences, { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true })
 })
 
-test('simulation uses the real preload/runtime/policy: pagination, filters, switch and sign-out', async t => {
+test('v1 simulation keeps full product gated while real preload policy, device switching and sign-out remain isolated', async t => {
   const { page } = await openApp(t, 'simulation')
   await expect(page.getByTestId('environment')).toContainText('模拟环境 · 合成数据')
   await page.getByTestId('sign-in').click()
   await page.getByTestId('connect-synthetic-box-a').click()
-  const rows = page.getByTestId('materials-table').locator('tbody tr')
-  await expect(rows).toHaveCount(20)
-  await expect(rows.first()).toContainText('模拟资料 001')
-  await page.getByTestId('next-page').click()
-  await expect(rows.first()).toContainText('模拟资料 021')
-  await page.getByTestId('next-page').click()
-  await expect(rows).toHaveCount(7)
-  await expect(page.getByTestId('next-page')).toBeDisabled()
-  await page.getByTestId('status-filter').selectOption('queued')
-  await expect(rows).toHaveCount(10)
-  for (const text of await rows.allTextContents()) assert.ok(text.includes('排队中'))
+  await expect(page.getByText('盒子已连接，知君工作区尚未就绪。请重新连接以加载完整产品服务。')).toBeVisible()
+  await expect(page.getByTestId('materials-table')).toHaveCount(0)
+  await expect(page.locator('.main-layout')).toHaveCount(0)
   await expect(page.locator('body')).not.toContainText('模拟私有目录')
   const safe = await page.evaluate(async () => {
     const api = window.zhijunDesktop
     const state = await api.getSnapshot()
     const context = () => ({ callId: crypto.randomUUID(), expectedGeneration: state.data.generation })
-    return { page: await api.materials.list(context(), { limit: 20, offset: 0 }),
+    return { snapshot: state.data, product: await api.product.start(context(), { version: 1, requestId: 'synthetic-action', operationId: 'get_api_mindos_zhijun_home', params: {}, query: {}, body: null }),
+      page: await api.materials.list(context(), { limit: 20, offset: 0 }),
       invalid: await api.materials.list(context(), { limit: 51, offset: 0 }),
       injected: await api.materials.list(context(), { limit: 20, offset: 0, path: '/api/private' }) }
   })
+  assert.equal(safe.snapshot.capabilities.product, false)
+  assert.equal(safe.snapshot.subject.workspaceId, undefined)
+  assert.equal(safe.product.error.code, 'SESSION_NOT_READY')
   assert.equal(safe.page.ok, true)
   assert.deepEqual(Object.keys(safe.page.data.items[0]).sort(), ['createdAt', 'fileName', 'fileType', 'materialId', 'status'])
   assert.equal(safe.invalid.error.code, 'INVALID_REQUEST')
@@ -93,7 +113,8 @@ test('simulation uses the real preload/runtime/policy: pagination, filters, swit
   await page.getByTestId('disconnect').click()
   await expect(page.getByTestId('materials-table')).toHaveCount(0)
   await page.getByTestId('connect-synthetic-box-b').click()
-  await expect(rows).toHaveCount(20)
+  await expect(page.getByTestId('account')).toContainText('synthetic-box-b')
+  await expect(page.getByTestId('disconnect')).toBeVisible()
   const second = await page.evaluate(async () => {
     const api = window.zhijunDesktop; const s = await api.getSnapshot()
     return api.materials.list({ callId: crypto.randomUUID(), expectedGeneration: s.data.generation }, { limit: 20, offset: 0 })

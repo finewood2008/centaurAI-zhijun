@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const router = await readFile(new URL('../src/router/index.ts', import.meta.url), 'utf8')
+const router = (await Promise.all(['routes.ts', 'guards.ts'].map(file => readFile(new URL('../src/router/' + file, import.meta.url), 'utf8')))).join('\n')
 const sidebar = await readFile(new URL('../src/layouts/AppSidebar.vue', import.meta.url), 'utf8')
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 const sse = await readFile(new URL('../src/services/sse.ts', import.meta.url), 'utf8')

@@ -91,7 +91,9 @@ test('closing production authorization discards a late material response', async
 test('old Agent manifest and native failures have safe actionable errors without raw exception leakage', async () => {
   for (const [native, expected] of [['REQUEST_TARGET_NOT_ALLOWED', 'BUSINESS_BRIDGE_REQUIRED'],
     ['SDK_CONNECTION_CLOSED', 'SESSION_EXPIRED'], ['SDK_REQUEST_TIMEOUT', 'REQUEST_TIMEOUT'],
-    ['SESSION_RESOURCE_EXHAUSTED', 'RESOURCE_EXHAUSTED'], ['SDK_RESPONSE_TOO_LARGE', 'RESPONSE_TOO_LARGE'],
+    ['SESSION_RESOURCE_EXHAUSTED', 'SESSION_QUOTA_EXHAUSTED'], ['SDK_REQUEST_LIMIT_REACHED', 'SESSION_QUOTA_EXHAUSTED'],
+    ['REQUEST_REPLAYED', 'SESSION_QUOTA_EXHAUSTED'], ['TOO_MANY_REQUESTS', 'RATE_LIMITED'], ['SDK_TOO_MANY_REQUESTS', 'RATE_LIMITED'],
+    ['SDK_RESPONSE_TOO_LARGE', 'RESPONSE_TOO_LARGE'],
     ['unknown', 'TRANSPORT_UNAVAILABLE']]) {
     await assert.rejects(createBusinessBridge({ clock }).authorize({ applicationId, subject,
       session: { request: async () => { throw Object.assign(new Error('synthetic-private-error'), { code: native }); } } }), error => {

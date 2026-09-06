@@ -16,7 +16,7 @@ from .stores.conversation_store import ConversationError, ConversationNotFoundEr
 from .zhijun import deliberate, persona
 from .zhijun.turn import TurnError, run_turn
 from .chat_import_routes import MaterialRef
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun.reply_assistance import ReplyInput
 
 _PREFIX = "/api/mindos/conversations"
@@ -290,7 +290,7 @@ def _provenance_from_receipt(receipt: dict | None) -> dict | None:
 def get_conversation(conversation_id: str, request: Request = None):
     store = _store()
     from .chat_imports import require_conversation
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     require_conversation(conversation_id, _device_scope_of(request))
     conversation = store.get_conversation(conversation_id)
     if conversation is None:
@@ -344,7 +344,7 @@ def _encode(name: str, data: dict) -> bytes:
 def post_message(conversation_id: str, req: MessageCreate, request: Request = None):
     from .zhijun.provider import ProviderError
     from .chat_imports import require_conversation
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     store = require_conversation(conversation_id, _device_scope_of(request))
     refs = [r.model_dump() for r in req.materialRefs]
     known = {(r["materialId"], r["version"]) for r in store.refs(conversation_id)}
@@ -400,7 +400,7 @@ def get_draft(conversation_id: str):
 
 def confirm_draft(conversation_id: str, req: DraftConfirm, request: Request = None):
     from .chat_imports import require_conversation
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     require_conversation(conversation_id, _device_scope_of(request))
     overrides = req.model_dump()
     if overrides.get("reviewAt") is not None:
