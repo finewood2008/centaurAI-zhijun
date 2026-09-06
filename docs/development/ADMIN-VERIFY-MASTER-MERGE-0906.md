@@ -30,7 +30,7 @@
 - [x] 解决 master 合并冲突并复核语义。
 - [x] 必要测试与构建。
 - [x] 推送集成分支并创建远端合并请求 #11。
-- [ ] 推送并核对远端 master。
+- [x] 通过 #11 合并并核对远端 master（2026-09-07 确认）。
 - [x] 更新验收结果与遗留事项。
 - [ ] 任务回收修复生效后的真实本体页面与重连复验。
 
@@ -74,10 +74,23 @@ Admin 远端 master `2ca211e` 已完整包含应用登记提交 `44a0950`，两�
 
 两个来源在隔离工作区完成三方冲突解决，保留 master 的 PC 宿主、窄 API 与分页权限语义，接入 live 的受控媒体、资料、上传、删除协调及工作区能力。合并提交 **`770da8f95f91b5c06a105044601f2964e1973725`** 已推送到 **`merge/zhijun-master-0906`**，本地 `master` 已在隔离 worktree 快进至该提交；原开发工作区与其未提交修改保持原样。
 
-直接更新 master 被服务端保护规则拒绝：“权限被拒绝：不允许推送该分支”。使用云效支持的推送评审流程成功创建 [合并请求 #11](https://codeup.aliyun.com/667637d76d5f7b05cc5d9ed7/nexusaos/nexusaos-data-engine/change/11)，评审 head 与已验证的集成分支完全一致。远端 master 当前仍为 **`236e100`**；尚未宣称合并完成，待桌面恢复后完成正常网页合并流程。
+直接更新 master 曾被服务端保护规则拒绝：“权限被拒绝：不允许推送该分支”。使用云效支持的推送评审流程创建 [合并请求 #11](https://codeup.aliyun.com/667637d76d5f7b05cc5d9ed7/nexusaos/nexusaos-data-engine/change/11)，评审 head 与已验证的集成分支完全一致。**2026-09-07 拉取确认 #11 已合入远端 master，合并提交为 `c88e4415c2e9bedcb1398b0e7712c332a29305e8`，父提交为原 master `236e100` 与集成提交 `770da8f`。** 两个最初指定的不同来源均已进入远端 master。
 
 合并验证：核心后端 **377 passed**；广域后端 **2329 passed + 26 subtests**；运行包/数据根 **9 passed**；Web/Desktop 构建、26 个相关前端测试文件、10 个 Chromium 场景、宿主 `test:connectivity` 与 `desktop:verify` 均通过。
 
 广域后端剩余 16 个失败及 1 个收集错误全部因仓库外三份正式合同/夹具缺失；15 个跳过为 Windows 用例及已退役旧索引机制。没有伪造文件或改弱安全校验令全套变绿。完整来源 SHA、冲突决策与限制见 Data Engine 分支中的 `docs/development/MASTER-MERGE-0906.md`。
 
 本次未把 Data Engine 合并候选自动部署到家庭盒子，也未完成正式签名、公证安装包与 Dock 外观验收。
+
+## 2026-09-07：MR #12 冲突修复
+
+用户随后要求解决 `dev/zhijun-business-bridge-0906` → `master` 的 [MR #12](https://codeup.aliyun.com/667637d76d5f7b05cc5d9ed7/nexusaos/nexusaos-data-engine/change/12)。该来源与此前 `-live` 分支不同，包含额外的 QR/蓝牙设备认领增量。
+
+在独立 `.worktrees/zhijun-mr12-0907` 中将目标 `c88e441` 合入来源 `a74d06e`，解决 5 处文本冲突及自动合并生成的重复 Bridge DTO。后端保持最新 master 完整内容，前端保留认领增量，并修复候选累计统计/上限与取消、重扫、登出后的迟到响应竞态。
+
+- 冲突解决提交：`6242cdf851c033cce0dd0986ba6a67829679e507`；验证记录提交及最终来源 head：`f27eb05d95e45262ccd5915b4d39f2de307f2734`。
+- 两次均正常快进推送到原来源分支，远端 `refs/changes/12/head` 与其一致；来源已完整包含最新目标。
+- 验证：后端 216 passed + 6 subtests；umask 002 的桥接测试 55 passed；完整前端连接套件、Web/Desktop 构建、打包边界（63/105）、transport/desktop 合同和 Chromium 扫码/蓝牙合成场景通过。新增 7 项生命周期回归接入维护脚本。
+- 云效新打开页面已实际确认 **版本3、待合并、无代码冲突、允许合并，合并按钮可用**。此结果证明冲突已消除；本记录不将它写成 #12 已合入 master。
+
+完整冲突决策与用例见 Data Engine 来源分支 `docs/development/MR12-CONFLICT-0907.md`。原始脏开发工作区未被覆盖，没有真实摄像头/BLE 认领、代码签名或盒端部署。
