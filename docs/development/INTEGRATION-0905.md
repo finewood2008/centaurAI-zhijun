@@ -1,6 +1,6 @@
 # 知君 Electron SDK 与 data-engine 集成方案
 
-更新：2026-09-06。当前方案已由早期只读调研收敛为 v2 完整产品接入实现；**盒端Agent/DE/worker/catalog已正式匹配部署；正式Consumer/SDK/P2P/UI验收仍待完成，Admin生产发布路径未提供**。本文不把源码完成、合成测试或健康检查写成端到端交付。
+更新：2026-09-06。当前方案已由早期只读调研收敛为 v2 完整产品接入实现；**Admin 已上线，真实 Consumer/SDK/Direct、家庭 AMD 工作区 context 和资料页面验证通过**。本体页面任务回收修复已通过 Shell 回归，修复后 UI 复验及全功能、正式安装包验收仍待完成。见[最新上线与合并记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)。本文不把源码完成、合成测试或健康检查写成端到端交付。
 
 配套：[架构图](ARCHITECTURE-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域规格](DOMAIN-INTEGRATION-0905.md)、[执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[真实验收](REAL-ACCEPTANCE-0906.md)。
 
@@ -105,12 +105,12 @@ Gateway 自动为 worker 注入 `ZHIJUN_WORKSPACE_ID/SUBJECT_FILE/KEY_FILE/SOCKE
 发布顺序与责任：
 
 1. 固定知君、SDK sidecar、Agent、DE、Admin、catalog 的版本与 SHA，检查运行版本漂移并准备代码/配置回退；数据升级另做一致性备份。
-2. Admin 维护方通过真实发布路径登记新 application/purpose 的 Connectivity target/policy；不能加入 legacy TARGETS 或放宽 read app。**该生产发布路径目前未提供，属于正式授权联调前置。**
+2. Admin 维护方通过真实发布路径登记新 application/purpose 的 Connectivity target/policy；不能加入 legacy TARGETS 或放宽 read app。**用户已完成发布，master `2ca211e` 包含登记增量，真实新应用票据已获准。**
 3. 部署支持 v2/pathTemplate 的 Agent 二进制，再装载仅新增新应用的 manifest；旧应用段不改。本次已完成，实际manifest保留原2个应用并仅新增zhijun-desktop。
 4. 部署 DE Gateway/capabilities 与固定版本知君 worker/catalog，配置独立数据/密钥/运行根；检查 UDS、进程锁、能力认证和空库启动。本次已按clean heads匹配部署，live8618健康200、未签名v2 context401；来源强制enforce、debug=0。此步骤与此前FD单文件热修分开记录。
 5. 桌面选择新应用并通过同一 SDK 通道 context 主体/capability 校验，才开放完整产品。运行真实逐功能与负向验收后记录部署 SHA，再交付安装包。
 
-Admin登记是正式授权联调前置，不阻止先部署受保护盒端组件；本次已完成第3、4步，第2、5步仍待完成。任一步未就绪应 fail closed；不能临时开 local-debug、透传任意 header/path 或退回旧 app。回退旧代码前须确认新 schema/写入兼容；不以旧备份静默覆盖升级后用户数据。
+Admin登记是正式授权联调前置，不阻止先部署受保护盒端组件；目前登记、盒端匹配部署与真实连接、资料页读取均已通过，第5步的完整业务矩阵仍未完成。任一步未就绪应 fail closed；不能临时开 local-debug、透传任意 header/path 或退回旧 app。回退旧代码前须确认新 schema/写入兼容；不以旧备份静默覆盖升级后用户数据。
 
 ## 6. 验证与剩余工作
 
@@ -124,12 +124,12 @@ Admin登记是正式授权联调前置，不阻止先部署受保护盒端组件
 
 PDF/DOCX/OCR盒端解析分别46/48/110字符通过；受限voice API返回40字符、0资料、2个指定短语均匹配。测试语音为合成WAV，实际麦克风/正式UI未测。内联snapshot SHA、DeletionStore连接释放及有界纠错修复后，最新资料相关范围189项通过；hardware-candidate5为5/5，safe material正文82、摘要43字符、实体2、关系0。gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。以上仅为隔离真盒合成主体/输入，非正式Consumer/UI；首次失败与修复过程保留在审核报告。
 
-shell最终117项Node、vue-tsc通过，独立15项配额验证包含在117内，既有4项隔离Electron E2E单独记录。生产Admin入口仍缺，完整v2正式SDK/P2P和UI验收pending。详见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)与[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
+该阶段 shell 117项Node、vue-tsc通过，独立15项配额验证包含在117内，既有4项隔离Electron E2E单独记录。此为 Admin 上线前的合成验证基线；后续真实连接通过及 Shell 128/128 结果见下节。详见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)与[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
 
-正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+正式盒端初次匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；后续 Admin 上线与 Agent `644b1c2` 部署、真实连接结果见[最新回执](ADMIN-VERIFY-MASTER-MERGE-0906.md)。
 
 ### 连接失败的定位顺序
 
 先区分账号请求、票据签发和原生连接阶段。新版保留 SDK 原票据校验，并恢复其捕获前的安全 Consumer 错误；账号服务拒绝应用/权限会明确显示 `APPLICATION_AUTHORIZATION_DENIED`，不再统一显示设备网络错误。该错误仍需检查 Admin 应用登记及请求权限，不能仅凭它断言某个后端版本未部署。盒端 HTTP 健康只证明服务运行，不证明账号票据和 P2P 链路已通过。登录后连接失败仍保留导航，内容区维持未连接提示。见[专项修复与验收](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
 
-本次真实账号连接家庭 AMD 盒子已复现该明确授权拒绝，主导航切换及实际 Reload 正常。Admin 登记增量 `44a0950` 已推送，生产发布入口仍缺；不能用旧只读应用身份代替新工作区身份。最新补充验证为 shell 126/126、前端 63/63、Web/Desktop 构建及两类导航回归通过。
+上线前真实账号连接家庭 AMD 盒子复现过该明确授权拒绝，主导航切换及实际 Reload 正常。Admin 登记增量 `44a0950` 现已合入 `2ca211e` 并上线，真实票据、Direct、v2 context 与资料页面已通过。Agent Owner 绑定修复 `644b1c2` 已部署，未改变同一授权快照校验。后续本体并发读取误报容量的本地任务回收漏洞已修复，Shell 128/128 通过；活跃任务、传输限额及未知写不重放规则不变。桌面窗口不可读导致该修复的 UI 复验待续。前端上轮 63/63、Web/Desktop 构建及两类导航回归结果保持有效。

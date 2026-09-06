@@ -1,6 +1,6 @@
 # 知君 Electron / 盒端完整产品架构
 
-更新：2026-09-06。文件名保留 0905 以延续集成基线。本文描述当前源码；**v2 盒端Agent/DE/worker/catalog已正式匹配部署，完整Consumer/SDK/P2P/UI验收仍待完成**；Admin尚未生产发布，其发布路径未提供。不能把本地测试、170 项操作清单或菜单可见视为全功能验收。
+更新：2026-09-06。文件名保留 0905 以延续集成基线。**Admin 已上线；真实账号经 SDK/Direct 连接家庭 AMD 盒子、v2 context 与资料页面已通过。** 本体页的本地任务回收漏洞已修复，修复后 UI 复验因桌面窗口不可读待续；全功能与正式安装包验收仍未完成。最新证据见[上线与合并记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)。不能把本地测试、170 项操作清单或菜单可见视为全功能验收。
 
 配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
 
@@ -76,7 +76,7 @@ Gateway 每盒最多 4 个 worker，每工作区最多 4 个运行任务、8 个
 
 canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效租约下向 `/v1/events` 发 HMAC 请求。来源事件处理保持幂等并在成功后 ACK，撤销/删除后使受影响理解、投影与授权失效。调度 tick 是固定内部事件，不是 renderer 可自由提交的业务操作。
 
-部署配置、路径权限和顺序见[集成方案第 5 节](INTEGRATION-0905.md#5-部署配置与顺序)。正式发布需固定 Admin、Agent、DE、worker、catalog、桌面和 sidecar 版本；当前盒端匹配发布已固定为知君 `735e341`（代码 `58dac31`）、DE `015c659`、OS `5f5f4c9`；Admin发布输入缺失，正式Consumer/SDK/P2P/UI验收待完成。
+部署配置、路径权限和顺序见[集成方案第 5 节](INTEGRATION-0905.md#5-部署配置与顺序)。正式发布需固定 Admin、Agent、DE、worker、catalog、桌面和 sidecar 版本；盒端 worker/catalog 仍为知君 `735e341`（代码 `58dac31`），DE `015c659`；Agent 已更新为 `644b1c2`，保留受信任快照校验并为新应用绑定会话 Owner。Admin master `2ca211e` 已包含独立应用登记。真实连接与资料页通过，不代表所有业务页面或正式安装包已验收。
 
 ## 6. 关键源码索引
 
@@ -88,9 +88,9 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 
 ## 7. 硬件复测的当前边界
 
-隔离真盒PDF/DOCX/OCR分别提取46/48/110字符，voice API已通过；小文档内联快照SHA、DeletionStore连接释放及有界纠错修复后，hardware-candidate5完整5/5：safe material正文82、摘要43字符、实体2、关系0。gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。以上均为合成主体/输入，不代表正式Consumer/UI/SDK验收完成；生产Admin发布入口仍缺。源码修复与配额证据见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，硬件现场结果见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
+隔离真盒PDF/DOCX/OCR分别提取46/48/110字符，voice API已通过；小文档内联快照SHA、DeletionStore连接释放及有界纠错修复后，hardware-candidate5完整5/5：safe material正文82、摘要43字符、实体2、关系0。gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。以上历史结果均为合成主体/输入，不代表全功能正式 UI 验收完成。源码修复与配额证据见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，硬件现场结果见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
 
-正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+正式盒端初次匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；后续 Admin 上线、Agent Owner 修复与真实桌面结果见[最新回执](ADMIN-VERIFY-MASTER-MERGE-0906.md)。任务历史回收现在与准入统一计入正在创建的任务，活跃任务配额不变。
 
 ### 连接失败时的应用框架
 

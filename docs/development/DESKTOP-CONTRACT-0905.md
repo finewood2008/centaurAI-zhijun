@@ -1,6 +1,6 @@
 # 知君桌面产品接口与远程传输合同
 
-更新：2026-09-06。当前公开类型以 [desktop-contract.ts](../../frontend/shared/desktop-contract.ts)、[product-contract.ts](../../frontend/shared/product-contract.ts) 为准。文件名沿用0905，内容已覆盖完整产品v2接入。**新应用正式盒子/UI验收仍待完成，Admin生产发布路径未提供。**
+更新：2026-09-06。当前公开类型以 [desktop-contract.ts](../../frontend/shared/desktop-contract.ts)、[product-contract.ts](../../frontend/shared/product-contract.ts) 为准。文件名沿用0905，内容已覆盖完整产品v2接入。**Admin 已上线，真实新应用账号、票据、Direct、工作区 context 与资料页面通过；完整业务和正式安装包验收仍待完成。** 见[最新验收记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)。
 
 配套：[架构](ARCHITECTURE-0905.md)、[集成方案](INTEGRATION-0905.md)、[领域规格](DOMAIN-INTEGRATION-0905.md)、[机器合同](contracts/zhijun-workspace-v2.json)、[真实验收](REAL-ACCEPTANCE-0906.md)。
 
@@ -65,11 +65,11 @@ Agent新应用：1MiB请求/响应、8并发、120rpm、1GiB会话预算；Core�
 
 正式验收需覆盖原15页真实操作与所有170项清单映射，尤其聊天长流/断流/取消、文件导入版本/保护/释放、模型授权拒绝与来源失效、媒体保存、语音权限、跨账号/client/device/session、重启和预算失败。安装包还需平台产物、签名/公证/权限声明验证；BLE独立可选。局部测试数量不可相加成完整产品“通过数”。
 
-当前Admin发布前置与逐功能状态以[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)和[真实验收记录](REAL-ACCEPTANCE-0906.md)为准。连接FD热修已单独恢复现有服务，见[故障报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)，此为历史独立热修。后续Agent/DE/worker/catalog已正式匹配部署，仍不代表Admin登记、桌面安装包或正式Consumer/SDK/P2P/UI验收通过。
+历史逐功能状态见[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)和[真实验收记录](REAL-ACCEPTANCE-0906.md)；Admin 上线后的状态以[最新回执](ADMIN-VERIFY-MASTER-MERGE-0906.md)为准。连接FD热修已单独恢复现有服务，见[故障报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)，此为历史独立热修。Agent/DE/worker/catalog 匹配部署后，本轮另修复新应用会话 Owner 绑定并完成真实连接，仍不代表正式安装包或所有业务功能通过。
 
 最新本地验证：shell117项Node、vue-tsc通过；独立15项配额用例包含在117内。200MiB/400块经真实JS模块和内存严格Agent配额，在243秒虚拟时间完成，滚动60秒最多101请求；尚未做真实SDK/P2P大文件验证。隔离盒端hardware-candidate5为5/5（safe material正文82、摘要43字符、实体2、关系0），gateway-candidate6为10/10（60请求/21个completed操作，含知识CRUD/confirm/search/purge）。均为合成主体/输入，非正式Consumer/UI；不能按170项catalog或隔离硬件结果关闭完整UI验收。证据见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
 
-正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+正式盒端初次匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；后续 Agent `644b1c2` 的备份、哈希与实际桌面连接结果见[最新回执](ADMIN-VERIFY-MASTER-MERGE-0906.md)。
 
 ## 连接错误、导航与图标补充（0906）
 
@@ -79,4 +79,4 @@ Agent新应用：1MiB请求/响应、8并发、120rpm、1GiB会话预算；Core�
 
 开发 Dock 与打包图标使用原 `frontend/mindos-web/logo.jpg` 半人马图像，生成资产固定在 shell/assets；页面内“知君”品牌保持原产品样式。修复步骤与实际核验见[专项计划](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
 
-本次补充验证更新为 shell 126/126、前端 63/63、Web/Desktop 构建及浏览器/隔离 Electron 导航回归通过。实际账号登录、家庭 AMD 盒子在线列表、失败态导航和重载已通过；实际连接在正式 Admin 票据应用策略处返回 `APPLICATION_AUTHORIZATION_DENIED`，完整工作区验收仍待发布入口与登记修复。
+上线前补充验证为 shell 126/126、前端 63/63、Web/Desktop 构建及浏览器/隔离 Electron 导航回归通过。Admin 发布后新应用授权拒绝已解除，真实账号通过 Direct 进入 AMD 工作区并读取资料页面。本体并发读取进一步暴露本地终态任务回收遗漏，现按 `jobs.size + pendingStarts` 清理已完成历史，与准入口径一致；取消未确认和结果未知的写入仍占位。Shell 最新 **128/128** 通过，实际本体页面重启复验因桌面窗口不可读待续；所有限额及公开类型均未变。

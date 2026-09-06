@@ -23,7 +23,10 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     if (terminal && !terminalReported) { terminalReported = true; onTerminal(terminal); }
   }
   function trimJobs() {
-    for (const [id, job] of jobs) if (TERMINAL.includes(job.state) && jobs.size >= LIMITS.jobs) jobs.delete(id);
+    // Pending starts reserve a place before the remote acknowledgement arrives.
+    // Retire terminal history against the same total used by admission, so a
+    // page's concurrent reads are not blocked by completed jobs kept for lookup.
+    for (const [id, job] of jobs) if (TERMINAL.includes(job.state) && jobs.size + pendingStarts >= LIMITS.jobs) jobs.delete(id);
   }
   async function wire(request, mutation = false, reservation) {
     const managed = session.managesRequestQueue === true;

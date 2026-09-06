@@ -76,6 +76,67 @@ test('domain HTTP 409 and JSON/SSE bytes remain intact without replaying writes'
   manager.close();
 });
 
+test('eleven completed jobs admit three genuinely concurrent reads without increasing the twelve active-job limit', async t => {
+  let dispatched = 0, holdStarts = false;
+  const finishes = [];
+  const manager = make(req => {
+    if (req.path.endsWith('/operations')) {
+      const result = { id: (++dispatched).toString(16).padStart(32, '0'), state: 'queued', cursor: 0 };
+      return holdStarts ? new Promise(resolve => finishes.push(() => resolve(result))) : result;
+    }
+    const jobId = req.path.split('/operations/')[1].split('?')[0];
+    return jobPage([headerEvent(), bytesEvent('{}'), { seq: 3, kind: 'end' }], { id: jobId });
+  });
+  t.after(() => manager.close());
+  for (let i = 0; i < 11; i++) {
+    const job = await manager.invoke('start', request(undefined, { requestId: `history-${i}-read` }));
+    await manager.invoke('poll', { id: job.id, after: 0, waitMs: 0 });
+  }
+  holdStarts = true;
+  const simultaneous = Promise.allSettled(Array.from({ length: 3 }, (_, i) =>
+    manager.invoke('start', request(undefined, { requestId: `ontology-${i}-read` }))));
+  await tick();
+  assert.equal(finishes.length, 3, 'terminal history must yield space while the earlier starts are still pending');
+  assert.equal(dispatched, 14);
+  finishes.splice(0).forEach(finish => finish());
+  const results = await simultaneous;
+  assert.deepEqual(results.map(result => result.status), ['fulfilled', 'fulfilled', 'fulfilled']);
+  holdStarts = false;
+  // Three newly admitted jobs are still active. Only nine more may start.
+  for (let i = 0; i < 9; i++) await manager.invoke('start', request(undefined, { requestId: `active-${i}-read` }));
+  const before = dispatched;
+  await assert.rejects(manager.invoke('start', request(undefined, { requestId: 'active-over-limit' })), { code: 'RESOURCE_EXHAUSTED' });
+  assert.equal(dispatched, before, 'genuine active capacity rejects before transport dispatch');
+});
+
+test('requested cancellation and an unknown cancel outcome do not free an active job or replay its mutation', async t => {
+  let dispatched = 0, cancelCalls = 0;
+  const manager = make(req => {
+    if (req.path.endsWith('/cancel')) {
+      cancelCalls++;
+      if (cancelCalls === 2) throw new DesktopError('TRANSPORT_UNAVAILABLE');
+      const jobId = req.path.split('/operations/')[1].split('/')[0];
+      return { id: jobId, state: cancelCalls === 1 ? 'running' : 'cancelled', cancelRequested: true };
+    }
+    return { id: (++dispatched).toString(16).padStart(32, '0'), state: 'queued', cursor: 0 };
+  });
+  t.after(() => manager.close());
+  let first;
+  for (let i = 0; i < 12; i++) {
+    const job = await manager.invoke('start', request('post_api_mindos_zhijun_onboarding', { requestId: `active-write-${i}`, body: {} }));
+    first ??= job;
+  }
+  const pendingCancel = await manager.invoke('cancel', { id: first.id, requestId: 'cancel-running' });
+  assert.equal(pendingCancel.state, 'running');
+  await assert.rejects(manager.invoke('start', request(undefined, { requestId: 'after-cancel-request' })), { code: 'RESOURCE_EXHAUSTED' });
+  await assert.rejects(manager.invoke('cancel', { id: first.id, requestId: 'cancel-unknown' }), { code: 'WRITE_OUTCOME_UNKNOWN' });
+  await assert.rejects(manager.invoke('start', request(undefined, { requestId: 'after-cancel-unknown' })), { code: 'RESOURCE_EXHAUSTED' });
+  assert.equal(dispatched, 12); assert.equal(cancelCalls, 2, 'unknown cancellation is never replayed');
+  assert.equal((await manager.invoke('cancel', { id: first.id, requestId: 'cancel-confirmed' })).state, 'cancelled');
+  await manager.invoke('start', request(undefined, { requestId: 'after-confirmed-cancel' }));
+  assert.equal(dispatched, 13, 'confirmed terminal state can yield one place');
+});
+
 test('poll rejects credential-bearing headers, unbounded data, invalid base64 and conflicting event order', async () => {
   for (const events of [
     [headerEvent(), { seq: 2, kind: 'chunk', data: '%%%=' }],
