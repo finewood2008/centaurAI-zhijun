@@ -1,8 +1,10 @@
 # 知君自动配置与真机验收
 
+> **完整产品v2后续状态（2026-09-06）：** 本文保留早期M0/v1阶段证据与任务语义；当前15页/170项受控操作、独立UDS worker、DE Gateway及能力适配已形成实现与本地回归；隔离真盒hardware-candidate5五项、gateway-candidate6十项已通过；均为合成主体/输入，非正式Consumer/UI。OS `5f5f4c9`、Admin `44a0950`及知君 `58dac31`已提交推送，DE完整增量 `015c659`已提交推送，DE FD热修 `132b97d`已单独部署；完整v2部署和正式UI/SDK验收仍pending，Admin生产发布路径未提供。新目标是 `zhijun-desktop / zhijun.workspace`，本文旧 `mindos-person-data-pc / person-data.read` 参数仅用于历史只读合同。最新计划见[FULL-PRODUCT-INTEGRATION](FULL-PRODUCT-INTEGRATION-0906.md)，复核见[Gateway审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)；170项清单不是170项UI实测。
+
 日期：2026-09-06。自动配置起点：`689bb11`；D03修复起点：`0550383`。
 
-## 计划与验收标准
+## v1阶段计划与验收标准（历史证据保留）
 
 - [x] 核查 Admin、Agent、data-engine 三端登记及 SDK 产物，区分目标应用 ID 和登录客户端 ID。
 - [x] 将受信服务地址、PC 资料应用绑定及当前平台 sidecar 自动写入本地配置；固定哈希，不写入密码或令牌。
@@ -20,7 +22,7 @@
 
 依赖：现有 Consumer 账号及授权设备、SDK 平台产物、系统钥匙串，以及 Agent → data-engine 可信业务身份桥。真实登录必须由用户在知君窗口输入；不读取别的应用的登录态。验收通过必须包含已授权资料读取，只有网络可达、原生进程或 UI 启动不能关闭 M0-R。
 
-## 参数来源
+## 参数来源（v1只读阶段，不作为v2新应用参数）
 
 `applicationId` 是 SDK 访问的盒端目标应用；`clientId` 是知君登录时独立创建的客户端身份。接入已登记的 PC 资料服务可使用 `mindos-person-data-pc`，不因此共用原 PC 应用的登录凭据。之前文档将独立客户端身份进一步推导为必须新建目标 applicationId，现予纠正。
 
@@ -88,7 +90,7 @@ rtk proxy node scripts/verify-electron-sidecar-native.mjs --manifest release/ele
 
 首次D03本地结果（历史）：宿主73项、Electron界面4项、DE相关101项及Agent全套/race通过；Desktop构建和4段Mermaid通过。Linux AMD64/ARM64 Agent部署输入已构建，12项文件哈希与ELF架构核对一致，重复运行构建器拒绝覆盖。OS `0a004c9`、DE `f6b1089` 已推送对应D03分支；该阶段未执行远程部署或读取真实资料；后续部署结果如下。
 
-## 家中盒端部署增量与当前状态
+## 家中盒端v1部署增量与当时状态
 
 2026-09-06 10:57:23 CST 已完成正式部署：Agent `0a004c9` active、Gateway connected、授权快照新鲜；DE 保留并发新发布 `6b549ad`，运行文件对应 `dev/zhijun-business-bridge-0906-live` / `c16dc17be81240285820b9e86076877911d153c4`。DE 保持 debug=0；health 200，无签名 context/materials 401，伪造格式及错误签名 401；两个服务 NRestarts=0。实际 release、并发发布处理、权限修复、6文件哈希和回退步骤见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
 
@@ -97,3 +99,13 @@ rtk proxy node scripts/verify-electron-sidecar-native.mjs --manifest release/ele
 用户已完成新版登录并提供连接家中AMD盒、0条资料的截图。随后主代理通过CUA检查真实 `zhijun://desktop/desktop.html` 窗口，点击刷新后无错误仍0条；断开后回选盒页且资料区消失；再次选择AMD盒后连接就绪并返回0条。此为真实SDK/context/空资料UI链路和一次断开重连证据。**`M0-R=false`、`realDeviceValidated=false`**：尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵。新 scope 合法空页不证明历史资料迁移或非空资料读取。
 
 新可复现部署输入位于忽略目录 `data/desktop/bridge-release-0906-live/`，12 项哈希、ELF 架构及6运行文件比对通过，manifest SHA-256 为 `ae24b1f7b11242caaecfae153f3b83c7cca441c9d631d3d7d34c6641c7e4de25`。新包的 `manifest.deployed=false` 表示该包本身未执行安装；现场已部署的是经合并核对的同内容运行文件，应用清单仅补 context，未整包覆盖。
+
+## 完整产品v2与FD热修后续状态
+
+OS `5f5f4c9`与Admin `44a0950`已提交推送；Gateway完整166项本地回归、8项审核修复及consent/取消/idle worker增量复验已完成。上述结果均不填入本记录的真实用户通过项目。隔离硬件脚本最终通过，逐项结果为：PDF46字符、DOCX48字符、OCR110字符；voice API40字符、0资料、两个指定短语均匹配。最终hardware-candidate5为5/5，safe material正文82、摘要43字符、实体2、关系0；gateway-candidate6为10/10，60请求/21个completed操作，知识CRUD/confirm/search/purge通过。均为合成主体/输入，非正式Consumer/UI；首次导入/FD/evidence_invalid失败与后续修复保留于审核报告。完整v2部署和正式UI/SDK验收仍等待Admin生产发布入口及后续匹配部署。
+
+DE `132b97d`只修复connectivity.db连接泄漏并已单独部署；新PID3144495四次30秒样本总FD52/55/52/52，connectivity FD0/0/0/0，HTTP200，NRestarts0，见[热修报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)。该线上恢复不改变原M0-R未完整验收，也不代表新领域/大文件/模型/语音已通过。完整业务状态统一看[执行计划](FULL-PRODUCT-INTEGRATION-0906.md)和[完整验收清单](FULL-PRODUCT-ACCEPTANCE-0906.md)。
+
+### 配额复验与硬件证据分层
+
+shell最终117项Node与vue-tsc通过，独立15项配额验证已包含在117内。真实JS模块+内存严格Agent配额+虚拟时钟下，200MiB/400块在243秒虚拟时间完成，滚动60秒最多101请求；这不是实际SDK/P2P吞吐或时延证据。资料相关最新189项回归包含后续有界纠错范围，既有172项是历史批次，均不与上述硬件结果相加为UI通过数。实际麦克风、正式模型授权及Consumer/UI/SDK流程仍需补验；详见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。

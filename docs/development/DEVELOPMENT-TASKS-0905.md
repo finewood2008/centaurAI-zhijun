@@ -1,5 +1,7 @@
 # 知君 SDK / data-engine 集成开发任务清单
 
+> **完整产品v2后续状态（2026-09-06）：** 本文保留早期M0/v1阶段证据与任务语义；当前15页/170项受控操作、独立UDS worker、DE Gateway及能力适配已形成实现与本地回归；隔离真盒hardware-candidate5五项、gateway-candidate6十项已通过；均为合成主体/输入，非正式Consumer/UI。OS `5f5f4c9`、Admin `44a0950`及知君 `58dac31`已提交推送，DE完整增量 `015c659`已提交推送，DE FD热修 `132b97d`已单独部署；完整v2部署和正式UI/SDK验收仍pending，Admin生产发布路径未提供。新目标是 `zhijun-desktop / zhijun.workspace`，本文旧 `mindos-person-data-pc / person-data.read` 参数仅用于历史只读合同。最新计划见[FULL-PRODUCT-INTEGRATION](FULL-PRODUCT-INTEGRATION-0906.md)，复核见[Gateway审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)；170项清单不是170项UI实测。
+
 日期：2026-09-06（文件名沿用 0905 集成基线）。规划代码基线：知君 `140dd34`，产品源 `22dc9a3`。任务清单最初仅作规划；2026-09-06 已实施首批 M0-L，实际起点 `ee8cd96`。**独立桌面本地合同和模拟流程已通过，正式 Consumer/SDK 客户端及三端 D03 逐请求 Ed25519 桥已编码、通过本地测试并部署家中盒子；真实盒子 M0-R 尚未完成。** 当前状态见第3节及各任务交付差额，不用既有产品回归或模拟结果代替真实业务集成。
 
 任务依据：[架构](ARCHITECTURE-0905.md)、[集成方案](INTEGRATION-0905.md)、[桌面接口合同](DESKTOP-CONTRACT-0905.md)、[领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[D03 业务桥 v1](BUSINESS-BRIDGE-0906.md)。发生冲突时先修订合同再实施，不由单个任务私自改变身份、部署或传输协议。
@@ -44,7 +46,7 @@
 
 M0-L/M0-R 是对既有 M0 的验收分层，不是两套产品实现。发布负责人记录实际包含的能力与合同版本；每个平台单独验收。
 
-### 2026-09-06 实施状态与证据边界
+### 2026-09-06 M0任务状态与后续v2引导
 
 | 任务 / 里程碑 | 当前状态 | 已交付与尚缺内容 |
 | --- | --- | --- |
@@ -52,13 +54,13 @@ M0-L/M0-R 是对既有 M0 的验收分层，不是两套产品实现。发布负
 | BASE-01、BASE-05 | 本地通过待外部验收（子交付） | 开发版本/哈希审计、隔离目录、合成 adapter、正式凭据存储及 macOS 存储检查已建立；固定部署产物和完整真机环境仍待验 |
 | BASE-03、BASE-04；SERV-01/02/03 | 本地通过待外部验收 | 三端 D03 v1 签发/验签、主体绑定、重放拒绝、资料范围及有界投影已实现；家中盒端已部署且正式负向检查通过；真实SDK空页及一次断开/重连已验，非空资料/跨主体矩阵未验，正式验收不关闭 |
 | DESK-08 | 实施中 | 有界 close、退出抢占、凭据/刷新失效及原生 adapter 清理已编码；真实连接两轮后的 native SDK/sidecar 回收未验 |
-| DESK-16–23；SERV-04–20；CONN-01–18 | 未开始 | 全域业务迁移、流/上传和发布继续按依赖推进 |
+| DESK-16–23；SERV-04–20；CONN-01–18 | 按v2执行计划追踪（混合状态） | 原产品全域transport、worker、任务/流/上传已本地实现回归；新分页/增强业务幂等/清除、正式发布与BLE等不能整组标完成，详见FULL-PRODUCT计划与领域规格 |
 | DESK-15 | 实施中 / 真机前置检查部分通过 | 网络、macOS 存储、原生 sidecar、真实 Consumer 登录和两台在线授权设备列表已验证；家中盒端已部署、新版 main 已启动；真实登录/context/空页/刷新和一次断开重连通过，完整矩阵待验 |
 | BASE-02；DESK-04/05/06 | 本地通过待外部验收（客户端子交付） | 自动配置既有 PC 资料目标，知君 clientId 独立；真实登录/设备列表已由 CUA 验证，真实刷新/撤销和签名发布待验 |
 | DESK-07 | 本地通过待外部验收 | 固定 SDK/sidecar 装配、同会话 context 握手及 D03 严格绑定已实现；真实 Direct 空资料读取及一次重连已验，非空资料及完整矩阵待验 |
 | M0-R、M1、M2、R | 未验收 | 已有家中盒端部署及正式负向证据；已有真实 Direct 空页及一次断开重连证据；缺非空资料、第二轮退出登录闭环、跨主体矩阵或安装包验收证据 |
 
-实际路径以[桌面明细](tasks/DESKTOP-TASKS-0905.md)映射为准，开发输入见 [integration-release-baseline.json](integration-release-baseline.json)。当前宿主使用 `frontend/shell/runtime/`，前端使用 `src/desktop/` 单页，原设计中的多级 electron 目录和 desktop router 未照搬。
+实际路径以[桌面明细](tasks/DESKTOP-TASKS-0905.md)映射为准，开发输入见 [integration-release-baseline.json](integration-release-baseline.json)。当前宿主使用 `frontend/shell/runtime/`；前端已由早期 `src/desktop/` 单页扩展为复用原15页的独立hash router，最新布局以v2执行计划为准。
 
 L1 为策略/调度/状态机/controller 单元与合同测试；L2 为真实 Electron 的真实 preload/main/页面搭配显式模拟 adapter。早期 M0-L 合流验证为 shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个 desktop controller 子测试）、L2 3 项及 Web/Desktop 双构建通过。本轮宿主 73 项、OS 全套 Go 测试与 race 检查及 Linux ARM64 构建、DE 101 项均通过。L3 已取得真实 Consumer 登录和两台在线授权设备列表的局部证据，真实 Direct 空资料页及一次断开重连已验，非空资料及跨主体场景未验；L4 安装包未验，不能把 L2 的 Electron 进程视作 L3 闭环。
 

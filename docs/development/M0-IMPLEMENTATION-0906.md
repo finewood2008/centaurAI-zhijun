@@ -1,5 +1,7 @@
 # 桌面 M0 实施记录
 
+> **完整产品v2后续状态（2026-09-06）：** 本文保留早期M0/v1阶段证据与任务语义；当前15页/170项受控操作、独立UDS worker、DE Gateway及能力适配已形成实现与本地回归；隔离真盒hardware-candidate5五项、gateway-candidate6十项已通过；均为合成主体/输入，非正式Consumer/UI。OS `5f5f4c9`、Admin `44a0950`及知君 `58dac31`已提交推送，DE完整增量 `015c659`已提交推送，DE FD热修 `132b97d`已单独部署；完整v2部署和正式UI/SDK验收仍pending，Admin生产发布路径未提供。新目标是 `zhijun-desktop / zhijun.workspace`，本文旧 `mindos-person-data-pc / person-data.read` 参数仅用于历史只读合同。最新计划见[FULL-PRODUCT-INTEGRATION](FULL-PRODUCT-INTEGRATION-0906.md)，复核见[Gateway审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)；170项清单不是170项UI实测。
+
 日期：2026-09-06。起始提交：`ee8cd96`；分支：`dev/first-integrate-check-0905`。
 
 > 后续状态已更新：本文的“当前交付”和“下一步”均为 `3d9679b` 阶段历史。正式认证及 D03 家中盒端部署已在后续完成；新版桌面真实登录/context/空资料页及一次断开/重连已通过，非空资料与跨主体验收仍未完成，`M0-R=false`。最新事实见[盒端部署记录](BOX-DEPLOYMENT-0906.md)，不回写本阶段历史测试数量。

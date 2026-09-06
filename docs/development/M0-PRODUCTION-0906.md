@@ -1,10 +1,12 @@
 # 正式认证与 SDK 接入实施记录
 
+> **完整产品v2后续状态（2026-09-06）：** 本文保留早期M0/v1阶段证据与任务语义；当前15页/170项受控操作、独立UDS worker、DE Gateway及能力适配已形成实现与本地回归；隔离真盒hardware-candidate5五项、gateway-candidate6十项已通过；均为合成主体/输入，非正式Consumer/UI。OS `5f5f4c9`、Admin `44a0950`及知君 `58dac31`已提交推送，DE完整增量 `015c659`已提交推送，DE FD热修 `132b97d`已单独部署；完整v2部署和正式UI/SDK验收仍pending，Admin生产发布路径未提供。新目标是 `zhijun-desktop / zhijun.workspace`，本文旧 `mindos-person-data-pc / person-data.read` 参数仅用于历史只读合同。最新计划见[FULL-PRODUCT-INTEGRATION](FULL-PRODUCT-INTEGRATION-0906.md)，复核见[Gateway审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)；170项清单不是170项UI实测。
+
 日期：2026-09-06；起点 `3d9679b`，当前开发分支不变。
 
-**当前验收边界（2026-09-06）：** 家中盒子 Agent 与 DE 已部署 D03，Agent active / Gateway connected / 授权快照新鲜，DE 保持 `MINDOS_LOCAL_WEB_DEBUG_ACCESS=0`；正式无签名及伪造桥请求均拒绝。新版桌面已真实登录并连接家中 AMD 盒；同一 SDK 会话的 context 握手、0条资料响应及刷新已通过UI链路，一次断开后资料区清空并重连通过。尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵，`M0-R=false`、`realDeviceValidated=false`；空页不代表历史资料迁移。部署、版本、负向检查及回退证据统一见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
+**v1阶段验收边界（2026-09-06）：** 家中盒子 Agent 与 DE 已部署 D03，Agent active / Gateway connected / 授权快照新鲜，DE 保持 `MINDOS_LOCAL_WEB_DEBUG_ACCESS=0`；正式无签名及伪造桥请求均拒绝。新版桌面已真实登录并连接家中 AMD 盒；同一 SDK 会话的 context 握手、0条资料响应及刷新已通过UI链路，一次断开后资料区清空并重连通过。尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵，`M0-R=false`、`realDeviceValidated=false`；空页不代表历史资料迁移。部署、版本、负向检查及回退证据统一见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
 
-**当前服务基线：** 家中盒子保留并发新发布 `6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0`，D03 在独立分支 `dev/zhijun-business-bridge-0906-live` 的 `c16dc17be81240285820b9e86076877911d153c4` 上合流；已部署的 6 个运行文件与该交付一致。原 `ec2854e` + dirty 调研事实及其上传协议描述保留为历史，不能当成现运行基线。新发布的权限、分页、错误边界和 Pocket 改动已保留；这不表示知君领域或上传四层合同已完成集成。
+**v1部署时服务基线（后续另有132b97d热修）：** 家中盒子保留并发新发布 `6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0`，D03 在独立分支 `dev/zhijun-business-bridge-0906-live` 的 `c16dc17be81240285820b9e86076877911d153c4` 上合流；已部署的 6 个运行文件与该交付一致。原 `ec2854e` + dirty 调研事实及其上传协议描述保留为历史，不能当成现运行基线。新发布的权限、分页、错误边界和 Pocket 改动已保留；这不表示知君领域或上传四层合同已完成集成。
 
 ## 实施计划
 
@@ -25,7 +27,7 @@
 4. SDK包固定哈希并仅 main import；native host 验证 sidecar 哈希和固定参数，业务桥验证失败时不进入ready，不用P2P ticket替代data-engine业务票据。
 5. 登录页/模拟路径、权限与错误边界、Web/Desktop构建、隔离测试通过；真实网络/账号/设备结果单独记录，不以合成fixture代替。
 
-## 外部输入
+## 外部输入（v1阶段历史）
 
 后续已根据用户要求自动核定 Consumer 和目标应用参数：`mindos-person-data-pc` / `person-data.read` / `remote.p2p`，知君使用自身 clientId、密钥和存储。`applicationId` 是盒端目标应用，不要求因知君 UI 品牌新建一项登记。账号密码在应用内输入；D03可信业务桥已编码且部署家中盒子，真实SDK context及空资料页已通过UI链路，完整M0-R仍待落实。最新证据见[自动配置与真机验收](REAL-ACCEPTANCE-0906.md)。
 

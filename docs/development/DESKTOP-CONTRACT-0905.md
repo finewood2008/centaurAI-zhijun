@@ -1,168 +1,70 @@
-# 知君桌面集成接口规格 v0.1
+# 知君桌面产品接口与远程传输合同
 
-更新：2026-09-06。设计基线：知君 `94239a1`（产品源 `22dc9a3`）；M0-L 实施起点 `ee8cd96`。配套：[架构](ARCHITECTURE-0905.md)、[集成分析](INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[领域迁移](DOMAIN-INTEGRATION-0905.md)。
+更新：2026-09-06。当前公开类型以 [desktop-contract.ts](../../frontend/shared/desktop-contract.ts)、[product-contract.ts](../../frontend/shared/product-contract.ts) 为准。文件名沿用0905，内容已覆盖完整产品v2接入。**新应用正式盒子/UI验收仍待完成，Admin生产发布路径未提供。**
 
-**当前验收边界（2026-09-06）：** 家中盒子 Agent 与 DE 已部署 D03，Agent active / Gateway connected / 授权快照新鲜，DE 保持 `MINDOS_LOCAL_WEB_DEBUG_ACCESS=0`；正式无签名及伪造桥请求均拒绝。新版桌面已真实登录并连接家中 AMD 盒；同一 SDK 会话的 context 握手、0条资料响应及刷新已通过UI链路，一次断开后资料区清空并重连通过。尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵，`M0-R=false`、`realDeviceValidated=false`；空页不代表历史资料迁移。部署、版本、负向检查及回退证据统一见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
+配套：[架构](ARCHITECTURE-0905.md)、[集成方案](INTEGRATION-0905.md)、[领域规格](DOMAIN-INTEGRATION-0905.md)、[机器合同](contracts/zhijun-workspace-v2.json)、[真实验收](REAL-ACCEPTANCE-0906.md)。
 
-**当前服务基线：** 家中盒子保留并发新发布 `6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0`，D03 在独立分支 `dev/zhijun-business-bridge-0906-live` 的 `c16dc17be81240285820b9e86076877911d153c4` 上合流；已部署的 6 个运行文件与该交付一致。原 `ec2854e` + dirty 调研事实及其上传协议描述保留为历史，不能当成现运行基线。新发布的权限、分页、错误边界和 Pocket 改动已保留；这不表示知君领域或上传四层合同已完成集成。
+## 1. 范围与版本
 
-**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；后续领域/流/上传跨团队协议仍待冻结，已新增正式密码登录/签名/共享刷新与SDK装配代码，目标PC应用参数已核定，D03 v1 三端已实现且家中盒端已部署、M0-R未验收；最新结果见[正式接入记录](M0-PRODUCTION-0906.md)。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
+正式桌面现装配原15个页面组件、20条页面路由和2条重定向，使用原产品导航、独立hash router和单一连接provider。共享catalog为170项：95领域、54资料、21模型；包含原JSON CRUD、聊天SSE、附件/版本、下载/预览、设置和语音转写端口。范围覆盖不表示每项业务均已实测成功。
 
-## 原规格编制计划与验收（历史）
+保留旧M0资料只读接口和v1应用兼容。新完整产品使用 `zhijun-desktop / zhijun.workspace`，不能把 `mindos-person-data-pc / person-data.read` 升权。preload仍是 `protocolVersion:1`，产品操作envelope `version:1`，签名桥是 `v2`；三者层次不同。
 
-- [x] 核对已有架构、SDK request/close 及 data-engine 资料列表/策略源码。
-- [x] 写明 M0 范围、宿主接口、连接生命周期、资料投影、错误/取消与跨仓合同。
-- [x] 输出可类型检查的接口样例及逐包交付/验收，明确未决输入。
-- [x] 更新主文档导航，交叉审核引用/类型/图示；检查结果见第10节。
+SDK1.2.0提供整响应request/close。本文的start/poll/cancel/uploads/blob是知君主进程与盒端Gateway合同，不是SDK已经导出的原生stream API。
 
-文档交付分支为 `dev/first-integrate-check-0905`，提交及远程同步状态以 Git 记录为准。
+## 2. Renderer → preload → main
 
-原规格编制阶段仅改文档；2026-09-06 的业务代码增量见实施记录。验收不是“所有外部问题已解决”，而是每个工作包都有输入、输出、依赖和验证标准，未知字段不会变成隐式生产默认值。
+所有调用携带 `CallContext {callId,expectedGeneration}`，返回 `Result<T>`，包含当前generation或受控错误。preload去除Electron事件对象，只暴露业务类型；main核验真实发送frame、参数、代次、ready状态及权限。renderer不得传URL、任意header、可信身份、磁盘路径或模型Key。
 
-## 1. 第一个可交付范围 M0
-
-用户流程：打开新桌面宿主 → 登录 → 选择已绑定盒子 → 建立 Direct 会话 → 完成业务身份桥 → 读取资料分页 → 断开/重连/退出。首个平台按 macOS ARM64 编写开发计划，平台承诺仍以 D05 的发布范围为准。
-
-M0 的业务能力只有 `materials.list`。认证/设备控制及内部健康检查是支撑动作。聊天、首次建档、事项写入、附件上传、资料详情/预览、目录管理、模型管理和 BLE 入口暂不开放；桌面路由不能先执行现有 onboarding guard。列表只展示已审核字段，禁止显示共享目录名称/计数或经由旧 Web transport 回退到 PC 数据。
-
-验收需在关闭 local-debug 的真实盒子上完成成功与拒绝用例。Mock 宿主、fixture 后端和健康检查只证明各自局部行为，不代替这次真实读取。
-
-## 2. 实施基线与待输入决策
-
-| ID | 本规格采用的设计方向 | 必须补齐的输入 | 在输入前可推进 / 不可放行 |
-| --- | --- | --- | --- |
-| D01 领域承载 | 盒端 data-engine 内的独立知君模块，服务适配隔开基础资料能力 | 服务端维护方确认模块入口、表迁移和生命周期；Claim事实源与owner/device规则 | 可做依赖清单/临时库验证；不可指向运行库合并表 |
-| D02 应用身份 | 独立知君 clientId/密钥/存储；目标采用已登记 PC 资料应用 | applicationId=`mindos-person-data-pc`、purpose=`person-data.read`、scopes=`remote.p2p` 与 Consumer/Gateway 已由三端源码核定；真实登录与两台授权设备列表已验证，D03独立盒内密钥已在家中盒部署 | 自动配置已实现，macOS安全存储真实检查通过；不共用别的应用登录态；不能将传输scope作为业务权限 |
-| D03 业务身份桥 | 盒端逐请求Ed25519证明，context握手 | Agent当前Owner/client/device/app、5秒有效期、原始请求目标、nonce和撤销；DE独立公钥；合同见[签名桥v1](BUSINESS-BRIDGE-0906.md) | 三端已编码；只有同一SDK通道握手主体匹配才ready；家中盒端已部署，真实SDK空资料页已验；非空资料及完整矩阵待验 |
-| D04 长请求/上传 | 聊天优先扩展现有分帧链路；上传统一当前Pocket parts/complete形态 | SDK/Core/Agent流与取消版本、后台任务备选取舍；上传四层合同及获批会话预算 | 可做流模拟器/上传adapter合同；不能把SDK1.2整包request当stream，也不自动试多个上传路径 |
-| D05 交付组合 | 独立desktop构建，sidecar置于ASAR外 | SDK tgz哈希、sidecar输入与二进制哈希、Agent/服务端提交、协议版本、OS/CPU与签名结果 | 可做本地包边界检查；dirty来源未核对前不能宣称可重建发布组合 |
-
-这些是规格编写的工作假设与决策入口，不等于产品/服务方已经批准。决策记录格式为 `ID / 结论 / 负责角色 / 代码或合同版本 / 验收证据 / 生效范围`；不需要在仓库中记录密钥或真实账号 token。
-
-## 3. Renderer → preload → main 的窄接口
-
-已通过安全 preload 暴露 `window.zhijunDesktop`，接口版本为 `1`；唯一类型源为 [desktop-contract.ts](../../frontend/shared/desktop-contract.ts)，[文档入口](contracts/desktop-contract-v1.ts)重新导出该类型并提供无副作用样例。实际 IPC 由 shell 注册；真实 SDK 仅由主进程 production 模块动态导入。
-
-| 操作 | 输入 | 公开输出与语义 |
+| 接口组 | 当前方法 | 职责 |
 | --- | --- | --- |
-| `getSnapshot()` | 无 | 当前连接状态/代次/事件序号及公开主体；用于初始加载和事件缺失后重取 |
-| `subscribe(listener)` | 本地回调 | 返回 unsubscribe；只发送公开快照，不将 IPC event 对象传给 renderer |
-| `beginSignIn(context)` | callId、expectedGeneration | 启动主进程控制的登录过程并返回快照；完成结果通过快照通知。此入口用于显式模拟登录；正式密码登录使用下行独立方法，renderer不提交已有access/refresh token |
-| `signInWithPassword(context, credentials)` | 一次性 phone/password | 正式账号登录；手机号11位，密码8–72 UTF-8字节，不接受token/clientId等额外字段，客户端注册身份由main生成 |
-| `listDevices(context)` | 已登录代次 | 已审核的设备标识/显示名/在线提示；在线提示不代表可建立连接 |
-| `connect(context, deviceId)` | 设备选择 | 仅允许属于最新授权设备列表的目标，服务端仍再授权；main构造固定binding |
-| `disconnect(context)` | 当前代次 | 立即失效旧执行，再有界回收连接；保留登录身份，回到选设备 |
-| `signOut(context)` | 当前代次 | 失效旧执行/刷新回包，回收连接，清安全凭据与该身份临时缓存 |
-| `materials.list(context, query)` | limit/offset及可选keyword/type/status | 已校验列表投影；无相对路径、host、headers或身份字段输入 |
-| `cancelRead(context, targetCallId)` | 同一sender/代次的读请求 | 返回已停止投递/未找到；M0仅取消排队或忽略回包，不保证服务端停止 |
+| 会话 | getSnapshot/subscribe/beginSignIn/signInWithPassword/listDevices/connect/disconnect/signOut | main持有登录态、设备选择与SDK；公开快照不含票据 |
+| 旧资料 | materials.list / cancelRead | v1最小公开投影；cancelRead只抑制本地投递 |
+| 产品任务 | product.start / poll / cancel | catalog操作、有界事件与显式服务端取消 |
+| 上传 | uploadCreate / uploadChunk / uploadComplete / uploadStatus / uploadCancel | 主进程计算分块/整文件SHA，校验所属资源 |
+| 二进制 | blobRead / save / openMedia / closeMedia | 有界读取、用户选择保存路径、受控媒体协议句柄 |
+| 麦克风 | requestMicrophone | 明确录音按钮后的短时audio许可，不自行采集 |
 
-`context.callId` 是 IPC 关联标识，建议 UUID，长度 8–100、字符限定字母数字/下划线/连字符；重复的在途 callId 被拒绝。它不替代未来领域写入的 requestId。领域 requestId 标识同一次用户写意图，获准重试时保持不变；重新登录/换设备后不得自动恢复另一个主体的写请求。
+`ProductOperationRequest` 固定字段为version/requestId/operationId/params/query/body。业务路径由catalog在main与DE分别展开；pathParams/query白名单、字节预算、multipart引用都必须匹配。JSON、SSE和bytes响应按catalog类型分别处理，不使用万能HTTP IPC。
 
-main 对每次调用做运行时结构校验、准确 sender WebContents/主frame/应用URL校验。TS类型不等于IPC安全校验。contextBridge不能暴露任意ipcRenderer、fetch、文件路径、宿主对象；业务URL只由main按operation映射。
+## 3. 状态、代次与身份
 
-## 4. 状态、代次与竞争处理
+状态为 signed_out/authenticating/selecting_device/connecting/authorizing/ready/disconnecting/failed。快照有generation和单调sequence；未ready不开放产品操作。context在同一SDK会话验证account/client/device/application及workspace/capability后才ready。simulation持续标记合成环境，不能证明真实盒子已连接。
 
-`phase` 可为 signed_out/authenticating/selecting_device/connecting/authorizing/ready/disconnecting/failed。SDK完成connect只进入 authorizing；身份桥按 D03 成功、主体与binding一致且业务会话有效后才进入 ready。ready不是本轮资料读取成功的证据，M0验收还要实际读取资料。
+断开、退出、设备或账户切换会使旧generation失效。晚到结果被拒绝，页面数据、媒体句柄、录音和临时资源随主体切换清理；草稿不能自动搬给新主体。app capability缺失或桥未就绪直接报错，不回退PC本机HTTP或旧读应用。
 
-- main唯一生成 `generation`，初值0。登录主体变化、开始切设备/连接、显式断开/退出或会话失败失效时递增；renderer不能自选更高代次。
-- 业务调用的 expectedGeneration 必须等于当前 generation；请求排队、发出、完成投影时分别复核，旧结果不会写回新页面。
-- beginSignIn/signInWithPassword/connect/disconnect/signOut 先检查入参代次，再分配新代次。该控制操作的后续完成与新代次及内部operation token绑定，避免它因自身递增被误判为旧请求；新的控制操作会使旧操作迟到结果失效。重复登录及退出后的旧认证回调不得恢复凭据或连接。
-- `sequence` 是 main 生命周期内全局递增的快照序号；renderer丢弃旧快照。订阅先注册再getSnapshot，按sequence合并，主进程重启会创建新窗口及新生命周期。
-- 显式断开保留登录状态；账号退出删除凭据。会话失效不自动登出，先分类原因，再由用户重连；未知错误不进入无限重连循环。
-- native close/watchdog 有界结束后清理资源；无法确认某个远端执行已取消时，记录“结果未知”，不能展示“服务端已停止”。
+DE workspace绑定account/device/ownershipEpoch；job/upload/blob还绑定clientId，job保留创建session。新session仅允许同client显式相同start恢复已知结果，不重放旧运行任务。所有poll、cancel、chunk和blob读都重新验权；本地对象ID不等于远程授权。
 
-普通页面切换可取消该页面的 M0只读投递。后续聊天切页只是解除订阅，让同主体任务完成落库；明确停止、换账号/设备、退出遵守流合同。两者不能共用“组件卸载必关闭整场SDK会话”的实现。
+## 4. 流与取消
 
-## 5. M0 资料请求与响应合同
+start返回 `{id,state,cursor}`；poll返回 `{id,state,events,cursor,hasMore}`。事件序号单调：headers带原HTTP状态和受控头，chunk在网络中为base64、preload中为Uint8Array，blob带文件描述，end/error终结事件流。renderer适配为ReadableStream，原SSE消费方保留跨块UTF-8与事件语义。
 
-### 5.1 请求映射
+poll最多等待8秒、32事件/256KiB；SDK收完每次短响应后返回。单任务上限600秒、累计事件16MiB并受更小catalog限制。缓冲与消费按页推进，不能无限累积，也不能把“长聊天”变成SDK超时后自动重试POST。
 
-`materials.list` → `GET /api/mindos/materials?limit=20&offset=0`。limit必填1–50，offset必填0–10000；均为整数，不接受重复query、空值或额外字段。建议页面默认20条，属于应用策略。可选 keyword 为trim后1–100字符；type取document/image/audio；status取uploaded/queued/processing/available/failed。
+产品cancel会请求服务端取消，区别于旧cancelRead的本地投递抑制；取消与写入提交可能竞争，不能承诺回滚。任务状态为queued/running/succeeded/failed/cancelled/interrupted。重启/失联导致写结果不确定时保留原requestId，提示用户核对；不自动换ID重建。
 
-GET没有body。main只构造受控 `Accept: application/json`；D03证明仅由Agent在盒内增加；renderer不能提交X-MindOS-Session、Authorization或CSRF头。M0不开放folder/folderId/tag/archived/recycled筛选，后续能力按单独合同扩展。
+## 5. 附件、预览、保存与语音
 
-服务端已支持该分页与状态集合：[后端列表](../../../nexusaos-data-engine/backend/mindos/uploads.py#L389)。参考[PC策略](../../../nexusaos-data-engine/frontend/electron/connectivity/request-policy.js#L76)及其响应枚举尚缺queued，而后端摄取队列已经返回该值。因此知君新main的query校验、响应投影及UI状态须同步包含queued，不能原样复制旧PC策略；实际Agent/盒端组合再通过合同测试。集合外的未来status先报告合同不兼容，不静默转换成“available”。
+上传状态open/complete/cancelled/failed，received为原始字节数，nextIndex为0-based。每块≤512KiB，非末块必须恰好512KiB；SHA256匹配、顺序正确才ACK。同index同内容重传ACK，不同内容拒绝；整文件摘要确认后才能作为multipart的uploadId引用。完成态仅表示暂存就绪，业务导入成功还需相应operation终态。
 
-### 5.2 公开投影
+单文件≤200MiB；会话传输1GiB含base64开销，workspace磁盘1GiB含加密元数据/墓碑。完成上传无活跃任务引用后可显式释放；重复DELETE幂等，不重置原requestId。v2暂存协议不等于DE Pocket的1MiB/1-based业务协议。
 
-仅保留 `items[{materialId,fileName,fileType,status,createdAt}]` 与 `total/limit/offset/hasMore`。其中 materialId为非空标识，fileName为纯文本，createdAt保留经验证的时间字符串。最大长度分别为256/512/64字符；禁止控制字符，不将fileName当HTML或路径使用。参考现有投影实现，但**删除其中的folder/folderId**：[response-policy](../../../nexusaos-data-engine/frontend/electron/connectivity/response-policy.js#L332)。
+blobRead最多512KiB，save在主进程打开原生保存对话框并逐块写文件。openMedia返回短生命周期 `zhijun-media:` 句柄，主进程限制类型、范围、主体与8MiB预览预算；页面不直接打开盒子previewUrl，也不能把任意文件路径交给宿主。
 
-顶层 folders、条目folder/folderId、宿主路径、previewUrl、正文、诊断对象均不透出M0。服务端返回items须为数组且不超过请求limit；total为非负安全整数，分页回显与请求一致。hasMore按 `offset + items.length < total` 校验/计算；并发写入可能造成下一页变化，不承诺跨页事务快照。
+语音流程为明确录音按钮 → requestMicrophone → OS授权/可信audio frame → getUserMedia → 停止 → 16kHz PCM16 mono WAV → 同一受控上传/转写操作 → 文字填入草稿。录音最长120秒，断开/切换/销毁时停止tracks；不自动发消息。macOS需有效 `NSMicrophoneUsageDescription`，可信frame短许可15秒，camera/display capture拒绝。DE WAV转写最多120秒/20MiB，不注册资料，不隐式改用外部模型。盒端voice API已用合成WAV返回40字符、0资料、2个指定短语均匹配；设备麦克风权限与正式SDK/UI录音链路仍待验收。
 
-M0-L 已采用参考PC资料列表256 KiB的原始响应body限制；必须在JSON解码/投影前限制，不能先接收无限数据再删folders。若共享folders本身使原响应超限，M0返回响应超限，并推进服务端受控列表投影；不得靠抬高限制或前端隐藏掩盖问题。上层业务投影不修复后端目录隔离，目录写仍不开放。
+## 6. 错误与预算
 
-### 5.3 错误与读取消
+公开错误保留受控 `code/message/httpStatus/remoteCode/traceId/recovery`；不暴露票据、proof、路径或原始异常。409/422及业务preview必须保留语义，不能全部归为“网络失败”。`WRITE_OUTCOME_UNKNOWN` 不能被自动重试吞掉，STALE_GENERATION结果不覆盖新页面。
 
-异步方法统一返回 `Promise<Result<T>>`（subscribe是本地订阅接口）：成功包含操作所属 generation 与 data；失败也携带该操作 generation 及结构化 public error，不透原生Error/stack/token。错误分为配置、未登录、未就绪、代次失效、输入拒绝、权限拒绝、会话失效、网络/超时、配额、合同不兼容、响应超限、业务失败和读投递取消。
+Agent新应用：1MiB请求/响应、8并发、120rpm、1GiB会话预算；Core单会话1024请求ID保持不变。main统一调度心跳、业务轮询和上传，预留上传请求数与编码后字节；仅明确未派发的限流拒绝允许同字节有限重试，已派发写入不自动重放。预算耗尽不得自动重连刷新。Gateway每workspace4运行/8排队，每盒4worker、30秒租约和10秒心跳。配置缺失、超额、过期、撤销与身份不匹配均fail closed。
 
-Result.generation 用于识别调用归属：控制操作成功接受时分配新代次，读操作使用接受时的代次；被后续操作抢占的失败仍属于旧代次，不能将它视为当前连接状态。当前状态只从按 sequence 合并的快照取得。
+## 7. 历史证据与正式验收
 
-M0-L 仅保留经过白名单校验的 HTTP status 和安全元数据，使用固定公开错误码与中文提示，不直接显示远端 message。后续桥合同可扩展经过审核的 code/traceId。没有traceId就省略，不伪造服务端关联ID；SDK错误不强塞HTTP状态。当前服务端某些401/403已丢细分code，adapter不得猜测“过期”还是“撤销”，用受限提示要求重连/核验权限。
+历史M0-L、v1桥及真实空资料页/刷新/一次重连见[实施记录](M0-IMPLEMENTATION-0906.md)、[盒端部署](BOX-DEPLOYMENT-0906.md)。这些证据不证明非空历史资料已迁移，也不证明v2 product capability、完整跨主体矩阵或新Admin应用已生产发布。
 
-M0默认不自动重试。用户可重试只读列表；纯排队取消不发请求，已发出请求取消只丢回包并继续计入真实在途预算。SDK1.2没有单请求abort，不能用 session.close 终止一次列表读取而误伤其他请求。未来读取重试须有次数/退避/同主体代次约束。
+正式验收需覆盖原15页真实操作与所有170项清单映射，尤其聊天长流/断流/取消、文件导入版本/保护/释放、模型授权拒绝与来源失效、媒体保存、语音权限、跨账号/client/device/session、重启和预算失败。安装包还需平台产物、签名/公证/权限声明验证；BLE独立可选。局部测试数量不可相加成完整产品“通过数”。
 
-取消成功时，被取消订阅对应的 `materials.list` Promise立即且只结算一次 `READ_CANCELLED`；底层迟到完成不再结算它，仍供其他未取消订阅使用。代次失效或断开时也要结算旧待决调用（如 `STALE_GENERATION` 或已确认的会话错误），避免永远pending；这些失效结果只结束旧调用，不能写入新主体页面。调度槽释放与Promise结算是两件事，仍按真实SDK完成时刻释放额度。
+当前部署阻塞与逐功能状态以[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)和[真实验收记录](REAL-ACCEPTANCE-0906.md)为准。连接FD热修已单独恢复现有服务，见[故障报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)，不得据此提前标记v2上线。
 
-## 6. 调度与能力声明
-
-M0-L 已实现：最多2个在途业务读、最多8个排队读；同主体同query的重复读取合并；取消一个订阅不影响仍在等待的订阅。健康检查与业务请求共享调度和实际额度，窗口后台不做固定周期列表轮询。服务端配置若更严格，取各层最小值。
-
-当前参考PC Agent是8并发/120每分钟/64MiB会话，Core还有限1024次和默认60秒；本规格的2/8是应用策略，并非SDK新增限制。已发出但被本地取消的请求仍占真实在途槽，直到SDK结束；否则renderer可用快速取消突破并发预算。
-
-快照 `environment` 可为 `unconfigured`、`simulation` 或 `production`。显式有效账号配置启用production Consumer adapter；main已注入真实D03握手；家中盒端已部署，但production快照本身不代表真实业务握手通过。没有桥端口的独立adapter实例仍在spawn前拒绝。默认未配置时拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
-
-本地默认调用超时 15 秒；最多 64 个资料订阅、128 个待决调用、8 个真实未完成的 adapter 控制操作和 64 个快照监听。取消/超时不提前释放实际操作额度。session 清理等待上限 1 秒，宿主退出兜底 2.5 秒；这些均为本地应用策略，不是 SDK 保证。退出接受时立即启动身份清理，后续断开不能跳过；清理真实结束前禁止新登录，避免旧清理覆盖新身份。
-
-正式模式快照中的capabilities由“已部署服务合同 + 主进程策略 + SDK/Agent版本 + 当前主体授权”共同得出。D05清单尚未齐备时不通过猜测URL或200响应探测开放功能。M0只可能开启materialsRead；streamChat、uploads、matters、provisioning始终为false。
-
-## 7. 身份桥的跨仓输入/输出
-
-推荐责任：Admin证明账号/客户端/设备授权；SDK/Core传递经过验证的连接binding；Agent只向已批准盒内目标转发；可信桥把该连接转换成data-engine接受的业务上下文；data-engine执行数据范围与领域权限。
-
-D03必须交付这些可核对字段与行为，而非仅一条路由名称：
-
-| 项目 | 必须确定的合同 |
-| --- | --- |
-| 主体来源 | accountId/clientId/deviceId/applicationId/scopes/purpose的验证者、传递载体、audience与授权路径；缺字段拒绝，不从renderer补信任 |
-| 会话绑定 | 连接ID/业务sessionID如何关联；换设备/应用不能复用；本地循环地址不是身份依据 |
-| 交换与密钥 | 优先Agent/盒内可信交换；签名验证、密钥归属与轮换、请求防重放、期限；如走专用JWT路径须验证现有512byte Bearer上限 |
-| 生命周期 | 连接与业务会话的期限取交集；刷新/续期、撤销、owner变化、Agent/后端重启、旧代次清理和失效错误 |
-| 数据范围 | 设备级资料可读范围、同盒多账号与转让处理、各路由guard；不能把旧global数据直接归给登录者 |
-| 可观测性 | 只记录callId/连接关联ID/版本/操作码/耗时/安全错误；原始ticket、token、资料正文不进日志 |
-
-当前实现采用[D03签名桥v1](BUSINESS-BRIDGE-0906.md)及共享合成向量：Agent仅在盒内增加受信证明，外部仍不得提交`X-MindOS-Session`或桥头。主程序已注入真实context握手适配器，家中盒端已部署Agent/DE匹配版本。部署失败、未配置独立密钥、无效签名、错主体或过期均不得ready。
-
-## 8. 后续流与上传合同的最小完成定义
-
-**流：** 明确stream/request/业务requestId的关联；response head、顺序chunk、terminal end/error、单请求cancel和确认；UTF-8增量解码、队列/背压限额、首帧/空闲/总deadline、断线后的持久状态查询、会话级失败的影响。推荐沿已有Agent chunk扩展Core及sidecar，不把同一JSON line无限放大。协议版本/协商位置由D04落实；出现不兼容时关闭聊天入口。
-
-**上传：** 原调研优先统一到当时未提交的Pocket的init/parts/complete/DELETE；固定1MiB分片、1-based编号、Idempotency-Key、初始化字段、状态联合类型、同主体续传和完整性检查。必须同步main policy、Agent应用manifest与后端，而不是改两个URL。请求/会话总额度、上传副本归属、版本上传和chat-import保护各有验收；不通过重连绕过会话配额。冻结前仍不开放M0上传。
-
-## 9. M0 的必须通过用例
-
-| 编号 | 输入/事件 | 期望 |
-| --- | --- | --- |
-| M0-01 | SDK连通但业务桥缺失/拒绝 | 不进入ready，不发renderer业务请求，无debug回退 |
-| M0-02 | 正式身份读取20条资料，包含queued记录及对应筛选 | 只含规定字段、正确状态与分页，无共享folders及条目目录信息 |
-| M0-03 | 错误设备/账号/应用或已撤销身份 | 按层拒绝，不能用health成功替代资料鉴权 |
-| M0-04 | A请求在途，切B后A回包 | generation不同，旧UI/缓存/事件全部不可写入B |
-| M0-05 | 两次登录/connect交错，退出时认证或refresh晚到 | 新控制操作胜出，旧结果不能恢复凭据或连接 |
-| M0-06 | 伪sender/子frame/任意header/query/无效分页 | main在SDK调用前拒绝 |
-| M0-07 | 资料body超过256KiB/字段类型错误 | 有界拒绝，不输出部分可信列表，不打印原body |
-| M0-08 | 取消排队/已发出的读，或调用中切代次 | Promise有界且仅结算一次；排队取消不发送，已发出时不关闭整个session，在途槽待真实完成释放 |
-| M0-09 | 会话额度/超时/Direct失败 | 有限结束并分类提示；不无限重试、不切到未批准transport |
-| M0-10 | 关闭窗口/重启 | 无sidecar残留，退出凭据与草稿按合同清理；重启不恢复旧session |
-
-通过记录应含客户端/SDK/sidecar/Agent/后端固定版本、测试方法、结果与脱敏关联ID。类型样例和模拟用例通过后才能进入真实联调，但两者的完成状态分别记录。
-
-## 10. 验证记录
-
-2026-09-05：6份新增/修改Markdown的153处本地链接及代码块闭合检查通过；架构文档4段Mermaid均通过解析和浏览器SVG生成，图源码未变，保留既有SVG。接口样例通过以下严格类型检查（知君仓库根执行）：
-
-```sh
-rtk proxy frontend/mindos-web/node_modules/.bin/tsc --noEmit --strict --target ES2022 --module ESNext --moduleResolution Bundler --skipLibCheck docs/development/contracts/desktop-contract-v1.ts
-```
-
-独立交叉审核后补齐queued状态、取消调用结算与登录竞态，统一迁移编号、外部输入边界和后端测试selector写法。上述为原文档阶段结果。2026-09-06 已开发 M0-L 并执行本地回归和真实 Electron 的模拟端到端验证；实际结果与未验项见[实施记录](M0-IMPLEMENTATION-0906.md)，未连接真实盒子。
-
-2026-09-06 后续增量：新增密码登录窄方法、生产账号模式、safeStorage与SDK auth/facade/admin/process装配。三个新增公开错误码为 AUTHENTICATION_FAILED、SECURE_STORAGE_UNAVAILABLE、BUSINESS_BRIDGE_REQUIRED（另沿用已有认证错误）；具体执行证据与限制见[正式接入记录](M0-PRODUCTION-0906.md)。
+最新本地验证：shell117项Node、vue-tsc通过；独立15项配额用例包含在117内。200MiB/400块经真实JS模块和内存严格Agent配额，在243秒虚拟时间完成，滚动60秒最多101请求；尚未做真实SDK/P2P大文件验证。隔离盒端hardware-candidate5为5/5（safe material正文82、摘要43字符、实体2、关系0），gateway-candidate6为10/10（60请求/21个completed操作，含知识CRUD/confirm/search/purge）。均为合成主体/输入，非正式Consumer/UI；不能按170项catalog或隔离硬件结果关闭完整UI验收。证据见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。

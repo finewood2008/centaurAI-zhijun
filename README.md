@@ -14,19 +14,15 @@
 
 当前产品源已同步至 GitHub `22dc9a3`，本次新增功能、审核修复与验证结果见 [上游同步记录](docs/development/UPSTREAM-SYNC-0905.md)。
 
-Electron SDK 与 data-engine 的后续集成调研见 [技术架构图](docs/development/ARCHITECTURE-0905.md)、[集成方案](docs/development/INTEGRATION-0905.md) 和 [二次审核记录](docs/development/REVIEW-0905.md)，其中区分了当前实现、接口缺口及建议实施步骤。
+Electron / 盒端集成当前采用完整产品 v2：原 15 个页面、20 条页面路由和 2 条重定向已装配到独立桌面，170 项受控操作通过主进程、Connectivity SDK 1.2.0 Direct 通道和盒端 Gateway 分发到独立知君领域 worker 或 DE 基础能力。原 Web 开发入口继续可用。架构和开发入口见 [架构图](docs/development/ARCHITECTURE-0905.md)、[集成与部署方案](docs/development/INTEGRATION-0905.md)、[桌面接口](docs/development/DESKTOP-CONTRACT-0905.md)、[领域规格](docs/development/DOMAIN-INTEGRATION-0905.md)。
 
-接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L、正式 Consumer 登录/签名/刷新、SDK 主进程装配，以及[三端 D03 逐请求 Ed25519 业务桥](docs/development/BUSINESS-BRIDGE-0906.md)。桥已部署到用户指定的家中盒子，服务健康与未授权请求拒绝检查通过，真实 SDK 已通过授权空资料页、刷新与一次断开重连，完整验收仍待完成；正式账号启动配置见[正式接入记录](docs/development/M0-PRODUCTION-0906.md)。
+**v2 正式盒子/UI 验收仍待完成，Admin 新应用生产发布路径尚未提供。** 新应用为 `zhijun-desktop / zhijun.workspace`，不能复用旧只读应用扩权。SDK 仍是整响应 request/close；聊天流、上传和导出使用盒端真实短任务、游标事件与分片，并非 SDK 原生流式接口。范围与进度见 [完整产品计划](docs/development/FULL-PRODUCT-INTEGRATION-0906.md)、[真实验收记录](docs/development/REAL-ACCEPTANCE-0906.md)。
 
-执行 `rtk proxy bash start-desktop.sh --real` 可自动填写现有 PC 资料服务参数、核验并复制当前平台 SDK sidecar，再打开正式登录窗口。首次准备从相邻 SDK 的 `release/electron-sidecars-1.2.0` 读取产物；配置及二进制保存在已忽略的 `data/desktop/`，密码仅在应用内输入。已通过应用 UI 核验真实 Consumer 登录和两台在线授权设备列表。2026-09-06 后续已使用用户提供的 SSH 认证部署 Agent/DE，并重启新版桌面。升级后已实际登录，成功读取授权范围内的空资料页，并验证刷新及一次断开重连；跨账号/设备等完整矩阵尚未完成，M0-R 保持未完成；详情见[自动配置与真机验收记录](docs/development/REAL-ACCEPTANCE-0906.md)。
+早期 v1 只读桥保留兼容：真实登录、授权空资料页、刷新和一次重连已验证；这不表示非空历史资料、完整跨主体矩阵或 v2 已验收。[盒端历史部署](docs/development/BOX-DEPLOYMENT-0906.md)保留原版本和证据。2026-09-06 现有 DE 服务连接 FD 泄漏已单独热修并恢复 HTTP 200，见 [故障记录](docs/reports/CONNECTIVITY-FD-HOTFIX-0906.md)；该修复与 v2 产品发布分开。
 
-Agent `0a004c9` 与当前 DE 合并版本 `c16dc17` 已推送远程集成分支；DE 基于盒端新发布的 `6b549ad`，保留其权限与上传增量。[部署输入准备脚本](frontend/shell/scripts/prepare-bridge-release.cjs)可生成 Linux AMD64/ARM64 产物及 12 项哈希清单。实际部署、并发版本变动处理、备份和验收边界见[盒端部署记录](docs/development/BOX-DEPLOYMENT-0906.md)。
+安装 `frontend/mindos-web` 和 `frontend/shell` 依赖后，可用 `rtk proxy bash start-desktop.sh --simulation` 体验合成入口；真实启动使用 `rtk proxy bash start-desktop.sh --real`，仍受新应用登记、服务配置与实际 capability 控制。密码仅在应用内输入，配置与sidecar位于已忽略的 `data/desktop/`，不进入Git。启动和安装说明见 [桌面说明](frontend/shell/README.md)。
 
-D03 原始增量验证包括宿主 73 项、OS 全套与 race 测试及 data-engine 101 项；本次针对盒端新发布基线的 DE 合并回归为 111 项及 6 个 subtests，盒端实际依赖下另有 55 项隔离桥测试和 5 项应用合成检查通过。新资料 scope 按账号、设备与 ownershipEpoch 隔离，不读取或自动迁移旧 global 数据；空列表不代表历史资料已迁移。
-
-分配具体开发工作时使用 [详细开发任务清单](docs/development/DEVELOPMENT-TASKS-0905.md)，包含任务编号、角色、文件、依赖、实施步骤、估算与验收。
-
-体验独立桌面：安装 `frontend/mindos-web` 和 `frontend/shell` 依赖后，在仓库根执行 `rtk proxy bash start-desktop.sh --simulation`。页面持续标记合成数据；省略参数则显示正式配置未就绪。启动方式和测试见 [桌面说明](frontend/shell/README.md)，本轮实现与限制见 [M0实施记录](docs/development/M0-IMPLEMENTATION-0906.md)。原有完整产品的本机 Web 开发入口如下，和新桌面分开运行。
+分配开发工作使用 [详细任务清单](docs/development/DEVELOPMENT-TASKS-0905.md)；测试、菜单覆盖和健康检查不能代替逐功能业务验收。
 
 ## 主要入口
 
@@ -99,13 +95,13 @@ curl -s -X POST http://127.0.0.1:8618/v1/agent/context-pack -H "Authorization: B
 
 ## 独立桌面、安装到主屏、盒子部署
 
-- 桌面：仓库根执行 `rtk proxy bash start-desktop.sh --simulation`，使用独立页面、preload 与受控 IPC，体验合成资料流程。默认未配置模式不连接真实服务；完整产品功能仍使用上面的 Web 入口。
+- 桌面：仓库根执行 `rtk proxy bash start-desktop.sh --simulation` 体验合成流程；完整产品页面已接入受控 IPC。正式 v2 需要新应用与盒端 Gateway 配置，不能把 simulation 当成业务验收。
 - 手机 / 平板：浏览器打开 `/mindos/` 可「添加到主屏幕」（PWA 清单），语音输入在 Chromium 系浏览器可用。
 - 盒子：`deploy/box.env.example` 是环境变量样例（数据根、生产模式、本地模型、网关开关）。
 
 ## 数据在哪
 
-主要业务数据位于 `CENTAURAI_DATABASE_DATA_ROOT`（默认 `./data`）：`db/ontology.db`（实体/理解/证据，以及新增 work_* 事项、绑定、成果和历史表）、`db/conversations.db`（会话/消息/回执）、`db/growth.db`（章程/判断/复盘）。资料索引与向量在 `indexes/`、`chroma_data/`；`memory/ZHIJUN_PROFILE.md` 与 `USER.md` 是旧 global 范围的文件投影，设备视图另由 API 渲染。
+以下为原本机 Web 数据路径；v2 正式领域改用 Gateway 配置的独立 domain root，每个 workspace 独立子目录，详见[领域规格](docs/development/DOMAIN-INTEGRATION-0905.md)。本机主要业务数据位于 `CENTAURAI_DATABASE_DATA_ROOT`（默认 `./data`）：`db/ontology.db`（实体/理解/证据，以及新增 work_* 事项、绑定、成果和历史表）、`db/conversations.db`（会话/消息/回执）、`db/growth.db`（章程/判断/复盘）。资料索引与向量在 `indexes/`、`chroma_data/`；`memory/ZHIJUN_PROFILE.md` 与 `USER.md` 是旧 global 范围的文件投影，设备视图另由 API 渲染。
 
 密钥库默认在独立的 `./secrets`；metadata、gbrain、MCP 路径可被环境变量单独覆盖。开发 supervisor 的日志/进程记录在项目 `data/run/dev`；浏览器还有临时草稿，用户可显式复制/导出文稿。不能用“清空数据根”概括所有这些位置。旧本体清除和删除对话都不清新增成果副本及历史，新增数据的独立清除能力尚待设计，见同步审核记录。
 
@@ -113,9 +109,11 @@ curl -s -X POST http://127.0.0.1:8618/v1/agent/context-pack -H "Authorization: B
 
 ```
 frontend/mindos-web/            Vue 3 + TypeScript + Vite；SSE 客户端 src/services/sse.ts
-frontend/mindos-web/src/desktop/ 独立 M0-L 页面与状态控制，不导入旧 Web 路由/API
+frontend/mindos-web/src/desktop/ 独立 hash router、连接 provider 与完整产品 transport
 frontend/shell/                 Electron 37.10.3 宿主、preload、安全协议与 runtime
-frontend/shared/desktop-contract.ts  桌面公开接口的唯一类型源
+frontend/shared/{desktop-contract,product-contract}.ts  凭据隔离的公开桌面类型
+frontend/shared/product-operations.json  170项受控操作清单
+backend/zhijun_worker/           盒端独立workspace领域进程，经UDS/HMAC与DE协作
 frontend/mindos-web/src/services/{chatStream,matters}.ts  发送恢复编排与事项/成果API
 backend/server.py               FastAPI 入口（仅绑定 127.0.0.1:8618，写路由要求 loopback + CSRF 头）
 backend/mindos/zhijun/          对话 agent：provider · gate · persona · context · extract · jobs · projection · turn · confirm
@@ -129,9 +127,9 @@ backend/{parser,embedder,watcher,vector_store}.py   资料摄取、解析、嵌�
 
 ## 现状与边界
 
-当前 Electron 默认打开独立资料验收入口，未加载原产品的侧栏与完整路由。原五个导航入口及偏好源码仍在；将主布局、页面和对应业务 API/SSE 迁入桌面是尚未完成的产品集成工作，不能把只读链路通过视作完整产品已交付。
-
-- 既有 Web 产品 P1「能聊、能记、能认」、P2「能商量、会回访」、P3「像良师」、P4「可带走、可安装」已实现：多轮流式对话、从对话抽取理解、对话内一键确认、我的本体、建档对话、投影、商量模式与判断草稿、到期提醒、回访记结果与复盘引导、整合器与裁决、张力提醒、资料 → 理解、导出与全量删除、给其他 Agent 的上下文包、可带走开关、语音输入、PWA 清单、盒子 profile。独立桌面已实现 M0-L、正式登录/设备列表和 D03 客户端（家中盒端已部署，SDK 空资料页与一次重连已验），上述完整产品功能尚未全部迁入新桌面。**承诺提醒、议题线程、移动端离线采集、录音转写、盒子硬件通讯、旧面退役尚未实现**，见 `docs/product/ZHIJUN_REDESIGN_V2.md` §10–§11。
-- 真实模型（Ollama / OpenAI 兼容 / Anthropic）的通道代码有单元测试，但抽取质量需要在真实模型上评测后再放开默认。
-- 持续事项、可编辑成果和有限发送恢复已同步；它们不等于完整议题线程/承诺任务系统，也尚未适配 Electron SDK。D03 只读业务桥已部署到家中盒子，真实 SDK 空资料页与一次重连已验，跨主体验收仍待完成；流式通道、完整目录隔离和领域迁移继续按集成方案推进。
-- 旧的资料管理、知识卡片、搜索、图谱页面仍可通过 URL 访问（`/materials`、`/knowledge`、`/search`、`/graph`），不再出现在侧栏；`/api/mindos/qa` 单轮问答接口保留给 Agent 网关。
+- 原 Web 产品的会话、本体、判断、章程、学习、事项/成果、资料/边界、搜索/图谱及偏好页面已装配进桌面；当前正在完成跨仓部署和真实逐功能验收，不能宣称已全量交付。
+- 录音端口已实现明确按钮授权、最长120秒、16kHz PCM16单声道WAV、盒端本地转写并填入草稿；不自动发送消息。盒端voice API已用合成WAV实测通过；真实麦克风、平台权限和正式SDK/UI仍待实测。
+- 隔离真盒已通过hardware-candidate5全部5项与gateway-candidate6全部10项（60请求、21个completed操作，含知识CRUD/confirm/search/purge）；均为合成主体/输入。首次失败、修复及189项资料相关回归见[审核记录](docs/reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，正式Consumer/SDK/UI验收仍待Admin生产发布入口与匹配部署。
+- 外部模型由DE统一管理，外发必须绑定来源预览、配置和真实同意；模型质量、真实调用、取消及来源撤销仍需验收。
+- 知君新领域目录按账号/设备/所有权代次隔离，DE能力负责canonical资料和模型。旧global不自动迁移，新领域目录不进入DE个人记忆退役清理范围。
+- 原事项/成果新cursor分页、增强业务幂等和清除流程仍是独立规划增量，不能把原列表/history或旧ontology purge描述为已具备这些能力。承诺提醒、完整议题线程、BLE配网等未实现产品规划不因本次传输接入自动完成。
