@@ -72,3 +72,17 @@ test('sign-out closes business authorization and native resources, including a l
   await assert.rejects(authorization, { code: 'STALE_GENERATION' });
   await session.close(); assert.equal(nativeClosed, 1); assert.equal(businessClosed, 1); await adapter.dispose();
 });
+
+test('sign-out while reading the current identity prevents a late native connection from starting', async () => {
+  let finishCurrent; let spawned = 0;
+  const adapter = await createProductionAdapter({ config,
+    consumer: { ...consumer, current: () => new Promise(resolve => { finishCurrent = resolve; }) },
+    bridge: { authorize: async () => ({}) },
+    runtimeFactory: async () => { spawned++; return { connect: async () => ({}), close: async () => {} }; } });
+  const connecting = adapter.connect({ accountId: 'account-synthetic', deviceId: 'device-synthetic' });
+  await adapter.signOut();
+  finishCurrent({ accountId: 'account-synthetic', clientId: 'client-synthetic' });
+  await assert.rejects(connecting, { code: 'STALE_GENERATION' });
+  assert.equal(spawned, 0);
+  await adapter.dispose();
+});

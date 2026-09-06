@@ -33,6 +33,7 @@ async function createWindow() {
   }
   const adapter = config ? await require('./production/adapter.cjs').createProductionAdapter({
     config, directory: app.getPath('userData'), safeStorage,
+    bridge: require('./production/business-bridge.cjs').createBusinessBridge(),
   }) : undefined
   runtime = createDesktopRuntime({ mode: config ? 'production' : mode, adapter })
   unsubscribe = runtime.subscribe(snapshot => {

@@ -1,10 +1,10 @@
 # 桌面宿主与前端开发任务
 
-日期：2026-09-06；文件后缀沿用 0905 集成基线。返回[开发任务总表](../DEVELOPMENT-TASKS-0905.md)。依据：[桌面接口规格](../DESKTOP-CONTRACT-0905.md)、[接口类型样例](../contracts/desktop-contract-v1.ts)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。**2026-09-06：DESK-01/02/03/09/10/11/12/13/14 已实现并通过 M0-L，记为“本地通过待外部验收”；原任务尚未覆盖的步骤保留未勾选。DESK-08 仅完成本地有界清理，记为实施中。随后DESK-04/05/06的Consumer/SDK客户端实现已本地通过，DESK-07实施中；DESK-15已开展自动配置、macOS系统存储、原生sidecar与真实网络前置检查，端到端资料未完成；DESK-16–23未开始。真实身份桥、事项、聊天、上传和发布未交付，见[真机记录](../REAL-ACCEPTANCE-0906.md)。**
+日期：2026-09-06；文件后缀沿用 0905 集成基线。返回[开发任务总表](../DEVELOPMENT-TASKS-0905.md)。依据：[桌面接口规格](../DESKTOP-CONTRACT-0905.md)、[接口类型样例](../contracts/desktop-contract-v1.ts)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。**2026-09-06：DESK-01/02/03/09/10/11/12/13/14 已实现并通过 M0-L，记为“本地通过待外部验收”；原任务尚未覆盖的步骤保留未勾选。DESK-08 仅完成本地有界清理，记为实施中。随后 DESK-04/05/06 的 Consumer/SDK 客户端及 DESK-07 的 D03 v1 客户端已本地通过；三端逐请求 Ed25519 桥已编码但未部署。DESK-15 已通过自动配置、macOS 系统存储、原生 sidecar、真实登录与两台在线授权设备列表检查，端到端 Direct 资料仍未完成；DESK-16–23 未开始。事项、聊天、上传和发布未交付，见[真机记录](../REAL-ACCEPTANCE-0906.md)。**
 
 里程碑复用总表：M0-L 为本地合同通过，M0-R 为正式只读闭环，M1 为领域与聊天。P0 为首条 M0 必需，P1 为完整业务。估算为建议开发投入，S=0.5–1、M=1–2、L=2–4 人日，包含对应局部验证和一次评审修订，不含外部注册、设备等待和未知兼容问题导致的额外返工；不能直接相加作为交付日期。
 
-“硬依赖”指本任务整体验收前必须满足；“可先做”限定在草案或 fake adapter 上的局部工作。正式登录、连接、资料读取不能以模拟结果关闭。未实现任务的拟新增路径仍为设计位置；已实现任务在下文回填实际映射。[本轮实施与验证记录](../M0-IMPLEMENTATION-0906.md)区分 L1 单元、L2 真实 Electron 加模拟适配器、未验 L3 真机及 L4 安装包。真实 Electron 运行不等于真实 SDK/盒子集成。
+“硬依赖”指本任务整体验收前必须满足；“可先做”限定在草案或 fake adapter 上的局部工作。正式登录、连接、资料读取不能以模拟结果关闭。未实现任务的拟新增路径仍为设计位置；已实现任务在下文回填实际映射。[本轮实施与验证记录](../M0-IMPLEMENTATION-0906.md)区分 L1 单元、L2 真实 Electron 加模拟适配器、L3 真机局部证据及未验 L4 安装包。真实 Electron 运行不等于真实 SDK/盒子集成。
 
 ## 源码定位与分工
 
@@ -50,7 +50,7 @@
 
 **验收：** 正向有效调用进入对应 handler；负向伪 sender、子 frame、外部页面、任意 header/URL/未知字段均在 SDK 调用前拒绝；没有通用 IPC 或 fetch 暴露。**交付证据：** 白名单、preload 导出快照及恶意调用测试结果。
 
-**2026-09-06 交付与差额：** 精确 sender/主 frame/URL、窄白名单、字段校验及订阅通过 L1；L2 核对实际 sandbox/contextIsolation/Node 权限并拒绝注入字段。未装配真实 SDK，调用前拒绝的证据限于 adapter 边界。
+**2026-09-06 交付与差额：** 精确 sender/主 frame/URL、窄白名单、字段校验及订阅通过 L1；L2 核对实际 sandbox/contextIsolation/Node 权限并拒绝注入字段。真实 SDK 已装配；该组 IPC 拒绝测试证据仍限于本地 adapter 边界，真机越权矩阵待验。
 
 <a id="desk-03"></a>
 
@@ -69,7 +69,7 @@
 
 **验收：** 正向完整状态转换可重放；负向两次登录/连接交错、退出后旧认证或 refresh 迟到不恢复凭据/连接；renderer 无法指定更高代次，未 ready 的 materialsRead 为 false。**交付证据：** 状态转移表、虚拟时钟竞态测试及事件序列。
 
-**2026-09-06 交付与差额：** 状态/代次、错误 binding、登录/连接抢占、退出及旧读失效通过 deferred Promise 和有界计时 L1，L2 模拟流程通过。正式 refresh/store 未实现，不能代替 DESK-05 刷新旋转验收；本轮未采用虚拟时钟。
+**2026-09-06 交付与差额：** 状态/代次、错误 binding、登录/连接抢占、退出及旧读失效通过 deferred Promise 和有界计时 L1，L2 模拟流程通过。正式 refresh/store 已实现并有独立局部回归，不能代替 DESK-05 真实刷新旋转验收；本轮未采用虚拟时钟。
 
 <a id="desk-04"></a>
 
@@ -79,16 +79,16 @@
 
 **硬依赖：** BASE-02、DESK-03。**可先做：** 使用注入式 fake auth/store 验证登录成功/拒绝分支。
 
-**路径：** 拟新增 `frontend/shell/electron/consumer/auth-client.*`、`credential-store.*`；只参考旧 `frontend/consumer-client.js`、`secure-store.js`，不复用运行凭据。
+**实际路径：** `frontend/shell/production/{consumer-client,credential-store}.cjs`、`runtime/desktop-runtime.cjs` 和 `main.js`；使用知君独立存储，不复用其他应用运行凭据。
 
-- [ ] 按正式 D02 实现登录回调/用户交互；缺配置返回 CONFIGURATION_REQUIRED。
-- [ ] 只在主进程存取 access/refresh 凭据，采用正式应用独立 namespace 和 OS 安全存储。
-- [ ] 登录结果写入前核对 DESK-03 operation token/代次；废弃已失效回调。
-- [ ] 区分取消登录、拒绝登录、存储不可用，不将原生异常或 token 发给页面。
+- [x] 按正式 D02 实现登录回调/用户交互；缺配置返回 CONFIGURATION_REQUIRED。
+- [x] 只在主进程存取 access/refresh 凭据，采用正式应用独立 namespace 和 OS 安全存储。
+- [x] 登录结果写入前核对 DESK-03 operation token/代次；废弃已失效回调。
+- [x] 区分取消登录、拒绝登录、存储不可用，不将原生异常或 token 发给页面。
 
 **验收：** 正向真实账号可登录并仅显示公开身份；负向示例 applicationId、错误回调、存储失败与退出后迟到回调不能得到可用会话；renderer、日志、sessionStorage 均无凭据。**交付证据：** 脱敏注册版本、fake 测试、指定 OS 安全存储及真实登录结果。
 
-**2026-09-06 后续交付：** production/credential-store.cjs 与 consumer-client.cjs 已实现P-256、safeStorage、Admin密码登录；系统存储使用替身验收，正式账号/签名安装及OS交互待验。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；下方涉及真实环境的整体步骤不以局部测试代为勾选。
+**2026-09-06 后续交付：** production/credential-store.cjs 与 consumer-client.cjs 已实现P-256、safeStorage、Admin密码登录；macOS 系统存储检查和真实 Consumer 登录已通过，签名安装及真实拒绝/撤销矩阵待验。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；已勾选项表示客户端实现及相应局部验证，任务整体仍须补齐真实环境验收。
 
 <a id="desk-05"></a>
 
@@ -98,16 +98,16 @@
 
 **硬依赖：** DESK-04。**可先做：** 与登录客户端端口对齐后，以 fake 时序测试开发。
 
-**路径：** 拟新增 `frontend/shell/electron/consumer/refresh-coordinator.*`；auth-client 改动由 DESK-04 owner 合并。
+**实际路径：** `frontend/shell/production/{consumer-client,adapter}.cjs`，通过实际 SDK `createElectronConsumerAuth` 共享刷新；由 `main.js` 装配。
 
-- [ ] 为同一身份构建共享刷新 coordinator，防止并发 401 触发多次 refresh 旋转。
-- [ ] 在刷新前、落凭据前校验身份与 operation token，退出时失效所有刷新等待者。
-- [ ] 处理已确认的撤销/过期与未知错误，向状态机输出分类结果。
-- [ ] 仅按 Consumer 正式合同重试其授权读；不顺带重放业务写或让 M0 列表自动重试。
+- [x] 为同一身份构建共享刷新 coordinator，防止并发 401 触发多次 refresh 旋转。
+- [x] 在刷新前、落凭据前校验身份与 operation token，退出时失效所有刷新等待者。
+- [x] 处理已确认的撤销/过期与未知错误，向状态机输出分类结果。
+- [x] 仅按 Consumer 正式合同重试其授权读；不顺带重放业务写或让 M0 列表自动重试。
 
 **验收：** 正向并发授权读只进行一次共享刷新；负向 refresh 旋转、退出、换账号交错后旧凭据不可恢复；持续失败有界结束。**交付证据：** 刷新计数断言、凭据写入时序及撤销场景记录。
 
-**2026-09-06 后续交付：** 采用实际SDK createElectronConsumerAuth统一设备/票据的刷新；并发401、退出与迟到刷新/主体替换已测；真实服务旋转/撤销待验。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；下方涉及真实环境的整体步骤不以局部测试代为勾选。
+**2026-09-06 后续交付：** 采用实际SDK createElectronConsumerAuth统一设备/票据的刷新；并发401、退出与迟到刷新/主体替换已测；真实服务旋转/撤销待验。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；已勾选项表示客户端实现及相应局部验证，任务整体仍须补齐真实环境验收。
 
 <a id="desk-06"></a>
 
@@ -117,35 +117,35 @@
 
 **硬依赖：** BASE-02、DESK-05。**可先做：** 已授权设备与无权设备 fixture。
 
-**路径：** 拟新增 `frontend/shell/electron/consumer/devices.*`、`ticket-provider.*`。
+**实际路径：** `frontend/shell/production/{consumer-client,adapter,sdk-runtime}.cjs` 和 `runtime/desktop-runtime.cjs`。
 
-- [ ] 从正式 Consumer 获取可访问设备集合，投影 deviceId/displayName/availability。
-- [ ] main 根据最新集合检查选择，固定 applicationId/purpose/scopes 和连接 binding。
-- [ ] ticket provider 绑定当前身份/设备/代次，续取前重新检查授权上下文。
-- [ ] 给出离线、列表失效、目标撤销、票据拒绝的安全错误，不将 ticket 传入 renderer。
+- [x] 从正式 Consumer 获取可访问设备集合，投影 deviceId/displayName/availability。
+- [x] main 根据最新集合检查选择，固定 applicationId/purpose/scopes 和连接 binding。
+- [x] ticket provider 绑定当前身份/设备/代次，续取前重新检查授权上下文。
+- [x] 给出离线、列表失效、目标撤销、票据拒绝的安全错误，不将 ticket 传入 renderer。
 
 **验收：** 正向仅能选择当前授权设备；负向篡改 deviceId/scopes/applicationId、使用旧设备列表或跨代次 ticket 均拒绝；online 提示不能替代服务端授权。**交付证据：** 脱敏设备用例、binding 断言及票据不出主进程的验证。
 
-**2026-09-06 后续交付：** 已实现签名设备列表和SDK Admin ticket provider；仅显示owner且有remote.p2p的设备。真实应用注册、设备授权和票据签发待验。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；下方涉及真实环境的整体步骤不以局部测试代为勾选。
+**2026-09-06 后续交付：** 已实现签名设备列表和SDK Admin ticket provider；仅显示owner且有remote.p2p的设备。既有目标 `mindos-person-data-pc` 的固定策略已配置，真实 Consumer 登录与两台在线授权设备列表已由 CUA 验证；实际 Direct ticket/会话及撤销矩阵待验。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；已勾选项表示客户端实现及相应局部验证，任务整体仍须补齐真实环境验收。
 
 <a id="desk-07"></a>
 
 ### DESK-07：装配 Direct SDK 与业务桥客户端端口
 
-**元数据：** WP-02；M0-R；P0；连接 adapter owner；L；实施中（SDK装配，真实桥待实现）。
+**元数据：** WP-02；M0-R；P0；连接 adapter owner；L；本地通过待外部验收（SDK 与 D03 客户端）。
 
 **硬依赖：** BASE-01、BASE-03、DESK-06、SERV-01、SERV-02、SERV-03 的正式桥交付。**可先做：** fake SDK/bridge 驱动 authorizing 与拒绝分支。
 
-**路径：** 拟新增 `frontend/shell/electron/connectivity/{native-host,session-adapter,business-bridge}.*`；仅在明确缺口后另提 SDK 仓改动。
+**实际路径：** `frontend/shell/production/{sdk-runtime,adapter,business-bridge}.cjs` 及 `main.js`；协议见 [D03 v1](../BUSINESS-BRIDGE-0906.md)。
 
-- [ ] 使用固定 tgz、匹配 sidecar 与 ticket provider 装配 native host/session，不从开发目录随意寻找产物。
-- [ ] 按 D03 绑定真实业务上下文，核对身份、应用、设备、有效期与版本。
-- [ ] 统一 SDK/桥失败到状态机，缺桥保持未就绪，禁用本机 HTTP/debug 降级。
+- [x] 使用固定 tgz、匹配 sidecar 与 ticket provider 装配 native host/session，不从开发目录随意寻找产物。
+- [x] 实现同一 SDK 会话的 context GET 握手，严格核对账号/client/设备、应用、有效期、版本与 materials.read 能力；通过才 ready。
+- [x] 统一 SDK/桥失败到状态机，缺桥保持未就绪，禁用本机 HTTP/debug 降级。
 - [ ] 验证真实版本只提供已确认能力；M0 不实现流、上传或 BLE。
 
 **验收：** 正向固定组合完成 Direct→authorizing→业务桥→ready；负向 SDK 成功而桥失败、错设备、过期桥、版本不兼容均不得放行资料请求。**交付证据：** 组件哈希/版本引用、桥合同用例及脱敏状态轨迹。
 
-**2026-09-06 后续交付：** production/sdk-runtime.cjs 已实现真实SDK facade/native装配、固定参数及sidecar哈希校验；合成管道测试通过，主程序缺D03时禁止spawn，真实连接/授权未完成。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；下方涉及真实环境的整体步骤不以局部测试代为勾选。
+**2026-09-06 后续交付：** production/sdk-runtime.cjs 已实现真实SDK facade/native装配、固定参数及sidecar哈希校验；合成管道及 D03 客户端合同测试通过。业务请求仅由 Agent 盒内签发逐请求证明，桌面不传可复用业务票据；旧 Agent 缺 context 时拒绝 ready。新桥尚未部署，真实 Direct 资料未完成。详细证据见[正式接入记录](../M0-PRODUCTION-0906.md)；已勾选项表示客户端实现及相应局部验证，任务整体仍须补齐真实环境验收。
 
 <a id="desk-08"></a>
 
@@ -155,16 +155,16 @@
 
 **硬依赖：** DESK-03、DESK-05、DESK-07。**可先做：** fake close/watchdog 的有界清理测试。
 
-**实际局部路径：** `frontend/shell/runtime/desktop-runtime.cjs`、`frontend/shell/main.js`；有界清理与单实例已实现，未创建真实 native host。
+**实际局部路径：** `frontend/shell/runtime/desktop-runtime.cjs`、`frontend/shell/main.js`、`production/{adapter,sdk-runtime}.cjs`；有界清理、单实例和原生装配已实现，真实业务会话两轮回收尚未验收。
 
-- [ ] 显式断开保留登录，退出清凭据与身份临时状态，二者首先使旧代次失效。
+- [x] 显式断开保留登录，退出清凭据与身份临时状态，二者首先使旧代次失效。
 - [ ] 有界关闭 session/native host，处理窗口关闭、重复退出和异常 sidecar。
-- [ ] 与读调度器挂接待决 Promise 结算；无法确认远端停止时标记结果未知。
-- [ ] 实现单实例策略，重启创建新会话生命周期，不恢复旧 session 对象。
+- [x] 与读调度器挂接待决 Promise 结算；无法确认远端停止时标记结果未知。
+- [x] 实现单实例策略，重启创建新会话生命周期，不恢复旧 session 对象。
 
 **验收：** 正向连接/关闭两轮后进程数量恢复基线；负向 close 卡住、刷新晚到和重复退出均不会永久 pending 或残留可用旧凭据；一次读取消不触发该全局关闭。**交付证据：** 关闭上限、故障注入结果及脱敏进程树。
 
-**2026-09-06 交付与差额：** 已实现本地断开保留合成身份、退出清理、close 超时/迟到/重复控制、单实例，L2 确认本次宿主退出。正式安全存储、refresh、SDK/sidecar 未接入，含这些能力的完整步骤仍不勾选；宿主退出不能证明真实 SDK 无残留。
+**2026-09-06 交付与差额：** 已实现本地断开保留合成身份、退出清理、close 超时/迟到/重复控制、单实例，L2 确认本次宿主退出。正式安全存储、refresh 和 SDK/sidecar 已接入并有局部测试，macOS 存储与 sidecar 前置检查通过；真实连接两轮的进程/凭据回收仍未验，宿主退出不能证明真实 SDK 无残留。
 
 <a id="desk-09"></a>
 
@@ -179,11 +179,11 @@
 - [x] 将唯一业务操作 materials.list 映射固定 GET `/api/mindos/materials`，GET 不带 body。
 - [x] 校验 limit 1–50、offset 0–10000、keyword trim 后 1–100 字符、type/status 枚举；包含 queued。
 - [x] 拒绝重复 query、空值、未知字段及 folder/tag/archived/recycled 筛选。
-- [ ] 只由 main 填写受控头与 D03 身份机制，不接受 renderer 身份字段。
+- [x] main 只构造受控业务请求，D03 证明由 Agent 盒内逐请求签发；不接受 renderer 身份字段或信任头。
 
 **验收：** 正向边界值及 queued 筛选得到确定请求；负向小数、超限、重复参数、路径/头注入与未开放筛选在 SDK 调用前拒绝。**交付证据：** 参数矩阵、请求快照和拒绝时零 SDK 调用断言。
 
-**2026-09-06 交付与差额：** 草案 query、queued、未知字段/越界/路径注入已验证；请求仅含固定 GET/path/Accept，不接受 renderer 身份头。D03 身份机制缺失，最后一步整体保留未勾选；BASE-04 尚未正式冻结。
+**2026-09-06 交付与差额：** 草案 query、queued、未知字段/越界/路径注入已验证；请求仅含固定 GET/path/Accept，不接受 renderer 身份头。D03 v1 与 account/device/ownershipEpoch 资料范围已编码并通过本地测试；真实放行仍待 DESK-15，不读取或迁移旧 global 数据。
 
 <a id="desk-10"></a>
 
@@ -202,7 +202,7 @@
 
 **验收：** 正向同一 validator 接受 fake/真实响应；负向超限、恶意文件名、错误类型、分页不一致均有界拒绝；巨大 folders 不能经“删后变小”绕过预算。**交付证据：** 字节边界测试、公开 JSON 快照及日志敏感字段断言。
 
-**2026-09-06 交付与差额：** 256 KiB 解码前限制、字段/分页/UTF-8/状态校验、目录/正文剔除及安全错误通过 L1，L2 通过实际 preload 的最小投影。当前只用合成响应运行同一生产 validator，无正式服务响应或服务端目录隔离证据；不从未知 HTTP 正文猜测身份错误。
+**2026-09-06 交付与差额：** 256 KiB 解码前限制、字段/分页/UTF-8/状态校验、目录/正文剔除及安全错误通过 L1，L2 通过实际 preload 的最小投影。当前只用合成响应运行同一生产 validator，尚无真实部署服务响应；DE 已有独立 scope、最小字段和预算的本地测试，跨主体真机证据未齐；不从未知 HTTP 正文猜测身份错误。
 
 <a id="desk-11"></a>
 
@@ -269,16 +269,16 @@
 
 **硬依赖：** BASE-05、DESK-02、DESK-03、DESK-11、DESK-13。**可先做：** BASE-05 后建立 fixture、断言和故障矩阵；正式 auth 任务未完成时只运行 fake 局部层。DESK-08 的关闭合同先以 fake 端口覆盖，真实 OS/SDK 清理由 DESK-15 合流验收。
 
-**实际路径：** `frontend/shell/tests/{security,runtime,materials,read-scheduler}.test.cjs`、`tests/electron.e2e.cjs`、`frontend/mindos-web/tests/desktop-ui.test.mjs`；运行入口为 shell `npm test`/`npm run test:e2e` 和 Web `npm run test:all`。
+**实际路径：** `frontend/shell/tests/{security,runtime,materials,read-scheduler}.test.cjs`、`tests/{production-storage,consumer,production-adapter,business-bridge}.test.cjs`、`tests/electron.e2e.cjs`、`frontend/mindos-web/tests/desktop-ui.test.mjs`；运行入口为 shell `npm test`/`npm run test:e2e` 和 Web `npm run test:all`。
 
 - [x] 将接口规格 M0-01–10 分配到 IPC、状态机、adapter 与页面层，列出无法由 fake 证明的真机项。
-- [ ] 使用临时凭据 store/状态目录和合成资料，模拟认证/桥拒绝、乱序回包、超时、断开、超限。
+- [x] 使用临时凭据 store/状态目录和合成资料，模拟认证/桥拒绝、乱序回包、超时、断开、超限。
 - [ ] 增加进程/订阅/Promise 泄漏断言，覆盖 2/8 调度、queued、原始 256 KiB 上限。
 - [x] 固定测试入口和可复现实例，运行受影响的现有前端回归与构建边界检查。
 
 **验收：** 正向隔离集可重复运行且通过；负向不存在访问用户运行库、真实凭据或默认 supervisor 的路径；故意移除代次或 sender 校验时对应测试失败。**交付证据：** 实际命令、测试结果、fixture 来源及 L1/L2 与未验 L3 清单。
 
-**2026-09-06 交付与差额：** 最终合流记录：shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个桌面 controller 子测试）、真实 Electron L2 3 项及双构建通过，详见实施记录。E2E 使用临时 userData 并关闭自建宿主；无正式 credential store，未做移除校验器的 mutation 测试或 native/sidecar 清理验收。订阅与 Promise 局部断言不等于完整内存泄漏证明，第二/三步保留差额。
+**2026-09-06 交付与差额：** 早期 M0-L 合流记录：shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个桌面 controller 子测试）、真实 Electron L2 3 项及双构建通过，详见实施记录。E2E 使用临时 userData 并关闭自建宿主；本轮正式存储/Consumer/SDK/D03 客户端合流后宿主 73 项通过，另有 OS 全套/race/Linux ARM64 与 DE 101 项通过。未做移除校验器的 mutation 测试或真实 native/sidecar 清理验收；订阅与 Promise 局部断言不等于完整内存泄漏证明，第三步保留差额。
 
 <a id="desk-15"></a>
 
@@ -296,6 +296,8 @@
 - [ ] 核对无本机后端、无凭据泄露和退出残留；缺环境项标为未验，问题交回对应任务复验。
 
 **验收：** 正向正式资料 API 读通过；负向越权/失效和隔离矩阵符合冻结合同；health/connect/fake 成功不能替代资料读。缺第二设备或第二账号时 M0-R 不关闭。**交付证据：** 脱敏关联 ID、版本哈希、逐场景预期/实际及最终验收矩阵。
+
+**2026-09-06 真机进展与阻塞：** CUA 已验证知君真实 Consumer 登录及两台在线授权设备列表；这只证明登录/选盒的局部链路。当前窗口仍运行旧 main，必须退出并重新启动才能加载新桥。SSH `user@192.168.1.18` 认证被拒，尚未部署新版 Agent/DE，没有真实 Direct 资料、两轮完整闭环或跨主体真机证据。DESK-15 四项正式验收均保持未勾选，M0-R 未完成。新 scope 按账号、设备和 ownershipEpoch 隔离，不读取或迁移 global，空页不代表历史迁移成功。
 
 ## M1：全域传输入口与状态归属
 

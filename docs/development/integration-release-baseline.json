@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "recordedAt": "2026-09-06",
-  "milestone": "M0-real-preflight-partial",
+  "milestone": "M0-business-bridge-coded-deployment-pending",
   "realDeviceValidated": false,
-  "clientSourceBase": "3d9679b3b17b63ca98baaf59212598f401514091",
+  "clientSourceBase": "0550383ca27f8f2dd0dfa47deae592a01a21ca61",
   "development": {
     "platform": "darwin",
     "arch": "arm64",
@@ -19,13 +19,19 @@
       "dirty": false
     },
     "osAgent": {
-      "commit": "9f7354ea4ff9d156cde33277a2de17e1eb36119f",
-      "dirty": false
+      "commit": "0a004c9fb36746a4d786c675207ff470a9b19cde",
+      "baseCommit": "9f7354ea4ff9d156cde33277a2de17e1eb36119f",
+      "branch": "dev/zhijun-business-bridge-0906",
+      "dirty": false,
+      "deploymentValidated": false
     },
     "dataEngine": {
-      "commit": "ec2854e8e56008571115cf637e9d27b63fbf1322",
-      "dirty": true,
-      "releaseInputApproved": false
+      "commit": "f6b10898a0421fc32f24a768e397157483d53439",
+      "baseCommit": "ec2854e8e56008571115cf637e9d27b63fbf1322",
+      "branch": "dev/zhijun-business-bridge-0906",
+      "dirty": false,
+      "deploymentValidated": false,
+      "originalWorkingTreeDirty": true
     },
     "admin": {
       "commit": "8ff6e888fb17ce268527755d6795c9d68b5b5305",
@@ -48,24 +54,51 @@
   },
   "production": {
     "missing": [
-      "D02: real account login and authorized device acceptance; target application configuration is resolved",
-      "D03: trusted Agent to data-engine identity bridge and deployed route authorization",
-      "BASE-04: approved material ownership and bounded server projection",
-      "D05: traceable clean sidecar input and production release matrix",
-      "DESK-15: authorized real devices and cross-account/device acceptance"
+      "D03: deploy matching Agent/data-engine with an independent on-box Ed25519 key",
+      "BASE-04: explicit ownership/migration of existing material records; no automatic global fallback",
+      "D05: traceable clean sidecar input and production signing matrix",
+      "DESK-15: real Direct material reads and cross-account/device/close acceptance"
     ],
     "consumerAdapterImplemented": true,
-    "deploymentLoginValidated": false,
-    "businessBridgeImplemented": false,
-    "realConnectionEnabled": false,
+    "deploymentLoginValidated": true,
+    "businessBridgeImplemented": true,
+    "realConnectionEnabled": true,
     "osCredentialStorageValidated": true,
     "osCredentialStorageScope": "macOS ARM64 Electron 37.10.3 safeStorage with temporary synthetic records; not signed-release or cross-platform acceptance",
     "consumerAnonymousDenialValidated": true,
     "gatewayHealthValidated": true,
     "applicationId": "mindos-person-data-pc",
     "purpose": "person-data.read",
-    "requestedScopes": ["remote.p2p"],
-    "independentClientIdentity": true
+    "requestedScopes": [
+      "remote.p2p"
+    ],
+    "independentClientIdentity": true,
+    "authorizedDeviceListValidated": true,
+    "authorizedOnlineDevicesObserved": 2,
+    "businessBridgeVersion": 1,
+    "businessBridgeDeployed": false,
+    "realDirectMaterialsValidated": false
   },
-  "realAcceptanceReport": "REAL-ACCEPTANCE-0906.md"
+  "realAcceptanceReport": "REAL-ACCEPTANCE-0906.md",
+  "businessBridgeBundle": {
+    "builder": "frontend/shell/scripts/prepare-bridge-release.cjs",
+    "localPath": "data/desktop/bridge-release-0906",
+    "manifestSha256": "afccbc9f95da00bafd7a47a9233359b8e6049639a7a0bc4ed3e89beb41afc801",
+    "filesVerified": 12,
+    "platforms": [
+      "linux-amd64",
+      "linux-arm64"
+    ],
+    "deployed": false,
+    "signedRelease": false
+  },
+  "validation": {
+    "shellTests": 73,
+    "electronE2eTests": 4,
+    "dataEngineTests": 101,
+    "osGoSuitePassed": true,
+    "osBridgeRacePassed": true,
+    "desktopBuildPassed": true,
+    "mermaidDiagrams": 4
+  }
 }

@@ -64,7 +64,7 @@ onBeforeUnmount(() => { password.value = ''; phone.value = ''; window.removeEven
 
     <div class="environment-banner" :class="{ simulation: environment === 'simulation' }" data-testid="environment">
       <strong>{{ environment === 'simulation' ? '模拟环境 · 合成数据' : environment === 'production' ? '账号服务已配置' : '正式连接尚未配置' }}</strong>
-      <span>{{ environment === 'simulation' ? '用于验证桌面操作流程，当前展示的账号、盒子和资料均为模拟内容。' : environment === 'production' ? '可登录并查询已绑定设备；资料访问仍需完成盒端授权通道配置。' : '完成正式登录、设备授权和访问配置后，才能连接真实盒子。' }}</span>
+      <span>{{ environment === 'simulation' ? '用于验证桌面操作流程，当前展示的账号、盒子和资料均为模拟内容。' : environment === 'production' ? '连接已绑定的盒子，验证访问权限后查看资料。' : '完成正式登录、设备授权和访问配置后，才能连接真实盒子。' }}</span>
     </div>
 
     <main>

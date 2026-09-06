@@ -1,8 +1,8 @@
 # 知君 SDK / data-engine 集成开发任务清单
 
-日期：2026-09-06（文件名沿用 0905 集成基线）。规划代码基线：知君 `140dd34`，产品源 `22dc9a3`。任务清单最初仅作规划；2026-09-06 已实施首批 M0-L，实际起点 `ee8cd96`。**独立桌面本地合同和模拟流程已通过，已新增正式Consumer/SDK客户端；可信身份桥和真实盒子M0-R尚未完成。** 当前状态见第3节及各任务交付差额，不用既有产品回归或模拟结果代替真实业务集成。
+日期：2026-09-06（文件名沿用 0905 集成基线）。规划代码基线：知君 `140dd34`，产品源 `22dc9a3`。任务清单最初仅作规划；2026-09-06 已实施首批 M0-L，实际起点 `ee8cd96`。**独立桌面本地合同和模拟流程已通过，正式 Consumer/SDK 客户端及三端 D03 逐请求 Ed25519 桥已编码并通过本地测试；真实盒子 M0-R 尚未完成。** 当前状态见第3节及各任务交付差额，不用既有产品回归或模拟结果代替真实业务集成。
 
-任务依据：[架构](ARCHITECTURE-0905.md)、[集成方案](INTEGRATION-0905.md)、[桌面接口合同](DESKTOP-CONTRACT-0905.md)、[领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)。发生冲突时先修订合同再实施，不由单个任务私自改变身份、部署或传输协议。
+任务依据：[架构](ARCHITECTURE-0905.md)、[集成方案](INTEGRATION-0905.md)、[桌面接口合同](DESKTOP-CONTRACT-0905.md)、[领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[D03 业务桥 v1](BUSINESS-BRIDGE-0906.md)。发生冲突时先修订合同再实施，不由单个任务私自改变身份、部署或传输协议。
 
 ## 1. 任务编制计划与交付标准（历史记录）
 
@@ -49,18 +49,18 @@ M0-L/M0-R 是对既有 M0 的验收分层，不是两套产品实现。发布负
 | 任务 / 里程碑 | 当前状态 | 已交付与尚缺内容 |
 | --- | --- | --- |
 | M0-L；DESK-01/02/03/09/10/11/12/13/14 | 本地通过待外部验收 | 独立宿主与 Vue 入口、安全 IPC、代次、资料投影/调度/取消及合成流程已实现；逐任务未覆盖验收仍保留，见桌面明细 |
-| BASE-01、BASE-05 | 本地通过待外部验收（子交付） | 开发版本/哈希审计、临时 userData、合成 adapter 与测试入口已建立；正式产物来源、身份、安全存储和真机环境未齐 |
-| BASE-04 | 实施中（草案/fixture） | 五态、分页、256 KiB 与最小投影已有本地策略/夹具；跨团队归属、服务端裁剪与授权尚未冻结 |
-| DESK-08 | 实施中（本地清理） | 有界 close、退出抢占、待决结算、单实例及自建宿主退出已覆盖；正式凭据/refresh/native SDK/sidecar 回收未验 |
-| BASE-03；DESK-16–23；SERV-01–20；CONN-01–18 | 未开始 | 身份桥、全域业务迁移、流/上传和发布继续按依赖推进 |
-| DESK-15 | 实施中 / 真机前置检查部分通过 | Admin/Gateway网络、macOS存储和原生sidecar通过；SSH认证被拒，账号登录/业务资料闭环未完成 |
-| BASE-02；DESK-04/05/06 | 实施中 / 客户端本地通过待外部验收 | 已自动配置现有PC资料目标，知君clientId独立；macOS加密存储真实检查通过，真实登录/设备与签名发布待验 |
-| DESK-07 | 实施中 | 实际SDK facade/admin/process装配通过合成管道测试，D03缺失时拒绝spawn；真实Direct连接待验 |
-| M0-R、M1、M2、R | 未验收 | 没有正式应用注册、真实 SDK 会话、盒子资料读取或安装包验收证据 |
+| BASE-01、BASE-05 | 本地通过待外部验收（子交付） | 开发版本/哈希审计、隔离目录、合成 adapter、正式凭据存储及 macOS 存储检查已建立；固定部署产物和完整真机环境仍待验 |
+| BASE-03、BASE-04；SERV-01/02/03 | 本地通过待外部验收 | 三端 D03 v1 签发/验签、主体绑定、重放拒绝、资料范围及有界投影已实现；新版本未部署，正式验收不关闭 |
+| DESK-08 | 实施中 | 有界 close、退出抢占、凭据/刷新失效及原生 adapter 清理已编码；真实连接两轮后的 native SDK/sidecar 回收未验 |
+| DESK-16–23；SERV-04–20；CONN-01–18 | 未开始 | 全域业务迁移、流/上传和发布继续按依赖推进 |
+| DESK-15 | 实施中 / 真机前置检查部分通过 | 网络、macOS 存储、原生 sidecar、真实 Consumer 登录和两台在线授权设备列表已验证；旧 main 仍在运行，SSH 认证被拒，未部署新桥 |
+| BASE-02；DESK-04/05/06 | 本地通过待外部验收（客户端子交付） | 自动配置既有 PC 资料目标，知君 clientId 独立；真实登录/设备列表已由 CUA 验证，真实刷新/撤销和签名发布待验 |
+| DESK-07 | 本地通过待外部验收 | 固定 SDK/sidecar 装配、同会话 context 握手及 D03 严格绑定已实现；真实 Direct 资料读取待部署后验收 |
+| M0-R、M1、M2、R | 未验收 | 没有新桥部署、真实 Direct 资料读取、跨主体真机矩阵或安装包验收证据 |
 
 实际路径以[桌面明细](tasks/DESKTOP-TASKS-0905.md)映射为准，开发输入见 [integration-release-baseline.json](integration-release-baseline.json)。当前宿主使用 `frontend/shell/runtime/`，前端使用 `src/desktop/` 单页，原设计中的多级 electron 目录和 desktop router 未照搬。
 
-L1 为策略/调度/状态机/controller 单元与合同测试；L2 为真实 Electron 的真实 preload/main/页面搭配显式模拟 adapter。最终合流验证为 shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个 desktop controller 子测试）、L2 3 项及 Web/Desktop 双构建通过。L3 的正式 SDK/盒子和 L4 安装包均未验，不能把 L2 的 Electron 进程视作 L3 真机。
+L1 为策略/调度/状态机/controller 单元与合同测试；L2 为真实 Electron 的真实 preload/main/页面搭配显式模拟 adapter。早期 M0-L 合流验证为 shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个 desktop controller 子测试）、L2 3 项及 Web/Desktop 双构建通过。本轮宿主 73 项、OS 全套 Go 测试与 race 检查及 Linux ARM64 构建、DE 101 项均通过。L3 已取得真实 Consumer 登录和两台在线授权设备列表的局部证据，真实 Direct 资料及跨主体场景未验；L4 安装包未验，不能把 L2 的 Electron 进程视作 L3 闭环。
 
 E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之后；启动更早阶段未被该监听捕获，另以入口依赖审查、受限 CSP 和 Electron session 阻断核对边界。详细命令、差额及环境以[本轮实施记录](M0-IMPLEMENTATION-0906.md)为准。
 
@@ -89,12 +89,12 @@ E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之�
 
 **归属：** WP-00 / M0-R；P0；控制面 + 桌面认证负责人；M（1–2 人日）。**依赖：** BASE-01 的版本清单；维护方提供合法配置与测试身份。
 
-**文件与交付：** 拟新增配置 schema/无敏感信息示例及注册记录；确切 Consumer/Admin 服务仓库与注册入口由维护方登记。
+**当前状态：本地通过待外部验收（客户端子交付）。** 配置与校验已落地于 `frontend/shell/config/zhijun-connectivity.json` 和 `production/`。`applicationId=mindos-person-data-pc` 是既有服务端目标；`purpose=person-data.read`、`scopes=[remote.p2p]` 沿用该目标策略，知君使用独立 clientId、密钥与存储，不复用其他应用登录凭据。真实 Consumer 登录及两台在线授权设备列表已由 CUA 验证；授权拒绝矩阵、真实刷新/撤销和发布仍待验。
 
-- [ ] 固定 D02 applicationId、purpose、scopes、受信 Consumer/Gateway/JWKS 地址及登录回调合同。
-- [ ] 确定 clientId 生命周期、安全存储 namespace、账号退出与 refresh 旋转行为。
+- [x] 固定 D02 目标 applicationId、purpose、scopes、受信 Consumer/Gateway 地址及登录交互合同；D03 使用独立 Ed25519 公钥，不复用 Consumer JWKS。
+- [x] 实现 clientId 生命周期、安全存储 namespace、账号退出与共享 refresh 旋转行为；真实撤销/旋转留待联合验收。
 - [ ] 准备至少两台已绑定设备及同盒不同账号的授权测试矩阵；不把设备在线提示当作授权。
-- [ ] 明确配置由主进程读取，缺项返回配置未就绪；示例配置不能自动启用真实连接。
+- [x] 配置由主进程读取并严格校验，缺项返回配置未就绪；仅加载通过校验的正式配置才启用真实适配器；`--real`提供自动准备入口。
 
 **验收：** 合法身份和无权限身份均有可重现预期；伪应用/错误 audience 或 scope 被拒；renderer 和日志无票据。**证据：** 脱敏配置版本、维护者责任记录、合法测试资源清单。模拟认证代码可在此项完成前编写。
 
@@ -104,12 +104,12 @@ E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之�
 
 **归属：** WP-00、WP-03 / M0-R；P0；Agent + data-engine + 控制面 + SDK；L（2–4 人日）。**依赖：** BASE-01、BASE-02 的身份字段；并行准备主体传递草案。
 
-**文件与交付：** `DESKTOP-CONTRACT-0905.md` D03、拟版本化桥合同与双方共享测试向量；Agent manifest、服务端 gate 的实施由 SERV-01/SERV-02 独占。
+**当前状态：本地通过待外部验收。** [D03 v1 合同](BUSINESS-BRIDGE-0906.md)及[跨语言合成签名向量](contracts/mindos-bridge-v1.json)已落地；桌面、OS/Agent、DE 均已编码并通过本地测试，新版本尚未部署。
 
-- [ ] 冻结验证者、传递载体和 account/client/device/application/scope/purpose 绑定，明确每层信任来源。
-- [ ] 选择盒内可信交换或经批准的专用票据方案，写明签发/验签、期限、防重放、撤销、续期及重启行为。
-- [ ] 明确错误码和安全公开字段；若选 JWT，验证真实票据长度满足当前 Bearer 上限。
-- [ ] 定义 ready 的证据及缺桥拒绝行为，禁止依赖 loopback 或 renderer 信任头绕过 gate。
+- [x] 固定 Agent 从同一份新鲜授权快照取得 Owner/有效 grant，逐请求核对账号、client、设备、应用、purpose、scope、Direct 状态和期限。
+- [x] 采用独立 Ed25519 密钥，Agent 盒内签发最长 5 秒的请求证明，DE 验签并原子消费 nonce；请求绑定方法与目标，撤销/过期拒绝，不建立可复用业务会话。
+- [x] 固定安全错误、公开字段与大小限制；外来同名信任头继续拒绝，内部证明不扩宽 SDK 外部头白名单或 Bearer 上限。
+- [x] 桌面在同一 SDK 会话调用 context，严格核对主体、应用、版本、能力与期限后才 ready；缺桥拒绝，不回退 loopback/debug。
 
 **验收：** 同一组有效、过期、撤销、错误设备/应用、伪主体向量可交给双方实现；未冻结字段保持显式未实现；不把 API 名称草案写成已部署端点。**证据：** 带版本的字段/时序/拒绝矩阵和双方负责人。
 
@@ -119,14 +119,14 @@ E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之�
 
 **归属：** WP-00、WP-04 / M0-R；P0；后端 + 产品 + 桌面负责人；M（1–2 人日）。**依赖：** BASE-03 的主体定义；可先按桌面草案制作合成夹具。
 
-**当前状态：实施中（草案/fixture）。** `frontend/shell/runtime/materials.cjs`、`runtime/adapters.cjs` 及策略测试已覆盖本地最小字段、五态和 256 KiB 边界。未冻结同盒多账号归属、服务端 folders 裁剪或跨层共享夹具；客户端拒绝/隐藏不替代服务端隔离，原正式步骤继续保留。
+**当前状态：本地通过待外部验收。** 桌面 `runtime/materials.cjs` 与 DE `backend/mindos/bridge_materials.py` 已实现 v1 资料合同。新 scope 按 accountId + deviceId + ownershipEpoch 隔离，items 与 total 使用相同范围；不读取、映射或迁移旧 global/其他 scope 数据。没有新 scope 资料时返回空页不能视为历史数据迁移成功。
 
-**文件与交付：** 桌面合同第5节、资料列表请求/响应 fixture（拟）；data-engine `backend/mindos/uploads.py`、`services/ingestion.py` 及主进程策略由后续任务修改。
+**文件与交付：** [D03 v1 合同](BUSINESS-BRIDGE-0906.md)、桌面资料策略测试及 DE 隔离路由/SQLite 夹具。
 
-- [ ] 明确盒级资料的共享/私有规则及同盒不同账号、设备转让后可见范围；列表 total 与条目使用同一过滤范围。
-- [ ] 冻结分页、五种状态（含 queued）、最小字段及 256 KiB 原始响应预算。
-- [ ] 确定服务端共享 folders 的裁剪方案与版本协商位置；客户端拒绝超限不能被当作完整服务端隔离。
-- [ ] 覆盖空页、末页、变动数据、未知状态、超限和无权访问的共享 fixture。
+- [x] 固定同盒不同账号与 ownershipEpoch 变化后的隔离规则，列表 total 与条目使用同一过滤范围。
+- [x] 实现分页、五种状态（含 queued）、最小字段及发送前 256 KiB 原始响应预算。
+- [x] 新投影不输出或读取共享 folders；context version=1 和 materials.read 能力明确对应此合同，保留既有 Web 接口兼容。
+- [ ] 完成跨三端共享 DTO 矩阵的正式合流验收，覆盖空页、末页、变动数据、未知状态、超限和无权访问；现有各端局部夹具不替代该验收。
 
 **验收：** 桌面、Agent 与服务端对同一夹具有一致结论，响应不泄露其他主体目录或计数；没有人为扩大允许范围。**证据：** 字段/状态/归属矩阵及预算边界报告。资料规则不自动决定个人 Claim/会话归属，后者由领域任务冻结。
 
@@ -136,7 +136,7 @@ E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之�
 
 **归属：** WP-00、WP-05 / M0-L、M0-R；P0；测试 + 集成负责人；M（1–2 人日）。**依赖：** 无，可立即开始；真实环境部分依赖 BASE-02。
 
-**当前状态：本地通过待外部验收（本地子交付）。** shell E2E 创建并清除临时 userData，仅用显式模拟 adapter 和合成内容，不启动 Python 或加载运行库，并检查本次宿主退出；实际入口为 `frontend/shell/tests/`、`frontend/mindos-web/tests/desktop-ui.test.mjs`。正式 credential store、后端模块路径覆盖拒绝与 native/sidecar 残留尚未验，不将本轮不加载后端写成已完成后端隔离故障测试。
+**当前状态：本地通过待外部验收（本地子交付）。** shell E2E 创建并清除临时 userData，仅用显式模拟 adapter 和合成内容，不启动 Python 或加载运行库，并检查本次宿主退出；实际入口为 `frontend/shell/tests/`、`frontend/mindos-web/tests/desktop-ui.test.mjs`。正式 credential store 已实现并通过 macOS 系统存储检查；后端模块路径覆盖拒绝与真实连接后的 native/sidecar 残留尚未完整验收，不将本轮不加载后端写成已完成后端隔离故障测试。
 
 **文件与交付：** [隔离运行说明](local-runtime.md)、既有 `scripts/run_tests.py`；拟新增 M0 fixture/测试辅助及验收记录模板，具体文件与 runner 在实现 PR 中登记。
 

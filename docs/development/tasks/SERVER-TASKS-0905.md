@@ -1,12 +1,12 @@
 # 服务端与盒端领域开发任务
 
-日期：2026-09-06。**SERV-01–SERV-20 均为未开始**；本文件只定义开发工作，不代表已配置正式权限、实现业务桥、迁移数据库或执行验收。返回 [开发任务总表](../DEVELOPMENT-TASKS-0905.md)。合同依据：[桌面接口](../DESKTOP-CONTRACT-0905.md)、[领域迁移](../DOMAIN-INTEGRATION-0905.md)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。
+日期：2026-09-06。**SERV-01/02/03 已编码并通过本地验证，状态为本地通过待外部验收；SERV-04–20 未开始。** 三端逐请求 Ed25519 桥以 [D03 v1](../BUSINESS-BRIDGE-0906.md) 为准。OS 全套/race/Linux ARM64 构建及 DE 101 项测试通过；新桥未部署，未迁移用户数据，也未完成真实 Direct 资料或跨主体真机验收。返回 [开发任务总表](../DEVELOPMENT-TASKS-0905.md)。合同依据：[桌面接口](../DESKTOP-CONTRACT-0905.md)、[领域迁移](../DOMAIN-INTEGRATION-0905.md)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。
 
 ## 使用与派发规则
 
 每项以一个独立 PR 为交付边界；跨仓任务分别提交关联 PR，以集成验证关闭任务。优先级 P0 支持 M0，P1 支持完整业务；M0-R 是正式只读链路，M1 是领域/聊天合流。本文件 M1 服务端子项完成不等于聊天端到端完成，仍依赖 WP-06/WP-08。估算为有效开发加本任务验证：S=0.5–1、M=1–2、L=2–4 人日，不含外部等待和发布排期；发现闭包超出 L 时先拆子任务，不能跳过表族或测试来满足估算。
 
-“硬依赖”表示任务最终验收所需输入；没有正式配置时，允许在明确标注假设的模拟适配器、模块骨架及合成夹具上先行开发，不能将本地通过写成真实链路通过。BASE-01–05 的定义和状态以总表为准。正式身份/桥在 BASE-02/03 冻结；资料归属、应用权限和预算在 BASE-04 冻结；领域归属/Claim/部署决议在 SERV-05 冻结。除明确写为“现有”的路径外，下文目标模块与报告路径均为**拟新增**，落点由实现负责人在 PR 中确认。
+“硬依赖”表示任务最终验收所需输入；没有正式配置时，允许在明确标注假设的模拟适配器、模块骨架及合成夹具上先行开发，不能将本地通过写成真实链路通过。BASE-01–05 的定义和状态以总表为准。正式身份/桥在 BASE-02/03 冻结；资料归属、应用权限和预算在 BASE-04 冻结；领域归属/Claim/部署决议在 SERV-05 冻结。SERV-01–03 已回填实际源码；其余任务除明确写为“现有”的路径外，目标模块与报告路径均为**拟新增**。
 
 仓库简称：ZJ=当前知君仓库；DE=`nexusaos-data-engine`；OS=`nexusaos-centuarai-os`。表和模块路径仅指源码，禁止读取现有运行库、凭据或用户文件用于开发夹具。所有验证只使用隔离目录、合成身份和合成业务数据；真实 M0 验证另由 WP-05 组织。证据至少记录实际版本、测试文件/命令、预期/实际、失败项和脱敏关联 ID，不能仅引用旧工程测试数量。
 
@@ -16,14 +16,14 @@
 
 ### SERV-01：Agent 可信身份桥适配
 
-**WP-03｜M0-R｜P0｜连接平台，控制面配合｜L（2–4 人日）｜未开始**。硬依赖：BASE-01、BASE-02、BASE-03。
+**WP-03｜M0-R｜P0｜连接平台，控制面配合｜L（2–4 人日）｜本地通过待外部验收**。硬依赖：BASE-01、BASE-02、BASE-03。
 
-涉及现有 OS `remote-agent/internal/p2p/http_channel.go`、`internal/sessionauth/`、`internal/application/registry.go`、`manifests/remote-agent-applications.yaml`；拟新增桥适配模块及合同向量。PR 独占 Agent 身份映射和知君应用策略，不混入流式/上传扩展。
+涉及现有 OS `remote-agent/internal/p2p/http_channel.go`、`internal/sessionauth/`、`internal/application/registry.go`、`manifests/remote-agent-applications.yaml`；已新增 `remote-agent/internal/mindosbridge/` 签发器及共享合同向量，并完成 config/control/p2p 接线。PR 独占 Agent 身份映射和知君应用策略，不混入流式/上传扩展。
 
-- [ ] 按冻结方案确定连接可信主体的来源与业务桥调用点，建立账号、client、设备、应用、purpose、scope 的绑定校验。
-- [ ] 实现服务端可信上下文传递或已批准的专用交换适配；禁止从 renderer 提供的 header、path、accountId 建立可信身份。
-- [ ] 按 M0 精确允许资料 GET 方法/路径/查询，并核对票据或会话字段在全链路的长度限制；不整体放开通配业务路径。
-- [ ] 实现连接关闭、过期和撤销的失效传播，补齐无凭据正文的关联诊断与正负合同向量。
+- [x] 从同一份新鲜授权快照取得 Owner 与当前 grant，逐请求重新校验账号、client、设备、应用、purpose、scope、Direct 状态与会话期限。
+- [x] 实现独立 Ed25519 签发器和最长 5 秒的逐请求证明，仅在盒内附加 `X-Nexus-Mindos-Bridge`；外来同名头拒绝，缺密钥配置不赋予新权限。
+- [x] 仅为 PC 目标的 GET `/api/mindos/connectivity/context` 与 `/api/mindos/materials` 签发证明；manifest/parser 只补精确 context 路径，不扩大其他应用或业务路径。
+- [x] 实现逐请求关闭/过期/撤销拒绝、密钥与授权快照的安全文件读取及共享正负向量；真实部署后的失效传播仍须 WP-05 验收。
 
 验收：正确绑定的合成向量被转交业务桥；错误账号/设备/应用/scope、伪造身份头、越界路径和重放凭据均被拒。正式向量须来自 BASE-03 确认的合同，不能复用 demo 身份作为授权证明。证据：Agent 单元结果、策略差异、与 SERV-02 共用的脱敏向量及版本；真实资料读取留待 WP-05。
 
@@ -31,14 +31,14 @@
 
 ### SERV-02：data-engine 业务 gate 与会话生命周期
 
-**WP-03｜M0-R｜P0｜后端鉴权负责人｜L（2–4 人日）｜未开始**。硬依赖：BASE-01、BASE-02、BASE-03、SERV-01。
+**WP-03｜M0-R｜P0｜后端鉴权负责人｜L（2–4 人日）｜本地通过待外部验收**。硬依赖：BASE-01、BASE-02、BASE-03、SERV-01。
 
-涉及现有 DE `backend/mindos/connectivity_ticket.py`、`connectivity_session.py`、`stores/connectivity_store.py`、`device_context.py`、`backend/server.py`。PR 独占桥入口、会话验证和统一安全错误；SERV-13 后续接入领域路由。
+涉及现有 DE `backend/mindos/connectivity_ticket.py`、`connectivity_session.py`、`stores/connectivity_store.py`、`device_context.py`、`backend/server.py`；新增 `agent_bridge.py`、`tests/test_agent_bridge.py` 与合成 fixture。PR 独占桥入口、会话验证和统一安全错误；SERV-13 后续接入领域路由。
 
-- [ ] 对照现有专用票据/JWKS 与会话验证实现冻结方案；不得将 Consumer 登录 token 直接当作业务票据。
-- [ ] 在业务处理前验证有效期、撤销、epoch、nonce/重放与账号/client/设备绑定；按合同补充应用、purpose、scope 责任，不假定现有 session 已覆盖全部条件。
-- [ ] 将已验证主体注入请求上下文；审查逐方法/路径授权落点，缺主体或缺 scope 时拒绝，不退回 global 或 local-debug。
-- [ ] 实现关闭/续期/重连失效规则和安全错误映射；只暴露已核实的 code/traceId，不伪造过期原因或输出原票据。
+- [x] 新增独立 Ed25519 公钥验签入口，保留既有专用票据/JWKS 与会话 API 兼容；Consumer 登录 token 不作为业务证明。
+- [x] DE在业务处理前验证签名、期限、持久化原子nonce、账号/client/设备、应用、scope及精确请求绑定；purpose与Direct策略由Agent签发前核对。Agent当前grant/ownershipEpoch与DE本地撤销各自按合同校验，不混同两层版本。
+- [x] 将已验证主体注入请求上下文；审查逐方法/路径授权落点，缺主体或缺 scope 时拒绝，不退回 global 或 local-debug。
+- [x] 不创建可复用业务会话；每次读重新验证最长 5 秒证明，关闭后 Agent 停止签发；安全错误不输出证明正文。真实重启/撤销传播验收保持待办。
 
 验收：关闭 local-debug 后通过桥的资料请求可到达业务处理器；过期、撤销、旧 epoch、重复 nonce、缺 scope、错误绑定均拒绝。现有 `validate_session` 未使用 method/path，必须证明授权在明确的 gate/策略层生效，不能以返回 principal 代替路由授权。证据：隔离 session/gate 测试、合同向量两端对照、会话清理和安全错误结果；health/validate 成功不算业务验收。
 
@@ -46,16 +46,19 @@
 
 ### SERV-03：资料归属及有界响应投影
 
-**WP-03/WP-04｜M0-R｜P0｜后端资料负责人｜L（2–4 人日）｜未开始**。硬依赖：BASE-04、BASE-05、SERV-02。
+**WP-03/WP-04｜M0-R｜P0｜后端资料负责人｜L（2–4 人日）｜本地通过待外部验收**。硬依赖：BASE-04、BASE-05、SERV-02。
 
-涉及现有 DE `backend/mindos/uploads.py`、`services/ingestion.py`、`api_contracts.py`；拟新增受控资料列表投影与合同测试。PR 只覆盖 M0 列表；保留既有 Web 合同的兼容方式必须在 BASE-04 中明确。
+涉及现有 DE `backend/mindos/uploads.py`、`services/ingestion.py`、`api_contracts.py`；已新增 `backend/mindos/bridge_materials.py` 及 `backend/tests/test_agent_bridge.py` 隔离合同测试。PR 只覆盖 M0 列表；保留既有 Web 合同的兼容方式必须在 BASE-04 中明确。
 
-- [ ] 按已批准的盒级共享或 owner 私有规则同时约束 items、total 和分页计算，禁止跨范围计数泄漏。
-- [ ] 落实 limit 1–50、offset 0–10000 及可选 keyword/type/status 的合同；状态完整包含 uploaded/queued/processing/available/failed。
-- [ ] 受控响应只输出 materialId/fileName/fileType/status/createdAt 和分页元数据，移除顶层 folders、条目 folder/folderId、路径、预览 URL、正文及共享目录统计。
-- [ ] 在发送前落实 256 KiB 原始 JSON body 预算及字段长度校验；不能先返回无限目录再靠桌面删除。超限给可识别错误，不静默截断。
+- [x] 按 accountId + deviceId + ownershipEpoch 生成的独立 scope 同时约束 items、total 和分页；不读取或迁移 global/其他 scope，不把历史资料自动归给首次登录者。
+- [x] 落实 limit 1–50、offset 0–10000 及可选 keyword/type/status 的合同；状态完整包含 uploaded/queued/processing/available/failed。
+- [x] 受控响应只输出 materialId/fileName/fileType/status/createdAt 和分页元数据，移除顶层 folders、条目 folder/folderId、路径、预览 URL、正文及共享目录统计。
+- [x] 在发送前落实 256 KiB 原始 JSON body 预算及字段长度校验；不能先返回无限目录再靠桌面删除。超限给可识别错误，不静默截断。
 
 验收：空页、连续页、queued 筛选和合法极值返回可校验结果；同盒不同账号及两设备按冻结归属规则断言允许/拒绝；增加其他范围资料或目录不改变当前可见 total。巨量共享目录不导致泄漏或无界响应，未知枚举/非法分页被拒。证据：隔离路由测试、真实序列化字节统计、与 WP-04 同一套 DTO 向量；新投影能力未部署前桌面仍对超限响应拒绝。
+
+
+**本轮本地证据与未验项：** OS 全套 Go 测试、race 及 Linux ARM64 构建通过，DE 101 项通过，包含验签/重放/错误绑定与隔离资料投影。新列表采用只读 SQLite 查询，避免旧列表修复逻辑写入；新 scope 空页不代表历史迁移。运行中的知君仍是旧 main，SSH `user@192.168.1.18` 认证被拒，Agent/DE 新桥未部署；正式 Direct 资料、两设备/同盒不同账号、撤销/过期及退出后的真机证据仍由 DESK-15 补齐。上述勾选仅确认已实现的本地子步骤，SERV 正式验收与 M0-R 均未关闭。
 
 ## 领域基础、数据和生命周期
 

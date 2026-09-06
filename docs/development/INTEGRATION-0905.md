@@ -1,6 +1,6 @@
 # 知君 Electron SDK 与 data-engine 集成方案
 
-> 状态：M0-L及正式Consumer/SDK客户端装配已实现；真实data-engine业务桥与真机集成未完成。更新日期：2026-09-06。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)，原调研审核见 [审核记录](REVIEW-0905.md)，产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
+> 状态：M0-L及正式Consumer/SDK客户端装配已实现；盒内签名桥已编码，盒端部署与真机资料集成未完成，见[D03合同](BUSINESS-BRIDGE-0906.md)。更新日期：2026-09-06。分支：`dev/first-integrate-check-0905`。架构见 [技术架构](ARCHITECTURE-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)，原调研审核见 [审核记录](REVIEW-0905.md)，产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)。
 
 实施规格入口：[桌面接口合同与 M0](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移](DOMAIN-INTEGRATION-0905.md)、[工作包与交付依赖](INTEGRATION-WORKPACKAGES-0905.md)。本文维护源码事实与总体方案，配套规格维护完整目标接口和验收，已实现部分以 M0 实施记录及当前源码为准；正式应用/跨仓合同未冻结的字段按 D01–D05 跟踪。
 
@@ -15,7 +15,7 @@
 - [x] 形成当前/目标架构图、连接时序、接口矩阵及分阶段集成方案。
 - [x] 复核所有关键结论的源码依据、文档链接及待确认项。
 
-初次调研只修改文档，随后已同步上游业务代码。2026-09-06 按开发任务落实独立桌面 M0-L：main/preload/runtime、独立 Vue 入口、资料策略、显式模拟适配器与测试；SDK、OS 与 data-engine 工作区仍只读，尚未开始正式跨仓业务联调。验收区分本地模拟、真实连接和领域迁移；未接入正式身份时保持能力关闭，不将模拟通过计为盒端业务完成。
+初次调研只修改文档，随后已同步上游业务代码。2026-09-06 按开发任务落实独立桌面 M0-L：main/preload/runtime、独立 Vue 入口、资料策略、显式模拟适配器与测试；后续已在OS/data-engine隔离worktree实现D03签名桥，原工作区不改；真实盒端部署仍待完成。验收区分本地模拟、真实连接和领域迁移；未接入正式身份时保持能力关闭，不将模拟通过计为盒端业务完成。
 
 验证记录分开维护：上游同步的后端、前端及事项/成果回归见同步记录；本轮新增宿主、资料控制器、策略与 Electron E2E 见 M0 实施记录。不沿用此前文档链接或产品测试数量作为本轮桌面验证结果；本轮已明确锁定宿主 Electron 依赖。
 
@@ -26,13 +26,13 @@
 | 知君 | `dev/first-integrate-check-0905`；开发起点 `ee8cd96`，产品同步提交 `94239a1` / 产品源 `22dc9a3` | 上游 2 个提交、76 个文件增量及文稿保护修复已保留；本轮在详细任务基线上实现 M0-L，当前提交以 Git 为准 |
 | Connectivity SDK | `dev/integrate-sdk-20260902` / `819831c` | 二次审核时工作区干净；Electron 1.2.0、auth、配网包与 release 已进入当前提交 |
 | data-engine | `dev/integrate-sdk-20260902` / `ec2854e` | **HEAD + 未提交修改**；上传、模型运行时等文件有改动，`pocket_uploads.py` 未跟踪 |
-| OS / Remote Agent（仅补查连接和鉴权） | `dev/integrate-sdk-20260902` / `9f7354e` | 二次审核时工作区干净；不是本轮实施目标 |
+| OS / Remote Agent | `dev/integrate-sdk-20260902` / `9f7354e` | 初次调研只读；后续从此基线创建独立D03实现分支 |
 
 首次调研时 SDK / OS 分别为 `f1dcb87` / `a13d7e5` 加未提交修改，二次审核时已更新为上表提交。SDK 本地 `release/electron-sdk-1.2.0/` 的 5 个 tgz 曾核对 package.json、exports 对应的 dist、README/examples 共 36 个文件；该检查不等于从源码重建或 npm 已发布。
 
 尤其需要区分仓库状态与二进制来源：现有 sidecar manifest 仍记录构建于 `2026-09-05T01:07:11.563Z`，源提交 `a13d7e5`、`dirty:true`，输入摘要 `97e3d55adf5de789d0111c79d70fe4c7188eef9f94251ef27f2af9c78daf731b`。不能因 SDK / OS 工作区变干净，就将这些二进制认定为当前 OS HEAD 的可重建产物。实施前须重新构建或逐项核对 source-inputs，固定 SDK、sidecar、Agent、服务端的提交/归档哈希与合同版本。[S10]
 
-2026-09-06 开发期间再次只读核验相邻三个仓库，以上 SDK/OS/data-engine HEAD、身份桥缺口和上传协议漂移均未变化。六平台 sidecar 的二进制与压缩包共 12 项哈希均匹配 manifest；Electron/contracts tgz 对应的 14 个 dist 文件与本地 dist 一致，最小主进程 SDK 装配片段通过内存类型检查。这些检查未运行 SDK 或连接设备，也未解决 dirty 构建来源。上游事项/成果与聊天发送恢复仍不代表 SDK 已支持这些能力。
+2026-09-06 D03实施前曾只读核验相邻三个仓库：当时以上SDK/OS/data-engine HEAD、身份桥缺口和上传协议漂移均未变化。后续D03实现与当前交付组合以[签名桥记录](BUSINESS-BRIDGE-0906.md)和[版本基线](integration-release-baseline.json)为准。六平台 sidecar 的二进制与压缩包共 12 项哈希均匹配 manifest；Electron/contracts tgz 对应的 14 个 dist 文件与本地 dist 一致，最小主进程 SDK 装配片段通过内存类型检查。这些检查未运行 SDK 或连接设备，也未解决 dirty 构建来源。上游事项/成果与聊天发送恢复仍不代表 SDK 已支持这些能力。
 
 ## 1. 先决定什么，再开始集成
 
@@ -42,7 +42,7 @@
 
 该交付现命名为 M0：业务操作仅 `materials.list`，暴露字段、query、连接phase/generation、取消边界与错误体已在桌面规格中明确。现有 onboarding guard 不属于 M0；事项/聊天/上传待后续交付开放。M0 的模拟合同验收和正式盒端验收分别记录，不将前者代替后者。
 
-其中 M0-L 已实现：Electron 37.10.3 独立宿主经 `zhijun://desktop/desktop.html` 加载独立 Vue 构建；窄 preload 调用主进程 runtime，主进程负责代次、读调度和资料投影。默认 `unconfigured` 无认证适配器，不发起真实连接；开发者显式启用 `simulation` 才使用合成账号/设备/资料，打包应用禁用模拟。该入口不启动 Python，不访问或回退到 PC `8618`。D02 正式认证、D03 业务桥、D05 固定发布组合及真机验收仍未完成。[A28] [A29] [A30] [A31]
+其中 M0-L 已实现：Electron 37.10.3 独立宿主经 `zhijun://desktop/desktop.html` 加载独立 Vue 构建；窄 preload 调用主进程 runtime，主进程负责代次、读调度和资料投影。默认 `unconfigured` 无认证适配器，不发起真实连接；开发者显式启用 `simulation` 才使用合成账号/设备/资料，打包应用禁用模拟。该入口不启动 Python，不访问或回退到 PC `8618`。D02登录/设备列表已在真实客户端验证，D03三端代码已落地；盒端部署、D05固定签名发布组合及完整真机验收仍未完成。[A28] [A29] [A30] [A31]
 
 资料合同差异已在 M0-L 落实：data-engine 列表/摄取服务已产生 `queued`，参考 PC 策略仍只有另外四种状态；知君 query、响应投影及页面筛选已包含 `queued`。本地模拟覆盖排队资料，真实盒端响应兼容性仍须联调验证。
 
@@ -50,7 +50,7 @@
 | --- | --- | --- |
 | 已解决（M0-L） | 原薄壳与根桌面启动器指向不同产品入口 | 根脚本与 frontend desktop 命令已统一到 `frontend/shell`，新入口不加载旧 renderer / Python 后端 |
 | P0 | data-engine 缺失知君核心领域路由 | 先定盒端模块承载与接口归属；仅替换 BASE 必然不够 |
-| P0 | SDK P2P ticket 与 data-engine 会话 gate 没有已实现的衔接 | 建立可信身份桥并实测；不得开启 local-debug 冒充生产鉴权 |
+| P0 | 盒内签名桥尚未部署到真实设备 | 已实现Agent逐请求Ed25519证明和DE验签；部署后实测，不能开启local-debug |
 | P0 | 现有 folders 未按设备隔离，知君隐私保护还改动了基础 QA / 上传路径 | 首轮收窄资料返回；领域迁移需包含保护策略扩展点，不能只搬 routers |
 | P0 | SDK 无逐帧流 / 单请求取消 | 知君聊天需新协议或持久任务轮询适配，不能原样复用 `streamPost` |
 | P0 | sidecar 仍记录旧 dirty 源码，服务端上传协议仍未提交 | 固定源码与实际交付物的对应关系，不能只记 npm 版本 |
@@ -96,7 +96,7 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 
 ### 2.3 preload 与 renderer 边界
 
-当前应用已实现 `window.zhijunDesktop`：快照/订阅、登录动作、列设备、连接/断开/退出、`materials.list` 和本地读结果取消；这是**应用自有接口**，不是 SDK 已提供这些方法。主进程支持显式模拟或配置后的正式Consumer adapter；已新增signInWithPassword、签名/刷新与SDK装配，stream、上传和真实业务桥仍待开发。[A29] [A30]
+当前应用已实现 `window.zhijunDesktop`：快照/订阅、登录动作、列设备、连接/断开/退出、`materials.list` 和本地读结果取消；这是**应用自有接口**，不是 SDK 已提供这些方法。主进程支持显式模拟或配置后的正式Consumer adapter；已新增signInWithPassword、签名/刷新与SDK装配，stream与上传仍待开发；签名桥客户端已注入main，Agent/DE隔离分支等待部署。[A29] [A30]
 
 - 验证 IPC sender、主 frame 和准确应用 URL，拒绝外部页面或子 frame。
 - 保留 `contextIsolation:true`、`sandbox:true`、`nodeIntegration:false`、`webSecurity:true`，不要复制旧 `frontend/main.js` 的 `webSecurity:false`。
@@ -107,7 +107,7 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 
 ## 3. 鉴权是当前最早需要打通的服务端断点
 
-### 3.1 三种凭据分开处理
+### 3.1 调研基线的凭据与断点
 
 | 凭据 / 主体 | 用途 | 当前边界 |
 | --- | --- | --- |
@@ -115,7 +115,7 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 | SDK 连接 ticket | 绑定设备、应用、平台、scope、purpose 的 P2P 会话建立 | SDK main → sidecar；不是逐请求业务 Bearer |
 | `X-MindOS-Session` | data-engine 受保护业务路由的会话 | 要求先用专用 Connectivity JWT 单次交换，再传业务 session；不能直接使用登录 access token 或 SDK ticket |
 
-拟接入的 Agent → data-engine 受保护调用链使用盒内 loopback；其[服务端 gate][D4]在非开发模式验证 `X-MindOS-Session` 并建立设备上下文，写请求另要 `X-Requested-By: centaur-vdb`。服务端另有非 loopback App Token 的有限资料只读例外，不适用于这条 Agent 链路，也不提供所需设备上下文。[交换入口][D5]是 `POST /api/mindos/connectivity/sessions/exchange`，使用 `Authorization: Bearer <专用 Connectivity JWT>`；返回 sessionToken/sessionId/deviceId/accountId/clientId/epochGeneration/expiresAt。该 JWT 经 Consumer JWKS 验签，校验 issuer/audience，并要求 `account_id / client_id / device_id / scope / nonce / epoch_generation / connect_before / exp / iat / nbf` 等字段。不是任意 Consumer access token。[D11]
+以下段落描述改造前基线；新桥增量见3.2。Agent → data-engine 受保护调用链使用盒内 loopback；其[服务端 gate][D4]在非开发模式验证 `X-MindOS-Session` 并建立设备上下文，写请求另要 `X-Requested-By: centaur-vdb`。服务端另有非 loopback App Token 的有限资料只读例外，不适用于这条 Agent 链路，也不提供所需设备上下文。[交换入口][D5]是 `POST /api/mindos/connectivity/sessions/exchange`，使用 `Authorization: Bearer <专用 Connectivity JWT>`；返回 sessionToken/sessionId/deviceId/accountId/clientId/epochGeneration/expiresAt。该 JWT 经 Consumer JWKS 验签，校验 issuer/audience，并要求 `account_id / client_id / device_id / scope / nonce / epoch_generation / connect_before / exp / iat / nbf` 等字段。不是任意 Consumer access token。[D11]
 
 guard 是按路由注册的，不能说整个 `/api/mindos/*` 前缀都统一受保护。例如 `/api/mindos/validate` 未挂上述 gate，不可用其成功证明鉴权；它与受保护的分片文件预检 `/api/mindos/uploads/validate` 也不是同一合同。[D4] [D8]
 
@@ -127,15 +127,15 @@ guard 是按路由注册的，不能说整个 `/api/mindos/*` 前缀都统一受
 
 Agent 还将 Bearer token 长度限制为 512 bytes，若选择通过通道传专用 JWT，必须用真实签发 token 验证长度、字符与所有层 header 合同；不能只加 exchange 路由便认为握手可用。[O9]
 
-因此，这些本地代码之间尚未形成可证实的正式鉴权闭环。真实部署可能有其他组件，但本轮没有登录设备核验，不能把这种可能性当成已解决。
+以上是本次登录报错对应的实现缺口。3.2所述改造已完成本地闭环验证，目标盒端仍未部署与实测，不能将源码或合成测试视作真机通过。
 
-### 3.2 推荐解决方向与验收
+### 3.2 已实现的签名桥与待完成验收
 
-建议由**盒端可信身份桥**把已验证的连接主体映射为 data-engine 可验证的业务上下文，或由主进程获取专用 MindOS ticket 并经批准的 Agent 内部握手完成交换。两者选其一，明确 issuer/audience、设备/账号/应用/scope 绑定、有效期、nonce、续期、撤销与重连规则。
+D03已选择**盒端逐请求Ed25519签名桥**：Agent从同一新鲜grant快照取得Owner，给仅两条GET请求签发最多5秒证明；DE校验独立公钥、主体/应用/原始请求目标、空body、时间、持久nonce与本地撤销。main经同一SDK session读取context并匹配四项主体后才进入ready；详见[版本化合同](BUSINESS-BRIDGE-0906.md)。该实现不使用P2P ticket作为专用JWT，也不生成客户端可复用的业务session token。
 
 当前MindOS ticket/session验证忽略method/path，principal不含applicationId，只验证配置的required scope。应用和路径级授权是新身份桥必须补齐或由Agent持续保证的合同，不是当前MindOS session已经提供的能力。[D11]
 
-这里没有指定可以复用某张现有 JWT：控制面合同和 Agent/服务端改动范围需先确认。禁止通过 renderer 传入自称可信的身份头，也不能用开启 `MINDOS_LOCAL_WEB_DEBUG_ACCESS` 或取消 loopback/session guard 作为正式方案。
+桥不复用现有JWT；Agent/服务端改动范围和密钥文件合同见D03记录。renderer不能传入自称可信的身份头，也不能用开启 `MINDOS_LOCAL_WEB_DEBUG_ACCESS` 或取消loopback/session guard作为正式方案。
 
 最小验收：同一个合法连接能读取 `/api/mindos/materials`；错误账号、设备、应用、过期或撤销身份被拒绝；两台设备不会读写彼此数据；注销/重连不会复用旧业务 session。
 
@@ -295,7 +295,7 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 
 ## 6. 分阶段工作包、依赖与验收
 
-下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。[早期文档样例](contracts/desktop-contract-v1.ts) 保留设计背景，当前实现类型在 [frontend/shared/desktop-contract.ts](../../frontend/shared/desktop-contract.ts)。M0-L 已落实 preload、runtime 和资料页面；SDK/正式认证客户端已实现，本地通过；业务身份桥尚未实现，不能只凭类型检查判定完成。
+下表保留总体 P0–P7 分层；具体任务编号、跨仓角色、文件归属、并行边界与完成证据见 [工作包](INTEGRATION-WORKPACKAGES-0905.md)。[早期文档样例](contracts/desktop-contract-v1.ts) 保留设计背景，当前实现类型在 [frontend/shared/desktop-contract.ts](../../frontend/shared/desktop-contract.ts)。M0-L 已落实 preload、runtime 和资料页面；SDK/正式认证客户端已实现，本地通过；业务身份桥已在独立分支编码，必须以盒端部署和真实资料读取关闭M0-R。
 
 | 阶段 | 工作与受影响文件（拟） | 前置依赖 | 完成标准 |
 | --- | --- | --- | --- |
@@ -340,7 +340,7 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 正式联调、发布组合冻结或领域迁移前需要落实下列输入（对应桌面规格 D01–D05）。M0-L 已在这些输入尚未齐备时完成本地宿主、注入式 adapter 与模拟合同实施；仍可继续隔离研发，真实连接和运行库迁移保持不放行：
 
 1. **领域部署**：知君领域模块并入盒端 data-engine，还是盒端独立服务？推荐前者，并通过服务适配层保留边界。
-2. **应用身份与归属**：M0 已核定 `mindos-person-data-pc` / `person-data.read` / `remote.p2p`、Consumer/Gateway 及独立安全存储，自动配置与本机检查见[真机记录](REAL-ACCEPTANCE-0906.md)。仍需真实登录/设备授权、业务桥及同盒多账号、设备转让、目录归属与个人Claim事实源；已有传输 scope 不等于业务权限。
+2. **应用身份与归属**：M0 已核定 `mindos-person-data-pc` / `person-data.read` / `remote.p2p`、Consumer/Gateway 及独立安全存储，自动配置与本机检查见[真机记录](REAL-ACCEPTANCE-0906.md)。真实登录及授权设备列表已验；仍需部署业务桥、资料归属验收与个人Claim事实源；已有传输 scope 不等于业务权限。
 3. **可复现版本**：SDK `819831c` 的 1.2.0、OS `9f7354e` 与实际 sidecar 来源如何对应；未提交服务端上传改动如何冻结和交付。
 4. **聊天协议**：扩展SDK原生流（推荐保持现有体验），还是任务+游标轮询；两者都需要服务端支持。
 5. **首期平台和配网**：只连已绑定盒子，还是包含BLE首次发现/配网？配网包当前要求Electron37，安全配网还依赖固件AEAD协议和宿主secureCommands实现，不能把开发明文兼容开关当作默认方案。
@@ -423,4 +423,4 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 [A26]: ../../frontend/mindos-web/src/services/matters.ts#L1
 [A27]: ../../frontend/mindos-web/src/components/matters/MatterWorkspace.vue#L1
 
-2026-09-06 正式接入增量详见[实施记录](M0-PRODUCTION-0906.md)：可配置账号登录和设备列表，SDK装配通过合成私有管道测试；这不关闭D03、真实资料归属和M0-R验收。
+2026-09-06 正式接入增量详见[实施记录](M0-PRODUCTION-0906.md)：可配置账号登录和设备列表，SDK装配通过合成私有管道测试；后续D03代码也已完成，但盒端部署、历史资料归属和M0-R验收仍未关闭。

@@ -19,13 +19,14 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
     signIn: (input, guard) => client.signIn(input, guard),
     listDevices: () => client.listDevices(),
     async connect(binding) {
+      const expected = epoch;
       // D03 is not a URL/config toggle. Only an implemented, trusted main adapter
       // may authorize a business session. Never pass a P2P ticket as a JWT.
       if (!bridge || typeof bridge.authorize !== 'function') throw new DesktopError('BUSINESS_BRIDGE_REQUIRED');
       if (!config.connectivity) throw new DesktopError('CONFIGURATION_REQUIRED');
       const current = await client.current();
+      if (expected !== epoch) throw new DesktopError('STALE_GENERATION');
       if (current.accountId !== binding.accountId) throw new DesktopError('AUTHENTICATION_REQUIRED');
-      const expected = epoch;
       const runtime = await runtimeFactory({ config: config.connectivity, consumer: client });
       if (expected !== epoch) { await runtime.close(); throw new DesktopError('STALE_GENERATION'); }
       let session; let authorization; let closed = false;

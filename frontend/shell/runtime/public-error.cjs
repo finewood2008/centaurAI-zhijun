@@ -5,7 +5,7 @@ const DEFINITIONS = Object.freeze({
   AUTHENTICATION_REQUIRED: ['请先登录。', 'user_sign_in'],
   AUTHENTICATION_FAILED: ['登录或账号请求未通过，请检查输入后重试。', 'user_sign_in'],
   SECURE_STORAGE_UNAVAILABLE: ['系统加密存储不可用，无法安全保存登录凭据。', 'none'],
-  BUSINESS_BRIDGE_REQUIRED: ['账号已登录，盒子的资料访问授权通道尚未配置完成。', 'none'],
+  BUSINESS_BRIDGE_REQUIRED: ['盒子尚未启用安全资料访问，请完成盒端服务升级和配置。', 'none'],
   SESSION_NOT_READY: ['设备连接尚未就绪。', 'user_reconnect'],
   STALE_GENERATION: ['连接已变化，请使用当前页面。', 'none'],
   INVALID_REQUEST: ['请求参数不符合要求。', 'none'],

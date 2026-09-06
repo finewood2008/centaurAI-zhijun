@@ -2,7 +2,7 @@
 
 更新：2026-09-06。设计基线：知君 `94239a1`（产品源 `22dc9a3`）；M0-L 实施起点 `ee8cd96`。配套：[架构](ARCHITECTURE-0905.md)、[集成分析](INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[领域迁移](DOMAIN-INTEGRATION-0905.md)。
 
-**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；跨团队协议未冻结，已新增正式密码登录/签名/共享刷新与SDK装配代码，正式应用注册与M0-R未验收；最新结果见[正式接入记录](M0-PRODUCTION-0906.md)。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
+**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；跨团队协议未冻结，已新增正式密码登录/签名/共享刷新与SDK装配代码，目标PC应用参数已核定，D03三端实现待部署、M0-R未验收；最新结果见[正式接入记录](M0-PRODUCTION-0906.md)。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
 
 ## 原规格编制计划与验收（历史）
 
@@ -28,8 +28,8 @@ M0 的业务能力只有 `materials.list`。认证/设备控制及内部健康�
 | ID | 本规格采用的设计方向 | 必须补齐的输入 | 在输入前可推进 / 不可放行 |
 | --- | --- | --- | --- |
 | D01 领域承载 | 盒端 data-engine 内的独立知君模块，服务适配隔开基础资料能力 | 服务端维护方确认模块入口、表迁移和生命周期；Claim事实源与owner/device规则 | 可做依赖清单/临时库验证；不可指向运行库合并表 |
-| D02 应用身份 | 独立知君 clientId/密钥/存储；目标采用已登记 PC 资料应用 | applicationId=`mindos-person-data-pc`、purpose=`person-data.read`、scopes=`remote.p2p` 与 Consumer/Gateway 已由三端源码核定；真实登录/设备授权及 D03 信任地址待验 | 自动配置已实现，macOS安全存储真实检查通过；不共用别的应用登录态；不能将传输scope作为业务权限 |
-| D03 业务身份桥 | 优先盒端可信桥，由已验证连接主体取得业务上下文 | Agent可证明的主体字段、签发/验签方、IPC/内部握手、应用路径授权、TTL/撤销/续期、版本 | 可实现bridge端口和拒绝路径；不可仅以P2P成功设置ready |
+| D02 应用身份 | 独立知君 clientId/密钥/存储；目标采用已登记 PC 资料应用 | applicationId=`mindos-person-data-pc`、purpose=`person-data.read`、scopes=`remote.p2p` 与 Consumer/Gateway 已由三端源码核定；真实登录与两台授权设备列表已验证，D03独立盒内密钥待部署 | 自动配置已实现，macOS安全存储真实检查通过；不共用别的应用登录态；不能将传输scope作为业务权限 |
+| D03 业务身份桥 | 盒端逐请求Ed25519证明，context握手 | Agent当前Owner/client/device/app、5秒有效期、原始请求目标、nonce和撤销；DE独立公钥；合同见[签名桥v1](BUSINESS-BRIDGE-0906.md) | 三端已编码；只有同一SDK通道握手主体匹配才ready；部署/真实资料未完成 |
 | D04 长请求/上传 | 聊天优先扩展现有分帧链路；上传统一当前Pocket parts/complete形态 | SDK/Core/Agent流与取消版本、后台任务备选取舍；上传四层合同及获批会话预算 | 可做流模拟器/上传adapter合同；不能把SDK1.2整包request当stream，也不自动试多个上传路径 |
 | D05 交付组合 | 独立desktop构建，sidecar置于ASAR外 | SDK tgz哈希、sidecar输入与二进制哈希、Agent/服务端提交、协议版本、OS/CPU与签名结果 | 可做本地包边界检查；dirty来源未核对前不能宣称可重建发布组合 |
 
@@ -75,7 +75,7 @@ main 对每次调用做运行时结构校验、准确 sender WebContents/主fram
 
 `materials.list` → `GET /api/mindos/materials?limit=20&offset=0`。limit必填1–50，offset必填0–10000；均为整数，不接受重复query、空值或额外字段。建议页面默认20条，属于应用策略。可选 keyword 为trim后1–100字符；type取document/image/audio；status取uploaded/queued/processing/available/failed。
 
-GET没有body。main只构造受控 `Accept: application/json` 及 D03 的内部业务身份机制；renderer不能提交X-MindOS-Session、Authorization或CSRF头。M0不开放folder/folderId/tag/archived/recycled筛选，后续能力按单独合同扩展。
+GET没有body。main只构造受控 `Accept: application/json`；D03证明仅由Agent在盒内增加；renderer不能提交X-MindOS-Session、Authorization或CSRF头。M0不开放folder/folderId/tag/archived/recycled筛选，后续能力按单独合同扩展。
 
 服务端已支持该分页与状态集合：[后端列表](../../../nexusaos-data-engine/backend/mindos/uploads.py#L389)。参考[PC策略](../../../nexusaos-data-engine/frontend/electron/connectivity/request-policy.js#L76)及其响应枚举尚缺queued，而后端摄取队列已经返回该值。因此知君新main的query校验、响应投影及UI状态须同步包含queued，不能原样复制旧PC策略；实际Agent/盒端组合再通过合同测试。集合外的未来status先报告合同不兼容，不静默转换成“available”。
 
@@ -105,7 +105,7 @@ M0-L 已实现：最多2个在途业务读、最多8个排队读；同主体同q
 
 当前参考PC Agent是8并发/120每分钟/64MiB会话，Core还有限1024次和默认60秒；本规格的2/8是应用策略，并非SDK新增限制。已发出但被本地取消的请求仍占真实在途槽，直到SDK结束；否则renderer可用快速取消突破并发预算。
 
-快照 `environment` 可为 `unconfigured`、`simulation` 或 `production`。显式有效账号配置启用production Consumer adapter；这不代表业务桥已部署，未注入真实D03时connect拒绝且不启动sidecar。默认未配置时拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
+快照 `environment` 可为 `unconfigured`、`simulation` 或 `production`。显式有效账号配置启用production Consumer adapter；main已注入真实D03握手，但这不代表盒端业务桥已部署。没有桥端口的独立adapter实例仍在spawn前拒绝。默认未配置时拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
 
 本地默认调用超时 15 秒；最多 64 个资料订阅、128 个待决调用、8 个真实未完成的 adapter 控制操作和 64 个快照监听。取消/超时不提前释放实际操作额度。session 清理等待上限 1 秒，宿主退出兜底 2.5 秒；这些均为本地应用策略，不是 SDK 保证。退出接受时立即启动身份清理，后续断开不能跳过；清理真实结束前禁止新登录，避免旧清理覆盖新身份。
 
@@ -126,7 +126,7 @@ D03必须交付这些可核对字段与行为，而非仅一条路由名称：
 | 数据范围 | 设备级资料可读范围、同盒多账号与转让处理、各路由guard；不能把旧global数据直接归给登录者 |
 | 可观测性 | 只记录callId/连接关联ID/版本/操作码/耗时/安全错误；原始ticket、token、资料正文不进日志 |
 
-当前代码没有实现这条真实闭环，`X-MindOS-Session`也不在Agent外部header白名单内。本文不擅自增加HTTP交换路由、信任头或私有签名格式；这些由D03明确后进入跨仓合同测试。M0-L 已在本仓通过注入的 fake bridge 验证状态机，但真实连接必须等待真实桥交付。
+当前实现采用[D03签名桥v1](BUSINESS-BRIDGE-0906.md)及共享合成向量：Agent仅在盒内增加受信证明，外部仍不得提交`X-MindOS-Session`或桥头。主程序已注入真实context握手适配器，尚需部署Agent/DE对应分支。部署失败、未配置独立密钥、无效签名、错主体或过期均不得ready。
 
 ## 8. 后续流与上传合同的最小完成定义
 
