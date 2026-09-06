@@ -28,7 +28,7 @@ M0 的业务能力只有 `materials.list`。认证/设备控制及内部健康�
 | ID | 本规格采用的设计方向 | 必须补齐的输入 | 在输入前可推进 / 不可放行 |
 | --- | --- | --- | --- |
 | D01 领域承载 | 盒端 data-engine 内的独立知君模块，服务适配隔开基础资料能力 | 服务端维护方确认模块入口、表迁移和生命周期；Claim事实源与owner/device规则 | 可做依赖清单/临时库验证；不可指向运行库合并表 |
-| D02 应用身份 | 独立知君 desktop 身份，主进程持凭据 | applicationId、purpose、scopes、Consumer/Gateway/JWKS受信地址、登录合同、客户端注册/安全存储namespace、目标设备授权 | 可实现注入式auth adapter和模拟登录；缺项时真实连接返回配置未就绪 |
+| D02 应用身份 | 独立知君 clientId/密钥/存储；目标采用已登记 PC 资料应用 | applicationId=`mindos-person-data-pc`、purpose=`person-data.read`、scopes=`remote.p2p` 与 Consumer/Gateway 已由三端源码核定；真实登录/设备授权及 D03 信任地址待验 | 自动配置已实现，macOS安全存储真实检查通过；不共用别的应用登录态；不能将传输scope作为业务权限 |
 | D03 业务身份桥 | 优先盒端可信桥，由已验证连接主体取得业务上下文 | Agent可证明的主体字段、签发/验签方、IPC/内部握手、应用路径授权、TTL/撤销/续期、版本 | 可实现bridge端口和拒绝路径；不可仅以P2P成功设置ready |
 | D04 长请求/上传 | 聊天优先扩展现有分帧链路；上传统一当前Pocket parts/complete形态 | SDK/Core/Agent流与取消版本、后台任务备选取舍；上传四层合同及获批会话预算 | 可做流模拟器/上传adapter合同；不能把SDK1.2整包request当stream，也不自动试多个上传路径 |
 | D05 交付组合 | 独立desktop构建，sidecar置于ASAR外 | SDK tgz哈希、sidecar输入与二进制哈希、Agent/服务端提交、协议版本、OS/CPU与签名结果 | 可做本地包边界检查；dirty来源未核对前不能宣称可重建发布组合 |

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "recordedAt": "2026-09-06",
-  "milestone": "M0-production-client",
+  "milestone": "M0-real-preflight-partial",
   "realDeviceValidated": false,
   "clientSourceBase": "3d9679b3b17b63ca98baaf59212598f401514091",
   "development": {
@@ -42,11 +42,13 @@
     "sidecarManifestDirtyInput": true,
     "cleanRebuildVerified": false,
     "releaseSigningVerified": false,
-    "privatePipeFixtureValidated": true
+    "privatePipeFixtureValidated": true,
+    "nativeSidecarValidated": "darwin-arm64",
+    "nativeSidecarSha256": "e8d05b9c6cba3a59651a8c98679a26ecb1739ab6e6b8badb3b1a894884c263f2"
   },
   "production": {
     "missing": [
-      "D02: verified deployment configuration, independent application registration and real account/OS credential acceptance",
+      "D02: real account login and authorized device acceptance; target application configuration is resolved",
       "D03: trusted Agent to data-engine identity bridge and deployed route authorization",
       "BASE-04: approved material ownership and bounded server projection",
       "D05: traceable clean sidecar input and production release matrix",
@@ -56,6 +58,14 @@
     "deploymentLoginValidated": false,
     "businessBridgeImplemented": false,
     "realConnectionEnabled": false,
-    "osCredentialStorageValidated": false
-  }
+    "osCredentialStorageValidated": true,
+    "osCredentialStorageScope": "macOS ARM64 Electron 37.10.3 safeStorage with temporary synthetic records; not signed-release or cross-platform acceptance",
+    "consumerAnonymousDenialValidated": true,
+    "gatewayHealthValidated": true,
+    "applicationId": "mindos-person-data-pc",
+    "purpose": "person-data.read",
+    "requestedScopes": ["remote.p2p"],
+    "independentClientIdentity": true
+  },
+  "realAcceptanceReport": "REAL-ACCEPTANCE-0906.md"
 }

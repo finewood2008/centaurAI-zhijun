@@ -23,7 +23,7 @@
 
 ## 外部输入
 
-已向用户请求非敏感 Consumer 地址和已注册 applicationId/purpose/scopes；账号密码在应用内输入。源码已确认 Admin 提供 `/app-api/auth/password/login`，D02 的客户端代码可先完成。D03 的可信业务桥及真实部署仍需单独落实；本记录不会将它们笼统地当作全部编码的阻塞。
+后续已根据用户要求自动核定 Consumer 和目标应用参数：`mindos-person-data-pc` / `person-data.read` / `remote.p2p`，知君使用自身 clientId、密钥和存储。`applicationId` 是盒端目标应用，不要求因知君 UI 品牌新建一项登记。账号密码在应用内输入；D03 的可信业务桥及真实部署仍需单独落实。最新证据见[自动配置与真机验收](REAL-ACCEPTANCE-0906.md)。
 
 并行研究未全部返回，代码实现及最终审核由主代理接续；不将未完成的独立审核列为通过证据。
 
@@ -50,14 +50,14 @@ Admin 源码基线 `8ff6e888fb17ce268527755d6795c9d68b5b5305`：
 
 ## 启动正式账号入口
 
-安装本轮新增SDK依赖后，显式指定配置文件：
+安装 SDK 依赖后，可自动生成开发验收配置并启动：
 
 ```sh
 rtk proxy npm --prefix frontend/shell ci
-rtk proxy env ZHIJUN_DESKTOP_CONFIG="$PWD/frontend/shell/config/zhijun-product.example.json" bash start-desktop.sh
+rtk proxy bash start-desktop.sh --real
 ```
 
-[样例配置](../../frontend/shell/config/zhijun-product.example.json)的 Consumer 地址来自 data-engine 现有 product-config 的受信默认值；它不代表知君应用已经注册，也未由本次开发登录验证。可复制到仓库外，替换部署地址后再指定绝对路径；文件禁止组/其他用户写权限。不要在JSON中放账号密码或token。没有配置文件时仍保留原未配置状态，`--simulation` 继续显式运行合成数据。
+[账号样例](../../frontend/shell/config/zhijun-product.example.json)和[目标绑定](../../frontend/shell/config/zhijun-connectivity.json)来自 data-engine 产品配置及 Admin/Agent 策略。准备脚本按固定 SHA-256 从 SDK release 复制当前平台二进制到 `data/desktop/`，生成完整绝对路径配置；不会覆盖已有不同内容。已有 `ZHIJUN_DESKTOP_CONFIG` 时 `--real` 优先验证并使用它。当前自动准备只支持 macOS/Linux，实际通过的是 macOS ARM64；Windows 权限/启动仍待验证。不要在JSON中放账号密码或token。没有配置或启动参数时仍保留原未配置状态，`--simulation` 继续显式运行合成数据。
 
 配置正确时显示“账号服务已配置”，用户可在应用内输入已有账号密码并查询设备。`production` 表示加载了正式账号适配器，不表示部署和真机验收通过。打包后只接受 `resources/zhijun-product.json`，忽略配置环境变量；打包/签名尚未交付。
 
@@ -78,6 +78,6 @@ rtk proxy env ZHIJUN_DESKTOP_CONFIG="$PWD/frontend/shell/config/zhijun-product.e
 
 DESK-04/05/06 已有正式客户端实现并通过本地合同测试，实际部署及OS签名存储仍待验；DESK-07/08 已有真实SDK装配与关闭边界，D03未实现使整条M0-R仍未完成。BASE-02 的配置文件和现有Admin合同已经落实到代码，正式应用注册并未由本次代码创建。M1领域迁移、流式聊天、上传和签名发布没有因此完成。
 
-仍需：核实所用账号服务部署版本及知君 applicationId/purpose/scopes；实现并部署 Agent→data-engine 的可信业务身份桥、明确资料归属；提供可重建签名sidecar及真实盒子，执行正式认证/资料/跨主体拒绝验证。现有Admin P2P票据不能直接交给data-engine session exchange，不能借用其他应用登录态或开启local-debug补过验证。
+后续已核定并自动填写目标参数；macOS safeStorage 及当前平台原生 sidecar 已实测，Consumer/Gateway 在线且未认证设备查询正确拒绝。仍需真实账号登录及授权设备、实现并部署 Agent→data-engine 可信业务身份桥、明确资料归属，以及可重建签名产物。现有Admin P2P票据不能直接交给data-engine session exchange，不能借用其他应用登录态或开启local-debug补过验证。具体结果和未完成项以[真机验收记录](REAL-ACCEPTANCE-0906.md)为准。
 
 本轮最终本地结果：shell 61项、前端48项、真实Electron 4项全部通过；Web/Desktop构建、严格类型与启动边界通过。289处本地文档链接与4段Mermaid渲染通过，目标图源码未变。已检查真实Electron密码页布局；截图仅保留临时检查目录，不提交用户/运行数据。

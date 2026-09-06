@@ -1,0 +1,8 @@
+{
+  "applicationId": "mindos-person-data-pc",
+  "purpose": "person-data.read",
+  "requestedScopes": ["remote.p2p"],
+  "gatewayHost": "gateway.remote.qeeshu.com",
+  "iceHost": "gateway.remote.qeeshu.com",
+  "profile": "SOVEREIGN_DIRECT_ONLY"
+}

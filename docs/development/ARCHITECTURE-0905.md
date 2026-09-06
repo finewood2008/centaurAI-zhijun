@@ -234,7 +234,7 @@ frontend/
 
 M0 固定为正式登录、选择已绑定盒子、连接并完成业务身份桥、资料分页只读、断开/重连。新宿主的窄接口及类型样例见桌面接口规格；业务调用不让 renderer 指定任意 path/header。SDK connect 成功只代表进入 authorizing，真实身份桥成功才允许进入 ready，资料读取仍需单独验收。
 
-2026-09-06 已落地的是 M0-L 本地实施子集：实际 Electron/main/preload/runtime 与 Vue 页面，通过显式模拟 adapter 验证登录、两台合成盒子切换、资料分页/筛选、退出、代次和公开字段。未配置模式关闭真实能力；模拟 `authorize` 不是正式鉴权。D02 正式注册与部署验收、D03 可信身份桥、D05 固定发布组合和真机验收仍待完成，验证范围见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。
+2026-09-06 已落地 M0-L 及正式认证/SDK客户端：实际 Electron/main/preload/runtime 与 Vue 页面已通过显式模拟 adapter 验证资料流程。D02 目标应用现采用已登记的 `mindos-person-data-pc`，知君的 clientId、密钥和存储仍独立；已自动配置，并通过本机 macOS safeStorage 与原生 sidecar 检查。D02 真实登录、D03 可信身份桥、D05 发布组合及整条真机资料链路仍待完成，实际证据见[自动配置与验收记录](REAL-ACCEPTANCE-0906.md)。
 
 资料公开投影仅保留标识、文件名、类型、状态、创建时间和分页信息；顶层 folders 及条目 folder/folderId 均不透出。聊天、事项写入、附件、模型管理、BLE 与现有建档 guard 在 M0 不开放。后续领域迁移按独立模块方案准备，D01–D05 决策明确之前可推进隔离骨架/模拟合同，不能将模拟通过计为真实联调完成。
 

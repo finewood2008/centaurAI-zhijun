@@ -1,6 +1,6 @@
 # 桌面宿主与前端开发任务
 
-日期：2026-09-06；文件后缀沿用 0905 集成基线。返回[开发任务总表](../DEVELOPMENT-TASKS-0905.md)。依据：[桌面接口规格](../DESKTOP-CONTRACT-0905.md)、[接口类型样例](../contracts/desktop-contract-v1.ts)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。**2026-09-06：DESK-01/02/03/09/10/11/12/13/14 已实现并通过 M0-L，记为“本地通过待外部验收”；原任务尚未覆盖的步骤保留未勾选。DESK-08 仅完成本地有界清理，记为实施中。随后DESK-04/05/06的Consumer/SDK客户端实现已本地通过，DESK-07实施中；DESK-15–23未开始。真实身份桥、事项、聊天、上传和发布未交付，见[正式接入记录](../M0-PRODUCTION-0906.md)。**
+日期：2026-09-06；文件后缀沿用 0905 集成基线。返回[开发任务总表](../DEVELOPMENT-TASKS-0905.md)。依据：[桌面接口规格](../DESKTOP-CONTRACT-0905.md)、[接口类型样例](../contracts/desktop-contract-v1.ts)、[工作包](../INTEGRATION-WORKPACKAGES-0905.md)。**2026-09-06：DESK-01/02/03/09/10/11/12/13/14 已实现并通过 M0-L，记为“本地通过待外部验收”；原任务尚未覆盖的步骤保留未勾选。DESK-08 仅完成本地有界清理，记为实施中。随后DESK-04/05/06的Consumer/SDK客户端实现已本地通过，DESK-07实施中；DESK-15已开展自动配置、macOS系统存储、原生sidecar与真实网络前置检查，端到端资料未完成；DESK-16–23未开始。真实身份桥、事项、聊天、上传和发布未交付，见[真机记录](../REAL-ACCEPTANCE-0906.md)。**
 
 里程碑复用总表：M0-L 为本地合同通过，M0-R 为正式只读闭环，M1 为领域与聊天。P0 为首条 M0 必需，P1 为完整业务。估算为建议开发投入，S=0.5–1、M=1–2、L=2–4 人日，包含对应局部验证和一次评审修订，不含外部注册、设备等待和未知兼容问题导致的额外返工；不能直接相加作为交付日期。
 
@@ -284,11 +284,11 @@
 
 ### DESK-15：执行正式 M0 跨仓联调与验收
 
-**元数据：** WP-05；M0-R；P0；集成测试 owner；L；未开始。
+**元数据：** WP-05；M0-R；P0；集成测试 owner；L；实施中，前置检查部分通过。
 
 **硬依赖：** BASE-01、BASE-02、BASE-03、BASE-04、BASE-05、DESK-04、DESK-05、DESK-06、DESK-07、DESK-08、DESK-14、SERV-01、SERV-02、SERV-03。**可先做：** 编写验收步骤与证据模板。
 
-**路径：** 拟新增 `docs/development/M0-ACCEPTANCE-0905.md` 和按 BASE-05 约定保存的脱敏证据；跨仓改动由原 owner 修复。
+**实际路径：** [REAL-ACCEPTANCE-0906.md](../REAL-ACCEPTANCE-0906.md)、`frontend/shell/scripts/{prepare-real,verify-os-storage,verify-real-environment}.cjs` 和版本基线；跨仓业务桥按 SERV-01/02 实施。
 
 - [ ] 固定 OS/CPU、客户端/SDK/sidecar/Agent/后端版本及正式注册配置，核对 local-debug 关闭。
 - [ ] 同环境完成登录→选盒→实际资料分页→断开两轮，记录受控样例中的 queued 与字段投影。

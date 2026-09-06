@@ -18,6 +18,8 @@ Electron SDK 与 data-engine 的后续集成调研见 [技术架构图](docs/dev
 
 接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L，以及正式Consumer登录/签名/刷新和SDK主进程装配；真实业务身份桥尚未接通。正式账号启动配置与本轮验证见[正式接入记录](docs/development/M0-PRODUCTION-0906.md)。
 
+执行 `rtk proxy bash start-desktop.sh --real` 可自动填写现有 PC 资料服务参数、核验并复制当前平台 SDK sidecar，再打开正式登录窗口。首次准备从相邻 SDK 的 `release/electron-sidecars-1.2.0` 读取产物；配置及二进制保存在已忽略的 `data/desktop/`，密码仅在应用内输入。该入口用于开发验收，当前资料业务桥仍未完成；真实网络、macOS 加密存储和原生 sidecar 的检查结果见[自动配置与真机验收记录](docs/development/REAL-ACCEPTANCE-0906.md)。
+
 分配具体开发工作时使用 [详细开发任务清单](docs/development/DEVELOPMENT-TASKS-0905.md)，包含任务编号、角色、文件、依赖、实施步骤、估算与验收。
 
 体验独立桌面：安装 `frontend/mindos-web` 和 `frontend/shell` 依赖后，在仓库根执行 `rtk proxy bash start-desktop.sh --simulation`。页面持续标记合成数据；省略参数则显示正式配置未就绪。启动方式和测试见 [桌面说明](frontend/shell/README.md)，本轮实现与限制见 [M0实施记录](docs/development/M0-IMPLEMENTATION-0906.md)。原有完整产品的本机 Web 开发入口如下，和新桌面分开运行。

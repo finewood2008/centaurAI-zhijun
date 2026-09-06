@@ -85,7 +85,7 @@ SDK 不是现成账号系统。`createElectronConsumerAuth` 负责共享刷新�
 
 1. 独立的知君桌面客户端身份和 OS 安全存储，配合单实例锁。不要直接复用示例中 CLI 的凭据 namespace。
 2. 一个 `createElectronConsumerAuth(...)`，设备管理与签发 ticket 的客户端共享它。
-3. Consumer client：认证、设备列表、创建连接请求。示例使用 `/app-api/devices` 和 `/app-api/devices/{deviceId}/connectivity/sessions`，带 Bearer 与 `NEXUSAOS-CONSUMER-V1` 签名；知君需确认正式应用注册配置。
+3. Consumer client：认证、设备列表、创建连接请求，使用 `/app-api/devices` 和 `/app-api/devices/{deviceId}/connectivity/sessions`，带 Bearer 与 `NEXUSAOS-CONSUMER-V1` 签名。现已确认可作为已登记 `mindos-person-data-pc` 目标应用的 Electron 客户端；独立 clientId 不要求另建目标 applicationId，参数由主进程配置固定。
 4. `createElectronAdminTicketProvider({ client, durationMinutes })`：校验返回的应用、平台、scope、purpose 与 transport policy；默认请求 30 分钟，允许 1–60，最终以服务端授权为准。
 5. `createElectronProcessNativeHost({ executable, args, tickets, operationTimeoutMs })`，再用 `createElectronMainFacade(native.host)`。
 6. 用固定产品策略构造 binding：`device_id / application_id / client_platform:'electron' / requested_scopes / purpose / profile / transport_policy`，建立 session。
@@ -340,7 +340,7 @@ data-engine 目录也有具体缺口：`folder_nodes.scope` 指 RAW/KNOWLEDGE �
 正式联调、发布组合冻结或领域迁移前需要落实下列输入（对应桌面规格 D01–D05）。M0-L 已在这些输入尚未齐备时完成本地宿主、注入式 adapter 与模拟合同实施；仍可继续隔离研发，真实连接和运行库迁移保持不放行：
 
 1. **领域部署**：知君领域模块并入盒端 data-engine，还是盒端独立服务？推荐前者，并通过服务适配层保留边界。
-2. **应用身份与归属**：知君 applicationId、purpose、requestedScopes、允许设备/路径/限额、Consumer/Gateway地址与安全存储 namespace；同盒多账号、设备转让、目录归属与个人Claim事实源。
+2. **应用身份与归属**：M0 已核定 `mindos-person-data-pc` / `person-data.read` / `remote.p2p`、Consumer/Gateway 及独立安全存储，自动配置与本机检查见[真机记录](REAL-ACCEPTANCE-0906.md)。仍需真实登录/设备授权、业务桥及同盒多账号、设备转让、目录归属与个人Claim事实源；已有传输 scope 不等于业务权限。
 3. **可复现版本**：SDK `819831c` 的 1.2.0、OS `9f7354e` 与实际 sidecar 来源如何对应；未提交服务端上传改动如何冻结和交付。
 4. **聊天协议**：扩展SDK原生流（推荐保持现有体验），还是任务+游标轮询；两者都需要服务端支持。
 5. **首期平台和配网**：只连已绑定盒子，还是包含BLE首次发现/配网？配网包当前要求Electron37，安全配网还依赖固件AEAD协议和宿主secureCommands实现，不能把开发明文兼容开关当作默认方案。
