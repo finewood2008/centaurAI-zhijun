@@ -42,7 +42,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </slot>
       <main class="ws-app__content">
         <ErrorBoundary>
-          <RouterView />
+          <slot name="content"><RouterView /></slot>
         </ErrorBoundary>
       </main>
     </div>

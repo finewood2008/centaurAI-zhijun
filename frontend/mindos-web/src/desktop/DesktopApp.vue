@@ -17,6 +17,7 @@ const bridge = (window as Window & { zhijunDesktop?: ZhijunDesktopV1 }).zhijunDe
 const controller = new DesktopController(bridge, { materials: false })
 const state = shallowRef(controller.state)
 const router = useRouter()
+const signedIn = computed(() => !!state.value.snapshot?.subject?.accountId)
 const enteredScope = shallowRef<string | null>(null)
 const ready = computed(() => enteredScope.value !== null && enteredScope.value === scopeKey && !!client && state.value.snapshot?.phase === 'ready' && !!state.value.snapshot.subject && !!state.value.snapshot.capabilities.product)
 const product = (bridge as (ZhijunDesktopV1 & { product?: ProductDesktop }) | undefined)?.product
@@ -51,8 +52,12 @@ onMounted(() => { void controller.start() })
 onBeforeUnmount(() => { stopObserving(); setProductScope(null); client?.dispose(); stopTransport(); stopFiles(); controller.dispose() })
 </script>
 <template>
-  <App v-if="ready" :key="scopeKey ?? ''">
-    <template #topbar="{ toggleMenu }"><DesktopTopbar @toggle-menu="toggleMenu" /></template>
+  <App v-if="signedIn">
+    <template #content>
+      <RouterView v-if="ready" :key="scopeKey ?? ''" />
+      <DesktopConnection v-else embedded />
+    </template>
+    <template #topbar="{ toggleMenu }"><DesktopTopbar :workspace-ready="ready" @toggle-menu="toggleMenu" /></template>
   </App>
   <DesktopConnection v-else />
 </template>

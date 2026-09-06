@@ -1,0 +1,9 @@
+{
+  "source": "../../mindos-web/logo.jpg",
+  "sourceSha256": "9d3fa3428bec533b3656a2b9d373e039faae08a5836dcf518535fe62a775227d",
+  "conversion": "macOS sips: preserve aspect ratio, fit within 1024 square, white padding; iconutil standard sizes",
+  "files": {
+    "centaur.png": "58cea7091d4de66c2f1ea4787228499de28472b166992baa23ab266ceeb7e980",
+    "centaur.icns": "66991a2b4846a95109a9ca1e1be3de67375e5a67199b4fe5f93649e2d8366389"
+  }
+}

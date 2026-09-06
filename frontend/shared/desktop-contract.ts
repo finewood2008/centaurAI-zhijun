@@ -11,6 +11,8 @@ export type PublicErrorCode =
   | 'CONFIGURATION_REQUIRED'
   | 'AUTHENTICATION_REQUIRED'
   | 'AUTHENTICATION_FAILED'
+  | 'APPLICATION_AUTHORIZATION_DENIED'
+  | 'ACCOUNT_SERVICE_UNAVAILABLE'
   | 'SECURE_STORAGE_UNAVAILABLE'
   | 'BUSINESS_BRIDGE_REQUIRED'
   | 'SESSION_NOT_READY'
@@ -20,6 +22,7 @@ export type PublicErrorCode =
   | 'ACCESS_DENIED'
   | 'SESSION_EXPIRED'
   | 'TRANSPORT_UNAVAILABLE'
+  | 'DIRECT_CONNECTION_UNAVAILABLE'
   | 'WRITE_OUTCOME_UNKNOWN'
   | 'REQUEST_TIMEOUT'
   | 'RESOURCE_EXHAUSTED'
@@ -37,6 +40,10 @@ export interface PublicError {
   readonly httpStatus?: number;
   readonly remoteCode?: string;
   readonly traceId?: string;
+  /** Main-process fixed allowlists only; no raw URLs, tickets, bodies or messages. */
+  readonly phase?: 'account_service' | 'ticket' | 'native';
+  readonly sdkCode?: string;
+  readonly detailCode?: 'DIRECT_TIMEOUT' | 'ICE_FAILED';
   /** A user action hint, not permission for automatic replay. */
   readonly recovery: 'none' | 'user_read' | 'user_reconnect' | 'user_sign_in';
 }

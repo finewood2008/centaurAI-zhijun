@@ -127,3 +127,9 @@ PDF/DOCX/OCR盒端解析分别46/48/110字符通过；受限voice API返回40字
 shell最终117项Node、vue-tsc通过，独立15项配额验证包含在117内，既有4项隔离Electron E2E单独记录。生产Admin入口仍缺，完整v2正式SDK/P2P和UI验收pending。详见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)与[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
 
 正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+
+### 连接失败的定位顺序
+
+先区分账号请求、票据签发和原生连接阶段。新版保留 SDK 原票据校验，并恢复其捕获前的安全 Consumer 错误；账号服务拒绝应用/权限会明确显示 `APPLICATION_AUTHORIZATION_DENIED`，不再统一显示设备网络错误。该错误仍需检查 Admin 应用登记及请求权限，不能仅凭它断言某个后端版本未部署。盒端 HTTP 健康只证明服务运行，不证明账号票据和 P2P 链路已通过。登录后连接失败仍保留导航，内容区维持未连接提示。见[专项修复与验收](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
+
+本次真实账号连接家庭 AMD 盒子已复现该明确授权拒绝，主导航切换及实际 Reload 正常。Admin 登记增量 `44a0950` 已推送，生产发布入口仍缺；不能用旧只读应用身份代替新工作区身份。最新补充验证为 shell 126/126、前端 63/63、Web/Desktop 构建及两类导航回归通过。

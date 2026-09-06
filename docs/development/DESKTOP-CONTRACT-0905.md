@@ -70,3 +70,13 @@ Agent新应用：1MiB请求/响应、8并发、120rpm、1GiB会话预算；Core�
 最新本地验证：shell117项Node、vue-tsc通过；独立15项配额用例包含在117内。200MiB/400块经真实JS模块和内存严格Agent配额，在243秒虚拟时间完成，滚动60秒最多101请求；尚未做真实SDK/P2P大文件验证。隔离盒端hardware-candidate5为5/5（safe material正文82、摘要43字符、实体2、关系0），gateway-candidate6为10/10（60请求/21个completed操作，含知识CRUD/confirm/search/purge）。均为合成主体/输入，非正式Consumer/UI；不能按170项catalog或隔离硬件结果关闭完整UI验收。证据见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
 
 正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+
+## 连接错误、导航与图标补充（0906）
+
+已登录即显示主导航和偏好入口，`ready` 只控制业务 RouterView；选盒、连接、授权、断开和失败状态展示嵌入的连接提示。未就绪时业务页卸载，transport/main 继续拒绝操作；导航可见不代表已经连接或获得访问授权。退出后回登录页。
+
+主进程在 SDK 获取票据前后保留受信任的 Consumer 错误，SDK 原有票据绑定和完整性检查不变。固定应用授权拒绝为 `APPLICATION_AUTHORIZATION_DENIED`；账号服务不可用为 `ACCOUNT_SERVICE_UNAVAILABLE`；明确的原生直连失败为 `DIRECT_CONNECTION_UNAVAILABLE`。超时、401/403、合同错误分别保留；未知错误不推断为应用未注册。公开诊断只允许固定 `phase` / `sdkCode` / `detailCode` 枚举及既有安全字段，不能返回原始正文、凭据、URL 或异常消息。
+
+开发 Dock 与打包图标使用原 `frontend/mindos-web/logo.jpg` 半人马图像，生成资产固定在 shell/assets；页面内“知君”品牌保持原产品样式。修复步骤与实际核验见[专项计划](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
+
+本次补充验证更新为 shell 126/126、前端 63/63、Web/Desktop 构建及浏览器/隔离 Electron 导航回归通过。实际账号登录、家庭 AMD 盒子在线列表、失败态导航和重载已通过；实际连接在正式 Admin 票据应用策略处返回 `APPLICATION_AUTHORIZATION_DENIED`，完整工作区验收仍待发布入口与登记修复。

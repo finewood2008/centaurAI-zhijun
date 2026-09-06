@@ -91,3 +91,7 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 隔离真盒PDF/DOCX/OCR分别提取46/48/110字符，voice API已通过；小文档内联快照SHA、DeletionStore连接释放及有界纠错修复后，hardware-candidate5完整5/5：safe material正文82、摘要43字符、实体2、关系0。gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。以上均为合成主体/输入，不代表正式Consumer/UI/SDK验收完成；生产Admin发布入口仍缺。源码修复与配额证据见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，硬件现场结果见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
 
 正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+
+### 连接失败时的应用框架
+
+账号登录态负责显示导航框架，工作区 `ready` 状态负责挂载业务内容。连接失败时五个导航与偏好仍可见，内容区显示连接恢复操作；业务页和旧工作区状态卸载。账号票据签发错误与原生设备连接错误在主进程分别分类，不能由统一 `TRANSPORT_UNAVAILABLE` 推断设备离线。见[桌面合同补充](DESKTOP-CONTRACT-0905.md)。

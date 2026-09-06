@@ -2,7 +2,7 @@
 const { DesktopError } = require('../runtime/public-error.cjs');
 const { createCredentialStore } = require('./credential-store.cjs');
 const { createConsumerClient } = require('./consumer-client.cjs');
-const { createSdkRuntime } = require('./sdk-runtime.cjs');
+const { createSdkRuntime, mapConnectionError } = require('./sdk-runtime.cjs');
 
 async function createProductionAdapter({ config, directory, safeStorage, consumer,
   bridge, runtimeFactory = createSdkRuntime }) {
@@ -27,8 +27,13 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
       const current = await client.current();
       if (expected !== epoch) throw new DesktopError('STALE_GENERATION');
       if (current.accountId !== binding.accountId) throw new DesktopError('AUTHENTICATION_REQUIRED');
-      const runtime = await runtimeFactory({ config: config.connectivity, consumer: client });
-      if (expected !== epoch) { await runtime.close(); throw new DesktopError('STALE_GENERATION'); }
+      let runtime;
+      try { runtime = await runtimeFactory({ config: config.connectivity, consumer: client }); }
+      catch (error) { throw mapConnectionError(error); }
+      if (expected !== epoch) {
+        try { await runtime.close(); } catch { /* Retain the session invalidation reason. */ }
+        throw new DesktopError('STALE_GENERATION');
+      }
       let session; let authorization; let closed = false; let failureListener; let pendingFailure;
       const lifetime = new AbortController();
       const close = async () => {
@@ -43,7 +48,12 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
       try {
         session = await runtime.connect(binding.deviceId);
         if (expected !== epoch) throw new DesktopError('STALE_GENERATION');
-      } catch (error) { await close(); throw error instanceof DesktopError ? error : new DesktopError('TRANSPORT_UNAVAILABLE'); }
+      } catch (error) {
+        // A failed cleanup must not replace a precise, already-safe connection
+        // rejection with an unrelated native transport error.
+        try { await close(); } catch { /* The primary connection failure wins. */ }
+        throw mapConnectionError(error);
+      }
       return Object.freeze({
         onFailure(listener) { failureListener = listener; if (pendingFailure && !closed) listener(pendingFailure); },
         async authorize() {

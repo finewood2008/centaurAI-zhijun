@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, protocol, session, safeStorage, dialog, systemPreferences } = require('electron')
 const path = require('node:path')
 const { access } = require('node:fs/promises')
+const { APP_ICON, installDockIcon } = require('./app-icon.cjs')
 const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
 const { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, isEntryUrl,
   createInvokeHandler, createAssetHandler } = require('./security.cjs')
@@ -27,6 +28,7 @@ let window
 let quitting = false
 
 async function createWindow() {
+  installDockIcon(app)
   await access(path.join(assetRoot, 'desktop.html'))
   let config
   if (mode !== 'simulation') {
@@ -59,7 +61,7 @@ async function createWindow() {
   await isolatedSession.protocol.handle('zhijun-media', request => runtime.mediaResponse(request))
   window = new BrowserWindow({
     width: 1200, height: 820, minWidth: 760, minHeight: 580,
-    title: '知君', backgroundColor: '#FFFCF6',
+    title: '知君', backgroundColor: '#FFFCF6', icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), session: isolatedSession,
       contextIsolation: true, sandbox: true, nodeIntegration: false,

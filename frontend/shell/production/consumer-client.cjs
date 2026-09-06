@@ -18,11 +18,15 @@ function tokens(value, clientId, accountId) {
   return Object.freeze({ accountId: value.accountId, clientId, accessToken: value.accessToken,
     refreshToken: value.refreshToken, expiresAt: Date.now() + value.expiresIn * 1000 });
 }
-function checkEnvelope(result) {
+function checkEnvelope(result, connectivity = false) {
+  if (connectivity && result.applicationDenied) throw new DesktopError('APPLICATION_AUTHORIZATION_DENIED', { phase: 'ticket', httpStatus: result.httpStatus });
   if (result.code === 401) fail('AUTHENTICATION_REQUIRED');
   if (result.code === 403) fail('ACCESS_DENIED');
   if (result.code === 429) fail('RESOURCE_EXHAUSTED');
-  if (result.code !== 200 || result.success === false) fail('AUTHENTICATION_FAILED');
+  if (result.code !== 200 || result.success === false) {
+    if (connectivity) throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'ticket', httpStatus: result.httpStatus });
+    fail('AUTHENTICATION_FAILED');
+  }
   return result.data;
 }
 
@@ -58,6 +62,12 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     try {
       const response = await fetchImpl(config.consumerBaseUrl + route, { method, headers, redirect: 'error',
         signal: controller.signal, ...(bytes.length ? { body: bytes } : {}) });
+      // Gateways may return an HTML error page. The HTTP status is sufficient
+      // to classify a service outage; never parse or reflect that response.
+      if (response.status >= 500 && response.status <= 599) {
+        await response.body?.cancel();
+        throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'account_service', httpStatus: response.status });
+      }
       if (!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) fail();
       const declared = Number(response.headers.get('content-length') || 0);
       if (declared > LIMIT) { await response.body?.cancel(); fail('RESPONSE_TOO_LARGE'); }
@@ -76,11 +86,16 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       try { envelope = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))); } catch { fail(); }
       if (!plain(envelope) || !Number.isInteger(envelope.code)) fail();
       return { code: response.ok ? (envelope.code === 0 ? 200 : envelope.code) : response.status,
-        success: envelope.success, data: envelope.data };
+        success: envelope.success, data: envelope.data, httpStatus: response.status,
+        // Legacy Admin has no machine error code for this policy rejection.
+        // Match only this exact established response; unknown 601 messages are
+        // never guessed to mean an application is unregistered or undeployed.
+        applicationDenied: method === 'POST' && /^\/app-api\/devices\/(?:[A-Za-z0-9._-]|%3A)+\/connectivity\/sessions$/.test(route)
+          && response.status === 200 && envelope.code === 601 && envelope.msg === 'Connectivity应用或权限未获准' };
     } catch (error) {
       if (controller.signal.aborted) fail('REQUEST_TIMEOUT');
       if (error instanceof DesktopError) throw error;
-      fail('TRANSPORT_UNAVAILABLE');
+      throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'account_service' });
     } finally { clearTimeout(timer); requests.delete(controller); }
   }
   const auth = factory({
@@ -101,7 +116,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     }
     if (disposed || expected !== epoch) fail('AUTHENTICATION_REQUIRED');
     if (response.code === 401) { await auth.clear(); fail('AUTHENTICATION_REQUIRED'); }
-    return checkEnvelope(response);
+    return checkEnvelope(response, route.endsWith('/connectivity/sessions'));
   }
   return Object.freeze({
     async signIn(input, guard = () => true) {

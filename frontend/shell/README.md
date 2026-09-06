@@ -50,3 +50,11 @@ v2通过同一SDK session请求 `GET /api/mindos/zhijun/context`，核对账号�
 语音输入仅在用户点击录音后申请麦克风，停止后由盒端转写并填入草稿，不自动发送。权限窗口限当前主页面的audio请求；相机及其他frame/origin拒绝，断开或切换主体会释放授权和录音资源。mac用途说明已配置，签名发行包与真实权限/转写结果仍需独立验收；自动化不探测或录制真实麦克风。
 
 盒端部署输入可由 [prepare-bridge-release.cjs](scripts/prepare-bridge-release.cjs) 生成。生成输入不执行部署，也不证明完整产品能力已经在盒端运行；最终版本与逐项验收必须记录在本轮文档中。
+
+## 应用图标
+
+开发启动会在 macOS Dock 使用原有半人马图像；Windows/Linux 窗口和打包配置也指向同源资产。原图为 `../mindos-web/logo.jpg`。运行 `npm run icons:build` 可用 macOS 系统工具重建 `assets/centaur.png` 和 `assets/centaur.icns`；不会重绘原图。正式安装包仍需在对应平台构建核验，设置打包配置不代表安装包已经产出。
+
+账号已登录时保留主导航；未连接的业务内容区显示选盒或错误提示。应用授权拒绝和账号服务故障会单独提示，不应据此认定盒子离线。
+
+完成 Desktop 构建后，在本目录执行 `node --test tests/product-navigation.e2e.cjs` 可验证真实 Electron main/preload/自定义协议在合成失败账号下的首次挂载、导航及 Reload；不访问真实账号、SDK 或麦克风。真实账号验收结果见[专项记录](../../docs/development/CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
