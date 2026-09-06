@@ -2,11 +2,18 @@
 
 更新日期：2026-09-06，已落实独立桌面 M0-L。产品源 `22dc9a3` 的同步事实见 [上游同步记录](UPSTREAM-SYNC-0905.md)，本轮实现与验证见 [M0 实施记录](M0-IMPLEMENTATION-0906.md)。配套步骤见 [集成方案](INTEGRATION-0905.md)，原调研审核见 [审核记录](REVIEW-0905.md)。第 3 节描述当前实现，第 5、6 节保留正式 SDK / 盒端集成目标。
 
-进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。桌面宿主、窄 IPC、资料策略和模拟流程已落地；正式 Consumer 密码登录/签名/刷新与SDK装配代码已新增，盒内签名桥已在隔离工作区实施，盒端部署、真机资料与领域迁移仍待完成；见[D03实施合同](BUSINESS-BRIDGE-0906.md)。
+**当前验收边界（2026-09-06）：** 家中盒子 Agent 与 DE 已部署 D03，Agent active / Gateway connected / 授权快照新鲜，DE 保持 `MINDOS_LOCAL_WEB_DEBUG_ACCESS=0`；正式无签名及伪造桥请求均拒绝。新版桌面已真实登录并连接家中 AMD 盒；同一 SDK 会话的 context 握手、0条资料响应及刷新已通过UI链路，一次断开后资料区清空并重连通过。尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵，`M0-R=false`、`realDeviceValidated=false`；空页不代表历史资料迁移。部署、版本、负向检查及回退证据统一见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
+
+**当前服务基线：** 家中盒子保留并发新发布 `6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0`，D03 在独立分支 `dev/zhijun-business-bridge-0906-live` 的 `c16dc17be81240285820b9e86076877911d153c4` 上合流；已部署的 6 个运行文件与该交付一致。原 `ec2854e` + dirty 调研事实及其上传协议描述保留为历史，不能当成现运行基线。新发布的权限、分页、错误边界和 Pocket 改动已保留；这不表示知君领域或上传四层合同已完成集成。
+
+进入实施时配套阅读：[桌面接口规格](DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[可执行工作包](INTEGRATION-WORKPACKAGES-0905.md)。桌面宿主、窄 IPC、资料策略和模拟流程已落地；正式 Consumer 密码登录/签名/刷新与SDK装配代码已新增，盒内签名桥已部署家中盒子，真机空资料页及一次断开/重连已通过，完整资料矩阵与领域迁移仍待完成；见[D03实施合同](BUSINESS-BRIDGE-0906.md)。
 
 具体文件归属、开发步骤、跨仓依赖和里程碑验收见 [详细开发任务](DEVELOPMENT-TASKS-0905.md)；任务完成状态与架构设计状态分别记录。
 
 可直接打开或用于评审的 [目标架构 SVG](assets/architecture-0905.svg) 已从第 5 节 Mermaid 图导出；第 3、4、5、6 节分别为当前架构、业务关系、目标部署和连接时序。
+
+
+当前界面是只读验收入口，尚未交付完整产品导航：`main-desktop.ts` 直接挂载 `DesktopApp`，没有装配原 router 和 `MainLayout`，所以原五项导航及偏好设置没有显示；这些页面源码仍保留。下一阶段须一并恢复主布局/路由、接入有类型约束的 Desktop transport，并交付对应盒端领域 API 与 SSE/流能力；不能只挂旧 `RouterLink` 或打开本机 HTTP 来冒充集成完成。
 
 ## 1. 结论
 
@@ -23,9 +30,9 @@
 | `nexusaos-centuarai-zhijun` | Vue 3 / TS / Vite；独立 Electron 37.10.3 宿主与 M0-L 页面；保留旧 Electron 源码及完整 FastAPI 后端 | 桌面主进程 / preload / 资料模拟流程已实现；产品领域代码供后续盒端迁移 |
 | `nexusaos-centuarai-conn-sdks` | 合同、Electron 主进程 facade、认证刷新助手、sidecar 桥、桌面配网包 | 受控连接能力；不承载知君业务或任意 URL 代理 |
 | `nexusaos-data-engine` | 盒端资料/知识/检索/模型服务；已有远程 Electron 客户端参考实现 | 盒端基础数据能力和宿主集成参考；不能直接替代知君后端 |
-| 外部依赖：Admin / Gateway / Remote Agent / OS Core | 账号与设备授权、信令和连接执行、盒端能力转发、Go 传输实现 | 端到端联调不可缺少；本轮在隔离分支新增Agent签名桥，未部署真实系统 |
+| 外部依赖：Admin / Gateway / Remote Agent / OS Core | 账号与设备授权、信令和连接执行、盒端能力转发、Go 传输实现 | 端到端联调不可缺少；Agent签名桥已部署家中盒子；真实SDK空资料页已验，完整矩阵仍待验收 |
 
-2026-09-06 只读复核时 SDK / OS 工作区干净，HEAD 分别为 `819831c` / `9f7354e`；data-engine 为 `ec2854e` 加未提交修改。现有 sidecar manifest 仍记录旧提交 `a13d7e5` 加 dirty 源码，不能将其等同当前 OS HEAD；完整版本基线见集成方案。
+2026-09-06 部署前只读复核时 SDK / OS 工作区干净，HEAD 分别为 `819831c` / `9f7354e`；data-engine 为 `ec2854e` 加未提交修改。现有 sidecar manifest 仍记录旧提交 `a13d7e5` 加 dirty 源码，不能将其等同当前 OS HEAD；完整版本基线见集成方案。
 
 ## 3. 知君当前架构
 
@@ -57,12 +64,12 @@ flowchart TB
     sdkmain --> context[同一session验证context与主体绑定]
   end
   configured --> consumer[Admin Consumer：真实登录与设备列表已验]
-  subgraph remotebox[盒端实现分支：待部署]
+  subgraph remotebox[家中盒子：只读空页已验，跨主体待验]
     agentbridge[Agent逐请求Ed25519证明]
     degate[data-engine验签 / nonce / Owner scope]
     agentbridge --> degate
   end
-  context -. SDK Direct，待真机验收 .-> agentbridge
+  context -. SDK Direct，只读空页已验 .-> agentbridge
   subgraph product[知君 Vue 应用]
     vue[今日来信 / 事情与成果 / 对话 / 本体 / 判断]
     api[api.ts：JSON 与 multipart]
@@ -101,7 +108,7 @@ flowchart TB
 当前桌面与保留产品路线的边界：
 
 1. 根 `start-desktop.sh` 与 `frontend/package.json` 的 desktop 命令已统一到 `frontend/shell`。新宿主加载 `zhijun://desktop/desktop.html`，不启动 Python，不等待或回退到 PC 的 `8618`；旧 `frontend/main.js` 只保留源码，不参与新启动链。[Z1] [Z2] [Z17]
-2. 新桌面的 `window.zhijunDesktop` 已提供窄方法和状态订阅；main 验证窗口、主 frame、精确入口 URL、参数及资料响应。默认 `unconfigured` 不创建认证适配器；仅开发显式 `simulation` 使用合成数据，打包应用禁用模拟。正式密码登录、系统加密凭据与SDK装配已在 production 模块实现，需显式账号配置；主程序现注入盒内签名桥客户端；后端及Agent需部署对应版本才能握手。[Z18] [Z19] [Z20]
+2. 新桌面的 `window.zhijunDesktop` 已提供窄方法和状态订阅；main 验证窗口、主 frame、精确入口 URL、参数及资料响应。默认 `unconfigured` 不创建认证适配器；仅开发显式 `simulation` 使用合成数据，打包应用禁用模拟。正式密码登录、系统加密凭据与SDK装配已在 production 模块实现，需显式账号配置；主程序现注入盒内签名桥客户端；家中盒端已部署匹配版本，同一SDK session真实握手及空资料响应已通过UI链路。[Z18] [Z19] [Z20]
 3. 新入口通过 `vite.desktop.config.ts` 独立生成 `dist-desktop`，使用受控资源协议和有限 hash 页面状态，不加载旧 router、onboarding guard 或票据桥。保留的 Web `/mindos/` 产品仍使用 `api.ts`、`sse.ts`、`taskRouting.ts` 三处网络入口；后续完整产品接入时仍需统一它们，不能把 M0-L 当成全部页面已迁移。[Z3] [Z4] [Z5] [Z6] [Z21]
 
 新增 `matters.ts` 复用 `routingRequest`；`chatStream.ts` 编排预览与 SSE，没有新增第四套传输。它只在尚未收到事件、命中特定 409 且用户未取消时重新预览一次，并复用 requestId；不自动重放来源变化、500、断网或已开始的流。`backendConnection` 的 Web 后端状态也不是 SDK 连接快照，桌面接入需映射到主进程状态。[Z14] [Z15]
@@ -171,7 +178,7 @@ flowchart TB
   sidecar <-->|受信信令| gateway
   subgraph box[AI 盒子]
     agent[Remote Agent：授权与路由]
-    auth[MindOS盒内签名桥 / 账号与所有权代次隔离]
+    auth[MindOS盒内签名桥 / 只读空页已验 / 跨主体待验]
     engine[data-engine FastAPI]
     zj[待接入：知君领域 / 事项与成果模块]
     data[资料 / 知识 / 检索 / 模型服务]
@@ -190,7 +197,7 @@ flowchart TB
   zj --> model
 ```
 
-本图及配套 SVG 保留完整正式集成的目标含义；其中「待实现」指完整产品的统一transport、流和上传；M0已实现的窄preload、正式账号、SDK与资料策略见第3节，不能据此声称 SDK真实网络或业务身份桥已接通。图中没有将 PC 的 `127.0.0.1:8618` 作为正式依赖。该地址在目标部署中属于盒内 data-engine；当前 M0-L 已无本机 HTTP 回退，本地 Web 开发保留独立入口。[D1] [D2]
+本图及配套 SVG 保留完整正式集成的目标含义；其中「待实现」指完整产品的统一transport、流和上传；M0已实现的窄preload、正式账号、SDK与资料策略见第3节，真实SDK与业务桥已通过空资料UI链路，但不能据此声称完整产品或跨主体矩阵已验收。图中没有将 PC 的 `127.0.0.1:8618` 作为正式依赖。该地址在目标部署中属于盒内 data-engine；当前 M0-L 已无本机 HTTP 回退，本地 Web 开发保留独立入口。[D1] [D2]
 
 ### 5.1 责任与数据归属
 
@@ -242,7 +249,7 @@ frontend/
 
 M0 固定为正式登录、选择已绑定盒子、连接并完成业务身份桥、资料分页只读、断开/重连。新宿主的窄接口及类型样例见桌面接口规格；业务调用不让 renderer 指定任意 path/header。SDK connect 成功只代表进入 authorizing，真实身份桥成功才允许进入 ready，资料读取仍需单独验收。
 
-2026-09-06 已落地 M0-L 及正式认证/SDK客户端：实际 Electron/main/preload/runtime 与 Vue 页面已通过显式模拟 adapter 验证资料流程。D02 目标应用现采用已登记的 `mindos-person-data-pc`，知君的 clientId、密钥和存储仍独立；已自动配置，并通过本机 macOS safeStorage 与原生 sidecar 检查。真实登录与两个已绑定设备查询已通过；D03已编码，盒端部署、D05发布组合及整条真机资料链路仍待完成，实际证据见[自动配置与验收记录](REAL-ACCEPTANCE-0906.md)。
+2026-09-06 已落地 M0-L 及正式认证/SDK客户端：实际 Electron/main/preload/runtime 与 Vue 页面已通过显式模拟 adapter 验证资料流程。D02 目标应用现采用已登记的 `mindos-person-data-pc`，知君的 clientId、密钥和存储仍独立；已自动配置，并通过本机 macOS safeStorage 与原生 sidecar 检查。真实登录与两个已绑定设备查询已通过；D03已部署家中盒子，真实空资料页及一次断开/重连已通过；D05签名发布、非空资料及完整矩阵仍待完成，实际证据见[自动配置与验收记录](REAL-ACCEPTANCE-0906.md)。
 
 资料公开投影仅保留标识、文件名、类型、状态、创建时间和分页信息；顶层 folders 及条目 folder/folderId 均不透出。聊天、事项写入、附件、模型管理、BLE 与现有建档 guard 在 M0 不开放。后续领域迁移按独立模块方案准备，D01–D05 决策明确之前可推进隔离骨架/模拟合同，不能将模拟通过计为真实联调完成。
 

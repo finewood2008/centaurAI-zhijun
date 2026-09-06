@@ -11,8 +11,8 @@ const baseline = JSON.parse(fs.readFileSync(path.join(root, 'docs/development/in
 const args = process.argv.slice(2);
 if (args.length !== 0 && args.length !== 3) throw new Error('usage: node prepare-bridge-release.cjs [os-worktree data-engine-worktree new-output-directory]');
 const osRoot = path.resolve(args[0] || path.join(root, '../.worktrees/zhijun-bridge-os'));
-const engineRoot = path.resolve(args[1] || path.join(root, '../.worktrees/zhijun-bridge-data-engine'));
-const output = path.resolve(args[2] || path.join(root, 'data/desktop/bridge-release-0906'));
+const engineRoot = path.resolve(args[1] || path.join(root, '../.worktrees/zhijun-bridge-data-engine-current'));
+const output = path.resolve(args[2] || path.join(root, 'data/desktop/bridge-release-0906-live'));
 const run = (cwd, file, argv, options = {}) => execFileSync(file, argv, { cwd, maxBuffer: 32 * 1024 * 1024, ...options });
 const git = (cwd, argv) => run(cwd, 'git', argv);
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');

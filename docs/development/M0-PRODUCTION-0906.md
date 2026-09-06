@@ -2,6 +2,10 @@
 
 日期：2026-09-06；起点 `3d9679b`，当前开发分支不变。
 
+**当前验收边界（2026-09-06）：** 家中盒子 Agent 与 DE 已部署 D03，Agent active / Gateway connected / 授权快照新鲜，DE 保持 `MINDOS_LOCAL_WEB_DEBUG_ACCESS=0`；正式无签名及伪造桥请求均拒绝。新版桌面已真实登录并连接家中 AMD 盒；同一 SDK 会话的 context 握手、0条资料响应及刷新已通过UI链路，一次断开后资料区清空并重连通过。尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵，`M0-R=false`、`realDeviceValidated=false`；空页不代表历史资料迁移。部署、版本、负向检查及回退证据统一见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
+
+**当前服务基线：** 家中盒子保留并发新发布 `6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0`，D03 在独立分支 `dev/zhijun-business-bridge-0906-live` 的 `c16dc17be81240285820b9e86076877911d153c4` 上合流；已部署的 6 个运行文件与该交付一致。原 `ec2854e` + dirty 调研事实及其上传协议描述保留为历史，不能当成现运行基线。新发布的权限、分页、错误边界和 Pocket 改动已保留；这不表示知君领域或上传四层合同已完成集成。
+
 ## 实施计划
 
 - [x] 核查 Admin 已有密码登录、签名、刷新、设备与连接票据合同。
@@ -23,7 +27,7 @@
 
 ## 外部输入
 
-后续已根据用户要求自动核定 Consumer 和目标应用参数：`mindos-person-data-pc` / `person-data.read` / `remote.p2p`，知君使用自身 clientId、密钥和存储。`applicationId` 是盒端目标应用，不要求因知君 UI 品牌新建一项登记。账号密码在应用内输入；D03可信业务桥现已编码，真实部署仍需落实。最新证据见[自动配置与真机验收](REAL-ACCEPTANCE-0906.md)。
+后续已根据用户要求自动核定 Consumer 和目标应用参数：`mindos-person-data-pc` / `person-data.read` / `remote.p2p`，知君使用自身 clientId、密钥和存储。`applicationId` 是盒端目标应用，不要求因知君 UI 品牌新建一项登记。账号密码在应用内输入；D03可信业务桥已编码且部署家中盒子，真实SDK context及空资料页已通过UI链路，完整M0-R仍待落实。最新证据见[自动配置与真机验收](REAL-ACCEPTANCE-0906.md)。
 
 本记录首阶段的部分并行研究未返回，由主代理接续；后续D03的OS和服务端实现已返回并经过主代理交叉检查。
 
@@ -62,7 +66,7 @@ rtk proxy bash start-desktop.sh --real
 
 配置正确时显示“账号服务已配置”，用户可在应用内输入已有账号密码并查询设备。`production` 表示加载了正式账号适配器，不表示部署和真机验收通过。打包后只接受 `resources/zhijun-product.json`，忽略配置环境变量；打包/签名尚未交付。
 
-可选 `connectivity` 对象字段是 applicationId、purpose、requestedScopes、gatewayHost、iceHost、sidecarPath、sidecarSha256、profile；profile只能为 SOVEREIGN_DIRECT_ONLY，传输固定DIRECT_ONLY。这些必须对应真实注册和固定产物，不能使用猜测值。**后续已在main注入真实D03握手适配器；连接现在进入SDK及盒端context验证。Agent/DE需部署匹配的[签名桥v1](BUSINESS-BRIDGE-0906.md)，配置JSON本身不能伪造授权。**
+可选 `connectivity` 对象字段是 applicationId、purpose、requestedScopes、gatewayHost、iceHost、sidecarPath、sidecarSha256、profile；profile只能为 SOVEREIGN_DIRECT_ONLY，传输固定DIRECT_ONLY。这些必须对应真实注册和固定产物，不能使用猜测值。**后续已在main注入真实D03握手适配器；连接现在进入SDK及盒端context验证。家中Agent/DE已部署匹配的[签名桥v1](BUSINESS-BRIDGE-0906.md)，配置JSON本身不能伪造授权。**
 
 ## 验证及未验范围
 
@@ -77,10 +81,10 @@ rtk proxy bash start-desktop.sh --real
 
 ## 当前完成状态与下一步
 
-DESK-04/05/06已有正式客户端实现，真实登录及两台授权设备列表已验证，macOS安全存储已测；签名发布仍待验；DESK-07/08 已有真实SDK装配与关闭边界，D03后续已编码，盒端部署和真实资料仍使M0-R未完成。BASE-02 的配置文件和现有Admin合同已经落实到代码，正式应用注册并未由本次代码创建。M1领域迁移、流式聊天、上传和签名发布没有因此完成。
+DESK-04/05/06已有正式客户端实现，真实登录及两台授权设备列表已验证，macOS安全存储已测；签名发布仍待验；DESK-07/08 已有真实SDK装配与关闭边界，D03后续已部署家中盒子，真实空资料页及一次断开重连已验；非空资料及完整矩阵仍使M0-R未完成。BASE-02 的配置文件和现有Admin合同已经落实到代码，正式应用注册并未由本次代码创建。M1领域迁移、流式聊天、上传和签名发布没有因此完成。
 
-后续已核定并自动填写目标参数；macOS safeStorage 及当前平台原生 sidecar 已实测，Consumer/Gateway 在线且未认证设备查询正确拒绝。真实账号登录及授权设备列表已通过，Agent→data-engine可信业务桥已编码；仍需盒端部署、真实资料及跨主体验收、历史资料归属，以及可重建签名产物。现有Admin P2P票据不能直接交给data-engine session exchange，不能借用其他应用登录态或开启local-debug补过验证。具体结果和未完成项以[真机验收记录](REAL-ACCEPTANCE-0906.md)为准。
+后续已核定并自动填写目标参数；macOS safeStorage 及当前平台原生 sidecar 已实测，Consumer/Gateway 在线且未认证设备查询正确拒绝。真实账号登录及授权设备列表已通过，Agent→data-engine可信业务桥已编码；家中盒端部署已完成；真实空页及一次断开重连已验；仍需非空资料及跨主体验收、历史资料归属，以及可重建签名产物。现有Admin P2P票据不能直接交给data-engine session exchange，不能借用其他应用登录态或开启local-debug补过验证。具体结果和未完成项以[真机验收记录](REAL-ACCEPTANCE-0906.md)为准。
 
 本记录首阶段本地结果：shell 61项、前端48项、真实Electron 4项全部通过；Web/Desktop构建、严格类型与启动边界通过。289处本地文档链接与4段Mermaid渲染通过，目标图源码未变。已检查真实Electron密码页布局；截图仅保留临时检查目录，不提交用户/运行数据。
 
-D03后续增量：三端签名桥已实现，真实Consumer登录和两台授权设备列表已确认；宿主现为73项测试通过，另4项Electron、101项DE和Agent全套/race通过。目标SVG已按本轮架构更新。已生成Linux双架构部署输入；盒端部署、真实Direct资料和跨主体隔离仍待验，详见[D03记录](BUSINESS-BRIDGE-0906.md)。
+D03后续增量：三端签名桥已实现，真实Consumer登录和两台授权设备列表已确认；宿主现为73项测试通过，另4项Electron、101项DE和Agent全套/race通过。目标SVG已按本轮架构更新。早期已生成Linux双架构部署输入；后续家中盒端部署完成，真实Direct空资料页及一次断开/重连已验，非空资料和跨主体隔离仍待验，详见[D03记录](BUSINESS-BRIDGE-0906.md)。

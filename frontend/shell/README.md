@@ -1,6 +1,6 @@
 # 知君独立桌面宿主
 
-当前已实现 M0-L：独立 Vue 页面、安全 IPC、连接状态机、资料分页/筛选、取消与退出。页面由 `zhijun://desktop/desktop.html` 加载，不启动 Python，也不依赖 PC 本机 8618 服务。正式 Consumer 密码登录/签名/共享刷新、SDK 主进程装配及 D03 业务桥客户端已实现；Agent 签发和 data-engine 验签代码已推送各自的 `dev/zhijun-business-bridge-0906` 分支，尚未部署到真实盒子。默认未配置时拒绝连接。
+当前已实现 M0-L：独立 Vue 页面、安全 IPC、连接状态机、资料分页/筛选、取消与退出。页面由 `zhijun://desktop/desktop.html` 加载，不启动 Python，也不依赖 PC 本机 8618 服务。正式 Consumer 密码登录/签名/共享刷新、SDK 主进程装配及 D03 业务桥客户端已实现；Agent 签发与 data-engine 验签已部署到家中盒子；当前 DE 合并版本 `c16dc17` 已推送 `dev/zhijun-business-bridge-0906-live`，对应盒端 `6b549ad` 新发布基线。默认未配置时拒绝连接。
 
 在仓库根安装依赖并启动：
 
@@ -31,6 +31,8 @@ E2E 启动真实 Electron，使用新建临时 userData 与合成数据，关闭
 
 [D03 v1 业务桥](../../docs/development/BUSINESS-BRIDGE-0906.md)通过同一 SDK session 请求 `GET /api/mindos/connectivity/context`，主进程核对账号、client、设备、应用及期限后才进入 ready。每次资料 GET 的证明由 Agent 在盒内独立签发，data-engine 逐请求验签；renderer 不提交身份头，客户端不保存可复用业务 token。新 scope 按账号、设备和 ownershipEpoch 隔离，不读取或迁移旧 global 资料。
 
-2026-09-06 本地宿主 73 项、OS 全套/race/Linux ARM64 编译及 data-engine 101 项通过；真实 Consumer 登录和两台在线授权设备列表已由应用 UI 核验。记录时现有窗口仍运行旧 main，SSH `user@192.168.1.18` 认证被拒；新版桥未部署，真实 Direct 资料读取与跨主体矩阵未执行，M0-R 未完成。更新 main 需要重新启动宿主，页面重载不能替换已有主进程；重启本身也不代表盒端已升级。后续证据见[真机验收记录](../../docs/development/REAL-ACCEPTANCE-0906.md)。
+2026-09-06 已有宿主 73 项、Electron E2E 4 项及 OS 全套/race 检查通过；本次当前 DE 合并版本新增回归结果为 111 项及 6 个 subtests。盒端实际依赖下 55 项桥测试和 5 项完整应用合成检查通过；正式服务未签名/错误签名请求均拒绝。此前真实 Consumer 登录和两台在线授权设备列表已由 UI 核验，新版桌面已真实登录并通过同一 SDK 链路读取空资料页，刷新、断开后清理和一次重连通过；跨主体矩阵和完整登录退出循环仍未完成，M0-R 未完成。部署证据见[盒端部署记录](../../docs/development/BOX-DEPLOYMENT-0906.md)，逐场景状态见[真机验收记录](../../docs/development/REAL-ACCEPTANCE-0906.md)。
 
 盒端部署输入由 [prepare-bridge-release.cjs](scripts/prepare-bridge-release.cjs) 生成；当前已有 Linux AMD64/ARM64 本地产物及 12 项哈希清单，生成输入不执行部署，也不记录真机验收通过。
+
+当前 `main-desktop.ts` 仅挂载独立 `DesktopApp.vue`，没有加载原产品 `MainLayout/AppSidebar` 和路由。因此没有“今日来信、对话、我的本体、判断、资料与边界、偏好”导航；代码仍在，完整页面及其业务传输尚需接入。恢复这些入口必须同时处理对应 API/SSE 与主体隔离，不能直接切回旧 renderer 的本机 HTTP。

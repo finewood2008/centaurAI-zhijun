@@ -1,6 +1,6 @@
 # 知君 SDK / data-engine 集成开发任务清单
 
-日期：2026-09-06（文件名沿用 0905 集成基线）。规划代码基线：知君 `140dd34`，产品源 `22dc9a3`。任务清单最初仅作规划；2026-09-06 已实施首批 M0-L，实际起点 `ee8cd96`。**独立桌面本地合同和模拟流程已通过，正式 Consumer/SDK 客户端及三端 D03 逐请求 Ed25519 桥已编码并通过本地测试；真实盒子 M0-R 尚未完成。** 当前状态见第3节及各任务交付差额，不用既有产品回归或模拟结果代替真实业务集成。
+日期：2026-09-06（文件名沿用 0905 集成基线）。规划代码基线：知君 `140dd34`，产品源 `22dc9a3`。任务清单最初仅作规划；2026-09-06 已实施首批 M0-L，实际起点 `ee8cd96`。**独立桌面本地合同和模拟流程已通过，正式 Consumer/SDK 客户端及三端 D03 逐请求 Ed25519 桥已编码、通过本地测试并部署家中盒子；真实盒子 M0-R 尚未完成。** 当前状态见第3节及各任务交付差额，不用既有产品回归或模拟结果代替真实业务集成。
 
 任务依据：[架构](ARCHITECTURE-0905.md)、[集成方案](INTEGRATION-0905.md)、[桌面接口合同](DESKTOP-CONTRACT-0905.md)、[领域迁移规格](DOMAIN-INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[D03 业务桥 v1](BUSINESS-BRIDGE-0906.md)。发生冲突时先修订合同再实施，不由单个任务私自改变身份、部署或传输协议。
 
@@ -50,17 +50,19 @@ M0-L/M0-R 是对既有 M0 的验收分层，不是两套产品实现。发布负
 | --- | --- | --- |
 | M0-L；DESK-01/02/03/09/10/11/12/13/14 | 本地通过待外部验收 | 独立宿主与 Vue 入口、安全 IPC、代次、资料投影/调度/取消及合成流程已实现；逐任务未覆盖验收仍保留，见桌面明细 |
 | BASE-01、BASE-05 | 本地通过待外部验收（子交付） | 开发版本/哈希审计、隔离目录、合成 adapter、正式凭据存储及 macOS 存储检查已建立；固定部署产物和完整真机环境仍待验 |
-| BASE-03、BASE-04；SERV-01/02/03 | 本地通过待外部验收 | 三端 D03 v1 签发/验签、主体绑定、重放拒绝、资料范围及有界投影已实现；新版本未部署，正式验收不关闭 |
+| BASE-03、BASE-04；SERV-01/02/03 | 本地通过待外部验收 | 三端 D03 v1 签发/验签、主体绑定、重放拒绝、资料范围及有界投影已实现；家中盒端已部署且正式负向检查通过；真实SDK空页及一次断开/重连已验，非空资料/跨主体矩阵未验，正式验收不关闭 |
 | DESK-08 | 实施中 | 有界 close、退出抢占、凭据/刷新失效及原生 adapter 清理已编码；真实连接两轮后的 native SDK/sidecar 回收未验 |
 | DESK-16–23；SERV-04–20；CONN-01–18 | 未开始 | 全域业务迁移、流/上传和发布继续按依赖推进 |
-| DESK-15 | 实施中 / 真机前置检查部分通过 | 网络、macOS 存储、原生 sidecar、真实 Consumer 登录和两台在线授权设备列表已验证；旧 main 仍在运行，SSH 认证被拒，未部署新桥 |
+| DESK-15 | 实施中 / 真机前置检查部分通过 | 网络、macOS 存储、原生 sidecar、真实 Consumer 登录和两台在线授权设备列表已验证；家中盒端已部署、新版 main 已启动；真实登录/context/空页/刷新和一次断开重连通过，完整矩阵待验 |
 | BASE-02；DESK-04/05/06 | 本地通过待外部验收（客户端子交付） | 自动配置既有 PC 资料目标，知君 clientId 独立；真实登录/设备列表已由 CUA 验证，真实刷新/撤销和签名发布待验 |
-| DESK-07 | 本地通过待外部验收 | 固定 SDK/sidecar 装配、同会话 context 握手及 D03 严格绑定已实现；真实 Direct 资料读取待部署后验收 |
-| M0-R、M1、M2、R | 未验收 | 没有新桥部署、真实 Direct 资料读取、跨主体真机矩阵或安装包验收证据 |
+| DESK-07 | 本地通过待外部验收 | 固定 SDK/sidecar 装配、同会话 context 握手及 D03 严格绑定已实现；真实 Direct 空资料读取及一次重连已验，非空资料及完整矩阵待验 |
+| M0-R、M1、M2、R | 未验收 | 已有家中盒端部署及正式负向证据；已有真实 Direct 空页及一次断开重连证据；缺非空资料、第二轮退出登录闭环、跨主体矩阵或安装包验收证据 |
 
 实际路径以[桌面明细](tasks/DESKTOP-TASKS-0905.md)映射为准，开发输入见 [integration-release-baseline.json](integration-release-baseline.json)。当前宿主使用 `frontend/shell/runtime/`，前端使用 `src/desktop/` 单页，原设计中的多级 electron 目录和 desktop router 未照搬。
 
-L1 为策略/调度/状态机/controller 单元与合同测试；L2 为真实 Electron 的真实 preload/main/页面搭配显式模拟 adapter。早期 M0-L 合流验证为 shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个 desktop controller 子测试）、L2 3 项及 Web/Desktop 双构建通过。本轮宿主 73 项、OS 全套 Go 测试与 race 检查及 Linux ARM64 构建、DE 101 项均通过。L3 已取得真实 Consumer 登录和两台在线授权设备列表的局部证据，真实 Direct 资料及跨主体场景未验；L4 安装包未验，不能把 L2 的 Electron 进程视作 L3 闭环。
+L1 为策略/调度/状态机/controller 单元与合同测试；L2 为真实 Electron 的真实 preload/main/页面搭配显式模拟 adapter。早期 M0-L 合流验证为 shell 45 项、前端 47 项（37 个原有测试文件项 + 10 个 desktop controller 子测试）、L2 3 项及 Web/Desktop 双构建通过。本轮宿主 73 项、OS 全套 Go 测试与 race 检查及 Linux ARM64 构建、DE 101 项均通过。L3 已取得真实 Consumer 登录和两台在线授权设备列表的局部证据，真实 Direct 空资料页及一次断开重连已验，非空资料及跨主体场景未验；L4 安装包未验，不能把 L2 的 Electron 进程视作 L3 闭环。
+
+新增部署证据：家中 Agent/DE 已部署，debug=0、无签名及伪造桥请求401、health200；盒端临时合成环境55项桥测试及实际server.app 5项检查通过。新DE live分支 `c16dc17`（基线 `6b549ad`）隔离回归为111项+6个subtests，与前述101项历史结果分开记录。新版桌面真实登录/context/空页及一次断开重连通过，M0-R=false；详情与可复现命令见[盒端部署记录](BOX-DEPLOYMENT-0906.md)和[D03记录](BUSINESS-BRIDGE-0906.md#当前-live-分支回归复现)。新scope空页不代表历史资料迁移。
 
 E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之后；启动更早阶段未被该监听捕获，另以入口依赖审查、受限 CSP 和 Electron session 阻断核对边界。详细命令、差额及环境以[本轮实施记录](M0-IMPLEMENTATION-0906.md)为准。
 
@@ -72,7 +74,7 @@ E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之�
 
 **归属：** WP-00 / M0-L、M0-R；P0；集成负责人 + SDK/后端维护者；M（1–2 人日）。**依赖：** 无，可立即开始。
 
-**当前状态：本地通过待外部验收（本地子交付）。** 已记录 `integration-release-baseline.json` 中各仓本地 SHA、dirty 状态、SDK tgz 哈希和 sidecar 审计，并将 shell 锁到 Electron 37.10.3。已安装并锁定SDK归档，未取得 data-engine dirty 变更的获批固定交付，sidecar dirty 输入尚未干净重建，正式版本门禁和平台兼容仍待验；下面跨仓完整步骤保持未勾选。
+**当前状态：本地通过待外部验收（本地子交付）。** 已记录 `integration-release-baseline.json` 中各仓本地 SHA、dirty 状态、SDK tgz 哈希和 sidecar 审计，并将 shell 锁到 Electron 37.10.3。已安装并锁定SDK归档，家中盒端当前版本已固定为 `6b549ad` + live桥 `c16dc17`，原dirty工作区保持不动；sidecar dirty 输入尚未干净重建，正式版本门禁和平台兼容仍待验；下面跨仓完整步骤保持未勾选。
 
 **文件与交付：** 当前各仓 `package.json`、lockfile、SDK release manifest；已新增 `docs/development/integration-release-baseline.json`，跨仓完整验收仍待完成。记录源码 SHA、相关 dirty 改动的可追溯交付、SDK tgz/sidecar 哈希、协议与 OS/CPU 范围，不写凭据。
 
@@ -104,7 +106,7 @@ E2E 的网络零请求断言仅覆盖窗口创建并安装 `request` 监听之�
 
 **归属：** WP-00、WP-03 / M0-R；P0；Agent + data-engine + 控制面 + SDK；L（2–4 人日）。**依赖：** BASE-01、BASE-02 的身份字段；并行准备主体传递草案。
 
-**当前状态：本地通过待外部验收。** [D03 v1 合同](BUSINESS-BRIDGE-0906.md)及[跨语言合成签名向量](contracts/mindos-bridge-v1.json)已落地；桌面、OS/Agent、DE 均已编码并通过本地测试，新版本尚未部署。
+**当前状态：本地通过待外部验收。** [D03 v1 合同](BUSINESS-BRIDGE-0906.md)及[跨语言合成签名向量](contracts/mindos-bridge-v1.json)已落地；桌面、OS/Agent、DE 均已编码并通过本地测试；家中盒端已部署，新版桌面已登录，context/空资料页及一次断开重连通过，完整真实SDK矩阵尚未完成。
 
 - [x] 固定 Agent 从同一份新鲜授权快照取得 Owner/有效 grant，逐请求核对账号、client、设备、应用、purpose、scope、Direct 状态和期限。
 - [x] 采用独立 Ed25519 密钥，Agent 盒内签发最长 5 秒的请求证明，DE 验签并原子消费 nonce；请求绑定方法与目标，撤销/过期拒绝，不建立可复用业务会话。

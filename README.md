@@ -16,13 +16,13 @@
 
 Electron SDK 与 data-engine 的后续集成调研见 [技术架构图](docs/development/ARCHITECTURE-0905.md)、[集成方案](docs/development/INTEGRATION-0905.md) 和 [二次审核记录](docs/development/REVIEW-0905.md)，其中区分了当前实现、接口缺口及建议实施步骤。
 
-接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L、正式 Consumer 登录/签名/刷新、SDK 主进程装配，以及[三端 D03 逐请求 Ed25519 业务桥](docs/development/BUSINESS-BRIDGE-0906.md)。桥代码已通过本地验证，尚未部署到真实盒子；正式账号启动配置见[正式接入记录](docs/development/M0-PRODUCTION-0906.md)。
+接口与任务拆分见 [桌面 M0 规格](docs/development/DESKTOP-CONTRACT-0905.md)、[盒端领域迁移规格](docs/development/DOMAIN-INTEGRATION-0905.md)、[工作包](docs/development/INTEGRATION-WORKPACKAGES-0905.md)。目前已实现桌面 M0-L、正式 Consumer 登录/签名/刷新、SDK 主进程装配，以及[三端 D03 逐请求 Ed25519 业务桥](docs/development/BUSINESS-BRIDGE-0906.md)。桥已部署到用户指定的家中盒子，服务健康与未授权请求拒绝检查通过，真实 SDK 已通过授权空资料页、刷新与一次断开重连，完整验收仍待完成；正式账号启动配置见[正式接入记录](docs/development/M0-PRODUCTION-0906.md)。
 
-执行 `rtk proxy bash start-desktop.sh --real` 可自动填写现有 PC 资料服务参数、核验并复制当前平台 SDK sidecar，再打开正式登录窗口。首次准备从相邻 SDK 的 `release/electron-sidecars-1.2.0` 读取产物；配置及二进制保存在已忽略的 `data/desktop/`，密码仅在应用内输入。已通过应用 UI 核验真实 Consumer 登录和两台在线授权设备列表。2026-09-06 记录时，窗口仍运行旧 main，盒端 SSH 认证被拒，尚无新版桥部署、真实 Direct 资料读取或跨主体真机证据，M0-R 保持未完成；详情见[自动配置与真机验收记录](docs/development/REAL-ACCEPTANCE-0906.md)。
+执行 `rtk proxy bash start-desktop.sh --real` 可自动填写现有 PC 资料服务参数、核验并复制当前平台 SDK sidecar，再打开正式登录窗口。首次准备从相邻 SDK 的 `release/electron-sidecars-1.2.0` 读取产物；配置及二进制保存在已忽略的 `data/desktop/`，密码仅在应用内输入。已通过应用 UI 核验真实 Consumer 登录和两台在线授权设备列表。2026-09-06 后续已使用用户提供的 SSH 认证部署 Agent/DE，并重启新版桌面。升级后已实际登录，成功读取授权范围内的空资料页，并验证刷新及一次断开重连；跨账号/设备等完整矩阵尚未完成，M0-R 保持未完成；详情见[自动配置与真机验收记录](docs/development/REAL-ACCEPTANCE-0906.md)。
 
-OS/DE 桥代码已推送至各自的 `dev/zhijun-business-bridge-0906` 分支；[部署输入准备脚本](frontend/shell/scripts/prepare-bridge-release.cjs)已生成 Linux AMD64/ARM64 本地产物及 12 项哈希清单，尚未部署。
+Agent `0a004c9` 与当前 DE 合并版本 `c16dc17` 已推送远程集成分支；DE 基于盒端新发布的 `6b549ad`，保留其权限与上传增量。[部署输入准备脚本](frontend/shell/scripts/prepare-bridge-release.cjs)可生成 Linux AMD64/ARM64 产物及 12 项哈希清单。实际部署、并发版本变动处理、备份和验收边界见[盒端部署记录](docs/development/BOX-DEPLOYMENT-0906.md)。
 
-D03 增量验证包括本地宿主 73 项、OS 全套与 race 测试及 Linux ARM64 编译、data-engine 101 项。新资料 scope 按账号、设备与 ownershipEpoch 隔离，不读取或自动迁移旧 global 数据；空列表不代表历史资料已迁移。
+D03 原始增量验证包括宿主 73 项、OS 全套与 race 测试及 data-engine 101 项；本次针对盒端新发布基线的 DE 合并回归为 111 项及 6 个 subtests，盒端实际依赖下另有 55 项隔离桥测试和 5 项应用合成检查通过。新资料 scope 按账号、设备与 ownershipEpoch 隔离，不读取或自动迁移旧 global 数据；空列表不代表历史资料已迁移。
 
 分配具体开发工作时使用 [详细开发任务清单](docs/development/DEVELOPMENT-TASKS-0905.md)，包含任务编号、角色、文件、依赖、实施步骤、估算与验收。
 
@@ -129,7 +129,9 @@ backend/{parser,embedder,watcher,vector_store}.py   资料摄取、解析、嵌�
 
 ## 现状与边界
 
-- 既有 Web 产品 P1「能聊、能记、能认」、P2「能商量、会回访」、P3「像良师」、P4「可带走、可安装」已实现：多轮流式对话、从对话抽取理解、对话内一键确认、我的本体、建档对话、投影、商量模式与判断草稿、到期提醒、回访记结果与复盘引导、整合器与裁决、张力提醒、资料 → 理解、导出与全量删除、给其他 Agent 的上下文包、可带走开关、语音输入、PWA 清单、盒子 profile。独立桌面已实现 M0-L、正式登录/设备列表和待部署的 D03 客户端，上述完整产品功能尚未全部迁入新桌面。**承诺提醒、议题线程、移动端离线采集、录音转写、盒子硬件通讯、旧面退役尚未实现**，见 `docs/product/ZHIJUN_REDESIGN_V2.md` §10–§11。
+当前 Electron 默认打开独立资料验收入口，未加载原产品的侧栏与完整路由。原五个导航入口及偏好源码仍在；将主布局、页面和对应业务 API/SSE 迁入桌面是尚未完成的产品集成工作，不能把只读链路通过视作完整产品已交付。
+
+- 既有 Web 产品 P1「能聊、能记、能认」、P2「能商量、会回访」、P3「像良师」、P4「可带走、可安装」已实现：多轮流式对话、从对话抽取理解、对话内一键确认、我的本体、建档对话、投影、商量模式与判断草稿、到期提醒、回访记结果与复盘引导、整合器与裁决、张力提醒、资料 → 理解、导出与全量删除、给其他 Agent 的上下文包、可带走开关、语音输入、PWA 清单、盒子 profile。独立桌面已实现 M0-L、正式登录/设备列表和 D03 客户端（家中盒端已部署，SDK 空资料页与一次重连已验），上述完整产品功能尚未全部迁入新桌面。**承诺提醒、议题线程、移动端离线采集、录音转写、盒子硬件通讯、旧面退役尚未实现**，见 `docs/product/ZHIJUN_REDESIGN_V2.md` §10–§11。
 - 真实模型（Ollama / OpenAI 兼容 / Anthropic）的通道代码有单元测试，但抽取质量需要在真实模型上评测后再放开默认。
-- 持续事项、可编辑成果和有限发送恢复已同步；它们不等于完整议题线程/承诺任务系统，也尚未适配 Electron SDK。D03 只读业务桥已编码，待盒端部署与真机验收；流式通道、完整目录隔离和领域迁移继续按集成方案推进。
+- 持续事项、可编辑成果和有限发送恢复已同步；它们不等于完整议题线程/承诺任务系统，也尚未适配 Electron SDK。D03 只读业务桥已部署到家中盒子，真实 SDK 空资料页与一次重连已验，跨主体验收仍待完成；流式通道、完整目录隔离和领域迁移继续按集成方案推进。
 - 旧的资料管理、知识卡片、搜索、图谱页面仍可通过 URL 访问（`/materials`、`/knowledge`、`/search`、`/graph`），不再出现在侧栏；`/api/mindos/qa` 单轮问答接口保留给 Agent 网关。

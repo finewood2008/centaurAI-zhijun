@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "recordedAt": "2026-09-06",
-  "milestone": "M0-business-bridge-coded-deployment-pending",
+  "milestone": "M0-business-bridge-real-readonly-empty-page-verified",
   "realDeviceValidated": false,
-  "clientSourceBase": "0550383ca27f8f2dd0dfa47deae592a01a21ca61",
+  "clientSourceBase": "c7a91488b7671a7ad92f4d428b0848acb630c577",
   "development": {
     "platform": "darwin",
     "arch": "arm64",
@@ -23,14 +23,14 @@
       "baseCommit": "9f7354ea4ff9d156cde33277a2de17e1eb36119f",
       "branch": "dev/zhijun-business-bridge-0906",
       "dirty": false,
-      "deploymentValidated": false
+      "deploymentValidated": true
     },
     "dataEngine": {
-      "commit": "f6b10898a0421fc32f24a768e397157483d53439",
-      "baseCommit": "ec2854e8e56008571115cf637e9d27b63fbf1322",
-      "branch": "dev/zhijun-business-bridge-0906",
+      "commit": "c16dc17be81240285820b9e86076877911d153c4",
+      "baseCommit": "6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0",
+      "branch": "dev/zhijun-business-bridge-0906-live",
       "dirty": false,
-      "deploymentValidated": false,
+      "deploymentValidated": true,
       "originalWorkingTreeDirty": true
     },
     "admin": {
@@ -54,10 +54,10 @@
   },
   "production": {
     "missing": [
-      "D03: deploy matching Agent/data-engine with an independent on-box Ed25519 key",
       "BASE-04: explicit ownership/migration of existing material records; no automatic global fallback",
       "D05: traceable clean sidecar input and production signing matrix",
-      "DESK-15: real Direct material reads and cross-account/device/close acceptance"
+      "DESK-15: second complete login cycle, cross-account/device, revocation, expiry and close acceptance",
+      "Product integration: restore original navigation and pages through typed desktop transport and corresponding owner-scoped box APIs"
     ],
     "consumerAdapterImplemented": true,
     "deploymentLoginValidated": true,
@@ -76,11 +76,32 @@
     "authorizedDeviceListValidated": true,
     "authorizedOnlineDevicesObserved": 2,
     "businessBridgeVersion": 1,
-    "businessBridgeDeployed": false,
-    "realDirectMaterialsValidated": false
+    "businessBridgeDeployed": true,
+    "realDirectMaterialsValidated": true,
+    "postUpgradeLoginValidated": true,
+    "businessBridgeDeploymentScope": "User-specified home box; matching runtime hashes, production unsigned/forged rejection and real desktop empty-page read/reconnect verified",
+    "deploymentLoginValidationScope": "Actual Consumer sign-in observed in the upgraded desktop and successful connection to the home box",
+    "realDirectMaterialsValidationScope": "Actual production desktop UI: successful bridge context, empty authorized material page, refresh, one disconnect cleanup and reconnect; no non-empty/historical data or cross-subject matrix acceptance"
   },
   "realAcceptanceReport": "REAL-ACCEPTANCE-0906.md",
-  "businessBridgeBundle": {
+  "validation": {
+    "shellTests": 73,
+    "electronE2eTests": 4,
+    "dataEngineTests": 111,
+    "osGoSuitePassed": true,
+    "osBridgeRacePassed": true,
+    "desktopBuildPassed": true,
+    "mermaidDiagrams": 4,
+    "dataEngineSubtests": 6,
+    "boxIsolatedBridgeTests": 55,
+    "boxIsolatedServerAppChecks": 5,
+    "productionUnsignedReadDenialPassed": true,
+    "productionWrongSigningKeyDenialPassed": true,
+    "dataEngineTestScope": "Eight explicitly listed modules and isolated reproduction command in BUSINESS-BRIDGE-0906.md; distinct from the earlier 101-test suite",
+    "actualProductionDesktopEmptyPageAndReconnectPassed": true
+  },
+  "boxDeploymentReport": "BOX-DEPLOYMENT-0906.md",
+  "previousBusinessBridgeBundle": {
     "builder": "frontend/shell/scripts/prepare-bridge-release.cjs",
     "localPath": "data/desktop/bridge-release-0906",
     "manifestSha256": "afccbc9f95da00bafd7a47a9233359b8e6049639a7a0bc4ed3e89beb41afc801",
@@ -92,13 +113,35 @@
     "deployed": false,
     "signedRelease": false
   },
-  "validation": {
-    "shellTests": 73,
-    "electronE2eTests": 4,
-    "dataEngineTests": 101,
-    "osGoSuitePassed": true,
-    "osBridgeRacePassed": true,
-    "desktopBuildPassed": true,
-    "mermaidDiagrams": 4
+  "boxDeployment": {
+    "recordedAt": "2026-09-06",
+    "platform": "linux-amd64",
+    "dataEngineRelease": "20260906T024325Z-6b549ad",
+    "dataEngineRuntimeCommit": "c16dc17be81240285820b9e86076877911d153c4",
+    "dataEngineRuntimeFilesMatched": 6,
+    "inputManifestSha256": "0f2407ae832876db611487ccd5896815de1b76b11417b8bbf1f2a1cda61ea2f3",
+    "agentBinarySha256": "7d21207a7dd54b4771546f382c4db82b378e87c2c5e064f62ead6c425f6fa476",
+    "independentOnBoxKey": true,
+    "localDebugEnabled": false,
+    "actualSdkContextValidated": true,
+    "actualSdkMaterialsValidated": true,
+    "historicalMaterialsMigrated": false,
+    "signedOtaRelease": false,
+    "actualSdkMaterialsResult": "empty page; total 0",
+    "disconnectReconnectCyclesValidated": 1,
+    "fullCrossSubjectAcceptance": false
+  },
+  "businessBridgeBundle": {
+    "builder": "frontend/shell/scripts/prepare-bridge-release.cjs",
+    "localPath": "data/desktop/bridge-release-0906-live",
+    "manifestSha256": "ae24b1f7b11242caaecfae153f3b83c7cca441c9d631d3d7d34c6641c7e4de25",
+    "filesVerified": 12,
+    "platforms": [
+      "linux-amd64",
+      "linux-arm64"
+    ],
+    "deployed": false,
+    "signedRelease": false,
+    "runtimeFilesMatchBoxDeployment": true
   }
 }

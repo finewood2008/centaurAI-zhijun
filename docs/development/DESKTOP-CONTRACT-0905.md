@@ -2,7 +2,11 @@
 
 更新：2026-09-06。设计基线：知君 `94239a1`（产品源 `22dc9a3`）；M0-L 实施起点 `ee8cd96`。配套：[架构](ARCHITECTURE-0905.md)、[集成分析](INTEGRATION-0905.md)、[工作包](INTEGRATION-WORKPACKAGES-0905.md)、[领域迁移](DOMAIN-INTEGRATION-0905.md)。
 
-**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；跨团队协议未冻结，已新增正式密码登录/签名/共享刷新与SDK装配代码，目标PC应用参数已核定，D03三端实现待部署、M0-R未验收；最新结果见[正式接入记录](M0-PRODUCTION-0906.md)。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
+**当前验收边界（2026-09-06）：** 家中盒子 Agent 与 DE 已部署 D03，Agent active / Gateway connected / 授权快照新鲜，DE 保持 `MINDOS_LOCAL_WEB_DEBUG_ACCESS=0`；正式无签名及伪造桥请求均拒绝。新版桌面已真实登录并连接家中 AMD 盒；同一 SDK 会话的 context 握手、0条资料响应及刷新已通过UI链路，一次断开后资料区清空并重连通过。尚未验证非空资料、退出后重新登录的第二轮、跨账号/设备及撤销矩阵，`M0-R=false`、`realDeviceValidated=false`；空页不代表历史资料迁移。部署、版本、负向检查及回退证据统一见[盒端部署记录](BOX-DEPLOYMENT-0906.md)。
+
+**当前服务基线：** 家中盒子保留并发新发布 `6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0`，D03 在独立分支 `dev/zhijun-business-bridge-0906-live` 的 `c16dc17be81240285820b9e86076877911d153c4` 上合流；已部署的 6 个运行文件与该交付一致。原 `ec2854e` + dirty 调研事实及其上传协议描述保留为历史，不能当成现运行基线。新发布的权限、分页、错误边界和 Pocket 改动已保留；这不表示知君领域或上传四层合同已完成集成。
+
+**状态：M0-L 的独立宿主、窄接口、状态机、模拟资料与隔离验证已实现；后续领域/流/上传跨团队协议仍待冻结，已新增正式密码登录/签名/共享刷新与SDK装配代码，目标PC应用参数已核定，D03 v1 三端已实现且家中盒端已部署、M0-R未验收；最新结果见[正式接入记录](M0-PRODUCTION-0906.md)。** 实际文件、验证与待输入见[实施记录](M0-IMPLEMENTATION-0906.md)。本文的桌面接口、错误码和数值策略属于知君应用合同；它们不是 SDK 已导出的 API。现有 SDK 能力和限制以集成分析为准。
 
 ## 原规格编制计划与验收（历史）
 
@@ -28,8 +32,8 @@ M0 的业务能力只有 `materials.list`。认证/设备控制及内部健康�
 | ID | 本规格采用的设计方向 | 必须补齐的输入 | 在输入前可推进 / 不可放行 |
 | --- | --- | --- | --- |
 | D01 领域承载 | 盒端 data-engine 内的独立知君模块，服务适配隔开基础资料能力 | 服务端维护方确认模块入口、表迁移和生命周期；Claim事实源与owner/device规则 | 可做依赖清单/临时库验证；不可指向运行库合并表 |
-| D02 应用身份 | 独立知君 clientId/密钥/存储；目标采用已登记 PC 资料应用 | applicationId=`mindos-person-data-pc`、purpose=`person-data.read`、scopes=`remote.p2p` 与 Consumer/Gateway 已由三端源码核定；真实登录与两台授权设备列表已验证，D03独立盒内密钥待部署 | 自动配置已实现，macOS安全存储真实检查通过；不共用别的应用登录态；不能将传输scope作为业务权限 |
-| D03 业务身份桥 | 盒端逐请求Ed25519证明，context握手 | Agent当前Owner/client/device/app、5秒有效期、原始请求目标、nonce和撤销；DE独立公钥；合同见[签名桥v1](BUSINESS-BRIDGE-0906.md) | 三端已编码；只有同一SDK通道握手主体匹配才ready；部署/真实资料未完成 |
+| D02 应用身份 | 独立知君 clientId/密钥/存储；目标采用已登记 PC 资料应用 | applicationId=`mindos-person-data-pc`、purpose=`person-data.read`、scopes=`remote.p2p` 与 Consumer/Gateway 已由三端源码核定；真实登录与两台授权设备列表已验证，D03独立盒内密钥已在家中盒部署 | 自动配置已实现，macOS安全存储真实检查通过；不共用别的应用登录态；不能将传输scope作为业务权限 |
+| D03 业务身份桥 | 盒端逐请求Ed25519证明，context握手 | Agent当前Owner/client/device/app、5秒有效期、原始请求目标、nonce和撤销；DE独立公钥；合同见[签名桥v1](BUSINESS-BRIDGE-0906.md) | 三端已编码；只有同一SDK通道握手主体匹配才ready；家中盒端已部署，真实SDK空资料页已验；非空资料及完整矩阵待验 |
 | D04 长请求/上传 | 聊天优先扩展现有分帧链路；上传统一当前Pocket parts/complete形态 | SDK/Core/Agent流与取消版本、后台任务备选取舍；上传四层合同及获批会话预算 | 可做流模拟器/上传adapter合同；不能把SDK1.2整包request当stream，也不自动试多个上传路径 |
 | D05 交付组合 | 独立desktop构建，sidecar置于ASAR外 | SDK tgz哈希、sidecar输入与二进制哈希、Agent/服务端提交、协议版本、OS/CPU与签名结果 | 可做本地包边界检查；dirty来源未核对前不能宣称可重建发布组合 |
 
@@ -105,7 +109,7 @@ M0-L 已实现：最多2个在途业务读、最多8个排队读；同主体同q
 
 当前参考PC Agent是8并发/120每分钟/64MiB会话，Core还有限1024次和默认60秒；本规格的2/8是应用策略，并非SDK新增限制。已发出但被本地取消的请求仍占真实在途槽，直到SDK结束；否则renderer可用快速取消突破并发预算。
 
-快照 `environment` 可为 `unconfigured`、`simulation` 或 `production`。显式有效账号配置启用production Consumer adapter；main已注入真实D03握手，但这不代表盒端业务桥已部署。没有桥端口的独立adapter实例仍在spawn前拒绝。默认未配置时拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
+快照 `environment` 可为 `unconfigured`、`simulation` 或 `production`。显式有效账号配置启用production Consumer adapter；main已注入真实D03握手；家中盒端已部署，但production快照本身不代表真实业务握手通过。没有桥端口的独立adapter实例仍在spawn前拒绝。默认未配置时拒绝真实登录；模拟必须显式启用且 `app.isPackaged` 为 false，UI 持续显示“模拟环境 · 合成数据”。模拟 ready 仅证明 fake bridge，不能作为 D03 验收。
 
 本地默认调用超时 15 秒；最多 64 个资料订阅、128 个待决调用、8 个真实未完成的 adapter 控制操作和 64 个快照监听。取消/超时不提前释放实际操作额度。session 清理等待上限 1 秒，宿主退出兜底 2.5 秒；这些均为本地应用策略，不是 SDK 保证。退出接受时立即启动身份清理，后续断开不能跳过；清理真实结束前禁止新登录，避免旧清理覆盖新身份。
 
@@ -126,13 +130,13 @@ D03必须交付这些可核对字段与行为，而非仅一条路由名称：
 | 数据范围 | 设备级资料可读范围、同盒多账号与转让处理、各路由guard；不能把旧global数据直接归给登录者 |
 | 可观测性 | 只记录callId/连接关联ID/版本/操作码/耗时/安全错误；原始ticket、token、资料正文不进日志 |
 
-当前实现采用[D03签名桥v1](BUSINESS-BRIDGE-0906.md)及共享合成向量：Agent仅在盒内增加受信证明，外部仍不得提交`X-MindOS-Session`或桥头。主程序已注入真实context握手适配器，尚需部署Agent/DE对应分支。部署失败、未配置独立密钥、无效签名、错主体或过期均不得ready。
+当前实现采用[D03签名桥v1](BUSINESS-BRIDGE-0906.md)及共享合成向量：Agent仅在盒内增加受信证明，外部仍不得提交`X-MindOS-Session`或桥头。主程序已注入真实context握手适配器，家中盒端已部署Agent/DE匹配版本。部署失败、未配置独立密钥、无效签名、错主体或过期均不得ready。
 
 ## 8. 后续流与上传合同的最小完成定义
 
 **流：** 明确stream/request/业务requestId的关联；response head、顺序chunk、terminal end/error、单请求cancel和确认；UTF-8增量解码、队列/背压限额、首帧/空闲/总deadline、断线后的持久状态查询、会话级失败的影响。推荐沿已有Agent chunk扩展Core及sidecar，不把同一JSON line无限放大。协议版本/协商位置由D04落实；出现不兼容时关闭聊天入口。
 
-**上传：** 优先统一到现有未提交Pocket的init/parts/complete/DELETE；固定1MiB分片、1-based编号、Idempotency-Key、初始化字段、状态联合类型、同主体续传和完整性检查。必须同步main policy、Agent应用manifest与后端，而不是改两个URL。请求/会话总额度、上传副本归属、版本上传和chat-import保护各有验收；不通过重连绕过会话配额。冻结前仍不开放M0上传。
+**上传：** 原调研优先统一到当时未提交的Pocket的init/parts/complete/DELETE；固定1MiB分片、1-based编号、Idempotency-Key、初始化字段、状态联合类型、同主体续传和完整性检查。必须同步main policy、Agent应用manifest与后端，而不是改两个URL。请求/会话总额度、上传副本归属、版本上传和chat-import保护各有验收；不通过重连绕过会话配额。冻结前仍不开放M0上传。
 
 ## 9. M0 的必须通过用例
 
