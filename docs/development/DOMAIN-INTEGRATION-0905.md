@@ -13,7 +13,7 @@ DE 的 `zhijun_gateway` 是唯一远程业务入口，按可信 workspace 启动
 | 进入条件 | 当前代码约束 | 正式验证 |
 | --- | --- | --- |
 | 新应用与逐请求身份 | Agent v2证明 → DE principal → account/device/ownershipEpoch workspace | 新Admin登记、真实ticket、跨主体矩阵待验 |
-| 发布代码与catalog一致 | worker启动检查所有domain清单路由实际注册 | 部署SHA、依赖环境与缺路由拒绝待核 |
+| 发布代码与catalog一致 | worker启动检查所有domain清单路由实际注册 | 知君735e341/DE015c659已匹配部署；363文件与已验candidate一致，正式Consumer/UI验收待完成 |
 | 独立路径与进程唯一性 | 根目录0700、主体标记0600、文件锁、UDS私有key | 盒端路径权限、并发进程和重启待验 |
 | 基础能力与模型授权 | HMAC能力端口、有效租约、来源和consent复验 | 真实资料/模型与生命周期待验 |
 
@@ -76,7 +76,7 @@ DE canonical资料更新/隐藏/删除/恢复等事件由持久outbox驱动；Ga
 
 ## 6. 部署、升级与正式验收
 
-环境变量与部署顺序见[集成方案第5节](INTEGRATION-0905.md#5-部署配置与顺序)。发布单元包括DE gateway/capabilities、固定版本知君backend领域代码、共享catalog、Agent和Admin新应用；不能只复制几张同名表或只改原server路由。
+环境变量与部署顺序见[集成方案第5节](INTEGRATION-0905.md#5-部署配置与顺序)。发布单元包括DE gateway/capabilities、固定版本知君backend领域代码、共享catalog、Agent和Admin新应用；不能只复制几张同名表或只改原server路由。本次Agent/DE/worker/catalog已正式匹配部署，Admin生产登记尚未完成；当前来源强制enforce、debug=0，正式Consumer/SDK/P2P/UI验收仍待完成。
 
 空库启动不读写用户原数据。若将来迁移旧资料/本体，需先停写和worker，使用SQLite backup或同一停写点的一致性快照，覆盖相关库/WAL、原件、版本引用、投影、索引和授权；备份不提交Git。升级失败应恢复匹配代码、配置与整组数据，禁止只回退代码保留不兼容schema，也不能用旧快照静默覆盖新写入。
 
@@ -87,3 +87,5 @@ DE canonical资料更新/隐藏/删除/恢复等事件由持久outbox驱动；Ga
 ### 硬件反馈增量
 
 真实盒端PDF/DOCX/OCR与合成WAV voice API已有通过证据；内联快照原先缺少正文SHA使privacy门禁拒绝，之后又发现DeletionStore连接释放问题与小模型evidence_invalid；修复后最新资料相关范围189项通过，hardware-candidate5为5/5，safe material正文82、摘要43字符、实体2、关系0。知识首次失败来自包dispatch公开函数被同名子模块覆盖，修复并fresh subprocess回归后，gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。全部为隔离真盒合成主体/输入，正式Consumer/UI/SDK领域闭环仍待验收。具体缺陷与证据见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)和[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)；不把这些局部结果回写为旧global迁移或完整UI成功。
+
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。

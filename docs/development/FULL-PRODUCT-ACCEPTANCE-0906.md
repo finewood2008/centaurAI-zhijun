@@ -1005,3 +1005,5 @@
 ## 2026-09-06 实机隔离验证补充
 
 实际盒端已通过 5 项能力测试（合成语音、PDF、DOCX、OCR、上传/正文脱敏/真实本地模型摘要与实体）和 10 组 v2 HTTP 验证（含知识 CRUD/搜索、分片与 Owner 代次隔离）。故障、修复及结构化证据见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。这些证据使用专用合成主体与隔离数据目录，**不替代下表正式 Consumer、SDK/P2P、UI 及实际麦克风验收**。170 项目录与逐条 UI PASS 仍须分别核对。
+
+匹配的 Agent/DE/worker/catalog 已正式部署，16 个数据库有一致备份，健康及鉴权拒绝验证通过，详见[部署记录](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)。正式账号的逐功能 UI、SDK/P2P、实际麦克风验收仍待 Admin 新应用登记上线，不能据此关闭原验收矩阵。

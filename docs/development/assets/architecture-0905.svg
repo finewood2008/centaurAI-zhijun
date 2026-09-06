@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1150" viewBox="0 0 1600 1150" role="img" aria-labelledby="title desc">
-<title id="title">知君完整产品 Electron 与盒端 v2 架构</title><desc id="desc">Vue十五页经主进程受控接口、SDK Direct、Agent逐请求签名到DE Gateway，Gateway管理加密任务与独立UDS领域worker，并复用DE基础能力。v2正式盒子和UI验收待完成。</desc>
+<title id="title">知君完整产品 Electron 与盒端 v2 架构</title><desc id="desc">Vue十五页经主进程受控接口、SDK Direct、Agent逐请求签名到DE Gateway，Gateway管理加密任务与独立UDS领域worker，并复用DE基础能力。v2盒端已匹配部署，Admin发布和正式Consumer/SDK/UI验收待完成。</desc>
 <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#667085"/></marker></defs>
 <style>text{font-family:"PingFang SC","Microsoft YaHei",sans-serif;fill:#182230}.title{font-size:32px;font-weight:700}.sub{font-size:18px;fill:#475467}.group{font-size:21px;font-weight:700}.head{font-size:20px;font-weight:650}.body{font-size:17px}.small{font-size:15px;fill:#475467}.line{fill:none;stroke:#667085;stroke-width:2;marker-end:url(#arrow)}.dash{stroke-dasharray:6 5}</style>
 <rect width="1600" height="1150" fill="#f7f9fc"/>
 <text x="50" y="61" class="title">知君完整产品 · Electron / 盒端 v2</text>
-<text x="50" y="95" class="sub">2026-09-06 · 当前源码架构；正式 v2 盒子 / UI 验收待完成，Admin 生产发布路径未提供</text>
+<text x="50" y="95" class="sub">2026-09-06 · 盒端 v2 已匹配部署；Admin 发布及正式 Consumer / SDK / UI 验收待完成</text>
 <rect x="50" y="122" width="1500" height="62" rx="12" fill="#fff5dc" stroke="#e6c574"/>
 <text x="72" y="148" class="body">原 15 页 / 170 项受控操作：95 领域 · 54 资料 · 21 模型</text>
 <text x="72" y="173" class="small">保留 v1 只读兼容；历史空资料页和一次重连仅为旧链路证据，不能代替完整产品验收。</text>

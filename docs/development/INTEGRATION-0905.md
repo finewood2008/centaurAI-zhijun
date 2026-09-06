@@ -1,6 +1,6 @@
 # 知君 Electron SDK 与 data-engine 集成方案
 
-更新：2026-09-06。当前方案已由早期只读调研收敛为 v2 完整产品接入实现；**正式 v2 盒子/UI 验收仍待完成，Admin 生产发布路径未提供**。本文不把源码完成、合成测试或健康检查写成端到端交付。
+更新：2026-09-06。当前方案已由早期只读调研收敛为 v2 完整产品接入实现；**盒端Agent/DE/worker/catalog已正式匹配部署；正式Consumer/SDK/P2P/UI验收仍待完成，Admin生产发布路径未提供**。本文不把源码完成、合成测试或健康检查写成端到端交付。
 
 配套：[架构图](ARCHITECTURE-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域规格](DOMAIN-INTEGRATION-0905.md)、[执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[真实验收](REAL-ACCEPTANCE-0906.md)。
 
@@ -106,11 +106,11 @@ Gateway 自动为 worker 注入 `ZHIJUN_WORKSPACE_ID/SUBJECT_FILE/KEY_FILE/SOCKE
 
 1. 固定知君、SDK sidecar、Agent、DE、Admin、catalog 的版本与 SHA，检查运行版本漂移并准备代码/配置回退；数据升级另做一致性备份。
 2. Admin 维护方通过真实发布路径登记新 application/purpose 的 Connectivity target/policy；不能加入 legacy TARGETS 或放宽 read app。**该生产发布路径目前未提供，属于正式授权联调前置。**
-3. 部署支持 v2/pathTemplate 的 Agent 二进制，再装载仅新增新应用的 manifest；旧应用段不改。
-4. 部署 DE Gateway/capabilities 与固定版本知君 worker/catalog，配置独立数据/密钥/运行根；检查 UDS、进程锁、能力认证和空库启动。已部署 FD 单文件热修不代替此步骤。
+3. 部署支持 v2/pathTemplate 的 Agent 二进制，再装载仅新增新应用的 manifest；旧应用段不改。本次已完成，实际manifest保留原2个应用并仅新增zhijun-desktop。
+4. 部署 DE Gateway/capabilities 与固定版本知君 worker/catalog，配置独立数据/密钥/运行根；检查 UDS、进程锁、能力认证和空库启动。本次已按clean heads匹配部署，live8618健康200、未签名v2 context401；来源强制enforce、debug=0。此步骤与此前FD单文件热修分开记录。
 5. 桌面选择新应用并通过同一 SDK 通道 context 主体/capability 校验，才开放完整产品。运行真实逐功能与负向验收后记录部署 SHA，再交付安装包。
 
-任一步未就绪应 fail closed；不能临时开 local-debug、透传任意 header/path 或退回旧 app。回退旧代码前须确认新 schema/写入兼容；不以旧备份静默覆盖升级后用户数据。
+Admin登记是正式授权联调前置，不阻止先部署受保护盒端组件；本次已完成第3、4步，第2、5步仍待完成。任一步未就绪应 fail closed；不能临时开 local-debug、透传任意 header/path 或退回旧 app。回退旧代码前须确认新 schema/写入兼容；不以旧备份静默覆盖升级后用户数据。
 
 ## 6. 验证与剩余工作
 
@@ -125,3 +125,5 @@ Gateway 自动为 worker 注入 `ZHIJUN_WORKSPACE_ID/SUBJECT_FILE/KEY_FILE/SOCKE
 PDF/DOCX/OCR盒端解析分别46/48/110字符通过；受限voice API返回40字符、0资料、2个指定短语均匹配。测试语音为合成WAV，实际麦克风/正式UI未测。内联snapshot SHA、DeletionStore连接释放及有界纠错修复后，最新资料相关范围189项通过；hardware-candidate5为5/5，safe material正文82、摘要43字符、实体2、关系0。gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。以上仅为隔离真盒合成主体/输入，非正式Consumer/UI；首次失败与修复过程保留在审核报告。
 
 shell最终117项Node、vue-tsc通过，独立15项配额验证包含在117内，既有4项隔离Electron E2E单独记录。生产Admin入口仍缺，完整v2正式SDK/P2P和UI验收pending。详见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)与[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
+
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。

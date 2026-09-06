@@ -1,0 +1,2257 @@
+{
+  "agent": {
+    "binaryProvenance": "Explicit prebuilt ELF; its content hash is recorded, but no source-build attestation was supplied.",
+    "elfClass": 64,
+    "elfMachine": 62,
+    "manifestPath": "agent/manifest.yaml",
+    "repository": {
+      "diffScope": "Only selected tracked source paths; excluded runtime files are never read for diff hashing.",
+      "dirty": false,
+      "head": "5f5f4c914ee15736ae4d189329018b0cd2bdd38b",
+      "packagedTrackedDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "workingTreeStatusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "archive": {
+    "name": "full-product-release.tar.gz",
+    "sha256": "03d8152cc0f236c94f8d089d419c50144ac1e0dd7701367de18ca78a4f646de6",
+    "size": 10456709
+  },
+  "candidate": false,
+  "deployed": false,
+  "embeddedReceiptSha256": "c9ddfb268630c1f9adbbe7842fb52dfefc42ae26d5b725dd6e5f1b1997aa67b9",
+  "files": {
+    "agent/manifest.yaml": {
+      "mode": "0600",
+      "origin": "explicit-manifest",
+      "sha256": "4bb6e5326a6c3440bd68cb5569f112332249abc095765de4d5485832dc245ab9",
+      "size": 8097
+    },
+    "agent/nexusagent": {
+      "mode": "0755",
+      "origin": "explicit-binary",
+      "sha256": "1b44da2a688b5acd64121ad55c14b178968de85bef89a223858d009725e6c574",
+      "size": 16605159
+    },
+    "de/backend/annotations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b625da3785f3e0e1f70a63dd7c2ecec144e8711f6b36e49fa31e1ade76efb9a2",
+      "size": 23981
+    },
+    "de/backend/config.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6d35c07e47bbd7523b1a12d44491500cab530a288928f18655ec0152ef79d251",
+      "size": 17851
+    },
+    "de/backend/convert_clip_weights.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5c7fd498d2e839d3e61e0ae93331864e7c4afc725540cf122e601b2f3c3aa00e",
+      "size": 5437
+    },
+    "de/backend/embedder.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fe692b355573308381033e625ec5ed420410efb8ce3f66c6b43e655255fa4e51",
+      "size": 22240
+    },
+    "de/backend/gbrain_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b5b0ae51e899fe557c56344567016a896c52c31ee24fe73868c015e03048a9ed",
+      "size": 16336
+    },
+    "de/backend/generation_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3119fedd7a5c990c36023025c20f5c03a5f6d322fee0d12078d6d7134af5ad2d",
+      "size": 8140
+    },
+    "de/backend/index_registry.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "18cd88774429d73b510d68b2ad1801bee0bbf8e09830b9f54368ad55c6a25496",
+      "size": 22101
+    },
+    "de/backend/instance_lock.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "00e76f9d93d60bcd4a974ed055b4d242ff9c1c8e10c5ef1216fc10e1f69b1823",
+      "size": 5540
+    },
+    "de/backend/lexical.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "17b767c68ce85b543e27ed009dd0d0bc76fd1bbaf3afab7e891cb7d12d6e7d64",
+      "size": 4638
+    },
+    "de/backend/mcp_access.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b680236b8cbb6c1df19fac78ab32436bd8f3c25be1846ed2e3d0a5d303cb4a63",
+      "size": 36641
+    },
+    "de/backend/mcp_remote_server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "092ef313947e324661e4d8b0d25cfb69d44b887dee39eeaf8c9a0362241cf63c",
+      "size": 13665
+    },
+    "de/backend/mcp_server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c56832f83f1e4ac3a4829ed903001935c67fda9ec6184d2bfc27c103f53d091c",
+      "size": 315
+    },
+    "de/backend/mcp_tools.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "757195d7290919b3763b0a2b402c6f7633b58807b6cb867566b5eb5930aa9b84",
+      "size": 4421
+    },
+    "de/backend/mindos/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fe16b8617364a213d763ad620c4ddf8963ee141130233dae349bd21f715bcdc1",
+      "size": 118
+    },
+    "de/backend/mindos/activities.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "88c70ec3278f511761525b4039d45dcab9b4d3272f42e03fb2d08ded3f60998a",
+      "size": 1424
+    },
+    "de/backend/mindos/agent/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "654ba10f0cb91334d70081f22901c7d3217eb37e30bbf0bce085495c62152c12",
+      "size": 563
+    },
+    "de/backend/mindos/agent/admin.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f8042f74b93d367e998c0fc8fe187ab978e29c8c012f78ea3d9da88c13fdba1a",
+      "size": 4033
+    },
+    "de/backend/mindos/agent/answer_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "45ecafe60a15f28a416ffb23db5f0cdb5573e4a7b522adccf21c3e6cab5987fa",
+      "size": 8862
+    },
+    "de/backend/mindos/agent/application_auth.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "8b5ec36f49c205a297008873c81d315d1d8944717d65e324781578cb2a39f53d",
+      "size": 4593
+    },
+    "de/backend/mindos/agent/application_boundary.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0bb7209e9ead09a725997390d74e6b7bdff60195097d273abd130aa2ffcf5a8c",
+      "size": 6086
+    },
+    "de/backend/mindos/agent/application_management.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "dbc3d0c382d6b09df784fc70042119651cab2c92ed16198aef22888a6756dc13",
+      "size": 3720
+    },
+    "de/backend/mindos/agent/application_results_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f105fdca782b08e2776f74b1dc84b296494eb468204c742b53ed6d166f97653e",
+      "size": 3770
+    },
+    "de/backend/mindos/agent/application_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1c07a2281719bcc3c29c1156b5e2044a3005c135b45afea6cf15400e2bed5fb5",
+      "size": 3023
+    },
+    "de/backend/mindos/agent/application_schemas.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "8c2d4685a1e37e19f83ceb78059d641c0c7022c62a40353363b43cf1d89c62bb",
+      "size": 8659
+    },
+    "de/backend/mindos/agent/application_search.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a2e980486d9eccd64c9000c21ae9c9473924bc14eb22fa139de2dfc926797f1e",
+      "size": 21903
+    },
+    "de/backend/mindos/agent/application_search_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "bb824ff4ac422070e4b10ebe5abc0927e149f683ac813623ad79d0884d851f47",
+      "size": 3175
+    },
+    "de/backend/mindos/agent/application_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f01c07ad7cc510d16286172a5a0f7d2d3d0fc5b1a229a214460e225919c0e20f",
+      "size": 20632
+    },
+    "de/backend/mindos/agent/application_upload_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "80bcacf78fdb34ada7141bfad908dd25d65f1537d48849a2db7fc4c470daa851",
+      "size": 10523
+    },
+    "de/backend/mindos/agent/audit.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ce796bbbb226eca34f632eef1043f2b73d0366e5088c894a0e439a3545097f82",
+      "size": 2146
+    },
+    "de/backend/mindos/agent/auth.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e4c14c3fead58bbb518a3f7f488109a3ac2437e111b7ef4d1de62eed7d620879",
+      "size": 4143
+    },
+    "de/backend/mindos/agent/config.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ede1b903d455549e2c732b707be4056630a1ae08d3076cbb0af26d7328ea6d76",
+      "size": 3251
+    },
+    "de/backend/mindos/agent/detail_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c213dcd04fc678b9dd3b2c19e22d5ad5e8efa4c18c2aa14826323ad0a79a08dd",
+      "size": 2801
+    },
+    "de/backend/mindos/agent/errors.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9b963ead0d298afaab92ac2223783d85904ec81132e0f24bde0ce7dd8e31d96d",
+      "size": 1114
+    },
+    "de/backend/mindos/agent/evidence.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0f5a508b33e32d0c3366952300ec855c30358c5206a883cb96cfe0dd99b1fd08",
+      "size": 14209
+    },
+    "de/backend/mindos/agent/mcp_server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4c0d672205023dd72ece64e35b37c48a4b59afa5c79b9256ad0f57b8b119abd8",
+      "size": 17554
+    },
+    "de/backend/mindos/agent/projection.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "601abc8e543dd895ee4a023001aa9f719f6e78ac9a6d5952b986e4d0c312b359",
+      "size": 9474
+    },
+    "de/backend/mindos/agent/rate_limit.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "141c476ee1a1c09fd0da1e96ce06d9861a052c81bf3ea087de61f3b76f51aec0",
+      "size": 2326
+    },
+    "de/backend/mindos/agent/router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6fc30ea7ab179b0a01d84ae3e61e70da4e00aa6360a1ca4a0e4ada5935d1b94a",
+      "size": 22394
+    },
+    "de/backend/mindos/agent/schemas.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "707cb63efc6900ea1416326c192ee24a10ab8c992a54d8ab6d99536076ad7070",
+      "size": 2819
+    },
+    "de/backend/mindos/agent/search_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fe8e3d814ddfe72133a83b83f85c159b179772dddb13e470316b332850b34f0f",
+      "size": 8222
+    },
+    "de/backend/mindos/agent/service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d018d0ab3f9c62b54e0c0f4c2eaeea5032e9adce897f97bb4e3fe52651e4d013",
+      "size": 7923
+    },
+    "de/backend/mindos/agent/store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f7da5979bbabfff6a7909aea9fa1b11669ee6f266788c45f4cdf572ab20f3b36",
+      "size": 16205
+    },
+    "de/backend/mindos/agent_bridge.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "374b50fbcecffa5b0aafc7ae50178fe3ee512e3cb2309b9e516de446644b8090",
+      "size": 8700
+    },
+    "de/backend/mindos/agent_eligibility.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "aee250a226c0f22415c1a27b0c6a921dbb928364fcfa1e8ce5daf09366994ee3",
+      "size": 4790
+    },
+    "de/backend/mindos/api_contracts.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "dd46b9d0a4a763a93e7494cfc405964bc5c1a005400dd9ac43cc8ed169a6c21a",
+      "size": 23793
+    },
+    "de/backend/mindos/bridge_materials.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c686ee65cf5509f37ae35ae270a00449de03c5dd8ea174ab58d3bd00043312ee",
+      "size": 5704
+    },
+    "de/backend/mindos/card_proposal_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "db2321344e557e43da17b47425a0296a5ad5cf50700bdcae6f1016a5f0d1939c",
+      "size": 3223
+    },
+    "de/backend/mindos/claim_governance.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "31ed24696cf4c9685f46e2ebbedabf7459b8d0efcb449573f7adffa6b3f64e05",
+      "size": 9291
+    },
+    "de/backend/mindos/claims.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a0950a3655a4260f38a2be74ff42ed332a4e30dea9600d4335e229619f453be9",
+      "size": 32954
+    },
+    "de/backend/mindos/connectivity_admin.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b3bb9ec0a623ae38774e4b251c573e94eb34d2f2e12c7d8e84885791945c0e39",
+      "size": 4841
+    },
+    "de/backend/mindos/connectivity_session.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "969e15b0cfa5bc235767f8d4ac9b3a43417c57cc97e454761016e4fd6d6adc30",
+      "size": 4196
+    },
+    "de/backend/mindos/connectivity_ticket.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ca8a5690d2bccc69b7699139886253e47629a92908e05234715da397f70ee0ed",
+      "size": 12641
+    },
+    "de/backend/mindos/consumer_adapter.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "bb6503638a3142153f83c9e1dad65e4bbf2a9d6061b004e4198dafb196f98625",
+      "size": 5248
+    },
+    "de/backend/mindos/corrections.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e363415f6485e91995ac710d338357c5ca992835f2e536ae9608e115c0ef5c95",
+      "size": 11167
+    },
+    "de/backend/mindos/data_access.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4833c1724b078cd486504d484a47d8a45fd98e62be6f878d5f7d9d8c5ac36077",
+      "size": 34797
+    },
+    "de/backend/mindos/deletion_reconciler.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "04c310f55c1526d224d1d37b41bf63350133b3fd90913dd4ab5074e534d8f144",
+      "size": 10062
+    },
+    "de/backend/mindos/deletions.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "8b5790d386fa17f65fe173945e5c11a4ee03f51f517c4859ab4478211ed6df22",
+      "size": 10333
+    },
+    "de/backend/mindos/derived.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "574c381a076afe051066b4758f563cba57252e96daf196b6c598490b2d472ba6",
+      "size": 74310
+    },
+    "de/backend/mindos/device_context.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0b1528141f776105c0f91133d8fcf876a52a19c1897ecedfcf6b6e3ca28d0ea8",
+      "size": 7912
+    },
+    "de/backend/mindos/feature_retirement.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5e3c450eba9f028421a962da5992d8b3b72175dd0ca1eee7b8b57b595f018289",
+      "size": 19894
+    },
+    "de/backend/mindos/generations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1dd3439bae04900e688beefd0244e40c1a867cb1fb8458a0c0615203498fadd7",
+      "size": 13611
+    },
+    "de/backend/mindos/governance.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "08ccca9764d5f616aeab831ced89248f19eb5d24e3e56ad10e9eb28bf439d350",
+      "size": 66949
+    },
+    "de/backend/mindos/governance_contract.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "327a69d78e5befe2170004b45c49ea780a140d4ef288ccf17b8a78911bc44fe5",
+      "size": 2983
+    },
+    "de/backend/mindos/governance_review.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a84dc43b9a2747ac3fab7bb123aa307d41d08e53490153e2894c5f5323814033",
+      "size": 30224
+    },
+    "de/backend/mindos/graph.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5836cb7a073eb2acfa1408fb593a7e81d22457ad0ecfff88380606e01c6198a6",
+      "size": 19851
+    },
+    "de/backend/mindos/home.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9977b6444f2e687d2b48ba817cc089f9513e0fd4f2613afbd5cc04feca0a85b1",
+      "size": 2413
+    },
+    "de/backend/mindos/inbox.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f5b3b46e2cefcbc917e73a3b14f78b6776ebe21ac82e34010dba81aa4dc5200b",
+      "size": 23085
+    },
+    "de/backend/mindos/knowledge.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "04b2f36d7294b1354f1993131465eef7ae289b9f0064e94fc9f3255d1d8b6b6b",
+      "size": 132880
+    },
+    "de/backend/mindos/knowledge_index.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "27ba2323e4748588a7ff0f1254a0f7a5858a907799fcfb09409a335dfb903d86",
+      "size": 18356
+    },
+    "de/backend/mindos/lifecycle.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9d73f9ca132eb5403be488902e094af663b453f8fe0c766ba45836e954354e4e",
+      "size": 129921
+    },
+    "de/backend/mindos/llm_transport.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "79b5b3527578ce3bb463eda1c63377f3b21150d84794136a2f046dc73809d3ed",
+      "size": 8777
+    },
+    "de/backend/mindos/local_web_debug.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9797f6d89648ddfe5d55d529115190e7e98622fa5fe507a1085eddf94df8b6ba",
+      "size": 2588
+    },
+    "de/backend/mindos/material_card_operations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4f97ae39c0b81ee3859a69a4191c2dc31a32d27df883b65473e427a6fd153de9",
+      "size": 531
+    },
+    "de/backend/mindos/material_card_state.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "af36289cacd4cdcf768b2a289bb83a9188cf0a79929355fcf8202c3d6df6189b",
+      "size": 6927
+    },
+    "de/backend/mindos/material_claim_shadow.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0685f7bf696033b79da2908da2451c326633a9aeceea9426fe4d2cdf3a0c3b87",
+      "size": 19749
+    },
+    "de/backend/mindos/material_drafts.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "519e17d30d5ddee6a2b1abd6eec2cf7b4eaefb1a2b5998fed669811d03cf64f8",
+      "size": 27416
+    },
+    "de/backend/mindos/material_snapshot_saga.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d1a67bb56bdecb285adec975550b5f99c9750bc942e0081e052723eccb043339",
+      "size": 16901
+    },
+    "de/backend/mindos/material_worker.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f70a0db4ee76a65430af4779772ae366f81bef83bbf28fd10f252cdd86ea9457",
+      "size": 28678
+    },
+    "de/backend/mindos/model_job_worker.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "160bdf8cfff7b85a42b5bb2bf97b57e4561845cca17897e895df1a51cb1224f6",
+      "size": 13597
+    },
+    "de/backend/mindos/model_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0169aa569005d4f6c8009b3097c97bfa25b87b2b45968e112cc9f79d53285609",
+      "size": 1747
+    },
+    "de/backend/mindos/model_runtime.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "97db0a1fa1f1161a0bdfe06ea374e365b4dfa9559179256ee4d7082d4d9cb4d8",
+      "size": 26841
+    },
+    "de/backend/mindos/ollama_client.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "63bff66e47e1619556cd1ee35d00de5900268de258e05197b7b8ead0dd4377de",
+      "size": 6151
+    },
+    "de/backend/mindos/ollama_material_scheduler.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c32417287630dafaa1bfd0a845ae27ea2ec5fc0407195069cc9e5e93fec537df",
+      "size": 14645
+    },
+    "de/backend/mindos/projection_dispatcher.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4c146a7a99b033ebfc4bb1aedac1bb50f475ca3aa7ec94e05954200305882ae1",
+      "size": 3066
+    },
+    "de/backend/mindos/projection_index_builder.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1eb2432fb3b78b8801b1d976cf195dad7a9a008095bd92cf57cb74f91773f209",
+      "size": 20518
+    },
+    "de/backend/mindos/projection_management.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f6013098c9a6963ba51ca763bb4c543c274163fc95c32614098847b14acab049",
+      "size": 6872
+    },
+    "de/backend/mindos/projection_reader.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "cffa18918ed5dc367a5a0a523fe6c81ae1519c8249acf25e6f667aa01669a5da",
+      "size": 54154
+    },
+    "de/backend/mindos/projection_staging_builder.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b4e5aa8505b2b2af3e9b30376c91b4939ebff5ef8eae3dbf132196932ad5da20",
+      "size": 9342
+    },
+    "de/backend/mindos/projections.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2b3f0a7fdc87f02facc8e1f6cf3909bcb377888e79f4166112d0e04bce36cfb8",
+      "size": 11618
+    },
+    "de/backend/mindos/qa.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f9ce1e065b53bec64213896be8bf8c815dd081c3a153e31cd9b116d0a4053b08",
+      "size": 57386
+    },
+    "de/backend/mindos/redaction_boundary.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c8ab973117d2f3ddf63a5f4f26c89603f4832f89595cca915574329071ab0b39",
+      "size": 1971
+    },
+    "de/backend/mindos/redaction_router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1e80778fb9c31a4a004821025f6a4f90b29900e2bfe57783448a17b0ed277628",
+      "size": 7425
+    },
+    "de/backend/mindos/redaction_runtime.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "daf5381286200b80ddc3eece203dfd6b86c8512f7197859ac12db2c5064e93d8",
+      "size": 19456
+    },
+    "de/backend/mindos/related.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7b2ed93e741abe1bff00c0e23e484817cf822fb2bacee4a8e63f3b6dc2881051",
+      "size": 18505
+    },
+    "de/backend/mindos/resource_monitor.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3591c24d63c56f91bf87c93e24bfe70d12cb1044291b3978bc1f1674be624131",
+      "size": 11164
+    },
+    "de/backend/mindos/runtime_config_provider.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "609fe56b2ed6583d70df4879e2ff94c3aca7ab063fe995cbf1f02f27657a58f4",
+      "size": 22029
+    },
+    "de/backend/mindos/search.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1ecc400dc80977f370df6b496aefd71e9a4315bcee1759b535d17ed9340511b3",
+      "size": 13088
+    },
+    "de/backend/mindos/secret_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6e4b2a8f0c3e7729e9c2f6849e113aef78ea068c6e8b9d65e56e49acc6bbb6cf",
+      "size": 12831
+    },
+    "de/backend/mindos/services/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e3f79960194fa16ef99a5044e6e330d76bb907320f04285a04e76edb04c8df6b",
+      "size": 59
+    },
+    "de/backend/mindos/services/application_results.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "83510deffffa0c7e6983b8870abf1ad4d66f43afa727a7b1ab7f0b554d1613cf",
+      "size": 11495
+    },
+    "de/backend/mindos/services/automatic_cards.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d3593a77ce819211b17717d38286d5140aa4a5064e4a7f29cd01bb88e34e1ebd",
+      "size": 13210
+    },
+    "de/backend/mindos/services/card_proposals.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5487d0023bbe627e1cdf9b72731673842414375edf1dbae3a0a75dcbf9c98144",
+      "size": 14020
+    },
+    "de/backend/mindos/services/ingestion.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c265a2c6803beafc42d8c3b135fa001c0c5ee78bd60c58309607e6fdd543b625",
+      "size": 39296
+    },
+    "de/backend/mindos/services/material_media.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fdefd7b23e0e1fbc723fc44a3215d005b90129a3cd89ad2891833f3d6ca94bec",
+      "size": 5195
+    },
+    "de/backend/mindos/services/material_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7133ca0dd1863bc04b9ca1fa42282d33675047b9d8da39168c6dc94bad59eb30",
+      "size": 6626
+    },
+    "de/backend/mindos/services/protected_material_extract.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d51e9a61c05cc7163b3c22d1fd22b8f2ba5871a6b64a106d34c1a19717c2a6f8",
+      "size": 11522
+    },
+    "de/backend/mindos/services/redaction_candidates.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c3e3d944ad5ca8f711782c7399125b87811d05109b71aa18310fc14ab5778492",
+      "size": 16149
+    },
+    "de/backend/mindos/services/redaction_process_limits.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "bbb2d5c5297d96d17bad30706652af1b2a582e704a94785070e4e8add01a71dc",
+      "size": 1881
+    },
+    "de/backend/mindos/services/redaction_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0a0831c1925f151b5dcd050aa688a351866592496159992f4b52a24d586b5c94",
+      "size": 18208
+    },
+    "de/backend/mindos/services/search_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ce09947c76f7cfc16bc504cbf99793216fd5fc0af6e2c3d22a227e399a76709b",
+      "size": 48227
+    },
+    "de/backend/mindos/services/upload_completion.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "40225e756e8839710a0512c5ad7ea8ff5b5e8e03d318a6b9cb3a29489a3b8f20",
+      "size": 21474
+    },
+    "de/backend/mindos/services/upload_receiving.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "075dd640fecd60dab4cd250bbbacab120a84c9c3dbf1c37af66abffac82d9814",
+      "size": 2394
+    },
+    "de/backend/mindos/services/upload_version_receiving.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f73172ba6b00626492b8646fb31bb19b95f8f7dbc381fd655a6b55f1fbab4b2b",
+      "size": 11564
+    },
+    "de/backend/mindos/sources.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4f0ce87e339e555ac49795c07248df3ab09eb3291ee3b573c71aaa3862975887",
+      "size": 9797
+    },
+    "de/backend/mindos/stage6.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6a4da3e96e4f7a49705e0353feb935bbfbf34ac45abad5f5f18063c82558d827",
+      "size": 8352
+    },
+    "de/backend/mindos/stage_d_admin.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "cbdf218599cea952daafe05022e44d944102d766f24b746a4a127314459ddde2",
+      "size": 14443
+    },
+    "de/backend/mindos/stores/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ed4441951341c062053b821338abdfb02e252b00ad4e7fffb6ec0fee5ef7138e",
+      "size": 83
+    },
+    "de/backend/mindos/stores/activity_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "14b39823cd2e470af2013c3955f1b2cca542468fb200128ad1b901978a97b02b",
+      "size": 14988
+    },
+    "de/backend/mindos/stores/agent_access_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fa7c2584216adf4b5167ef7035f2d585bd78a484bac8b0eaedd1ade6d05f8729",
+      "size": 27993
+    },
+    "de/backend/mindos/stores/app_upload_acceptance.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6a4b6601f8446fee8122bad837e907575751785579c9b9e786cfed57bf2e4af1",
+      "size": 7462
+    },
+    "de/backend/mindos/stores/app_upload_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "662847661de66bd0550eeaf321614a00aa179419c55045c842b65bc72f82f51e",
+      "size": 25082
+    },
+    "de/backend/mindos/stores/app_upload_v4.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a751b55f52baed2efef5c32a79571bd608d2a104a6a4ca383d735d0246a651aa",
+      "size": 2074
+    },
+    "de/backend/mindos/stores/app_upload_versions.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "92092288c59a78885a962f4097c2142b02de5f3d4cd95eab6ed82ae8167a9b42",
+      "size": 3954
+    },
+    "de/backend/mindos/stores/automatic_card_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5115207c6783474e50f62438960a0324d0dfb189bf4ad13e4d1a3de8e1feb26f",
+      "size": 3617
+    },
+    "de/backend/mindos/stores/card_ledger_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1342b76243f37777e2f1fe9c23f4ce67fc9cc9a8e378a40ba6390b6cfefebc98",
+      "size": 141511
+    },
+    "de/backend/mindos/stores/card_proposal_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "8552070b4b4069cafdc27eb46df3b31a4e39b6726bf0f0e390e56f9f3332fb2d",
+      "size": 6721
+    },
+    "de/backend/mindos/stores/claim_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "58a83905ebed21dbf95256f62f0885c6059b6cc10b9d049ff2fbc8187c88b448",
+      "size": 198583
+    },
+    "de/backend/mindos/stores/connectivity_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "24290b789e5a8be443bc2eb37f3e437d17ca35232a6c0d3916a4edaa1580caa8",
+      "size": 24176
+    },
+    "de/backend/mindos/stores/deletion_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9b353f84cf386d6485ab25f141e09fe827df5faf9725d3d0bc8e23f4d321db1b",
+      "size": 27254
+    },
+    "de/backend/mindos/stores/derived_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "cd78b5edd0e79b4a2e78a712f7745b25bf8994285bd11475292d8a75bae36797",
+      "size": 35067
+    },
+    "de/backend/mindos/stores/governance_backfill_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4264bbcab5ac7922b200dfbea9c606909a125a4a78df834208329029f096b81a",
+      "size": 26549
+    },
+    "de/backend/mindos/stores/governance_review_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3c53afb1c6cefb7cbe932e7c9242bbc08fe7db1a79d4b9c70f29390f3183bd90",
+      "size": 41612
+    },
+    "de/backend/mindos/stores/governance_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a3a5bc4ccd69ad4402cf25bf1e8a073e372d6fefbcad48d93e3f88844b3a9abc",
+      "size": 43965
+    },
+    "de/backend/mindos/stores/inbox_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "52f31178a98ace22a87e220ef31d99d3f12582b2017c136000f9c5f53b22721f",
+      "size": 35318
+    },
+    "de/backend/mindos/stores/job_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "74c972f4e4c127daad792ae45790bbee48ada72332bb618630d57c4674dc1c8a",
+      "size": 89760
+    },
+    "de/backend/mindos/stores/material_pipeline_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9000a66d229d5b552c84d3283bb35e21a6b0b3535dfc3c3d427c2c6c09656d3f",
+      "size": 59339
+    },
+    "de/backend/mindos/stores/material_version_reservations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d8d0b907c7fd160801e5b77728972c8b06850182e4404935a168f347bdc8c301",
+      "size": 8546
+    },
+    "de/backend/mindos/stores/model_job_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2757962299eb82101f05839530728b19157d99ee7749c65a4887645508677a4d",
+      "size": 24269
+    },
+    "de/backend/mindos/stores/projection_registry_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "12b0851e1d973b6bf9a747657a32f1eba3c37374e1c6875d57aa1b503561d8ff",
+      "size": 84948
+    },
+    "de/backend/mindos/stores/redaction_candidate_files.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "00e3e29b9aafae40c7cc64b00b0c3340742f6cc4f94f95e66bfbf73c3915d1c6",
+      "size": 10363
+    },
+    "de/backend/mindos/stores/redaction_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1821a7105e5e2de5db5c224dfd6e9c24fa345d01e91f5414a9d3519b77d0b44f",
+      "size": 30183
+    },
+    "de/backend/mindos/stores/runtime_settings_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9d1df8b0bfd2a9c24506088ba43b404ebe99f0e5af688ecfbd03b6e6956c743f",
+      "size": 11190
+    },
+    "de/backend/mindos/stores/source_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "10f589f57679bd1ec01197bb913e1fc1b328875b00b94ee1c1dd5a330f9e1ae9",
+      "size": 17698
+    },
+    "de/backend/mindos/stores/version_acceptance_holds.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "27f33a2e45cd12514f0362c8573481b9cb3bec5ee33d3dfa9a17bbed8b8cb2a1",
+      "size": 4067
+    },
+    "de/backend/mindos/tag_suggest.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "76e09a2eeefea10c8469f62153829759f60b544f9db4c6e3456a993dd8c97409",
+      "size": 6516
+    },
+    "de/backend/mindos/today.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "368563678953b20aae6184d0a7c9702f5b7561cd4b5a55baf222981a1ee852df",
+      "size": 13929
+    },
+    "de/backend/mindos/upload_runtime.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "dc1cf306f65e751bb69dd420efdaea49be141274ed4d81d1eb156585378d1de5",
+      "size": 10615
+    },
+    "de/backend/mindos/uploads.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "468e3958eaf02ddb4319bfd0f7c1cad041e935beb5f2a5498cb53a571f6c4291",
+      "size": 89249
+    },
+    "de/backend/mindos/validation.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "04ce280b5caa62374e3a947d74a999e45b6dfbb80aa4f6d3e63a80904cf72c06",
+      "size": 2401
+    },
+    "de/backend/mindos/zhijun_capabilities/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ad8392dd17dff786be296379557e92864cd62e468b865e4098099023e4fa819c",
+      "size": 1875
+    },
+    "de/backend/mindos/zhijun_capabilities/context.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "87bd8e9f9c700c46e5a4fa32a4da8e4151df583d8bc2faf8e3c35f655267497c",
+      "size": 3858
+    },
+    "de/backend/mindos/zhijun_capabilities/dispatch.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5c90dc9252585651c361fc758d6be6ce002e8dc1b50b730a464bf266cc1760b7",
+      "size": 22702
+    },
+    "de/backend/mindos/zhijun_capabilities/events.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a57e06136392c34a26694cc68a41ae8256ca8aa8ff166fbeab2d4b40b7b8dfe7",
+      "size": 7687
+    },
+    "de/backend/mindos/zhijun_capabilities/folders.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a7b2994b37353eee00a0f394cb94549de655fffc75b2ddcab0f2c9d7e84e9718",
+      "size": 13913
+    },
+    "de/backend/mindos/zhijun_capabilities/materials.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "27b672e29267cec5bcfbe13c92ea828da7efbaf9d17cb598f1ef80ae7e434f2f",
+      "size": 16005
+    },
+    "de/backend/mindos/zhijun_capabilities/model_consent.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "bea6df3ac16c308ace1dd9e128c8cabe5773c508e4879614b3b96bb95705da14",
+      "size": 10703
+    },
+    "de/backend/mindos/zhijun_capabilities/model_stream.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6ce513a8174e6ef9812293c8feacf289d36d0234971ee42e34963fc4c8b4d839",
+      "size": 16177
+    },
+    "de/backend/mindos/zhijun_capabilities/models.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b661066eb653ce31c976375537a3f5e74e1a4876e6733b2bd6ed94f95a4b9fe2",
+      "size": 25301
+    },
+    "de/backend/mindos/zhijun_capabilities/safe_derived.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "79dc2f3ba44d2a082d640d032e07255efe9c687f0053ac10e0ba3414f5e92f54",
+      "size": 17170
+    },
+    "de/backend/mindos/zhijun_capabilities/voice.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5278e3012c01b1040cbea2c028508b6a31e7181d72b109b8d18a8621432deb47",
+      "size": 4549
+    },
+    "de/backend/mindos/zhijun_capabilities/workspace_models_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3cf354320146c0ac42d572fe7c4e600b649916e550d0ce27828c802161554d1f",
+      "size": 12416
+    },
+    "de/backend/mindos/zhijun_gateway/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "39ccdacab8e35d7554c4d2cf219cf891322aedb01b35e5ff055cf235133735ad",
+      "size": 74
+    },
+    "de/backend/mindos/zhijun_gateway/catalog.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "de40430948191874a372eac38ac1be7b22eea437227fc5f8300b71929a60da23",
+      "size": 6014
+    },
+    "de/backend/mindos/zhijun_gateway/manager.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "eee7a1bd6e3b85b7c7aacc7f37b7e5c0f459c2dcf0f3339c87bf7980dc6009e7",
+      "size": 38365
+    },
+    "de/backend/mindos/zhijun_gateway/protocol.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3ab21e92e217ccb846403bbaf8e2f1f369de32e1ec0e071ba696065b98c17f70",
+      "size": 8678
+    },
+    "de/backend/mindos/zhijun_gateway/router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "20739579486029d9f4ff57daa6ca15b95d8d7e40f052545bb00e7431092c7bb8",
+      "size": 9271
+    },
+    "de/backend/mindos/zhijun_gateway/store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "95403051481a3d2a355c0fbed12b10bdf8f39a9a69e374b2b39be4bf5123f555",
+      "size": 40388
+    },
+    "de/backend/mindos/zhijun_gateway/worker_auth.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b09881531c74ed6bc920b00092511d1a4c8ca60087e10bf50d949857f72e6854",
+      "size": 5017
+    },
+    "de/backend/mindos/zhijun_gateway/workers.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4a4bd02c9b506156ff4b7ae23b57a0a60c8a93cae0cad144e1d340ab0c25d6fc",
+      "size": 6917
+    },
+    "de/backend/parser.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2d4eb55e90369953cd6d7878f8b8ad0f7a5abbcd93972b90a8057beb05878998",
+      "size": 24009
+    },
+    "de/backend/rag_strategy.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "61970496514ec942d63aea82613cfdc56ed28489e9590948dfab433ac0c94216",
+      "size": 9179
+    },
+    "de/backend/rebuild_progress.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "509ccb0b3effb8c8a9d3e68de35bfdbbd649282280db2540c16439e412a1e73b",
+      "size": 4293
+    },
+    "de/backend/requirements-lock.txt": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "edd430b9fb6e2c05d31acf3c9777a167a6ba1825019479bc8bbd7e33a51c60b8",
+      "size": 2683
+    },
+    "de/backend/requirements.txt": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2a521f815f9d0dd52a515555d11c82ab3cd9db21af12b283550f48350f24a63b",
+      "size": 1410
+    },
+    "de/backend/rpc_stdio.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ad1ab49708695791d3c9034b68458ece26c829f508488b07862f26b27e7a30b2",
+      "size": 6786
+    },
+    "de/backend/runtime_paths.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6b079aaca4a67947e7792c0436e8173e5307e468907e1784f1187471c994349f",
+      "size": 5521
+    },
+    "de/backend/server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fb3d5dde92766a10e0d27ee34ae56cddd7628957e89a22e967d46a8453223520",
+      "size": 160029
+    },
+    "de/backend/vector_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "14672dc570953ff996942a62cb4c4f9322ad4b0737c4951aa43a63a75d9f4419",
+      "size": 106666
+    },
+    "de/backend/video.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c4e28d3fb9d434602761c1a5be0a371ce88f2615d4247743f84223d285377585",
+      "size": 14256
+    },
+    "de/backend/watcher.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "95161594951811c265e59100f4972c839ec2ccc4dc24647e2bf2e373ba4f271f",
+      "size": 69258
+    },
+    "de/backend/wiki_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c114d5a5cb22a8a36cb044f0f088ac0376d466f1ab1f7dc746c180ce999ce4f2",
+      "size": 62001
+    },
+    "de/governance/policy-manifest.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1bb51129e86f0a9ca4bc26f893c377d745c678cc2df28d04e9696b7647e22a32",
+      "size": 4342
+    },
+    "de/governance/schemas/claim-evidence.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b3f23c426d97165981cbd2fcb85bb0454697bfb2ad36e19d3eff9213c24657be",
+      "size": 775
+    },
+    "de/governance/schemas/claim.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a2dfd47cd21b743463906d13f8c94e2a83f82e10f45b876fc66513eedbe8eaaa",
+      "size": 3298
+    },
+    "de/governance/schemas/entity.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "af73f183eb5a091514848563a49a6e8f9d812cb71acb23361c257dbf99fd3802",
+      "size": 1098
+    },
+    "de/governance/schemas/evidence-span.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "33ee307d7bcb49eec15746bc27b71877a17711b0eb0ddcacaaa96753ec6f9c57",
+      "size": 1716
+    },
+    "de/governance/schemas/policy-manifest.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "992ae8625719875097554f3fa24ce2080a455b1fedcf7f3030b147daf324897b",
+      "size": 1895
+    },
+    "de/governance/schemas/review-event.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "80a5aec564cb58f984ca00324bff87c30365be08c122268f081d201cca86a9c1",
+      "size": 1054
+    },
+    "de/governance/schemas/source.schema.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "58435a476247669e2a011985fb0b862d9876a59e4ce2b9b38a1510944f46ab73",
+      "size": 1605
+    },
+    "zhijun/backend/annotations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b625da3785f3e0e1f70a63dd7c2ecec144e8711f6b36e49fa31e1ade76efb9a2",
+      "size": 23981
+    },
+    "zhijun/backend/config.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7a1130c771a28c5ac3868facb1a2cefa538343ed2ac71059ce23746fba9e3855",
+      "size": 19115
+    },
+    "zhijun/backend/context_snapshot.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "10ec37cea232603c1acdc309cafdccc7dce8e466c352ffd73f19e7048dad6755",
+      "size": 8420
+    },
+    "zhijun/backend/convert_clip_weights.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5c7fd498d2e839d3e61e0ae93331864e7c4afc725540cf122e601b2f3c3aa00e",
+      "size": 5437
+    },
+    "zhijun/backend/embedder.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6fc5a59f95d25fc423d141ca399d262c1f92c81f97a22c9301548cbdea9cc66c",
+      "size": 22496
+    },
+    "zhijun/backend/gbrain_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b5b0ae51e899fe557c56344567016a896c52c31ee24fe73868c015e03048a9ed",
+      "size": 16336
+    },
+    "zhijun/backend/generation_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f886073d4eef94e09881ed8cd6d8902b4b905785f54b8a3eaef33a41986b5f59",
+      "size": 7934
+    },
+    "zhijun/backend/index_registry.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b2bbb098b6c7e83d26ed3fb0c42277f185be8dbeb3b1f1342d57c399ff42e689",
+      "size": 20959
+    },
+    "zhijun/backend/instance_lock.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fc7ff15627d6b94a4176d14875b5025cc83d8c169ee98d7cc746c93e4803dbbe",
+      "size": 5320
+    },
+    "zhijun/backend/lexical.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "17b767c68ce85b543e27ed009dd0d0bc76fd1bbaf3afab7e891cb7d12d6e7d64",
+      "size": 4638
+    },
+    "zhijun/backend/mcp_access.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "8ff7ebe1608b112c9a4a316496e2c27d162355ea80c3f4a76081d3a76b7b510d",
+      "size": 35852
+    },
+    "zhijun/backend/mcp_remote_server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b3616563845c8797e02ef9d83d459bfcf3df6ddbe09c5ae4c29ff55f1f7eda71",
+      "size": 14060
+    },
+    "zhijun/backend/mcp_server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c36586c958a133a640e6cc0c6ccd3d4bd2451e2543ea92d907f67db1f9cff082",
+      "size": 317
+    },
+    "zhijun/backend/mcp_tools.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "52a8a87408b42412ced9ad2b81e5d243c6c36e38be4d3ae402a7e2791056e89c",
+      "size": 7276
+    },
+    "zhijun/backend/memory_api.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0eae2425c6e396a90810fa973b8d910258af895b7bbde56d84736c37fb00e50e",
+      "size": 7720
+    },
+    "zhijun/backend/memory_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b8046a335e7931fa4a9ba415e5abe7c932d7a8b72f3d00da8a17d26663933921",
+      "size": 31065
+    },
+    "zhijun/backend/mindos/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fe16b8617364a213d763ad620c4ddf8963ee141130233dae349bd21f715bcdc1",
+      "size": 118
+    },
+    "zhijun/backend/mindos/agent/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "654ba10f0cb91334d70081f22901c7d3217eb37e30bbf0bce085495c62152c12",
+      "size": 563
+    },
+    "zhijun/backend/mindos/agent/admin.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f8042f74b93d367e998c0fc8fe187ab978e29c8c012f78ea3d9da88c13fdba1a",
+      "size": 4033
+    },
+    "zhijun/backend/mindos/agent/answer_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c0c37d06428feb3ffa1280fa02abd834a6efc5364058716f0f7f4517a9f787b4",
+      "size": 6707
+    },
+    "zhijun/backend/mindos/agent/audit.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ce796bbbb226eca34f632eef1043f2b73d0366e5088c894a0e439a3545097f82",
+      "size": 2146
+    },
+    "zhijun/backend/mindos/agent/auth.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "872114f7dba0d18faf40f22898d9a0585226ac325a7e5dcd3bb47da71e43f3cb",
+      "size": 3946
+    },
+    "zhijun/backend/mindos/agent/config.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b618257f752067779d54f9bfb47ae2673b88d49c2fe908bcf7cdff02dbf40248",
+      "size": 3175
+    },
+    "zhijun/backend/mindos/agent/detail_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "402847caeb82dcab3d7f1769a5d273b4226e905e49139a4664481a869061286a",
+      "size": 2459
+    },
+    "zhijun/backend/mindos/agent/errors.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9b963ead0d298afaab92ac2223783d85904ec81132e0f24bde0ce7dd8e31d96d",
+      "size": 1114
+    },
+    "zhijun/backend/mindos/agent/evidence.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "dc083a023916f382113880ca7d3d1d0b0e7606dde7d0f3f3d0e50edea86492bd",
+      "size": 10893
+    },
+    "zhijun/backend/mindos/agent/mcp_server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4be7e1659d81445539c23c611983d191bf94c7e7be96e6858742022623fae0f4",
+      "size": 19634
+    },
+    "zhijun/backend/mindos/agent/projection.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5a22e604aab2afddb9244f4ec886ee273e4de52f9ba251d3717648438a12184a",
+      "size": 9047
+    },
+    "zhijun/backend/mindos/agent/rate_limit.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "141c476ee1a1c09fd0da1e96ce06d9861a052c81bf3ea087de61f3b76f51aec0",
+      "size": 2326
+    },
+    "zhijun/backend/mindos/agent/router.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f2a527165e4eb8447085666df46ea89d8a186b4b16452c29d98987be7c05356f",
+      "size": 18543
+    },
+    "zhijun/backend/mindos/agent/schemas.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "707cb63efc6900ea1416326c192ee24a10ab8c992a54d8ab6d99536076ad7070",
+      "size": 2819
+    },
+    "zhijun/backend/mindos/agent/search_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d42ba1f0a3f64350f9750f5734c3f609295bceaf7ac7da1c1b0854e84373661a",
+      "size": 3527
+    },
+    "zhijun/backend/mindos/agent/service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "aa93116fbdcd55e270f5683e9756f4c208671a435d90624f07dd7eca8174c218",
+      "size": 4650
+    },
+    "zhijun/backend/mindos/agent/store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2a70e452272bb65bd55d94db89cf7d6f3ae4e0d75d248a4bdf858b68943aafdf",
+      "size": 14017
+    },
+    "zhijun/backend/mindos/alignment_routes.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "929cdf38ea65d142a90c6d20b5d7cac9520831b9c3ddaa9dba3305931d0ab85d",
+      "size": 10541
+    },
+    "zhijun/backend/mindos/chat_import_routes.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b15e46d9b39fff663a0a9c7de5d10d5c94201bf4378426b2cdd627768d1dfa6f",
+      "size": 13733
+    },
+    "zhijun/backend/mindos/chat_imports.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fd1a7680b5ba851145bd652805a61a511e81c2633f6741705dbdfd9832cdda76",
+      "size": 20784
+    },
+    "zhijun/backend/mindos/connectivity_admin.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b3bb9ec0a623ae38774e4b251c573e94eb34d2f2e12c7d8e84885791945c0e39",
+      "size": 4841
+    },
+    "zhijun/backend/mindos/connectivity_session.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "eecdc9aa4aff237ed76ab04682bc69e2bc54c7044b360eb85ab1d8eaed5138c8",
+      "size": 4150
+    },
+    "zhijun/backend/mindos/connectivity_ticket.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "abcc5324870141dfce73c861335d9d1ed957293f073ba370d67981ac15f41d5d",
+      "size": 12585
+    },
+    "zhijun/backend/mindos/consumer_adapter.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "87be40a218e719749bd1a0b3035cf1f0f66ec6d410f1bed2d303013fdfc04470",
+      "size": 3442
+    },
+    "zhijun/backend/mindos/conversations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c48ef542c22047a6bc00005d1cd858aaf70cd81ae47160942d041725fb35c8ba",
+      "size": 24672
+    },
+    "zhijun/backend/mindos/corrections.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d77c7808cba261ba5702c82336127f2d811c2085f8d9be09b3cbd27eaba3b564",
+      "size": 10871
+    },
+    "zhijun/backend/mindos/derived.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3164e9396cf4324ba049532c9deabfd01eacb3660aee10de80a3e596441602e5",
+      "size": 70011
+    },
+    "zhijun/backend/mindos/device_context.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "75b197b4c44ccb990b3c380213bba508fd622e7f25741e527b32316f769ca81b",
+      "size": 4892
+    },
+    "zhijun/backend/mindos/domain_scope.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9c1136f23daeb00175beb5b8eb63544ede947f6dc34c595cf2d205dc004257ca",
+      "size": 764
+    },
+    "zhijun/backend/mindos/external_model_discovery.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "10a25010f9e7db481b00514351cdb59e89558ebdcbdf143fde2f860c23e1c3ea",
+      "size": 3612
+    },
+    "zhijun/backend/mindos/generations.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "944440aee9d3c1a0e7a838ff43452f45421ec79bdb2121dc212eaa82c9ffe56a",
+      "size": 11050
+    },
+    "zhijun/backend/mindos/governance.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f9c4aa406a974eaf7fb6ce900539a2a8115098868883a3b85175b06de89c6576",
+      "size": 19655
+    },
+    "zhijun/backend/mindos/graph.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f5a995cf65956ea29f73e2c382c494673ee3a93189a4ce528950753be51b51c8",
+      "size": 17049
+    },
+    "zhijun/backend/mindos/growth.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "af949258986f876b51289f4ddf028daf755531a15b591cd76837fa6f80d13915",
+      "size": 15078
+    },
+    "zhijun/backend/mindos/home.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7fde4437a8a3bb20609b96e57721b3a679d502f336a34eab05291c3a352fbf74",
+      "size": 1676
+    },
+    "zhijun/backend/mindos/knowledge.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f11dd849fa339a58ff29904c6ec009f8e6a47c41a7407d5c25c6883698018eea",
+      "size": 92882
+    },
+    "zhijun/backend/mindos/knowledge_index.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b217adb342524b58c0832fa7e57951087421a4da202ef65c525274c1d620b173",
+      "size": 13920
+    },
+    "zhijun/backend/mindos/learning_routes.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "28e814a01439021982d40f5ef61d712d137ebcf4c6a664f22e0c09c45d0496a5",
+      "size": 13704
+    },
+    "zhijun/backend/mindos/lifecycle.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7788421b89cea6cff4dc279275fe9c57b0521977d86a4a3e57f5d0f74b0487e7",
+      "size": 41852
+    },
+    "zhijun/backend/mindos/llm_transport.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ce1f210d0aa6dfe108d9fefc7c61cc96dfebc1d47f6cc9b9895f4c265059f0a2",
+      "size": 2745
+    },
+    "zhijun/backend/mindos/local_web_debug.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "541389e09e8960a6e2fbcb4d784dea7b2c3dad7398b42b9b50cad038f92a90e8",
+      "size": 2023
+    },
+    "zhijun/backend/mindos/material_drafts.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "97f7a17399ec83726399c82ea6739c05c2d00410f8d3b2e51962c3ec31da361f",
+      "size": 16213
+    },
+    "zhijun/backend/mindos/material_snapshot_saga.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6a920371dc4d74fabc0bdca0d05a9ab69762d12ceb7b40ae3aa16a59270605b0",
+      "size": 11492
+    },
+    "zhijun/backend/mindos/material_worker.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d3def510530caf69f3faee93c519c2be5d032889148644c7e52a4156e3a553c0",
+      "size": 18024
+    },
+    "zhijun/backend/mindos/matters_routes.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "48092a536bb8ad4750dbeaf0bc0984b96b002bfe5fd8d5cd9aa9ad48f0b86cc9",
+      "size": 10226
+    },
+    "zhijun/backend/mindos/memory_routes.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2a339cf1f2d1bda0372b057d803b5963fc33a2110b38d7fc5577565a41104bc2",
+      "size": 6024
+    },
+    "zhijun/backend/mindos/model_job_worker.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "71d7b68e93c3960950eebe78479a7db44bad7a5c7c90452ea2c2b3f1058a86d2",
+      "size": 11927
+    },
+    "zhijun/backend/mindos/model_runtime.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "467ed44b6b0284a8ae3302c9b0d61cfc2fd00aced18a61b55ecceaee16af9767",
+      "size": 29817
+    },
+    "zhijun/backend/mindos/nudges.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f60e7b1f614daa799f6ae82d58d87d09c14c5d953ddf9ddad9b24e867aa88144",
+      "size": 2857
+    },
+    "zhijun/backend/mindos/ollama_client.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "63bff66e47e1619556cd1ee35d00de5900268de258e05197b7b8ead0dd4377de",
+      "size": 6151
+    },
+    "zhijun/backend/mindos/ollama_material_scheduler.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "256f0f59611a4461ce53b5e90b6e7a80a24cab905ebdbd5c90f8b88694613a50",
+      "size": 10105
+    },
+    "zhijun/backend/mindos/ontology.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "050d0b10d06ea4b137f600dbacca4931e6d6953aa654f74d901b7642cf2a077a",
+      "size": 18767
+    },
+    "zhijun/backend/mindos/qa.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0caf4e768c8cec6f3d6667c70f6e66f4454a4bb74a5f8ca4f46b4f609c6285c4",
+      "size": 39848
+    },
+    "zhijun/backend/mindos/related.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3b5711ef7ea40bfe6c4cddaf90361ab2c4c38200ac87e8a64b29431ba82fc4af",
+      "size": 14690
+    },
+    "zhijun/backend/mindos/resource_monitor.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ea6012af30f3655b0a510430ee07251425edb67cc4de8df817d24f7e4fd32282",
+      "size": 10695
+    },
+    "zhijun/backend/mindos/routing_routes.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "789eba5f79d1d6699cad925a40bdca9e4f16c8cf4229340e46dcf546a33287d8",
+      "size": 18280
+    },
+    "zhijun/backend/mindos/runtime_config_provider.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "77b0b605be0756c0e2b5d57957ee99304b024c0ce3223f56e0ae1fdd259f70c4",
+      "size": 29122
+    },
+    "zhijun/backend/mindos/search.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2caf1a666a45736b27ea74c3f50b4e29c58c0a23a68aaca4703509bb1f94e4b8",
+      "size": 9523
+    },
+    "zhijun/backend/mindos/secret_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6e4b2a8f0c3e7729e9c2f6849e113aef78ea068c6e8b9d65e56e49acc6bbb6cf",
+      "size": 12831
+    },
+    "zhijun/backend/mindos/services/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e3f79960194fa16ef99a5044e6e330d76bb907320f04285a04e76edb04c8df6b",
+      "size": 59
+    },
+    "zhijun/backend/mindos/services/ingestion.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "68fd190afb271bb38550836a42cf122a98f91d35cdce92aca80b68ef4584b35e",
+      "size": 34206
+    },
+    "zhijun/backend/mindos/services/search_service.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "37110267900966cb6ec543429232aa6166433acc76b60cd5c5090e9cdd423ea5",
+      "size": 37858
+    },
+    "zhijun/backend/mindos/stage_d_admin.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e0a3c3665527cee768692d98bbc8aa072aa79a283bbb9635cae76b7b27709a3d",
+      "size": 13492
+    },
+    "zhijun/backend/mindos/stores/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ed4441951341c062053b821338abdfb02e252b00ad4e7fffb6ec0fee5ef7138e",
+      "size": 83
+    },
+    "zhijun/backend/mindos/stores/alignment_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "48f04b5e87797258ffce01872f9036adf8346eb09a32f0ab07d6963dd53fa10d",
+      "size": 13097
+    },
+    "zhijun/backend/mindos/stores/card_ledger_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "99d9e0e1cc1d12c1a97c28a225c24e873cc97d0f0390dc67beed3f3c612b0e39",
+      "size": 64888
+    },
+    "zhijun/backend/mindos/stores/charter_draft_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c9280d6a5cdb1da299d9f2f6bc4c78188aa95d713f4988dea12c9ab3d6f81349",
+      "size": 38920
+    },
+    "zhijun/backend/mindos/stores/chat_import_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "bc763d29d057e9a5fc4374d42cfa817bd6f322e633db6a8511efe28edf7929a8",
+      "size": 11856
+    },
+    "zhijun/backend/mindos/stores/connectivity_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "495ef66923dbb03ed6b550fe24c4f2715f3d976804fef4e120f87793b0119912",
+      "size": 21083
+    },
+    "zhijun/backend/mindos/stores/conversation_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "12d7d7800ddccfd3f1432d6aca88652497ec519aee52de97d9d02dba70cdcce2",
+      "size": 48375
+    },
+    "zhijun/backend/mindos/stores/derived_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9079f854b72078d7361f14729b4a06ecf64000703d99520b3e9415c67e92f204",
+      "size": 30421
+    },
+    "zhijun/backend/mindos/stores/governance_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2829be7639e881dfd3ef79ade650c88b2de362efc69ae5eb78974e525e298918",
+      "size": 16422
+    },
+    "zhijun/backend/mindos/stores/growth_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "85e929d556e5a19d16b45a5c1605bde491e91e54fadc173b11c8081a24e8d744",
+      "size": 30951
+    },
+    "zhijun/backend/mindos/stores/job_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c9fb0ad65266ece2b69b939f4bfc65254f86973e3cb20e9aba564c29cb96a60a",
+      "size": 55033
+    },
+    "zhijun/backend/mindos/stores/learning_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3dd3044c9fc8377463363ee2d66ad07029ae6aebf4b38050a3aa023907dc317f",
+      "size": 7331
+    },
+    "zhijun/backend/mindos/stores/material_pipeline_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9b48b23046b356541c3570fedf3b83acc0508241500b8cd34ad239374e917482",
+      "size": 33508
+    },
+    "zhijun/backend/mindos/stores/matters_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "1c1184bee4550a38592975f8b8f25a4abf8619ed075b3f0794bac47c83940032",
+      "size": 13820
+    },
+    "zhijun/backend/mindos/stores/memory_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e9cce3b4de56fa8d00d323e69e4a37f53f634813c601a4ba1e77e3e71666943c",
+      "size": 9263
+    },
+    "zhijun/backend/mindos/stores/model_job_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f108e8012d882e27915d4ffe5f3435090eaa32b821f6a5394ec5cd3b7db7f71b",
+      "size": 21236
+    },
+    "zhijun/backend/mindos/stores/ontology_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4651275823ce21d5c47fe7ad373e59c85f1142043243bc80ef77109ea1a0318f",
+      "size": 89210
+    },
+    "zhijun/backend/mindos/stores/reply_assist_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9219456b0a966270c4b0b5ecd41417c639c7dd520294d3fca358a89f01160c77",
+      "size": 1519
+    },
+    "zhijun/backend/mindos/stores/routing_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "bfa18038de708828da028883fd26a12a17fc785ba8f2d7ce113d5466c78aaf61",
+      "size": 15206
+    },
+    "zhijun/backend/mindos/stores/runtime_settings_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "fadd3ebda7c1a4232bfc4107233fdaa0de6725afa51a8d1e5bc5db97c8fb75e5",
+      "size": 17428
+    },
+    "zhijun/backend/mindos/stores/sqlite_connection.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f34e7847a00d5e6d3903f15896e92a5a3e43576667675e14ccfd8b07d2369082",
+      "size": 315
+    },
+    "zhijun/backend/mindos/tag_suggest.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "76e09a2eeefea10c8469f62153829759f60b544f9db4c6e3456a993dd8c97409",
+      "size": 6516
+    },
+    "zhijun/backend/mindos/uploads.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e51d18c5ced9bef1791aa8ebde70ecbd4e838835d3552c27183e5d30ff029731",
+      "size": 55580
+    },
+    "zhijun/backend/mindos/validation.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "04ce280b5caa62374e3a947d74a999e45b6dfbb80aa4f6d3e63a80904cf72c06",
+      "size": 2401
+    },
+    "zhijun/backend/mindos/zhijun/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b0222fd1aebf4708fbf656cbc026466f7f1d3d0ce552220ccb1fd7e3ccddaba8",
+      "size": 968
+    },
+    "zhijun/backend/mindos/zhijun/alignment.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2108ed14e12d4854720a561d2777723b41311acfae5690100421137963bc6fd6",
+      "size": 19395
+    },
+    "zhijun/backend/mindos/zhijun/charter.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7d429c9fd17eca10118889946ad5e02cede60a6bebc3a476c47f100ab1068b18",
+      "size": 36427
+    },
+    "zhijun/backend/mindos/zhijun/charter_artifacts.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "114d6dc32924fe79eff54974313ad602d52c2b6a407f0341596c3a2f6ebde855",
+      "size": 1993
+    },
+    "zhijun/backend/mindos/zhijun/charter_policy.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5e62351639888de2f25d1550facf7593a1f1ffdfdf4560c63f98874c2d3d2736",
+      "size": 14002
+    },
+    "zhijun/backend/mindos/zhijun/confirm.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "209de4da6094ba24230f4b7efb608234b1a8a61db762ea7bfe1762854382e0cc",
+      "size": 2418
+    },
+    "zhijun/backend/mindos/zhijun/consolidate.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "884eb316dd0e0b681b4ff083fdfe36fb1a54115bd25450ff1830f7d77b779a4a",
+      "size": 13708
+    },
+    "zhijun/backend/mindos/zhijun/context.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "38f56b5f40fc6580aa5ce9bb96d404d156952eba872cf046c1fe5d9e3037c89f",
+      "size": 14848
+    },
+    "zhijun/backend/mindos/zhijun/context_bridge.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "988a5035fcbbdc6a726ba4572ec4ef2d000f2160e00cea01b91e0dfd639a53cd",
+      "size": 2888
+    },
+    "zhijun/backend/mindos/zhijun/context_lookup.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "581e835b4116720732881ba4eb8ecf75b343bc9b682753fa6fbfaf002c2e8df5",
+      "size": 9101
+    },
+    "zhijun/backend/mindos/zhijun/context_pack.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ee169e7bb44a1d0440fa9ec2795e1708d119098d37c12aae9adb420199e53717",
+      "size": 4386
+    },
+    "zhijun/backend/mindos/zhijun/context_plan.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0d93a14272ae48c15835be5cb41a004fe32b5a4f644a1fca890d18fe6528086b",
+      "size": 19250
+    },
+    "zhijun/backend/mindos/zhijun/context_sources.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "66ca0f90e48c237b6696da259bcd059de5b9999f6a1cdf5f3d6101d18ea20276",
+      "size": 16056
+    },
+    "zhijun/backend/mindos/zhijun/decision_suggestions.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "209f5d92e147631cd0c43dc1f943a1905796981f5761e2caeee284f305849978",
+      "size": 8202
+    },
+    "zhijun/backend/mindos/zhijun/deliberate.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "dfdb36f9269bc695feb7832e996a14ec263f0c78af63fcf77ec9b8120a68de6f",
+      "size": 18171
+    },
+    "zhijun/backend/mindos/zhijun/extract.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "2cdd0b2a29264fe84d53e30d4db557af9c949c98cc4a97ca85d09836a9aebe76",
+      "size": 39317
+    },
+    "zhijun/backend/mindos/zhijun/gate.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "28a4c6316194ad1977b1fb30f7f36764e54176329cc3aec5ac40d5ebff6e4a2d",
+      "size": 3268
+    },
+    "zhijun/backend/mindos/zhijun/growth_hooks.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "74568fa60255f575f39c545c099c918eb30d16ab798ed013372798160a9bfc08",
+      "size": 2515
+    },
+    "zhijun/backend/mindos/zhijun/history.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7d31d568f5853eb3137505a191b3ea2525f1e832a9ddfe81b9167687b52305f0",
+      "size": 1808
+    },
+    "zhijun/backend/mindos/zhijun/jobs.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "65553d52bb2dc1677d78efef29d3e47b76dd97a67e7d46d6a32a1f7aa918afe6",
+      "size": 23579
+    },
+    "zhijun/backend/mindos/zhijun/materials.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7b23cc7e1d8247c6c9fa9746f402033e41d151c654847a1e205f08f86d0eaded",
+      "size": 7434
+    },
+    "zhijun/backend/mindos/zhijun/memory.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "19d90ce4f868adf41bf3264b0a63676cced2f6ad57cb1b690c34520242076b6b",
+      "size": 13218
+    },
+    "zhijun/backend/mindos/zhijun/memory_context.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "5358ffd53f634f6a002eddc22718c87e3077254037eccac22a0f3c1ee933a5a5",
+      "size": 9933
+    },
+    "zhijun/backend/mindos/zhijun/memory_index.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "930fa8bb92ce07180179cc917a5d58a488880d68ca3c997d2942c8d2af102437",
+      "size": 5529
+    },
+    "zhijun/backend/mindos/zhijun/memory_retrieval.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7926daa44bcaf005e0601c41aee37153ff69a1f0652fb3259cf68cd5fadddcfb",
+      "size": 14623
+    },
+    "zhijun/backend/mindos/zhijun/nudges.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d5631e5cefc4e7cd764ac242a41952b8364a374aee05834816aeb5b1b34e7d16",
+      "size": 12985
+    },
+    "zhijun/backend/mindos/zhijun/persona.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "88a5ff1dfee8b283485413c6a6eeab8eb4053955395b08c2bcf83c862008bacc",
+      "size": 13386
+    },
+    "zhijun/backend/mindos/zhijun/projection.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b3c7068245f76086d6affe54fb04bd482795edc8a957e315871dca7959fbb234",
+      "size": 4995
+    },
+    "zhijun/backend/mindos/zhijun/provider.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7ac0ae4f6ef378ec4a75e08884937c94d9648b9922fce3e77184373b0fcc2294",
+      "size": 36344
+    },
+    "zhijun/backend/mindos/zhijun/reply_assistance.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3404fa19a9e82b8f75a9b8082361d7b592a478b70bbd5cfa1a8566e6a8d6bc4e",
+      "size": 15919
+    },
+    "zhijun/backend/mindos/zhijun/routing.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "cef5530f38b487d762324bccf49a576a344aa971a36337fe8d26dd2c7ba446d1",
+      "size": 62538
+    },
+    "zhijun/backend/mindos/zhijun/source_policy.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0c783eee21641489287f6dc38c97d2a9f19c8f3a80e0029bddddd0373fe8705a",
+      "size": 3513
+    },
+    "zhijun/backend/mindos/zhijun/turn.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "aa5e5f30e8bf0ac28091c1e4eed15fb3e5241635a9ede55ec44d2de8ff17e42e",
+      "size": 32021
+    },
+    "zhijun/backend/mindos/zhijun_home.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "277a5fd3e979a89f186301dd52c923050daea25a050fec634e5f7981073ab1fe",
+      "size": 22619
+    },
+    "zhijun/backend/mindos/zhijun_onboarding.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "51327f36fca531bdaabc312f891d0d95084a24568e75f832f325d65a1d47d6d5",
+      "size": 10370
+    },
+    "zhijun/backend/mindos/zhijun_status.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "edbf1349c32824d5e74b0d27289f8cab8b5ff9ea8b9d301f78413bef6596b6c3",
+      "size": 1193
+    },
+    "zhijun/backend/parser.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "eff8a22a5a79dfe8bc629f8cf8b12e22d99d9d02487da8c414bc598b40ccabed",
+      "size": 23399
+    },
+    "zhijun/backend/rag_strategy.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "61970496514ec942d63aea82613cfdc56ed28489e9590948dfab433ac0c94216",
+      "size": 9179
+    },
+    "zhijun/backend/rebuild_progress.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "509ccb0b3effb8c8a9d3e68de35bfdbbd649282280db2540c16439e412a1e73b",
+      "size": 4293
+    },
+    "zhijun/backend/requirements-lock.txt": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "edd430b9fb6e2c05d31acf3c9777a167a6ba1825019479bc8bbd7e33a51c60b8",
+      "size": 2683
+    },
+    "zhijun/backend/requirements.txt": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "86f238617ee99cd7886b84db8367bb6f4c96fa7806a3697cd120e6d9b6fdde68",
+      "size": 1340
+    },
+    "zhijun/backend/rpc_stdio.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ad1ab49708695791d3c9034b68458ece26c829f508488b07862f26b27e7a30b2",
+      "size": 6786
+    },
+    "zhijun/backend/runtime_paths.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "eb87134bf803ec5c9deab687d3ddf19d4aa722b6f008ee1c0180e4cccec7b07f",
+      "size": 4992
+    },
+    "zhijun/backend/scripts/charter_smoke.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "f5560763dd3c2ce6a464f6796f13135359e74e785b02dfe9b0ca37c718f399aa",
+      "size": 3409
+    },
+    "zhijun/backend/scripts/dual_routing_smoke.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "08908a81191568ce632bba3bf371efc774b4b52dd579c23b67ae4f01a81641f6",
+      "size": 5332
+    },
+    "zhijun/backend/scripts/executive_quality_smoke.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "45f5b20ca6fb848485466129d987f520aced8f92bd198e5a1fa5a90f89ce8c61",
+      "size": 8665
+    },
+    "zhijun/backend/scripts/memory_context_smoke.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "0f54c6205d82938e8b233ac809078c9e6105789367fcc1e50af895a19364a1eb",
+      "size": 3321
+    },
+    "zhijun/backend/scripts/personal_context_quality.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3d5af027097fca0d0b2478b31df8731556491b58e62d81c8caf9206f4919b3f5",
+      "size": 5095
+    },
+    "zhijun/backend/scripts/reply_assistance_smoke.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "8df3136cc393b652d357f3c5d7a0475af259e49af0bdf772ec9dcf884374b4e0",
+      "size": 3828
+    },
+    "zhijun/backend/server.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "7f61ddd95f32c9b9d78637099d0391a01008f9e3d8133f171f0f0709bde5344b",
+      "size": 166059
+    },
+    "zhijun/backend/tokenmanager_sync.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "d8ed0bd6bd7eaa44d8a006fc28ba154a7e39e57fe5e0c42e01dd07c74aa77c36",
+      "size": 36158
+    },
+    "zhijun/backend/vector_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "3355a227d543e8357bf4a84b791fe04c79607f37b8b69fb59fa770cbbc181da3",
+      "size": 104537
+    },
+    "zhijun/backend/video.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c4e28d3fb9d434602761c1a5be0a371ce88f2615d4247743f84223d285377585",
+      "size": 14256
+    },
+    "zhijun/backend/watcher.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "4cfc9a48ea01c0712ae108fbf41b3e477a8921a6d72d87b0fc723ca86e3f4605",
+      "size": 61543
+    },
+    "zhijun/backend/wiki_store.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "172a036a7bd203b6e0461e098d41fdcf20a09999087af7b046cde3741ac4cd6b",
+      "size": 62001
+    },
+    "zhijun/backend/zhijun_worker/__init__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9dffbf3bfa3a09fbbedf842c418a7ac75e12b804f0337330b06e1635ec0e4d21",
+      "size": 79
+    },
+    "zhijun/backend/zhijun_worker/__main__.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "db68e68bc657813f352451bf5ed1206705dac7b00c0f96556848f98e0f85f7bf",
+      "size": 963
+    },
+    "zhijun/backend/zhijun_worker/app.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "eef562bc9c468243fccb49a21fe2915022d5fe5fdf854588bc7f4ace3d1a99fa",
+      "size": 12698
+    },
+    "zhijun/backend/zhijun_worker/attachments.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c469700da440987adb4f78a79ddd91a30aad16324f4010d4bcc8ecc32ac45810",
+      "size": 2776
+    },
+    "zhijun/backend/zhijun_worker/auth.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "b09881531c74ed6bc920b00092511d1a4c8ca60087e10bf50d949857f72e6854",
+      "size": 5017
+    },
+    "zhijun/backend/zhijun_worker/background.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "6d69c80d6dac5b9002a985fd44556ad6f2adc9efbfbc26e621998a82a09d9d6a",
+      "size": 1831
+    },
+    "zhijun/backend/zhijun_worker/capabilities.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "052f39ca0cabfa14e9d5c42d7806281bef9dcf8483abf3448a41d5a878a9da11",
+      "size": 5357
+    },
+    "zhijun/backend/zhijun_worker/consent.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "9a12fbcd3782dc84c19c023912704252294e47ea1c2d056a91ba4bc816865fa9",
+      "size": 4082
+    },
+    "zhijun/backend/zhijun_worker/events.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "073bc9a7f0c592519dd8b21d414e875909fb39d917fd8a2659af1559947fd12a",
+      "size": 9279
+    },
+    "zhijun/backend/zhijun_worker/material_understanding.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "a775ad6b112d75c1edf0063bf332e1b6a5ea2a1f505472970a0147f63468f362",
+      "size": 5780
+    },
+    "zhijun/backend/zhijun_worker/model.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "ed95d45f63c41f996e297111ae4869ce8fbe27ddf51339aa28e8be39cfc048ca",
+      "size": 3959
+    },
+    "zhijun/backend/zhijun_worker/workspace.py": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "c107884e7e54e467fb6162de08db8e62335fec7d11bab38b7d23ce9c29802bc5",
+      "size": 4647
+    },
+    "zhijun/frontend/shared/product-operations.json": {
+      "mode": "0644",
+      "origin": "tracked",
+      "sha256": "e339894c17a39b92d7ffd7c0d3c47a69b6e47c2e65fcce08a9062c08599d2722",
+      "size": 68056
+    }
+  },
+  "formatVersion": 1,
+  "policy": {
+    "allowedNewSourcePrefixes": {
+      "de": [
+        "backend/mindos/zhijun_capabilities/",
+        "backend/mindos/zhijun_gateway/",
+        "backend/mindos/services/protected_material_extract.py"
+      ],
+      "zhijun": [
+        "backend/zhijun_worker/",
+        "backend/mindos/domain_scope.py",
+        "frontend/shared/product-operations.json"
+      ]
+    },
+    "runtimeRoots": "excluded",
+    "sourceOnly": true,
+    "symlinks": "rejected"
+  },
+  "repositories": {
+    "de": {
+      "diffScope": "Only selected tracked source paths; excluded runtime files are never read for diff hashing.",
+      "dirty": false,
+      "excludedUntrackedSourceCount": 0,
+      "head": "015c65967d4d2cd370067e16d65111bfdcd820a4",
+      "includedNewSources": [],
+      "packagedTrackedDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sourceAudit": {
+        "literalResourcesVerified": [
+          "governance/policy-manifest.json"
+        ],
+        "localImportTargetsVerified": 1566,
+        "pythonFilesParsed": 179,
+        "scope": "Static repository imports and literal paths only; third-party dependencies and dynamic runtime paths require target-host validation."
+      },
+      "workingTreeStatusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "zhijun": {
+      "diffScope": "Only selected tracked source paths; excluded runtime files are never read for diff hashing.",
+      "dirty": false,
+      "excludedUntrackedSourceCount": 0,
+      "head": "735e3411bba7cccc8079392fa44ee8cdb9b4b5f0",
+      "includedNewSources": [],
+      "packagedTrackedDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sourceAudit": {
+        "literalResourcesVerified": [
+          "frontend/shared/product-operations.json"
+        ],
+        "localImportTargetsVerified": 1302,
+        "pythonFilesParsed": 169,
+        "scope": "Static repository imports and literal paths only; third-party dependencies and dynamic runtime paths require target-host validation."
+      },
+      "workingTreeStatusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+}

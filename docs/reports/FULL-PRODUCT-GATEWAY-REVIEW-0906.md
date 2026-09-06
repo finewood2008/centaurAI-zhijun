@@ -2,7 +2,7 @@
 
 日期：2026-09-06。审核范围是 DE live worktree 的 `backend/mindos/zhijun_gateway/{manager,router,workers,store,protocol,catalog}.py`、知君 `backend/zhijun_worker/app.py` 与主进程/前端共同合同。审核由 shell 工作流独立只读完成，网关及 worker 修复由主代理和对应代码代理负责。
 
-这是发现与复核账本，不是部署通过报告。初始发现阶段，除 R-01 用原函数进行独立 asyncio 复现外，其余为源码与调用合同交叉检查；不将静态判断或合成测试写成真实用户验收。后续8项问题均已完成本地代码修复与相应回归；下文保留初始发现及修复结果。主代理已记录Gateway完整集合166项通过。正式Consumer/SDK/UI与完整v2部署仍pending；隔离候选盒端已通过hardware-candidate5五项与gateway-candidate6十项，详见后续复核。
+这是发现与复核账本，不是部署通过报告。初始发现阶段，除 R-01 用原函数进行独立 asyncio 复现外，其余为源码与调用合同交叉检查；不将静态判断或合成测试写成真实用户验收。后续8项问题均已完成本地代码修复与相应回归；下文保留初始发现及修复结果。主代理已记录Gateway完整集合166项通过。盒端Agent/DE/worker/catalog已完成正式匹配部署，Admin生产登记及正式Consumer/SDK/P2P/UI验收仍pending；隔离候选盒端已通过hardware-candidate5五项与gateway-candidate6十项，详见后续复核。
 
 关联：[完整验收清单](../development/FULL-PRODUCT-ACCEPTANCE-0906.md)、[执行计划](../development/FULL-PRODUCT-INTEGRATION-0906.md)、[v2合同](../development/contracts/zhijun-workspace-v2.json)。
 
@@ -79,7 +79,7 @@ worker_factory 最多等待 12 秒启动，旧 worker.close 最多等待 5 秒�
 
 建议：使用明确、受权限校验的配置清单或明确部署同一固定产物；启动核验 SHA 与 schemaVersion；worker和DE不能各自默默选择不同路径。生产发布还须核对真实进程 cwd 与加载的版本，防止验到旧实例。
 
-状态：已修复，本地复验通过。worker读取明确的`ZHIJUN_PRODUCT_CATALOG`并检查路径/权限/清单及实际domain路由；DE实际UDS worker CRUD测试使用显式部署catalog。生产仍须核对同一catalog SHA、进程cwd与实际加载版本，不把本地路径测试当成部署一致性证明。对应验收 `X-RESTART-03`。
+状态：已修复，本地复验通过。worker读取明确的`ZHIJUN_PRODUCT_CATALOG`并检查路径/权限/清单及实际domain路由；DE实际UDS worker CRUD测试使用显式部署catalog。正式匹配发布已核对363文件与已验candidate一致，live健康与未签名拒绝通过；完整Consumer/SDK路径、生产重启与逐功能验收仍待完成，不把本地路径测试当成全部生产验收。对应验收 `X-RESTART-03`。
 ## 补充合同核对
 
 - MIME：manager 最初直接把 `text/plain; charset=utf-8` 交给仅接受基础MIME的 blob store，会使文本原件下载失败。已向主代理反馈，后续源码已见基础MIME提取/校验。文本原件、PDF、图片、音频和子文件的真实下载/预览仍需 `F-MEDIA-01/02` 和 `F-EXP-03` 实测。
@@ -109,9 +109,9 @@ worker_factory 最多等待 12 秒启动，旧 worker.close 最多等待 5 秒�
 
 本地审核结论：8项已修复并完成回归，追加consent期限/反向取消/后台撤销/idle回收已测。Gateway完整集合166项通过；其余前端63、shell最终117项Node与vue-tsc（独立15项包含在117内）及既有4项隔离Electron E2E、worker113与4subtests、资料156、模型99与7subtests及近期针对性40项，分别属于不同验证范围和批次，**不累计为全链路通过数**。
 
-提交与部署：OS `5f5f4c9`、Admin `44a0950`已提交推送；DE连接FD热修 `132b97d`已单独部署，见[故障报告](CONNECTIVITY-FD-HOTFIX-0906.md)。知君完整增量 `58dac31`已提交推送，DE `015c659`已提交推送；完整产物部署SHA由主代理最终记录，不能使用FD热修提交代表完整Gateway部署。
+提交与部署：OS `5f5f4c9`、Admin `44a0950`已提交推送；DE连接FD热修 `132b97d`已单独部署，见[故障报告](CONNECTIVITY-FD-HOTFIX-0906.md)。知君完整增量 `58dac31`已提交推送，DE `015c659`已提交推送；后续clean heads知君 `735e341`（代码 `58dac31`）/DE `015c659`/OS `5f5f4c9`已正式匹配部署，363文件与已验candidate一致；该完整发布与此前FD热修分开记录。
 
-生产结论：**pending**。Admin新应用尚缺boss生产发布入口，完整v2尚未部署验收；隔离硬件hardware-candidate5为5/5，gateway-candidate6为10/10、60请求/21个completed操作，含知识CRUD/confirm/search/purge。均为合成主体/输入，真实Consumer/UI功能矩阵未关闭。170项catalog不是170项UI实测；原v1空资料页/一次重连证据保留历史含义。
+生产结论：**pending**。Admin新应用尚缺boss生产发布入口，盒端Agent/DE/worker/catalog已正式匹配部署，健康与未签名拒绝检查通过，完整验收尚未完成；隔离硬件hardware-candidate5为5/5，gateway-candidate6为10/10、60请求/21个completed操作，含知识CRUD/confirm/search/purge。均为合成主体/输入，真实Consumer/UI功能矩阵未关闭。170项catalog不是170项UI实测；原v1空资料页/一次重连证据保留历史含义。
 
 ## 后续硬件与配额缺陷复核
 
@@ -165,4 +165,6 @@ worker_factory 最多等待 12 秒启动，旧 worker.close 最多等待 5 秒�
 
 证据：最新资料相关范围189项通过，包含纠错上限、禁止回灌和权限/配置/隐私变化负向回归；189不是与既有156/172批次累加。最终实际盒端`hardware-candidate5`五项全部通过：voice 40字符/0资料/2个指定短语匹配，PDF46、DOCX48、OCR110字符，safe material正文82、摘要43字符、实体2、关系0。输入与主体均为合成，实际麦克风和正式Consumer/UI/SDK验收仍待完成。
 
-当前总边界：hardware-candidate5为5/5，safe material正文82、摘要43字符、实体2、关系0；gateway-candidate6为10/10，60请求/21个completed操作，含知识CRUD/confirm/search/purge。全部为实际盒端的合成主体/输入；完整v2正式Consumer/SDK/UI仍缺Admin生产发布入口及后续匹配部署验收。170项catalog、117项shell测试或任何局部通过数均不等于170项UI实测。
+当前总边界：hardware-candidate5为5/5，safe material正文82、摘要43字符、实体2、关系0；gateway-candidate6为10/10，60请求/21个completed操作，含知识CRUD/confirm/search/purge。全部为实际盒端的合成主体/输入；盒端匹配部署已完成，完整v2正式Consumer/SDK/P2P/UI仍缺Admin生产发布入口与后续端到端验收。170项catalog、117项shell测试或任何局部通过数均不等于170项UI实测。
+
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。

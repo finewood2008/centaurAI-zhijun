@@ -21,7 +21,7 @@
 
 D03 v1只签空body GET context/materials。完整产品已实现版本化操作清单、body哈希签名、精确路由与能力校验，桌面/Agent/DE协同执行；保留v1只读兼容。主进程接收operationId与经校验参数，不能接受任意URL/header。
 
-领域部署采用DE鉴权入口管理的独立UDS worker：每个owner/设备所有权代次有独立数据根及唯一worker；只装配知君领域与其任务，不启动旧server的全局watcher/Chroma/模型。通过受限内部能力接口复用DE。存储、配置、内部认证、worker上限/无活租约空闲回收、租约和撤销均已实现并完成本地回归；正式配置和运行行为仍待盒端验收，不以开启local-debug绕过权限。
+领域部署采用DE鉴权入口管理的独立UDS worker：每个owner/设备所有权代次有独立数据根及唯一worker；只装配知君领域与其任务，不启动旧server的全局watcher/Chroma/模型。通过受限内部能力接口复用DE。存储、配置、内部认证、worker上限/无活租约空闲回收、租约和撤销均已实现并完成本地回归；正式盒端已匹配部署并完成健康/未签名拒绝检查，完整运行行为仍待真实Consumer/SDK验收，不以开启local-debug绕过权限。
 
 已确认DE新版本会退役清理旧personal memory/profile形态数据，知君新存储不得位于这些目录；旧global资料不自动归属首次登录者。资料复用须对齐当前canonical service的owner、隐私和生命周期规则。
 
@@ -36,7 +36,7 @@ D03 v1只签空body GET context/materials。完整产品已实现版本化操作
 - [x] 各模块隔离回归、Web/Desktop构建、Electron隔离E2E和网关审核8项修复复验；范围见下表。
 - [x] 将OS `5f5f4c9`、Admin `44a0950`提交推送；DE连接FD热修 `132b97d`单独提交推送并部署。
 - [ ] 取得boss Admin生产发布路径并发布新 `zhijun-desktop / zhijun.workspace` 登记。
-- [ ] 固定完整v2部署产物、复核实际版本、备份后部署Agent/DE/worker/catalog；不以已部署FD热修代替。
+- [x] 固定clean heads匹配产物，363个文件与已验candidate源码一致；备份16个SQLite及旧Agent二进制/manifest/90/95配置后，正式部署Agent/DE/worker/catalog；live8618健康200、未签名v2 context401。
 - [x] 执行首轮隔离真盒解析/转写与Gateway业务复测，记录通过项与实际失败。
 - [x] 修复并复验知识dispatch导入冲突、DeletionStore连接释放与safe_derived有界纠错；hardware-candidate5为5/5、gateway-candidate6为10/10，限于隔离真盒合成主体/输入。
 - [ ] 完成正式Consumer/UI/SDK逐功能、跨主体/故障验收；隔离脚本通过不关闭完整产品验收。
@@ -71,19 +71,25 @@ Gateway复验覆盖真实隔离UDS CRUD、409领域错误、稳定start幂等、
 
 | 组件 | 当前交付 | 是否代表v2生产已通过 |
 | --- | --- | --- |
-| OS / Agent | `5f5f4c9`已提交推送 | 否，完整v2匹配部署/验收待完成 |
+| OS / Agent | `5f5f4c9`已提交推送并正式部署 | 仅证明盒端匹配部署及基础检查，正式SDK/P2P验收待完成 |
 | Admin | `44a0950`已提交推送，独立新应用登记 | 否，boss后端生产发布路径未提供 |
 | DE连接FD热修 | `132b97d`已推送并单文件部署 | 只证明现有服务热修，非完整v2 |
-| 知君worker / 桌面完整增量 | `58dac31`已提交推送 | 正式SDK/UI匹配部署与验收待完成 |
-| DE Gateway / 能力完整增量 | `015c659`已提交推送 | 隔离候选真盒通过不等于正式Consumer部署；最终部署SHA由主代理核对 |
+| 知君worker / 桌面完整增量 | clean head `735e341`（代码 `58dac31`）已打包；worker随DE正式部署 | 不代表桌面安装包或正式SDK/UI验收完成 |
+| DE Gateway / 能力完整增量 | `015c659`已提交推送并正式匹配部署；与已验candidate逐文件一致 | live健康200、未签名context401；正式Consumer/UI验收待完成 |
 
 FD故障中旧PID3108033达到1024 soft上限、约970条connectivity.db连接；最小修复确定关闭21处SQLite事务连接。新PID3144495四次30秒样本FD52/55/52/52、connectivity FD0/0/0/0、HTTP200、NRestarts0；细节和211项必要回归见[独立热修报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)。
 
 盒端已准备离线faster-whisper-small模型（model.bin为483546902字节）；仅在发布阶段下载，解析/转写运行时禁止外发和下载。当前hardware-candidate5完整5/5的依据是实际脚本输出，包含voice API与safe material；不是仅凭模型准备或单项成功推断。逐项结果见下节。
 
+本次正式盒端release为`/home/user/apps/centuarai-data-engine/releases/20260906T051053Z-zhijun-015c659`。打包输入均为clean heads：知君`735e341`（产品代码`58dac31`）、DE`015c659`、OS`5f5f4c9`；363个文件逐项与已验candidate源码一致。archive SHA256为`03d8152cc0f236c94f8d089d419c50144ac1e0dd7701367de18ca78a4f646de6`。
+
+正式替换前已备份16个SQLite及旧Agent二进制、manifest和90/95配置。新Agent binary SHA256为`1b44da2a688b5acd64121ad55c14b178968de85bef89a223858d009725e6c574`；现场manifest保留旧2个应用，仅增加zhijun-desktop，其SHA256为`41a54e50b26df4e3baac153ab2f47aa65e3f7fce0d3b8e5c86921d6c7834d552`，与源码模板hash须分开记录。
+
+部署后DE主PID3184701、Agent PID3184868均active，live8618健康200，未签名v2 context401；来源强制enforce、debug=0。该结果证明匹配部署和基础存活/拒绝边界，不证明已通过正式Consumer、SDK/P2P、UI或实际麦克风验收。逐项部署证据和后续稳定性记录见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)，原始结构化记录见[deployment-receipt.json](../reports/evidence/deployment-receipt.json)。
+
 当前正式联调前置是boss Admin后端可用发布路径（已向用户询问），用于发布新应用。仓库仅查到Admin `scripts/run.sh`启动脚本，未找到boss生产CI/SSH主机/代码目录；Gateway独立部署文档不能替代Admin发布证据。不能复用旧只读应用冒充完整权限。
 
-下一步取得Admin发布入口并登记上线，重建并固定匹配产物，再完成v2匹配部署、正式账号UI/SDK与负向验收、整理提交/部署SHA。完整功能矩阵由[验收清单](FULL-PRODUCT-ACCEPTANCE-0906.md)维护；旧真实只读事实见[REAL-ACCEPTANCE](REAL-ACCEPTANCE-0906.md)，不回写成新产品完成。
+下一步取得Admin发布入口并登记上线，在已匹配部署的盒端完成正式Consumer/SDK/P2P/UI与负向验收、实际麦克风验证，并补齐安装包和最终交付记录。完整功能矩阵由[验收清单](FULL-PRODUCT-ACCEPTANCE-0906.md)维护；旧真实只读事实见[REAL-ACCEPTANCE](REAL-ACCEPTANCE-0906.md)，不回写成新产品完成。
 
 ## 新增硬件和限流证据（非正式SDK全链路）
 

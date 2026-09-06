@@ -1,6 +1,6 @@
 # 知君 Electron / 盒端完整产品架构
 
-更新：2026-09-06。文件名保留 0905 以延续集成基线。本文描述当前源码；**v2 正式盒子部署及完整 UI 验收仍待完成**，Admin 生产发布路径尚未提供。不能把本地测试、170 项操作清单或菜单可见视为全功能验收。
+更新：2026-09-06。文件名保留 0905 以延续集成基线。本文描述当前源码；**v2 盒端Agent/DE/worker/catalog已正式匹配部署，完整Consumer/SDK/P2P/UI验收仍待完成**；Admin尚未生产发布，其发布路径未提供。不能把本地测试、170 项操作清单或菜单可见视为全功能验收。
 
 配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
 
@@ -12,7 +12,7 @@
 
 原 Web 入口继续使用本机开发后端。正式桌面使用新的 `zhijun-desktop / zhijun.workspace` 应用，经 SDK Direct 通道访问盒端 v2 Gateway，再由 Gateway 调用独立领域 worker 或 DE 能力适配器。renderer 不启动 Python，也不请求 PC 本机 HTTP。
 
-历史 v1 `mindos-person-data-pc / person-data.read` 保留原行为。家中盒子此前已验证真实登录、授权空资料页、刷新和一次断开重连；尚缺非空资料和完整跨主体矩阵，不能据此宣称 M0-R 或 v2 完成。历史部署见 [BOX-DEPLOYMENT-0906.md](BOX-DEPLOYMENT-0906.md)。2026-09-06 的连接 FD 泄漏修复已单独部署，见 [故障记录](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)；该热修不代表 v2 已上线。
+历史 v1 `mindos-person-data-pc / person-data.read` 保留原行为。家中盒子此前已验证真实登录、授权空资料页、刷新和一次断开重连；尚缺非空资料和完整跨主体矩阵，不能据此宣称 M0-R 或 v2 完成。历史部署见 [BOX-DEPLOYMENT-0906.md](BOX-DEPLOYMENT-0906.md)。2026-09-06 的连接 FD 泄漏修复已单独部署，见 [故障记录](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)；该热修是历史独立修复；后续v2盒端匹配部署已完成，仍不等于完整产品验收。
 
 ## 2. 运行单元与责任
 
@@ -76,7 +76,7 @@ Gateway 每盒最多 4 个 worker，每工作区最多 4 个运行任务、8 个
 
 canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效租约下向 `/v1/events` 发 HMAC 请求。来源事件处理保持幂等并在成功后 ACK，撤销/删除后使受影响理解、投影与授权失效。调度 tick 是固定内部事件，不是 renderer 可自由提交的业务操作。
 
-部署配置、路径权限和顺序见[集成方案第 5 节](INTEGRATION-0905.md#5-部署配置与顺序)。正式发布需固定 Admin、Agent、DE、worker、catalog、桌面和 sidecar 版本；当前 Admin 发布输入缺失，v2 真机验收待完成。
+部署配置、路径权限和顺序见[集成方案第 5 节](INTEGRATION-0905.md#5-部署配置与顺序)。正式发布需固定 Admin、Agent、DE、worker、catalog、桌面和 sidecar 版本；当前盒端匹配发布已固定为知君 `735e341`（代码 `58dac31`）、DE `015c659`、OS `5f5f4c9`；Admin发布输入缺失，正式Consumer/SDK/P2P/UI验收待完成。
 
 ## 6. 关键源码索引
 
@@ -89,3 +89,5 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 ## 7. 硬件复测的当前边界
 
 隔离真盒PDF/DOCX/OCR分别提取46/48/110字符，voice API已通过；小文档内联快照SHA、DeletionStore连接释放及有界纠错修复后，hardware-candidate5完整5/5：safe material正文82、摘要43字符、实体2、关系0。gateway-candidate6为10/10、60请求/21个completed操作，知识CRUD/confirm/search/purge通过。以上均为合成主体/输入，不代表正式Consumer/UI/SDK验收完成；生产Admin发布入口仍缺。源码修复与配额证据见[审核报告](../reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，硬件现场结果见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
+
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。

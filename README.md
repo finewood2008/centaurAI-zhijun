@@ -127,9 +127,11 @@ backend/{parser,embedder,watcher,vector_store}.py   资料摄取、解析、嵌�
 
 ## 现状与边界
 
-- 原 Web 产品的会话、本体、判断、章程、学习、事项/成果、资料/边界、搜索/图谱及偏好页面已装配进桌面；当前正在完成跨仓部署和真实逐功能验收，不能宣称已全量交付。
+- 原 Web 产品的会话、本体、判断、章程、学习、事项/成果、资料/边界、搜索/图谱及偏好页面已装配进桌面；盒端Agent/DE/worker/catalog已匹配部署，Admin生产登记和真实逐功能验收待完成，不能宣称已全量交付。
 - 录音端口已实现明确按钮授权、最长120秒、16kHz PCM16单声道WAV、盒端本地转写并填入草稿；不自动发送消息。盒端voice API已用合成WAV实测通过；真实麦克风、平台权限和正式SDK/UI仍待实测。
-- 隔离真盒已通过hardware-candidate5全部5项与gateway-candidate6全部10项（60请求、21个completed操作，含知识CRUD/confirm/search/purge）；均为合成主体/输入。首次失败、修复及189项资料相关回归见[审核记录](docs/reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，正式Consumer/SDK/UI验收仍待Admin生产发布入口与匹配部署。
+- 隔离真盒已通过hardware-candidate5全部5项与gateway-candidate6全部10项（60请求、21个completed操作，含知识CRUD/confirm/search/purge）；均为合成主体/输入。首次失败、修复及189项资料相关回归见[审核记录](docs/reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，盒端匹配部署已完成，正式Consumer/SDK/P2P/UI验收仍待Admin生产发布入口与后续端到端验证。
 - 外部模型由DE统一管理，外发必须绑定来源预览、配置和真实同意；模型质量、真实调用、取消及来源撤销仍需验收。
 - 知君新领域目录按账号/设备/所有权代次隔离，DE能力负责canonical资料和模型。旧global不自动迁移，新领域目录不进入DE个人记忆退役清理范围。
 - 原事项/成果新cursor分页、增强业务幂等和清除流程仍是独立规划增量，不能把原列表/history或旧ontology purge描述为已具备这些能力。承诺提醒、完整议题线程、BLE配网等未实现产品规划不因本次传输接入自动完成。
+
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](docs/reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。

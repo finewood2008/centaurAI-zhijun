@@ -49,8 +49,8 @@ DeletionStore 高频权限检查也发现原生 SQLite 上下文不关闭连接�
 
 ## 发布及剩余验收
 
-已提交：桌面/领域代码 `58dac31`、DE 完整能力 `015c659`、Agent `5f5f4c9`、Admin `44a0950`。DE 独立 FD 热修 `132b97d` 已部署，见 [连接泄漏报告](CONNECTIVITY-FD-HOTFIX-0906.md)。完整 v2 工件尚未切换到正式服务。
+已推送：桌面/领域代码 `58dac31`、DE 完整能力 `015c659`、Agent `5f5f4c9`、Admin `44a0950`。DE 独立 FD 热修 `132b97d` 已部署，见 [连接泄漏报告](CONNECTIVITY-FD-HOTFIX-0906.md)。完整 v2 已匹配部署到正式盒端，源版本、备份和回执见[部署报告](FULL-PRODUCT-DEPLOYMENT-0906.md)。
 
-上述盒端隔离硬件复测已通过。仍需：提交文档并重建最终一致工件、部署匹配的 Agent/DE/worker、发布 Admin 新应用登记，再使用正式账号逐项执行 [完整产品验收矩阵](../development/FULL-PRODUCT-ACCEPTANCE-0906.md)。170 项操作清单不等于 170 项 UI 实测。
+上述盒端隔离硬件复测及匹配部署已完成。仍需发布 Admin 新应用登记，再使用正式账号逐项执行 [完整产品验收矩阵](../development/FULL-PRODUCT-ACCEPTANCE-0906.md)。170 项操作清单不等于 170 项 UI 实测。
 
 生产 Admin 发布入口尚缺：仓内只找到 `admin-backend/scripts/run.sh` 的通用启动方式，未找到 `boss.nexusaos.qitus.cn` 对应的发布任务、SSH 主机及实际部署目录。Gateway 部署脚本属于独立服务，不能据此推断 Admin 主机。

@@ -65,6 +65,8 @@ Agent新应用：1MiB请求/响应、8并发、120rpm、1GiB会话预算；Core�
 
 正式验收需覆盖原15页真实操作与所有170项清单映射，尤其聊天长流/断流/取消、文件导入版本/保护/释放、模型授权拒绝与来源失效、媒体保存、语音权限、跨账号/client/device/session、重启和预算失败。安装包还需平台产物、签名/公证/权限声明验证；BLE独立可选。局部测试数量不可相加成完整产品“通过数”。
 
-当前部署阻塞与逐功能状态以[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)和[真实验收记录](REAL-ACCEPTANCE-0906.md)为准。连接FD热修已单独恢复现有服务，见[故障报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)，不得据此提前标记v2上线。
+当前Admin发布前置与逐功能状态以[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)和[真实验收记录](REAL-ACCEPTANCE-0906.md)为准。连接FD热修已单独恢复现有服务，见[故障报告](../reports/CONNECTIVITY-FD-HOTFIX-0906.md)，此为历史独立热修。后续Agent/DE/worker/catalog已正式匹配部署，仍不代表Admin登记、桌面安装包或正式Consumer/SDK/P2P/UI验收通过。
 
 最新本地验证：shell117项Node、vue-tsc通过；独立15项配额用例包含在117内。200MiB/400块经真实JS模块和内存严格Agent配额，在243秒虚拟时间完成，滚动60秒最多101请求；尚未做真实SDK/P2P大文件验证。隔离盒端hardware-candidate5为5/5（safe material正文82、摘要43字符、实体2、关系0），gateway-candidate6为10/10（60请求/21个completed操作，含知识CRUD/confirm/search/purge）。均为合成主体/输入，非正式Consumer/UI；不能按170项catalog或隔离硬件结果关闭完整UI验收。证据见[硬件报告](../reports/FULL-PRODUCT-HARDWARE-0906.md)。
+
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
