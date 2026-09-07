@@ -656,6 +656,9 @@ def build_provider(snapshot=None) -> ChatProvider:
     - ``ZHIJUN_PROVIDER=openai`` 或设置页「外部问答」已开启且 provider=openai：OpenAI 兼容通道。
     - 其余：本地 Ollama（沿用材料通道快照的地址与模型）。
     """
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.model import CapabilityProvider
+        return CapabilityProvider()
     override = os.environ.get("ZHIJUN_PROVIDER", "").strip().lower()
     if override == "fake":
         if not _fake_allowed():

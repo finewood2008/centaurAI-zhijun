@@ -38,7 +38,7 @@ const provenance = computed<ProvenanceEvent>(() => ({
       <article class="lookup-fixture__answer">
         <h2>知君</h2>
         <p v-if="awaiting" data-testid="fixture-answer">这轮回复尚未开始，等待你核对授权。下面仅展示来源区域的待处理状态。</p>
-        <p v-else data-testid="fixture-answer">可以先选一个最重要的使用场景，做出能完整走通的小版本，再邀请少量用户试用。这与你之前提到的“小范围试用后再调整”一致。[p1]</p>
+        <p v-else data-testid="fixture-answer">可以先选一个最重要的使用场景，做出能完整走通的小版本，再邀请少量用户试用。这与你之前提到的“小范围试用后再调整”一致。</p>
       </article>
       <ProvenanceStrip :key="String(awaiting)" :provenance="provenance" />
     </section>

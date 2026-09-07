@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { saveProductText } from '@/services/productFiles'
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -20,23 +21,12 @@ const exporting = ref(false)
 const exportSections = ref<Section[]>([])
 const exportOpen = ref(false)
 
-function downloadJson(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 
 async function doExport(sections?: Section[]) {
   exporting.value = true
   try {
     const data = await exportOntology({ sections })
-    downloadJson(data, exportFileName())
+    await saveProductText(exportFileName(), JSON.stringify(data, null, 2), 'application/json')
     toast({ type: 'success', message: `已导出 ${data.claims.length} 条已确认理解、${data.entities.length} 个实体` })
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '导出失败' })
@@ -82,12 +72,12 @@ async function doPurge() {
 
 const primaryCards = [
   { to: '/materials', icon: FolderOpen, title: '原材料', desc: '导入文档、图片、音频；查看处理状态与原件出处' },
+  { to: '/search', icon: Search, title: '找回资料', desc: '搜索已经带入的资料，找回原文与细节' },
   { to: '/settings', icon: Settings, title: '偏好（模型与隐私）', desc: '用哪个模型、什么能出设备、提醒多不多' },
 ]
 const moreCards = [
   { to: '/knowledge', icon: FileText, title: '知识档案', desc: '由资料整理出的知识卡片' },
   { to: '/recycle-bin', icon: Trash2, title: '回收站', desc: '恢复或永久清除已删除的资料' },
-  { to: '/search', icon: Search, title: '搜索', desc: '在本地资料里找回细节' },
 ]
 
 // ---- 可以带走的认识（Context Pack 状态）
@@ -127,7 +117,7 @@ async function toggleProjection() {
 <template>
   <div class="page zj-hub">
     <div class="page-head">
-      <h1>资料与边界</h1>
+      <h1>让经历与资料用得上</h1>
       <p>资料从这里进来；什么能出设备，也在这里说清楚。</p>
     </div>
 
@@ -150,7 +140,7 @@ async function toggleProjection() {
     </section>
 
     <details class="zj-hub__adv">
-      <summary>高级 · 知识档案、回收站、搜索、导出、删除全部记忆</summary>
+      <summary>高级 · 知识档案、回收站、导出与清理</summary>
 
       <div class="zj-hub__grid zj-hub__grid--sub">
         <RouterLink v-for="c in moreCards" :key="c.to" :to="c.to" class="zj-hub__card">
@@ -229,13 +219,13 @@ async function toggleProjection() {
 <style scoped>
 .zj-hub__grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
   max-width: 760px;
   margin-bottom: 20px;
 }
 .zj-hub__grid--sub {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 12px 0 20px;
 }
 .zj-hub__adv {
@@ -281,7 +271,7 @@ async function toggleProjection() {
   color: var(--ws-text-primary-color, #1d211f);
 }
 .zj-hub__card-desc {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   color: var(--ws-text-secondary-color, #686b66);
 }

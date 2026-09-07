@@ -1,6 +1,8 @@
 # 知君工程迁移
 
-## 来源与范围
+当前产品源已从首次迁移的 `67161ed` 更新到 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`，工作分支为 `dev/first-integrate-check-0905`。以下原迁移范围与测试保留为历史记录；本次 2 个提交、76 个文件增量、715 个源文件核验、审核修复及远程同步见 [2026-09-05 上游同步记录](UPSTREAM-SYNC-0905.md)。
+
+## 首次迁移来源与范围
 
 - 来源：`https://github.com/finewood2008/centaurAI-zhijun`
 - 源分支：`main`
@@ -24,7 +26,7 @@
 
 按根 README 安装依赖并构建前端，然后执行 `./start-backend.sh`，访问 `http://127.0.0.1:8618/mindos/`。开发前端可另执行 `./start-web.sh`。真实对话需要配置可用模型；`ZHIJUN_PROVIDER=fake ./start-backend.sh` 可在开发环境演示与联调。
 
-## 验证记录
+## 首次迁移验证记录
 
 - 已通过：`npm ci`、`npm run typecheck`、`npm run build`。
 - 已通过：`npm run test:p14-frontend` 及 `node --experimental-strip-types --test tests/*.test.mjs`（全部 32 个测试文件）。
@@ -35,3 +37,9 @@
 - 已核对：684 个源文件无缺失；仅迁移文档、README、忽略规则、脚本权限及一处 Markdown 行尾空格有调整。保留源仓库已跟踪的 7 张界面基线图。
 - 本机验证环境：Node 23.11.0、Python 3.11.12；后端依赖根据 `requirements.txt` 安装，未改动源依赖锁文件。
 - 验证边界：真实模型效果、OCR/语音模型、移动原生包及 Docker 镜像不属于此次迁移运行验证。
+
+## 后续同步规则
+
+按已记录源提交获取增量，不覆盖本工程 Git 历史、Codeup 配置、迁移调整及集成文档。本次通过 GitHub 官方 API 与固定 SHA 归档取得源码，以完整 Git tree 的 blob 哈希核对 715 个文件；源工程本地 checkout 未改动。新增 `/backups/` 忽略规则与目标已有 `/secrets/`、构建产物规则合并。
+
+当前源文件内容差异仅包括既有迁移调整、本次文档更新，以及保护未保存文稿的本地修复与回归测试；源脚本原模式和此前已修正的启动脚本权限均保留。当前测试隔离入口、独立密钥路径和开发启动范围见 [local-runtime](local-runtime.md)，不要将开发 supervisor 作为测试沙箱。

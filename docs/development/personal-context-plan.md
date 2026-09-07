@@ -1,5 +1,7 @@
 # 个人上下文：章程、本体与经历共同参与对话
 
+> 2026-09-05 已按上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476` 复核；本轮变化见文末同步补充，原测试与部署内容保留为历史记录。
+
 2026-09-04 实施记录。
 
 ## 已落地
@@ -36,3 +38,17 @@
 本机启动核对：8618 后端健康、5173 页面正常，当前对话已刷新并保留全部原消息。当前主模型为 Qwen，但用户的默认授权及默认跳过方案仍绑定此前 DeepSeek 服务，因此显示“检查设置”。这不是本次自动迁移的范围；用户需要核对新服务后才可让原来的默认处理方式适用于它，未代用户开启。
 
 仍应持续用固定案例评价：条件遗漏、错误引用、重复追问与回答有用性，而不是提供条数增加。引用标识校验只保证来源对应，不保证每项推论都正确。
+
+
+## 2026-09-05 同步补充：正在推进的事项与成果
+
+核对源码：上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`。前文模型配置、本机状态与测试数字为原实施记录，不作为本次同步的环境或测试结论。
+
+- `ContextPlan` 增加 `matterBinding:{matterId,revision}`、`matterSuspended:{matterId,revision}|null`、`matterHistoryAfterSeq:number`；它们参与计划 revision。绑定 revision 与事项 revision 分开，补查指纹同时纳入绑定 revision 与事项来源版本。
+- 默认只有会话明确绑定的 active 事项参与上下文；paused/completed 事项在明确“回顾/复盘这件事”等请求下可作为回顾来源。创建、关联或查看事项不自动发送模型请求。事项是工作记录，不是人格；nextStep 是用户记录的下一步，outcome 才是用户记录的实际结果。
+- 明确换话题会暂停本会话当前绑定的事项，并保留历史截断序号；普通短回答不会自动恢复。明确回到/继续/回顾事项或重新绑定可以重新建立上下文。控制记录按会话与绑定修订生效，失败/中止回复中已记录的控制也参与后续判断，避免生成失败后自动恢复旧话题。
+- 事项自身授权通过后才扩展搜索条件，并从该事项下召回至多 3 条相关成果候选；候选仍要通过来源、版本、历史边界及上下文预算筛选，不保证全部送入模型。成果作为独立 `artifact` 来源，不直接当作用户自述或已确认本体。
+- 保存成果先冻结原 assistant 消息版本，随后可去掉旧引用标识、编辑标题或正文；原始来源链始终保留。历史正文清理后，内部 `_sourceRef` 仍指向变换前快照。发送前检查实际事项绑定；来源无法恢复、版本变化或依赖格式不完整仍阻止不安全复用。
+- 输出口吻也随工作场景调整：普通闲聊仍简短；展开分析、方案比较和完整文稿按任务组织，不再强制五段或普通闲聊字数上限，可用 Markdown 标题。新建议明确属于知君，未知细节保留待确认；用户只想倾诉或暂不行动时不强迫生成判断/待办。这是提示约束，不是模型输出质量保证。
+
+API 与存储详见 [事项与成果合同](zhijun-api-contract.md#19-事项与成果合同--版本-work-2026-09-05)。源码入口：[context_plan.py](../../backend/mindos/zhijun/context_plan.py)、[context_lookup.py](../../backend/mindos/zhijun/context_lookup.py)、[context_sources.py](../../backend/mindos/zhijun/context_sources.py)、[memory_context.py](../../backend/mindos/zhijun/memory_context.py)。相关测试入口为 `test_matters`、`test_matters_independent`、`test_context_plan`、`test_context_lookup`、`test_routing_source_snapshots`；本次文档核对不等于测试或真实模型验证。

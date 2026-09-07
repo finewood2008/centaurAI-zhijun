@@ -1,13 +1,17 @@
 <script setup lang="ts">
+import { createProductSessionStorage, isDesktopProduct } from '@/shared/productScope'
+const productStorage = createProductSessionStorage()
 // 输入区：Enter 发送、Shift+Enter 换行（提示只出现一次）；「深入」「我在考虑…」是两枚开关 chip；
 // 麦克风在输入框里；字数只在快到上限时才出现。语音只填入输入框，永远不自动发送。
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { appendReply, undoReply, type ReplyAssistanceInput } from '@/shared/replyAssistance'
+import { appendReply, mergeReplyDrafts, undoReply, type ReplyAssistanceInput, type ReplyInputDraft } from '@/shared/replyAssistance'
+import { replyNeedsRecovery } from '@/composables/useReplyRecovery'
 import { Mic, MicOff, Send, Square, Plus } from 'lucide-vue-next'
 import { DOC_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS } from '@/features/import/validation'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import { useToast } from '@/composables/useToast'
 import { intentHint } from '@/shared/decisionDraft'
+import { createVoiceRecording, type VoiceState } from '@/services/voiceRecording'
 import { createRecognizer, mergeTranscript, speechSupported, splitResults } from '@/shared/speech'
 
 const props = defineProps<{
@@ -32,34 +36,53 @@ const emit = defineEmits<{
 
 const text = ref('')
 const expression = ref<ReplyAssistanceInput>()
-const undo = ref<{ inserted: string; offset: number; origin?: ReplyAssistanceInput }>()
-const inputDrafts = new Map<string, { text: string; origin?: ReplyAssistanceInput }>()
+type InputUndo = NonNullable<ReplyInputDraft['undo']>
+type InputDraft = ReplyInputDraft
+const undo = ref<InputUndo>()
+let lastSubmission: { conversationId?: string | null; text: string; origin?: ReplyAssistanceInput; undo?: typeof undo.value } | undefined
+const recovery = computed(() => replyNeedsRecovery(props.conversationId, expression.value))
+const inputDrafts = new Map<string, InputDraft>()
 const LANDING_DRAFT = '__new_conversation__'
 let draftLoaded = false
 const draftKey = (id: string) => `zhijun.reply-input.${id}`
+const failedKey = (id: string) => `zhijun.reply-failed.${id}`
+const failedDrafts = ref<InputDraft[]>([])
+const failedDraftCache = new Map<string, InputDraft[]>()
+function readFailed(id: string): InputDraft[] {
+  if (failedDraftCache.has(id)) return failedDraftCache.get(id)!
+  try { const saved = JSON.parse(productStorage.getItem(failedKey(id)) || '[]'); return Array.isArray(saved) ? saved.filter(d => d && typeof d.text === 'string') : [] }
+  catch { return [] }
+}
+function saveFailed(id: string, values: InputDraft[]) {
+  failedDraftCache.set(id, values)
+  if (id === (props.conversationId || LANDING_DRAFT)) failedDrafts.value = values
+  try { productStorage.setItem(failedKey(id), JSON.stringify(values)) } catch { /* The current mounted draft remains readable. */ }
+}
 function storedDraft(id: string) {
   if (inputDrafts.has(id)) return inputDrafts.get(id)
   try {
-    const saved = JSON.parse(sessionStorage.getItem(draftKey(id)) || 'null')
-    if (saved && typeof saved.text === 'string' && saved.text.length <= 4000) return saved as { text: string; origin?: ReplyAssistanceInput }
+    const saved = JSON.parse(productStorage.getItem(draftKey(id)) || 'null')
+    if (saved && typeof saved.text === 'string' && saved.text.length <= 4000) return saved as InputDraft
   } catch { /* Storage may be unavailable; typing still works. */ }
 }
 watch(() => props.conversationId, (next, previous) => {
-  if (draftLoaded) inputDrafts.set(previous || LANDING_DRAFT, { text: text.value, origin: expression.value })
+  if (draftLoaded) inputDrafts.set(previous || LANDING_DRAFT, { text: text.value, origin: expression.value, undo: undo.value })
   const saved = storedDraft(next || LANDING_DRAFT)
-  text.value = saved?.text || ''; expression.value = saved?.origin; undo.value = undefined
+  text.value = saved?.text || ''; expression.value = saved?.origin; undo.value = saved?.undo
+  failedDrafts.value = readFailed(next || LANDING_DRAFT)
   draftLoaded = true
 }, { immediate: true })
-watch([text, expression], () => {
+watch([text, expression, undo], () => {
   const id = props.conversationId || LANDING_DRAFT
   try {
-    if (text.value) sessionStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value }))
-    else sessionStorage.removeItem(draftKey(id))
+    if (text.value) productStorage.setItem(draftKey(id), JSON.stringify({ text: text.value, origin: expression.value, undo: undo.value }))
+    else productStorage.removeItem(draftKey(id))
   } catch { /* Do not block the composer if local storage is full. */ }
 }, { deep: true })
 watch(text, value => { if (!value.trim()) { expression.value = undefined; undo.value = undefined } })
 function insertReply(extra: string, origin: ReplyAssistanceInput) {
   try {
+    if (recovery.value) throw new Error('请先撤销旧辅助句，再选择新的回答。已改写的文字会保留，不能自动移除其来源。')
     const result = appendReply(text.value, extra, expression.value, origin)
     undo.value = { inserted: result.inserted, offset: result.offset, origin: expression.value }
     text.value = result.text; expression.value = result.origin
@@ -72,8 +95,33 @@ function undoInsertion() {
   if (result === null) { toast({ type: 'info', message: '你已修改填入的文字，为保留修改，请手动调整或删除。' }); return }
   text.value = result; expression.value = undo.value.origin; undo.value = undefined
 }
+function applyDraft(id: string, draft: InputDraft) {
+  inputDrafts.set(id, draft)
+  try { productStorage.setItem(draftKey(id), JSON.stringify(draft)) } catch { /* Preserve the in-memory copy if storage is unavailable. */ }
+  if (id === (props.conversationId || LANDING_DRAFT)) { text.value = draft.text; expression.value = draft.origin; undo.value = draft.undo }
+}
+function restoreSubmission(value: string, origin: ReplyAssistanceInput | undefined, conversationId: string | null) {
+  const id = conversationId || LANDING_DRAFT
+  const previous = lastSubmission && (lastSubmission.conversationId || LANDING_DRAFT) === id && lastSubmission.text.trim() === value && JSON.stringify(lastSubmission.origin) === JSON.stringify(origin) ? lastSubmission : undefined
+  const failed: InputDraft = { text: previous?.text ?? value, origin, undo: previous?.undo }
+  const here = id === (props.conversationId || LANDING_DRAFT)
+  const current = here ? { text: text.value, origin: expression.value, undo: undo.value } : storedDraft(id) || { text: '' }
+  const merged = mergeReplyDrafts(current, failed)
+  if (merged) { applyDraft(id, merged); return }
+  const pending = here ? failedDrafts.value : readFailed(id)
+  if (!pending.some(d => d.text === failed.text && JSON.stringify(d.origin) === JSON.stringify(failed.origin))) saveFailed(id, [...pending, failed])
+}
+function switchFailedDraft() {
+  const [next, ...rest] = failedDrafts.value
+  if (!next) return
+  if (text.value) rest.push({ text: text.value, origin: expression.value, undo: undo.value })
+  const id = props.conversationId || LANDING_DRAFT
+  saveFailed(id, rest); applyDraft(id, next)
+  textareaRef.value?.focus({ preventScroll: true })
+}
 const filesInput = ref<HTMLInputElement | null>(null)
 const addOpen = ref(false)
+const audioInput = ref<HTMLInputElement | null>(null)
 const acceptFiles = [...DOC_EXTENSIONS, ...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS].join(',')
 function onFiles(e: Event) {
   const input = e.target as HTMLInputElement
@@ -114,8 +162,9 @@ const effectivePlaceholder = computed(() => {
 
 function send() {
   const content = text.value.trim()
-  if ((!content && !props.hasAttachments) || props.streaming || props.uploading || blocked.value) return
+  if ((!content && !props.hasAttachments) || props.streaming || props.uploading || blocked.value || voiceState.value !== 'idle') return
   if (content.length > MAX) return
+  lastSubmission = { conversationId: props.conversationId, text: text.value, origin: expression.value, undo: undo.value }
   emit('send', content, deep.value ? 'deep' : 'brief', deliberate.value ? 'deliberate' : 'chat', expression.value)
   text.value = ''
   expression.value = undefined; undo.value = undefined
@@ -131,13 +180,25 @@ function onKeydown(e: KeyboardEvent) {
 
 // ---- 语音输入（浏览器 Web Speech；只填入输入框，永远不自动发送）
 const toast = useToast()
-const voiceAvailable = speechSupported()
+const desktopAudioUpload = isDesktopProduct()
+const voiceAvailable = desktopAudioUpload || speechSupported()
+const voiceState = ref<VoiceState>('idle')
 const listening = ref(false)
 let recognizer: any = null
 let baseText = ''
 let finalText = ''
+const boxVoice = desktopAudioUpload ? createVoiceRecording({
+  onState(value) { voiceState.value = value; listening.value = value === 'recording' },
+  onText(value) {
+    text.value = text.value.trim() ? text.value + '\n' + value : value
+    textareaRef.value?.focus({ preventScroll: true })
+  },
+  onError(message) { toast({ type: 'error', message }) },
+}) : null
+watch(() => props.conversationId, () => boxVoice?.cancel())
 
 function stopVoice() {
+  boxVoice?.cancel()
   if (recognizer) {
     try {
       recognizer.stop()
@@ -181,23 +242,36 @@ function startVoice() {
 }
 
 function toggleVoice() {
+  if (boxVoice) {
+    if (voiceState.value === 'recording') { void boxVoice.finish(); return }
+    if (voiceState.value !== 'idle') return
+    if (!props.streaming && !blocked.value) void boxVoice.start()
+    return
+  }
   if (props.streaming || blocked.value) return
   if (listening.value) stopVoice()
   else startVoice()
 }
 
-onBeforeUnmount(stopVoice)
+onBeforeUnmount(() => { stopVoice(); boxVoice?.dispose() })
 
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
   insertReply,
+  restoreSubmission,
+  appendText: (value: string) => {
+    text.value = text.value.trim() ? text.value + '\n\n' + value : value
+    textareaRef.value?.focus()
+  },
   focus: () => textareaRef.value?.focus(),
   setDeliberate: (on: boolean) => {
     deliberate.value = on
   },
   setText: (value: string, origin?: ReplyAssistanceInput) => {
-    text.value = value
+    const failed = lastSubmission && lastSubmission.conversationId === props.conversationId && lastSubmission.text.trim() === value && JSON.stringify(lastSubmission.origin) === JSON.stringify(origin) ? lastSubmission : undefined
+    text.value = failed?.text ?? value
     expression.value = origin
+    undo.value = failed?.undo
     textareaRef.value?.focus()
   },
 })
@@ -210,6 +284,8 @@ defineExpose({
       <span>{{ expression.selections.length ? 'AI 辅助起草，可修改后发送' : '对话操作，发送后生效' }}</span>
       <button v-if="undo" type="button" @click="undoInsertion">撤销填入</button>
     </div>
+    <p v-if="recovery" class="zj-composer__recovery" role="status">{{ recovery.reason }}<span v-if="!undo"> 已修改的辅助文字不会自动删除；请保留草稿，再整理要表达的内容。</span></p>
+    <div v-if="failedDrafts.length" class="zj-composer__assisted" role="status"><span>另有 {{ failedDrafts.length }} 份未发送草稿已保留，切换不会丢失当前输入。</span><button type="button" @click="switchFailedDraft">切换到未发送草稿</button></div>
     <p v-if="notice" class="zj-composer__notice" role="status">
       <span>{{ notice }}</span>
       <RouterLink v-if="noticeTo" :to="noticeTo" class="zj-composer__notice-link">去偏好</RouterLink>
@@ -237,22 +313,30 @@ defineExpose({
         class="zj-composer__voice"
         :class="{ 'is-on': listening }"
         :aria-pressed="listening"
-        :aria-label="listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        :aria-label="desktopAudioUpload ? listening ? '停止录音并由盒子转写' : '录音并由盒子转写' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
         :disabled="streaming || blocked"
-        :title="listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        :title="desktopAudioUpload ? '盒子转写：最长 120 秒，只填入草稿，不自动发送' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
         @click="toggleVoice"
       >
         <component :is="listening ? MicOff : Mic" :size="16" aria-hidden="true" />
       </button>
     </div>
+    <p v-if="desktopAudioUpload && voiceState !== 'idle'" class="zj-composer__voice-status" role="status">
+      {{ voiceState === 'requesting' ? '正在请求麦克风权限…' : voiceState === 'recording' ? '正在录音，最长 120 秒。停止后由盒子转写，仅填入草稿。' : '正在由盒子转写…' }}
+      <button v-if="voiceState === 'recording'" type="button" @click="boxVoice?.finish()">停止并转写</button>
+      <button type="button" @click="boxVoice?.cancel()">取消</button>
+    </p>
     <div class="zj-composer__bar">
       <div class="zj-composer__add" @keydown.esc="addOpen = false">
         <button type="button" class="zj-composer__chip" aria-label="添加文件" :aria-expanded="addOpen" :disabled="disabled || uploading" @click="addOpen = !addOpen"><Plus :size="17" /></button>
         <div v-if="addOpen" class="zj-composer__add-menu">
           <button type="button" @click="filesInput?.click()">上传文件</button>
+          <button v-if="desktopAudioUpload" type="button" @click="audioInput?.click()">上传音频到盒子处理</button>
+          <span v-if="desktopAudioUpload">可点麦克风录音交给盒子转写，也可上传已有录音。</span>
           <button type="button" @click="emit('pick-materials'); addOpen = false">选择已有资料</button>
           <span>也可以拖入文件或粘贴截图</span>
         </div>
+        <input v-if="desktopAudioUpload" ref="audioInput" type="file" multiple hidden :accept="AUDIO_EXTENSIONS.join(',')" aria-label="上传音频到盒子处理" @change="onFiles" />
         <input ref="filesInput" type="file" multiple hidden :accept="acceptFiles" aria-label="上传聊天文件" @change="onFiles" />
       </div>
       <button
@@ -265,7 +349,7 @@ defineExpose({
         title="把这件事整理成一条判断：选项、倾向、把握、预期"
         @click="deliberate = !deliberate"
       >
-        我在考虑…
+        整理成判断
       </button>
       <button
         type="button"
@@ -273,17 +357,17 @@ defineExpose({
         :class="{ 'is-on': deep }"
         :aria-pressed="deep"
         :disabled="streaming || blocked"
-        title="让知君展开说：观察、依据、其他解释、想确认什么、可以试什么"
+        title="结合依据展开分析，按当前问题组织内容；不要求每次回答一串问题"
         @click="deep = !deep"
       >
-        深入
+        展开分析
       </button>
       <span v-if="!hintSeen" class="zj-composer__tip">Enter 发送 · Shift+Enter 换行</span>
       <span v-if="text.length >= COUNT_FROM" class="zj-composer__count" aria-live="polite">{{ text.length }}/{{ MAX }}</span>
       <BaseButton v-if="streaming" variant="secondary" size="sm" class="zj-composer__send" @click="emit('stop')">
         <Square :size="14" aria-hidden="true" />停止
       </BaseButton>
-      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || uploading || (!text.trim() && !hasAttachments)" @click="send">
+      <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || uploading || voiceState !== 'idle' || (!text.trim() && !hasAttachments)" @click="send">
         <Send :size="14" aria-hidden="true" />发送
       </BaseButton>
     </div>
@@ -293,6 +377,7 @@ defineExpose({
 <style scoped>
 .zj-composer__assisted { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:11px; color:var(--ws-text-secondary-color,#686b66); }
 .zj-composer__assisted button { border:0; background:transparent; color:var(--ws-primary-color,#a6452e); font:inherit; cursor:pointer; text-decoration:underline; }
+.zj-composer__recovery { margin:6px 0; font-size:12px; line-height:1.6; color:var(--ws-text-secondary-color,#686b66); overflow-wrap:anywhere; }
 .zj-composer__add { position: relative; }
 .zj-composer__add-menu { position: absolute; bottom: 38px; left: 0; width: 210px; z-index: 20; padding: 8px; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 9px; background: var(--ws-card-bg, #fff); box-shadow: 0 5px 22px rgb(0 0 0 / 10%); }
 .zj-composer__add-menu button { display: block; width: 100%; padding: 10px; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }
@@ -358,6 +443,8 @@ defineExpose({
   line-height: 1.6;
   resize: vertical;
 }
+.zj-composer__voice-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--ws-text-secondary-color); margin:8px 0; }
+.zj-composer__voice-status button { border:1px solid var(--ws-border-color); border-radius:6px; padding:4px 8px; background:transparent; color:inherit; cursor:pointer; }
 .zj-composer__field.has-voice {
   padding-right: 40px;
 }

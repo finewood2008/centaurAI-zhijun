@@ -223,12 +223,12 @@ def apply_action(
 
 
 def read_progress(request: Request):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return get_progress(scope=_device_scope_of(request))
 
 
 def update_progress(command: OnboardingCommand, request: Request):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return apply_action(command, scope=_device_scope_of(request))
 
 

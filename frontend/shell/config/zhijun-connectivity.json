@@ -1,0 +1,8 @@
+{
+  "applicationId": "zhijun-desktop",
+  "purpose": "zhijun.workspace",
+  "requestedScopes": ["remote.p2p"],
+  "gatewayHost": "gateway.remote.qeeshu.com",
+  "iceHost": "gateway.remote.qeeshu.com",
+  "profile": "SOVEREIGN_DIRECT_ONLY"
+}

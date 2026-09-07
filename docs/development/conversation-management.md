@@ -1,5 +1,7 @@
 # 对话整理：重命名、归档、搜索与置顶
 
+> 2026-09-05 已按上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476` 复核；本轮变化见文末同步补充，原测试与部署内容保留为历史记录。
+
 ## 用户行为与边界
 
 - 列表每项及当前标题的 `⋯` 都提供管理入口。改名去除首尾空白，接受 1～80 个 Unicode 字符；Enter 保存、Esc 取消，冲突时保留用户输入供核对。手动标题不会被后续消息覆盖。
@@ -56,3 +58,16 @@
 浏览器验证使用隔离的 8772 合成数据服务；不会向用户真实会话插入测试消息或调用外部模型。
 
 本次后端组合回归 404 项通过，前端 26 个测试文件通过，并完成桌面 1440×1000 与窄屏 390×844 的隔离浏览器验证。真实数据库迁移后通过 quick_check；28 条既有会话的名称与状态和备份一致，置顶时间为空、管理修订为 0。
+
+
+## 2026-09-05 同步补充：事项绑定与发送恢复
+
+核对源码：上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`。以上归档、置顶、搜索存储语义及测试/备份数值保留为原实施记录；本次同步未重新执行那些验证，也未操作这些历史备份。
+
+- 本轮没有修改 conversation-management 后端的列表/管理路由。列表中的搜索命中片段现在经 `stripLabels` 清理显示标记；搜索仍查询原正文，未重写数据库。显示清理不产生新的事实确认或授权。
+- 新增独立事项和成果工作区，详情见 [接口契约第 19 节](zhijun-api-contract.md#19-事项与成果合同--版本-work-2026-09-05)。一段对话可用独立 `bindingRevision` 关联/切换/解除一个当前事项，一个事项可关联多段对话；事项不等于对话，也不以对话 metadataRevision 管理。归档对话不等于暂停事项，完成事项也不等于删除对话。
+- 用户可以先创建事项、以后再明确点击继续讨论；`continueMatter` 优先使用仍存在的绑定会话，否则创建会话后绑定。仅打开事项不发送模型请求。准备沟通等起手文字追加到现有输入，仍由用户发送。
+- 发送前的路由查询、预览及授权等待支持取消。失败或取消时按提交所属会话恢复输入；用户后来已写的内容优先保留，能安全合并才合并，否则另存未发送草稿供切换。恢复保留辅助来源和可撤销片段，跨会话的迟到回包不应写入当前正文。
+- 草稿键目前仍按会话区分：`zhijun.reply-input.<id>` 与新增 `zhijun.reply-failed.<id>`，尚未具备账号/设备维度。此更新改善对话恢复，不代表桌面多账号/设备隔离已经完成；集成时需按 [集成方案](INTEGRATION-0905.md) 收敛状态与清理规则。
+
+核对入口：[ConversationList.vue](../../frontend/mindos-web/src/components/conversation/ConversationList.vue)、[Composer.vue](../../frontend/mindos-web/src/components/conversation/Composer.vue)、[ConversationPage.vue](../../frontend/mindos-web/src/pages/ConversationPage.vue)、[matters.ts](../../frontend/mindos-web/src/services/matters.ts)。验证入口新增 `chat-send-recovery.e2e.mjs`、`chat-stream.test.mjs`、`matters.test.mjs`；这里只列入口，不声明本轮运行结果。

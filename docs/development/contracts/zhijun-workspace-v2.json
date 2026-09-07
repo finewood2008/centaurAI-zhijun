@@ -1,0 +1,257 @@
+{
+  "version": 2,
+  "applicationId": "zhijun-desktop",
+  "purpose": "zhijun.workspace",
+  "requestedScopes": [
+    "remote.p2p"
+  ],
+  "profile": "SOVEREIGN_DIRECT_ONLY",
+  "header": "X-Nexus-Mindos-Bridge",
+  "signaturePrefix": "v2",
+  "signatureDomain": "NEXUSAOS-MINDOS-BRIDGE-V2\n",
+  "signatureFields": [
+    "v",
+    "accountId",
+    "clientId",
+    "deviceId",
+    "sessionId",
+    "applicationId",
+    "ownershipEpoch",
+    "authVersion",
+    "requestedScopes",
+    "iat",
+    "exp",
+    "nonce",
+    "method",
+    "relativePath",
+    "bodySha256",
+    "contentType"
+  ],
+  "limits": {
+    "proofTtlSeconds": 5,
+    "proofBytes": 4096,
+    "requestBytes": 1048576,
+    "contextBytes": 8192,
+    "responseBytes": 1048576,
+    "chunkBytes": 524288,
+    "pollWaitMs": 8000,
+    "eventsPerPage": 32,
+    "eventPageBytes": 262144,
+    "jobBytes": 16777216,
+    "jobSeconds": 600,
+    "concurrentJobsPerWorkspace": 4,
+    "queuedJobsPerWorkspace": 8,
+    "workerLeaseSeconds": 30,
+    "workersPerBox": 4,
+    "fileBytes": 209715200,
+    "heartbeatSeconds": 10,
+    "sessionTransferBytes": 1073741824,
+    "workspaceStorageBytes": 1073741824,
+    "backgroundTasksPerWorkspace": 32,
+    "previewMemoryBytes": 8388608
+  },
+  "contextFields": [
+    "version",
+    "accountId",
+    "clientId",
+    "deviceId",
+    "applicationId",
+    "workspaceId",
+    "capabilities",
+    "expiresAt"
+  ],
+  "capabilities": [
+    "product.rpc",
+    "product.events",
+    "product.uploads",
+    "product.blobs"
+  ],
+  "idPattern": "[a-f0-9]{32}",
+  "requestIdPattern": "[A-Za-z0-9_-]{8,100}",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/mindos/zhijun/context",
+      "query": [],
+      "body": "empty"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mindos/zhijun/operations",
+      "query": [],
+      "body": "json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mindos/zhijun/operations/{id}",
+      "query": [
+        "after",
+        "waitMs"
+      ],
+      "body": "empty"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mindos/zhijun/operations/{id}/cancel",
+      "query": [],
+      "body": "json"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mindos/zhijun/uploads",
+      "query": [],
+      "body": "json"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mindos/zhijun/uploads/{id}",
+      "query": [],
+      "body": "empty"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mindos/zhijun/uploads/{id}/chunks",
+      "query": [],
+      "body": "json"
+    },
+    {
+      "method": "POST",
+      "path": "/api/mindos/zhijun/uploads/{id}/complete",
+      "query": [],
+      "body": "json"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/mindos/zhijun/uploads/{id}",
+      "query": [],
+      "body": "empty"
+    },
+    {
+      "method": "GET",
+      "path": "/api/mindos/zhijun/blobs/{id}",
+      "query": [
+        "offset",
+        "limit"
+      ],
+      "body": "empty"
+    }
+  ],
+  "operationRequest": {
+    "version": 1,
+    "requestId": "stable user action id",
+    "operationId": "catalog id",
+    "params": {},
+    "query": {},
+    "body": null
+  },
+  "operationStartResponse": {
+    "id": "32 lowercase hex",
+    "state": "queued|running|succeeded|failed|cancelled|interrupted",
+    "cursor": 0
+  },
+  "operationPollResponse": {
+    "id": "32 lowercase hex",
+    "state": "queued|running|succeeded|failed|cancelled|interrupted",
+    "events": [
+      {
+        "seq": 1,
+        "kind": "headers|chunk|blob|end|error",
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "data": "base64 bytes"
+      }
+    ],
+    "cursor": 1,
+    "hasMore": false
+  },
+  "multipartBody": {
+    "kind": "multipart",
+    "fields": {
+      "string field": "string value"
+    },
+    "files": [
+      {
+        "field": "file",
+        "uploadId": "32 lowercase hex"
+      }
+    ]
+  },
+  "uploadCreate": {
+    "requestId": "stable user action id",
+    "fileName": "basename",
+    "contentType": "declared MIME",
+    "size": 1
+  },
+  "uploadChunk": {
+    "index": 0,
+    "data": "base64",
+    "sha256": "lowercase hex digest"
+  },
+  "uploadComplete": {
+    "sha256": "whole file lowercase hex digest"
+  },
+  "blobResponse": {
+    "id": "32 lowercase hex",
+    "offset": 0,
+    "size": 1,
+    "contentType": "MIME",
+    "sha256": "whole file digest",
+    "data": "base64",
+    "hasMore": false
+  },
+  "notes": [
+    "v1 read-only remains unchanged; v2 requires separately registered application/purpose, not upgraded read privileges",
+    "All query keys unique and canonical; IDs and integer ranges checked at each layer",
+    "GET/DELETE must omit Content-Type entirely and have empty body; POST Content-Type is exactly application/json; actual raw body SHA256 and header value are signed",
+    "Worker selection hashes compact JSON [deviceId,accountId,ownershipEpoch] and never uses caller filesystem paths",
+    "Every poll/chunk/cancel/blob read reauthorizes; leases expire without valid owner requests",
+    "No automatic mutation replay or quota-reset reconnect; stable requestId deduplicates identical starts",
+    "Signature domain contains one actual trailing LF, not literal backslash-n",
+    "Workspace ID is 64 lowercase hex with no prefix; storage scope is zhijun:v2:<workspaceId>",
+    "Jobs/uploads/blobs also bind clientId; jobs bind creation session and require identical explicit start to recover results in a new session of the same client",
+    "An interrupted mutating request has an unknown write result; cancellation does not imply rollback and cannot automatically replay",
+    "Completed uploads may be explicitly released once no active operation references them; small idempotency tombstones remain",
+    "Fresh online task consent binds preview revision, selected source identities/versions, service/configuration and exact request digest; empty-source prompts still require explicit consent"
+  ],
+  "blobEvent": {
+    "seq": 2,
+    "kind": "blob",
+    "blob": {
+      "id": "32 lowercase hex",
+      "size": 1,
+      "sha256": "whole file digest",
+      "contentType": "base MIME",
+      "fileName": "optional basename"
+    }
+  },
+  "uploadResponse": {
+    "id": "32 lowercase hex",
+    "state": "open|complete|cancelled|failed",
+    "size": 1,
+    "received": 0,
+    "nextIndex": 0,
+    "sha256": "optional completed file digest"
+  },
+  "operationCancelResponse": {
+    "id": "32 lowercase hex",
+    "state": "queued|running|succeeded|failed|cancelled|interrupted",
+    "cancelRequested": true
+  },
+  "workerProtocol": {
+    "header": "X-Zhijun-Worker-Proof",
+    "domain": "ZHIJUN-WORKER-V1\n",
+    "algorithm": "HMAC-SHA256",
+    "keyBytes": 32,
+    "nonceBytes": 24,
+    "ttlSeconds": 5,
+    "ports": [
+      "POST /v1/dispatch",
+      "POST /v1/events",
+      "POST /internal/zhijun/capabilities",
+      "POST /internal/zhijun/model-stream"
+    ],
+    "modelStream": "NDJSON: text/usage/done/error, max 65536 bytes per line"
+  }
+}

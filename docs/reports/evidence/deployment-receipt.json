@@ -1,0 +1,76 @@
+{
+  "deployedAt": "2026-09-06T05:13:08.243293+00:00",
+  "release": "/home/user/apps/centuarai-data-engine/releases/20260906T051053Z-zhijun-015c659",
+  "archiveSha256": "03d8152cc0f236c94f8d089d419c50144ac1e0dd7701367de18ca78a4f646de6",
+  "backup": "/home/user/apps/centuarai-data-engine/patch-backups/20260906T051053Z-zhijun-015c659-full-product",
+  "sqliteBackups": 16,
+  "deMainPid": 3184701,
+  "agentMainPid": 3184868,
+  "hashes": {
+    "agentBinary": "1b44da2a688b5acd64121ad55c14b178968de85bef89a223858d009725e6c574",
+    "agentManifest": "41a54e50b26df4e3baac153ab2f47aa65e3f7fce0d3b8e5c86921d6c7834d552",
+    "deUnit": "d0a6c2db1397268b95404102632f7cc2054406afa21eb28bf3c8ccf3008d34ae"
+  },
+  "healthStatus": 200,
+  "unsignedContextStatus": 401,
+  "consumerUiAcceptance": false,
+  "sourceCandidateDifferences": [],
+  "stabilitySamples": [
+    {
+      "index": 0,
+      "health": 200,
+      "fd": 55,
+      "connectivityFd": 0,
+      "de": {
+        "ActiveState": "active",
+        "MainPID": "3184701",
+        "NRestarts": "0"
+      },
+      "agent": {
+        "ActiveState": "active",
+        "MainPID": "3184868",
+        "NRestarts": "0"
+      }
+    },
+    {
+      "index": 1,
+      "health": 200,
+      "fd": 56,
+      "connectivityFd": 0,
+      "de": {
+        "ActiveState": "active",
+        "MainPID": "3184701",
+        "NRestarts": "0"
+      },
+      "agent": {
+        "ActiveState": "active",
+        "MainPID": "3184868",
+        "NRestarts": "0"
+      }
+    },
+    {
+      "index": 2,
+      "health": 200,
+      "fd": 55,
+      "connectivityFd": 0,
+      "de": {
+        "ActiveState": "active",
+        "MainPID": "3184701",
+        "NRestarts": "0"
+      },
+      "agent": {
+        "ActiveState": "active",
+        "MainPID": "3184868",
+        "NRestarts": "0"
+      }
+    }
+  ],
+  "stabilityPassed": true,
+  "gatewayConfigurationValidated": true,
+  "agentStatus": "connected",
+  "runtimePolicy": {
+    "MINDOS_LOCAL_WEB_DEBUG_ACCESS": "0",
+    "MINDOS_REDACTION_MODE": "enforce",
+    "HF_HUB_OFFLINE": "1"
+  }
+}

@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-06",
+  "milestone": "M0-business-bridge-real-readonly-empty-page-verified",
+  "realDeviceValidated": false,
+  "clientSourceBase": "c7a91488b7671a7ad92f4d428b0848acb630c577",
+  "development": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "node": "23.11.0",
+    "electron": "37.10.3",
+    "typescript": "5.9.3",
+    "vite": "5.4.21",
+    "playwright": "1.62.1"
+  },
+  "sources": {
+    "connectivitySdk": {
+      "commit": "819831c143aa2ea269b979eac2297124054436f6",
+      "dirty": false
+    },
+    "osAgent": {
+      "commit": "0a004c9fb36746a4d786c675207ff470a9b19cde",
+      "baseCommit": "9f7354ea4ff9d156cde33277a2de17e1eb36119f",
+      "branch": "dev/zhijun-business-bridge-0906",
+      "dirty": false,
+      "deploymentValidated": true
+    },
+    "dataEngine": {
+      "commit": "c16dc17be81240285820b9e86076877911d153c4",
+      "baseCommit": "6b549ad3371b5250a4b6e6f2afd7cd06c61ef6b0",
+      "branch": "dev/zhijun-business-bridge-0906-live",
+      "dirty": false,
+      "deploymentValidated": true,
+      "originalWorkingTreeDirty": true
+    },
+    "admin": {
+      "commit": "8ff6e888fb17ce268527755d6795c9d68b5b5305",
+      "dirty": false
+    }
+  },
+  "sdkAudit": {
+    "runtimeDependencyInstalled": true,
+    "electronVersion": "1.2.0",
+    "electronTgzSha256": "0637f4c3cbc309bc96e3be553b47b31e8a36279e1d6230fa7a0831a69b84bcea",
+    "contractsVersion": "1.0.1",
+    "contractsTgzSha256": "2a553d79061c8947fa234f42b69e905ebc6c9e964cae66fc0f4f2935c677cf41",
+    "sidecarArtifactsVerified": 12,
+    "sidecarManifestDirtyInput": true,
+    "cleanRebuildVerified": false,
+    "releaseSigningVerified": false,
+    "privatePipeFixtureValidated": true,
+    "nativeSidecarValidated": "darwin-arm64",
+    "nativeSidecarSha256": "e8d05b9c6cba3a59651a8c98679a26ecb1739ab6e6b8badb3b1a894884c263f2"
+  },
+  "production": {
+    "missing": [
+      "BASE-04: explicit ownership/migration of existing material records; no automatic global fallback",
+      "D05: traceable clean sidecar input and production signing matrix",
+      "DESK-15: second complete login cycle, cross-account/device, revocation, expiry and close acceptance",
+      "Product integration: restore original navigation and pages through typed desktop transport and corresponding owner-scoped box APIs"
+    ],
+    "consumerAdapterImplemented": true,
+    "deploymentLoginValidated": true,
+    "businessBridgeImplemented": true,
+    "realConnectionEnabled": true,
+    "osCredentialStorageValidated": true,
+    "osCredentialStorageScope": "macOS ARM64 Electron 37.10.3 safeStorage with temporary synthetic records; not signed-release or cross-platform acceptance",
+    "consumerAnonymousDenialValidated": true,
+    "gatewayHealthValidated": true,
+    "applicationId": "mindos-person-data-pc",
+    "purpose": "person-data.read",
+    "requestedScopes": [
+      "remote.p2p"
+    ],
+    "independentClientIdentity": true,
+    "authorizedDeviceListValidated": true,
+    "authorizedOnlineDevicesObserved": 2,
+    "businessBridgeVersion": 1,
+    "businessBridgeDeployed": true,
+    "realDirectMaterialsValidated": true,
+    "postUpgradeLoginValidated": true,
+    "businessBridgeDeploymentScope": "User-specified home box; matching runtime hashes, production unsigned/forged rejection and real desktop empty-page read/reconnect verified",
+    "deploymentLoginValidationScope": "Actual Consumer sign-in observed in the upgraded desktop and successful connection to the home box",
+    "realDirectMaterialsValidationScope": "Actual production desktop UI: successful bridge context, empty authorized material page, refresh, one disconnect cleanup and reconnect; no non-empty/historical data or cross-subject matrix acceptance"
+  },
+  "realAcceptanceReport": "REAL-ACCEPTANCE-0906.md",
+  "validation": {
+    "shellTests": 73,
+    "electronE2eTests": 4,
+    "dataEngineTests": 111,
+    "osGoSuitePassed": true,
+    "osBridgeRacePassed": true,
+    "desktopBuildPassed": true,
+    "mermaidDiagrams": 4,
+    "dataEngineSubtests": 6,
+    "boxIsolatedBridgeTests": 55,
+    "boxIsolatedServerAppChecks": 5,
+    "productionUnsignedReadDenialPassed": true,
+    "productionWrongSigningKeyDenialPassed": true,
+    "dataEngineTestScope": "Eight explicitly listed modules and isolated reproduction command in BUSINESS-BRIDGE-0906.md; distinct from the earlier 101-test suite",
+    "actualProductionDesktopEmptyPageAndReconnectPassed": true
+  },
+  "boxDeploymentReport": "BOX-DEPLOYMENT-0906.md",
+  "previousBusinessBridgeBundle": {
+    "builder": "frontend/shell/scripts/prepare-bridge-release.cjs",
+    "localPath": "data/desktop/bridge-release-0906",
+    "manifestSha256": "afccbc9f95da00bafd7a47a9233359b8e6049639a7a0bc4ed3e89beb41afc801",
+    "filesVerified": 12,
+    "platforms": [
+      "linux-amd64",
+      "linux-arm64"
+    ],
+    "deployed": false,
+    "signedRelease": false
+  },
+  "boxDeployment": {
+    "recordedAt": "2026-09-06",
+    "platform": "linux-amd64",
+    "dataEngineRelease": "20260906T024325Z-6b549ad",
+    "dataEngineRuntimeCommit": "c16dc17be81240285820b9e86076877911d153c4",
+    "dataEngineRuntimeFilesMatched": 6,
+    "inputManifestSha256": "0f2407ae832876db611487ccd5896815de1b76b11417b8bbf1f2a1cda61ea2f3",
+    "agentBinarySha256": "7d21207a7dd54b4771546f382c4db82b378e87c2c5e064f62ead6c425f6fa476",
+    "independentOnBoxKey": true,
+    "localDebugEnabled": false,
+    "actualSdkContextValidated": true,
+    "actualSdkMaterialsValidated": true,
+    "historicalMaterialsMigrated": false,
+    "signedOtaRelease": false,
+    "actualSdkMaterialsResult": "empty page; total 0",
+    "disconnectReconnectCyclesValidated": 1,
+    "fullCrossSubjectAcceptance": false
+  },
+  "businessBridgeBundle": {
+    "builder": "frontend/shell/scripts/prepare-bridge-release.cjs",
+    "localPath": "data/desktop/bridge-release-0906-live",
+    "manifestSha256": "ae24b1f7b11242caaecfae153f3b83c7cca441c9d631d3d7d34c6641c7e4de25",
+    "filesVerified": 12,
+    "platforms": [
+      "linux-amd64",
+      "linux-arm64"
+    ],
+    "deployed": false,
+    "signedRelease": false,
+    "runtimeFilesMatchBoxDeployment": true
+  }
+}

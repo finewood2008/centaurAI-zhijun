@@ -29,7 +29,7 @@ function sourceLink(item: ContextItem) {
       <h4>提供给模型的信息 <span>{{ provided.length }} 项</span></h4>
       <p v-if="!provided.length">本轮未记录额外提供的信息条目。</p>
       <details v-for="item in provided" :key="item.citationId" class="zj-context__item">
-        <summary><span class="zj-context__id">[{{ item.citationId }}]</span> {{ item.title || item.id }} <small>{{ plan.background.some(b => b.citationId === item.citationId) ? '背景' : '证据' }}</small></summary>
+        <summary>{{ item.title || item.id }} <small>{{ plan.background.some(b => b.citationId === item.citationId) ? '背景' : '证据' }}</small></summary>
         <p class="zj-context__text">{{ item.text }}</p>
         <p class="zj-context__note">{{ charterSourceLabel(item.kind) }} · 版本 {{ item.version }}<template v-if="item.claim?.trustState"> · {{ item.claim.trustState === 'confirmed' ? '已确认理解' : '待核对理解' }}</template></p>
         <RouterLink v-if="sourceLink(item)" :to="sourceLink(item)!">查看原记录（可能已有新版本）</RouterLink>
@@ -38,7 +38,7 @@ function sourceLink(item: ContextItem) {
     </section>
     <section class="zj-context__section" data-testid="context-cited">
       <h4>回答明确引用的信息 <span>{{ cited.length }} 项</span></h4>
-      <ul v-if="cited.length"><li v-for="item in cited" :key="item.citationId"><span class="zj-context__id">[{{ item.citationId }}]</span> {{ item.title || item.id }} · 版本 {{ item.version }}</li></ul>
+      <ul v-if="cited.length"><li v-for="item in cited" :key="item.citationId">{{ item.title || item.id }} · 版本 {{ item.version }}</li></ul>
       <p v-else>这条回答没有标注可核验的来源引用；不能据此判断模型是否受到某条信息影响。</p>
       <p class="zj-context__note">只列出回答中出现、且确实提供过的引用标识。它不证明结论被证据支持，也不是因果影响或影响权重。</p>
       <p v-if="plan.citationAudit?.invalidRefs.length" class="zj-context__note">另有 {{ plan.citationAudit.invalidRefs.length }} 个无法核验的引用标识，未列入明确引用。</p>
@@ -49,5 +49,5 @@ function sourceLink(item: ContextItem) {
   <p v-else class="zj-context__note">旧回执无法区分实际提供的信息与回答引用，不展示推定的使用关系。</p>
 </template>
 <style scoped>
-.zj-context { font-size:12px; line-height:1.75; overflow-wrap:anywhere; }.zj-context__section { margin:14px 0; padding:0 0 12px; border-bottom:1px solid var(--ws-border-color-3); }.zj-context h4 { color:var(--ws-text-color); font-size:13px; margin:0 0 8px; }.zj-context h4 span { font-weight:400; color:var(--ws-text-secondary-color); margin-left:5px; }.zj-context p { margin:6px 0; }.zj-context__note,.zj-context small { color:var(--ws-text-secondary-color); font-size:12px; }.zj-context__item { padding:7px 0; }.zj-context summary { cursor:pointer; }.zj-context__id { font-variant-numeric:tabular-nums; color:var(--ws-primary-color); }.zj-context__text { white-space:pre-wrap; padding:10px 12px; background:var(--ws-surface-2); border-radius:8px; max-height:240px; overflow:auto; }.zj-context a { color:var(--ws-primary-color); }.zj-context ul { padding-left:18px; margin:6px 0; }.zj-context__excluded { margin:10px 0; }
+.zj-context { font-size:12px; line-height:1.75; overflow-wrap:anywhere; }.zj-context__section { margin:14px 0; padding:0 0 12px; border-bottom:1px solid var(--ws-border-color-3); }.zj-context h4 { color:var(--ws-text-color); font-size:13px; margin:0 0 8px; }.zj-context h4 span { font-weight:400; color:var(--ws-text-secondary-color); margin-left:5px; }.zj-context p { margin:6px 0; }.zj-context__note,.zj-context small { color:var(--ws-text-secondary-color); font-size:12px; }.zj-context__item { padding:7px 0; }.zj-context summary { cursor:pointer; }.zj-context__text { white-space:pre-wrap; padding:10px 12px; background:var(--ws-surface-2); border-radius:8px; max-height:240px; overflow:auto; }.zj-context a { color:var(--ws-primary-color); }.zj-context ul { padding-left:18px; margin:6px 0; }.zj-context__excluded { margin:10px 0; }
 </style>

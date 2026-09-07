@@ -75,6 +75,43 @@ class ReplyAssistanceTests(unittest.TestCase):
         res = self.client.post(self.url + "/routing/preview", json={"content": "我选这个", "replyAssistance": self.origin(batch)})
         self.assertEqual(res.status_code, 409)
 
+    def test_new_group_omits_stale_previous_hint_without_laundering_old_selection(self):
+        self.seed()
+        old = self.generate()["batch"]
+        self.convs.append_message(self.cid, "user", "换个问题，请只讨论这周的安排。", meta={"routingSources": []})
+        self.target = self.convs.append_message(self.cid, "assistant", "你这周更想先完成哪件事？", meta={"routingSources": []})
+        old_texts = [c["text"] for c in old["candidates"]]
+        self.local.result = {"candidates": [{"text": "我想先把这周最重要的事情做好。"}, {"text": "我还不确定，想先确认哪些事情必须这周完成。"}]}
+        new = self.generate(requestId="fresh-group-after-change", previousBatchId=old["id"])["batch"]
+        self.assertTrue(new["previousBatchExcluded"])
+        self.assertFalse(any(s["kind"] == "reply_assist" and s["id"] == old["id"] for s in new["sources"]))
+        payload = json.dumps(self.local.requests[-1].messages, ensure_ascii=False)
+        for text in old_texts:
+            self.assertNotIn(text, payload)
+        self.assertEqual(self.generate(requestId="fresh-group-after-change", previousBatchId=old["id"])["batch"], new)
+        bad = self.client.post(self.url + "/routing/preview", json={"content": "沿用旧候选", "replyAssistance": self.origin(old)})
+        self.assertEqual(bad.status_code, 409)
+
+    def test_discarding_stale_previous_does_not_discard_required_reply_sources(self):
+        self.seed(protected=True)
+        old = self.generate()["batch"]
+        claim_id = next(s["id"] for s in old["sources"] if s["kind"] == "claim")
+        self.onto.add_evidence(claim_id, [{"kind": "user_edit", "quote": "新的合成依据"}])
+        before = len(self.local.requests)
+        response = self.client.post(self.url + "/reply-assistance", json={
+            "messageId": self.target["id"], "requestId": "stale-required-reply", "previousBatchId": old["id"]})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(len(self.local.requests), before)
+
+    def test_previous_group_cannot_come_from_another_conversation(self):
+        self.seed()
+        old = self.generate()["batch"]
+        cid = self.convs.create_conversation()["id"]
+        target = self.convs.append_message(cid, "assistant", "另一个对话的问题", meta={"routingSources": []})
+        response = self.client.post(f"/api/mindos/conversations/{cid}/reply-assistance", json={
+            "messageId": target["id"], "requestId": "foreign-previous-group", "previousBatchId": old["id"]})
+        self.assertEqual(response.status_code, 404)
+
     def test_context_changed_during_generation_does_not_save(self):
         self.seed()
         original = self.local.complete_json

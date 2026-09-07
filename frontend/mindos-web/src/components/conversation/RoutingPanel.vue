@@ -25,8 +25,10 @@ const taskLabels: Record<string, string> = { alignment: '自我校准', extract_
 const taskLabel = (key: string) => taskLabels[key] || (key.startsWith('file_reply:') ? '文件反馈' : '后台整理')
 const taskCount = (task: any) => Number.isInteger(task.count) && task.count > 0 ? task.count : null
 const pausedMemory = computed(() => state.value?.pending?.find((task: any) => task.task_key === 'extract_turn'))
+const failedCount = computed(() => (state.value?.pending ?? []).reduce((total: number, task: any) => total + (task.failedCount || 0), 0))
 const attentionLabel = computed(() => {
   if (error.value || state.value?.error || policy.value?.serviceChanged || handling.value?.serviceChanged) return '检查设置'
+  if (failedCount.value) return `整理未完成 · ${failedCount.value}`
   if (pausedMemory.value) return `个人理解暂停${taskCount(pausedMemory.value) ? ` · ${taskCount(pausedMemory.value)} 轮` : ''}`
   return `待处理 ${state.value?.pending?.length ?? 0}`
 })
@@ -195,8 +197,8 @@ defineExpose({ refresh })
           <p class="routing-fine">来源失效的旧记录默认暂停引用，仅轻提示。你明确选用的附件、回访记录或辅助表达无法安全处理时，仍需决定。后台任务缺少权限继续暂停，不自行扩大授权。</p>
         </section>
         <section v-if="state?.pending?.length" class="routing-group">
-          <h3>等待你决定 · {{ state.pending.length }} 类</h3><p>聊天仍可继续，但下列整理尚未完成。核对后会补处理遗漏的轮次；不会把普通对话回复当成已经记入本体。</p>
-          <div v-for="task in state.pending" :key="task.task_key" class="routing-task"><div><strong>{{ taskLabel(task.task_key) }}</strong><span v-if="taskCount(task)"> · {{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span><p v-if="task.detail" class="routing-fine">{{ task.detail }}</p><p v-if="task.previewExpired" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p></div><button :disabled="busy || disabled" @click="pending(task, !!task.previewExpired)">{{ task.previewExpired ? '重新准备待办' : '核对并继续' }}</button></div>
+          <h3>尚未完成的整理 · {{ state.pending.length }} 类</h3><p>聊天仍可继续。这里区分处理失败与等待授权；恢复时重新核验来源，不会把普通回复当成已经记入本体。</p>
+          <div v-for="task in state.pending" :key="task.task_key" class="routing-task"><div><strong>{{ taskLabel(task.task_key) }}</strong><span v-if="taskCount(task)"> · {{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span><p v-if="task.detail" class="routing-fine">{{ task.detail }}</p><p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p></div><button :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button></div>
         </section>
         <details v-if="state" class="routing-group"><summary>撤销已批准的授权</summary><p>停止本设备后续使用资料，关闭默认授权。日常在线消息仍按对话处理方式发送；已经发送的内容无法收回。</p><button :disabled="busy" @click="revoke">撤销本设备资料用途授权</button></details>
         <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="error || state?.error" class="routing-warning" role="alert">{{ error || state.error }}</p>

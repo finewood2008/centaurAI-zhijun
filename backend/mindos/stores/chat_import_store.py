@@ -6,6 +6,7 @@ Material privacy records deliberately survive deletion of a conversation.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 
 from .conversation_store import ConversationStore, utc_now
@@ -88,6 +89,9 @@ class ChatImportStore:
         return [self.get(row[0]) for row in rows]
 
     def update(self, batch_id: str, state: str, error: str | None = None, *, local_only: bool | None = None):
+        if state == "queued":
+            from zhijun_worker.background import register
+            register(batch_id, "chat")
         with self.conversations._lock, self.conversations._connect() as db:
             db.execute("UPDATE chat_import_batches SET state=?,error=?,updated_at=?,local_only=COALESCE(?,local_only) WHERE id=?",
                        (state, error, utc_now(), int(local_only) if local_only is not None else None, batch_id))
@@ -116,15 +120,34 @@ class ChatImportStore:
         with self.conversations._lock, self.conversations._connect() as db:
             db.execute("UPDATE chat_material_privacy SET sha256=NULL WHERE material_id=?", (material_id,))
 
-    def grant(self, refs: list[dict], service: str):
+    def _snapshot(self, ref):
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            from zhijun_worker.capabilities import require, CapabilityError
+            try:
+                value = require().call("materials.processing", {"materialId": ref["materialId"]})
+            except CapabilityError as exc:
+                if exc.status not in {404, 409, 410}:
+                    raise
+                return None
+            if value["record"]["versionNumber"] != ref["version"] or not value.get("snapshotId"):
+                return None
+            return {"snapshot_id": value["snapshotId"]}
         from .material_pipeline_store import MaterialPipelineStore
-        rows = [(r["materialId"], r["version"], service, utc_now(), (MaterialPipelineStore.instance().current_snapshot(r["materialId"]) or {}).get("snapshot_id", "")) for r in refs]
+        return MaterialPipelineStore.instance().current_snapshot(ref["materialId"])
+
+    def grant(self, refs: list[dict], service: str):
+        rows = []
+        for ref in refs:
+            snapshot = self._snapshot(ref)
+            if os.environ.get("ZHIJUN_WORKSPACE_ID") and not snapshot:
+                from fastapi import HTTPException
+                raise HTTPException(409, {"code": "ATTACHMENT_VERSION_CHANGED", "detail": "文件正文或版本已变化"})
+            rows.append((ref["materialId"], ref["version"], service, utc_now(), (snapshot or {}).get("snapshot_id", "")))
         with self.conversations._lock, self.conversations._connect() as db:
             db.executemany("INSERT INTO chat_material_grants(material_id,version,service,created_at,snapshot_id) VALUES(?,?,?,?,?) ON CONFLICT(material_id,version,service) DO UPDATE SET snapshot_id=excluded.snapshot_id,created_at=excluded.created_at", rows)
 
     def allowed(self, ref: dict, service: str, snapshot_id: str | None = None) -> bool:
-        from .material_pipeline_store import MaterialPipelineStore
-        snapshot = MaterialPipelineStore.instance().current_snapshot(ref["materialId"])
+        snapshot = self._snapshot(ref)
         if not snapshot:
             return False
         with self.conversations._connect() as db:

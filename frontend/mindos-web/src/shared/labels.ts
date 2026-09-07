@@ -11,6 +11,15 @@ export const LAYER_MARKERS: ReadonlyArray<{ marker: string; kind: 'told' | 'mate
 ]
 
 const CITE_RE = /\[m([1-9])\]/g
+const CONTEXT_CITE_RE = /[ \t\u00a0]*(?:\[p\d+\])+/g
+
+/**
+ * ContextPlan 的 pN 是逐轮临时审计编号，不是给用户阅读的脚注。
+ * 只在显示边界隐藏；服务端仍保留原文，以便核验本轮实际引用。
+ */
+export function stripContextCitations(text: string): string {
+  return text.replace(CONTEXT_CITE_RE, '')
+}
 
 export function decorateLabels(html: string): string {
   let out = html
@@ -25,7 +34,7 @@ export function decorateLabels(html: string): string {
 export function stripLabels(text: string): string {
   let out = text
   for (const { marker } of LAYER_MARKERS) out = out.split(marker).join('')
-  return out.replace(CITE_RE, '')
+  return stripContextCitations(out.replace(CITE_RE, ''))
 }
 
 /** 提醒种类的中文名（对话页顶部提醒条上的小印）。 */

@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Play, RotateCw, Search } from 'lucide-vue-next'
 import { api, type UnifiedSearchResult, type VisualMatchMode } from '@/services/api'
+import ProductImage from '@/components/ui/ProductImage.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
@@ -276,13 +277,12 @@ onBeforeUnmount(() => searchGate.invalidate())
               type="button"
               @click="router.push(`/materials/${item.materialId}`)"
             >
-              <img
+              <ProductImage
                 class="ws-visual-card__thumb"
                 :src="item.previewUrl"
                 :alt="`${item.title} 缩略图`"
-                loading="lazy"
-                @error="hideThumb"
-              >
+                :interactive="false"
+              />
               <span class="ws-visual-card__body">
                 <span class="ws-visual-card__head">
                   <span class="ws-kind ws-kind--visual">图片语义</span>

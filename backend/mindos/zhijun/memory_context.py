@@ -8,6 +8,43 @@ _SWITCH = re.compile(r"换个话题|换一(?:个)?话题|不聊.*章程|不谈.*
 _QUESTION = re.compile(r"[？?]|怎么|如何|什么|帮我|请问|会不会|能不能|是否|要不要")
 _RETROSPECTIVE = re.compile(r"回顾|以前|过去|当时|曾经|那时候|历史|原来|这些年|这几年")
 _COURTESY = re.compile(r"^(?:你好|谢谢|好的|好|嗯|收到|再见)[。！!\s]*$")
+_MATTER_RESUME = re.compile(r"(?:回到|继续)(?:刚才|之前|原来|当前关联的)?(?:这件事|那件事|这项工作|这个项目|这次沟通)")
+_MATTER_REVIEW = re.compile(r"(?:回顾|复盘)(?:一下)?(?:刚才|之前|原来|当前关联的)?(?:这件事|这项工作|这个项目|这次沟通)")
+
+
+def explicit_matter_review(content):
+    text = str(content or "")
+    return bool(_MATTER_REVIEW.search(text) and not re.search(r"(?:不要|不用|不必|无需|别|不)(?:再|继续)?(?:回顾|复盘)", text))
+
+
+def matter_control(router, content, binding, messages=None):
+    """Carry an explicit UI/topic control, never private historical prose.
+
+    The marker belongs to this conversation and binding revision. An explicit
+    rebind (including the same matter) starts fresh; an ordinary short answer
+    does not silently resume a matter after the user changed topics.
+    """
+    if not binding.get("matterId"):
+        return {"suspended": None, "afterSeq": 0}
+    before = getattr(router, "context_before_seq", None)
+    records = messages if messages is not None else router.convs.list_messages(router.cid)
+    records = [m for m in records if before is None or m["seq"] < before]
+    # Prepared/aborted replies already persist the user's explicit control; a
+    # generation failure must not restore the previous matter on the next turn.
+    previous = next(((m.get("meta") or {}).get("routingProvenance", {}).get("contextPlan", {})
+                     for m in reversed(records) if m["role"] == "assistant"
+                     and "matterBinding" in ((m.get("meta") or {}).get("routingProvenance", {}).get("contextPlan") or {})), {})
+    latest_seq = max((m["seq"] for m in records), default=0)
+    same_binding = previous.get("matterBinding") == binding
+    suspended = previous.get("matterSuspended") == binding if same_binding else False
+    after_seq = int(previous.get("matterHistoryAfterSeq") or 0) if same_binding else (latest_seq if (previous.get("matterBinding") or {}).get("matterId") else 0)
+    text = str(content or "")
+    resume = _MATTER_RESUME.search(text) and not re.search(r"(?:不要|不用|不必|无需|别|不)(?:再)?(?:回到|继续)", text)
+    if _SWITCH.search(text):
+        suspended, after_seq = True, latest_seq
+    elif resume or explicit_matter_review(content):
+        suspended, after_seq = False, latest_seq
+    return {"suspended": dict(binding) if suspended else None, "afterSeq": after_seq}
 
 
 def build_focus(content, allowed_history):

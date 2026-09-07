@@ -1,0 +1,91 @@
+'use strict';
+const { DesktopError } = require('../runtime/public-error.cjs');
+const { createCredentialStore } = require('./credential-store.cjs');
+const { createConsumerClient } = require('./consumer-client.cjs');
+const { createSdkRuntime, mapConnectionError } = require('./sdk-runtime.cjs');
+
+async function createProductionAdapter({ config, directory, safeStorage, consumer,
+  bridge, runtimeFactory = createSdkRuntime }) {
+  const client = consumer || await createConsumerClient({ config,
+    store: createCredentialStore({ directory, safeStorage, consumerBaseUrl: config.consumerBaseUrl }) });
+  let epoch = 0;
+  const closers = new Set();
+  async function closeAll() {
+    epoch++;
+    await Promise.allSettled([...closers].map(close => close()));
+    closers.clear();
+  }
+  return Object.freeze({
+    signIn: (input, guard) => client.signIn(input, guard),
+    listDevices: () => client.listDevices(),
+    async connect(binding) {
+      const expected = epoch;
+      // D03 is not a URL/config toggle. Only an implemented, trusted main adapter
+      // may authorize a business session. Never pass a P2P ticket as a JWT.
+      if (!bridge || typeof bridge.authorize !== 'function') throw new DesktopError('BUSINESS_BRIDGE_REQUIRED');
+      if (!config.connectivity) throw new DesktopError('CONFIGURATION_REQUIRED');
+      const current = await client.current();
+      if (expected !== epoch) throw new DesktopError('STALE_GENERATION');
+      if (current.accountId !== binding.accountId) throw new DesktopError('AUTHENTICATION_REQUIRED');
+      let runtime;
+      try { runtime = await runtimeFactory({ config: config.connectivity, consumer: client }); }
+      catch (error) { throw mapConnectionError(error); }
+      if (expected !== epoch) {
+        try { await runtime.close(); } catch { /* Retain the session invalidation reason. */ }
+        throw new DesktopError('STALE_GENERATION');
+      }
+      let session; let authorization; let closed = false; let failureListener; let pendingFailure;
+      const lifetime = new AbortController();
+      const close = async () => {
+        if (closed) return;
+        closed = true;
+        lifetime.abort();
+        try { await authorization?.close?.(); } finally {
+          try { await runtime.close(); } finally { closers.delete(close); }
+        }
+      };
+      closers.add(close);
+      try {
+        session = await runtime.connect(binding.deviceId);
+        if (expected !== epoch) throw new DesktopError('STALE_GENERATION');
+      } catch (error) {
+        // A failed cleanup must not replace a precise, already-safe connection
+        // rejection with an unrelated native transport error.
+        try { await close(); } catch { /* The primary connection failure wins. */ }
+        throw mapConnectionError(error);
+      }
+      return Object.freeze({
+        onFailure(listener) { failureListener = listener; if (pendingFailure && !closed) listener(pendingFailure); },
+        async authorize() {
+          if (closed || expected !== epoch) throw new DesktopError('SESSION_NOT_READY');
+          const value = await bridge.authorize({ session, signal: lifetime.signal, subject: { accountId: current.accountId, clientId: current.clientId,
+            deviceId: binding.deviceId }, applicationId: config.connectivity.applicationId,
+            onFailure(error) { if (!closed && expected === epoch) { pendingFailure = error; failureListener?.(error); } },
+          });
+          if (closed || expected !== epoch) { await value?.close?.(); throw new DesktopError('STALE_GENERATION'); }
+          authorization = value;
+          if (!value || value.accountId !== binding.accountId || value.deviceId !== binding.deviceId
+            || typeof value.request !== 'function') throw new DesktopError('ACCESS_DENIED');
+          return { accountId: value.accountId, deviceId: value.deviceId, ...(value.product === true ? { product: true, workspaceId: value.workspaceId } : {}) };
+        },
+        get managesRequestQueue() { return authorization?.managesRequestQueue === true; },
+        reserveTransfer(value) { if (closed || !authorization || expected !== epoch) throw new DesktopError('SESSION_NOT_READY'); return authorization.reserveTransfer?.(value); },
+        releaseTransfer(value) { authorization?.releaseTransfer?.(value); },
+        async request(request, options) {
+          if (closed || !authorization || expected !== epoch) throw new DesktopError('SESSION_NOT_READY');
+          // The bridge owns business credentials. Renderer only chooses an approved operation.
+          return authorization.request({ method: request.method, relative_path: request.path,
+            headers: Object.fromEntries(Object.entries(request.headers).map(([key, value]) => [key, [value]])),
+            ...(request.body === undefined ? {} : { body: request.body }) }, options);
+        },
+        close,
+      });
+    },
+    async signOut() {
+      const clearing = client.signOut(); // Start credential invalidation before waiting for native close.
+      await Promise.all([clearing, closeAll()]);
+    },
+    async dispose() { await Promise.all([client.dispose(), closeAll()]); },
+  });
+}
+module.exports = { createProductionAdapter };

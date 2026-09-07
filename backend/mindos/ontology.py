@@ -20,7 +20,7 @@ from .stores.ontology_store import (
     utc_now,
 )
 from .stores.conversation_store import ConversationStore
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun.alignment import visible
 from .zhijun import projection
 from .zhijun.confirm import review_claim as _review_claim

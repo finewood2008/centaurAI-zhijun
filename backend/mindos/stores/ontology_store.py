@@ -1424,7 +1424,12 @@ class OntologyStore:
         """入队一个后台任务；同 kind+owner 已有活跃任务时返回 None（幂等）。"""
         if kind not in JOB_KINDS:
             raise OntologyError(f"任务类型不合法：{kind}")
+        with self._connect() as db:
+            if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (kind, owner_id)).fetchone():
+                return None
         job_id = f"ojob_{uuid.uuid4().hex[:12]}"
+        from zhijun_worker.background import register
+        register(job_id, kind)
         now = time.time()
         with self._lock, self._connect() as conn:
             try:

@@ -1,3 +1,5 @@
+import { isDesktopProduct } from '../shared/productScope.ts'
+import { transportRequest } from './transport.ts'
 // 类型化 API Service：MindOS 浏览器页面统一通过此模块访问 /api/...，
 // 不依赖 window.api / Electron preload / ipcRenderer。
 import type { HealthInfo } from '@/types'
@@ -16,7 +18,7 @@ const SESSION_HEADER = 'X-MindOS-Session'
 let sessionToken: string | null = null
 
 export function setMindosSessionToken(token: string | null): void {
-  sessionToken = token || null
+  sessionToken = isDesktopProduct() ? null : token || null
 }
 
 export function getMindosSessionToken(): string | null {
@@ -101,7 +103,7 @@ export async function throwApiError(res: Response): Promise<never> {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = buildHeaders(init)
-  const res = await fetch(`${BASE}${path}`, { ...init, headers })
+  const res = await transportRequest(`${BASE}${path}`, { ...init, headers })
   if (!res.ok) await throwApiError(res)
   return res.json() as Promise<T>
 }
@@ -1180,7 +1182,7 @@ export interface ModelActionResponse {
 }
 
 export const api = {
-  health: () => request<HealthInfo>('/health'),
+  health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),
   // 后端同一套导入校验规则（与 mindos.validation.validate_import 一致）。
   // P1 前端本地校验用于即时反馈；P2 “开始上传”前将用此接口批量复核，避免仅依赖浏览器。
@@ -1473,6 +1475,7 @@ export async function exchangeTicketForSession(ticket: string): Promise<SessionE
  * 本机调试模式或宿主未注入票据时返回 null，页面不阻塞、不弹错。
  */
 export async function provisionMindosSession(): Promise<{ deviceId: string } | null> {
+  if (isDesktopProduct()) return null
   const ctx = await api.mindosAccessContext()
   if (ctx.mode !== 'connectivity_ticket_required') return null
   const ticket = await readConnectivityTicket()
@@ -2096,6 +2099,9 @@ export interface ContextItem {
 }
 export interface ContextPlan {
   revision: string
+  matterBinding?: { matterId: string | null; revision: number }
+  matterSuspended?: { matterId: string; revision: number } | null
+  matterHistoryAfterSeq?: number
   focus?: Record<string, unknown>
   background: ContextItem[]
   evidence: ContextItem[]

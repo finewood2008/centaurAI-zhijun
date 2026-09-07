@@ -8,6 +8,11 @@ export interface ReplyBatch {
   candidates: Array<{ id: string; text: string }>
   model: string; external: boolean; excluded: string[]
 }
+export interface ReplyInputDraft {
+  text: string
+  origin?: ReplyAssistanceInput
+  undo?: { inserted: string; offset: number; origin?: ReplyAssistanceInput }
+}
 export const REPLY_CONTROLS = {
   rephrase: '请换一种更简单、具体的说法，一次只问一个问题。',
   pause: '这个问题先放一放，换一个方向聊聊。',
@@ -26,4 +31,22 @@ export function appendReply(text: string, extra: string, current: ReplyAssistanc
 export function undoReply(text: string, insertion: { inserted: string; offset: number }) {
   if (text.slice(insertion.offset, insertion.offset + insertion.inserted.length) !== insertion.inserted) return null
   return text.slice(0, insertion.offset) + text.slice(insertion.offset + insertion.inserted.length)
+}
+
+/** Failure recovery keeps later typing, and never launders an assisted draft into unassisted text. */
+export function mergeReplyDrafts(current: ReplyInputDraft, failed: ReplyInputDraft): ReplyInputDraft | null {
+  if (!current.text) return failed
+  if (current.text === failed.text && JSON.stringify(current.origin) === JSON.stringify(failed.origin)) return current
+  try {
+    const prefix = current.text + (current.text.endsWith('\n') ? '' : '\n')
+    const text = prefix + failed.text
+    if (text.length > 4000) return null
+    const origin = failed.origin ? appendReply('', '', current.origin, failed.origin).origin : current.origin
+    let undo: ReplyInputDraft['undo']
+    if (failed.undo) {
+      const before = failed.undo.origin ? appendReply('', '', current.origin, failed.undo.origin).origin : current.origin
+      undo = { ...failed.undo, offset: prefix.length + failed.undo.offset, origin: before }
+    }
+    return { text, origin, undo }
+  } catch { return null } // Different questions or too many sources stay in separate, recoverable drafts.
 }

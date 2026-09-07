@@ -2,13 +2,34 @@
   "name": "zhijun-shell",
   "version": "0.1.0",
   "private": true,
-  "description": "知君桌面薄壳：只加载本机后端提供的 /mindos/ 页面，不含任何业务逻辑",
+  "description": "知君桌面宿主：完整产品界面、受控 IPC 与盒端工作区连接",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "smoke": "ZHIJUN_SHELL_SMOKE=1 electron ."
+    "start": "node launch.cjs",
+    "start:simulation": "node launch.cjs --simulation",
+    "icons:build": "node scripts/build-icons.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "test:e2e": "node tests/electron.e2e.cjs",
+    "smoke": "node tests/electron.e2e.cjs"
   },
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "37.10.3"
+  },
+  "dependencies": {
+    "@nexusaos/connectivity-contracts": "file:vendor/nexusaos-connectivity-contracts-1.0.1.tgz",
+    "@nexusaos/connectivity-electron": "file:vendor/nexusaos-connectivity-electron-1.2.0.tgz"
+  },
+  "build": {
+    "appId": "com.qeeshu.zhijun",
+    "productName": "知君",
+    "icon": "assets/centaur.png",
+    "mac": {
+      "icon": "assets/centaur.icns",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "在你点击录音时使用麦克风，停止后将录音发送到已连接的盒子转为文字。转写结果仅填入输入框，不会自动发送消息。"
+      }
+    },
+    "win": { "icon": "assets/centaur.png" },
+    "linux": { "icon": "assets/centaur.png" }
   }
 }

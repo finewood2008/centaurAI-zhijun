@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ProductImage from '@/components/ui/ProductImage.vue'
+import { productPreview, releaseProductPreview, saveProductResource } from '@/services/productFiles'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { FileText } from 'lucide-vue-next'
@@ -715,6 +717,37 @@ onBeforeUnmount(() => {
   detailLoadGate.invalidate()
   analysisLoadGate.invalidate()
 })
+
+const mainPreviewUrl = ref('')
+const mainPreviewError = ref('')
+let previewController: AbortController | null = null
+let previewRevision = 0
+function clearMainPreview() {
+  previewRevision++; previewController?.abort(); previewController = null
+  audioEl.value?.pause()
+  if (mainPreviewUrl.value) releaseProductPreview(mainPreviewUrl.value)
+  mainPreviewUrl.value = ''
+}
+watch(() => detail.value?.previewUrl, async () => {
+  clearMainPreview(); mainPreviewError.value = ''
+  const value = detail.value
+  if (!value || (value.fileType !== 'audio' && !value.fileName.toLowerCase().endsWith('.pdf'))) return
+  const ticket = previewRevision
+  previewController = new AbortController()
+  try {
+    const url = await productPreview(value.previewUrl, previewController.signal)
+    if (ticket !== previewRevision) releaseProductPreview(url)
+    else mainPreviewUrl.value = url
+  } catch (e) { if (ticket === previewRevision) mainPreviewError.value = e instanceof Error ? e.message : '原件预览不可用' }
+})
+onBeforeUnmount(clearMainPreview)
+async function saveOriginal() {
+  const value = detail.value
+  if (!value) return
+  try { await saveProductResource(value.previewUrl, value.fileName) }
+  catch (e) { toast({ type: 'error', message: e instanceof Error ? e.message : '原件保存失败' }) }
+}
+
 </script>
 
 <template>
@@ -769,14 +802,15 @@ onBeforeUnmount(() => {
       <div class="detail-grid">
         <section class="detail-panel preview-panel">
           <div class="panel-title">原始资料 <span class="badge soon">只读</span></div>
-          <img v-if="detail.fileType === 'image'" :src="detail.previewUrl" :alt="detail.fileName" class="material-preview image-preview">
-          <iframe v-if="detail.fileName.toLowerCase().endsWith('.pdf')" :src="detail.previewUrl" :title="detail.fileName" class="material-preview document-preview"></iframe>
+          <ProductImage v-if="detail.fileType === 'image'" :src="detail.previewUrl" :alt="detail.fileName" class="material-preview image-preview" />
+          <p v-if="mainPreviewError" role="status">{{ mainPreviewError }}</p>
+          <iframe v-if="detail.fileName.toLowerCase().endsWith('.pdf')" :src="mainPreviewUrl || undefined" :title="detail.fileName" class="material-preview document-preview"></iframe>
          <!-- <div v-else-if="detail.fileType === 'document'" class="document-open-state">
             <p>该文档格式由系统安全托管，可在新窗口中只读打开。</p>
-            <a class="secondary-btn" :href="detail.previewUrl" target="_blank" rel="noopener">打开文档</a>
+            <button class="secondary-btn" @click="saveOriginal">保存文档</button>
           </div>-->
           <div v-else-if="detail.fileType === 'audio'" class="audio-preview">
-            <audio ref="audioEl" :src="detail.previewUrl" controls preload="metadata" class="audio-player" @timeupdate="onTimeUpdate"></audio>
+            <audio ref="audioEl" :src="mainPreviewUrl || undefined" controls preload="metadata" class="audio-player" @timeupdate="onTimeUpdate"></audio>
             <p class="audio-hint">播放时点击下方转写片段可跳转到对应时刻。</p>
           </div>
           <div class="panel-title text-title">{{ detail.textLabel }}</div>
@@ -969,9 +1003,7 @@ onBeforeUnmount(() => {
         <div class="panel-title">内嵌图片（{{ embeddedImages.length }}）</div>
         <div class="embedded-image-grid">
           <div v-for="img in embeddedImages" :key="img.partId" class="embedded-image-card">
-            <a :href="img.previewUrl" target="_blank" rel="noopener" class="embedded-image-link">
-              <img :src="img.previewUrl" :alt="`内嵌图片：${imageLocationLabel(img)}`" class="embedded-image-thumb">
-            </a>
+            <ProductImage :src="img.previewUrl" :alt="`内嵌图片：${imageLocationLabel(img)}`" class="embedded-image-thumb" />
             <div class="embedded-image-meta">
               <span class="image-location">{{ imageLocationLabel(img) }}</span>
               <span v-if="img.width" class="image-size">{{ img.width }}×{{ img.height }}</span>

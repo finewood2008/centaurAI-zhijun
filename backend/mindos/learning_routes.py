@@ -13,7 +13,7 @@ from .stores.growth_store import GrowthStore
 from .stores.learning_store import LearningStore, claim_token
 from .stores.ontology_store import OntologyStore, OntologyError
 from .alignment_routes import mapped
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun import alignment
 from .zhijun.gate import provider_gate, ProviderBusyError
 from .zhijun.provider import ChatRequest, ProviderError

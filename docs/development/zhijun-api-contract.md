@@ -1,7 +1,8 @@
 # 知君 P1 接口契约（对话 · 本体 · 确认）
 
-> 版本 p1-2026-09-02。前后端共同遵守；改动先改本文。所有路径挂在现有网关之下：
-> 请求必须带 `X-Requested-By: centaur-vdb`（写路由还要求 loopback），票据模式再带 `X-MindOS-Session`。
+> 更新核对：2026-09-05，上游源码 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`。第 1–18 节保留 P1 与后续历史增补，不是当前全部接口的完整 OpenAPI；对话管理以 [conversation-management.md](conversation-management.md) 为准，本轮新增事项/成果及来源合同见第 19–21 节。历史验证记录不代表本次同步已执行测试或部署。
+>
+> 历史版本 p1-2026-09-02。当前知君业务路由要求 loopback 与访问 gate；写路由另要求 `X-Requested-By: centaur-vdb`，正式票据模式使用 `X-MindOS-Session`。data-engine 与远程 Agent 是否兼容需另见 [集成方案](INTEGRATION-0905.md)，不可从本契约推定已经可远程调用。
 > 错误体沿用现状：`{"detail": "文案"}` 或 `{"detail": {"code": "...", "detail": "文案"}}`。
 
 ## 1. 标签契约（模型输出 → 前端徽章）
@@ -365,3 +366,62 @@ interface ZhijunHomeOverview {
 - `sourceRefs.label` 只使用“你确认过 / 我的推测 / 判断簿”，每条同时带可点击的 `id`、`sourceType`、`title` 和 `trust`。
 - 缓存存于 `ontology_meta.zhijun_home_snapshot_v1`。模型只可返回 `headline / message / focusIds`，非法来源 id 会使整份模型结果回退到模板。
 - 外部模型不接收 `sensitive/restricted` 理解；判断仅发送标题、选择、状态和回访时间。
+
+
+## 19. 事项与成果合同 · 版本 work-2026-09-05
+
+本节按上游 `22dc9a3112058f06a1e4a385c1b2dc3175e39476` 的 [路由](../../backend/mindos/matters_routes.py)、[存储](../../backend/mindos/stores/matters_store.py) 和 [前端服务](../../frontend/mindos-web/src/services/matters.ts) 核对。事项是用户维护的工作记录，成果是明确保存的回复副本；均不自动成为 Claim、正式判断或章程，不调用模型，不授予外发权限。
+
+以下路径均以 `/api/mindos` 为前缀。读写按服务端身份导出的设备 scope 过滤；客户端不能提交 `deviceScope` 指定归属。所有写请求采用 `extra="forbid"`，携带 `requestId`（8–100 个 ASCII 字母、数字、下划线或连字符）。请求标识在同一设备 scope 内全局去重：相同操作与载荷重放返回原结果，不同载荷复用同一标识返回 409。它是 JSON body 字段，不是上传协议的幂等 header。
+
+| 方法与路径 | 请求 | 响应 / 语义 |
+| --- | --- | --- |
+| `GET /matters?status=active` | status 为 active/paused/completed/all，默认 active | `{items: Matter[], total}`，按 updatedAt 倒序、id 稳定排序；当前无分页参数 |
+| `POST /matters` | requestId、title；可选 goal、context、nextStep、conversationId | `Matter`，初始 active、revision=1、outcome 为空；可不关联对话独立创建 |
+| `GET /matters/{id}` | — | `Matter`；不存在或跨设备 404 |
+| `PATCH /matters/{id}` | requestId、expectedRevision≥1，以及至少一项 title/goal/context/nextStep/outcome/status/decisionId | `Matter`；版本冲突 409；decisionId 可为 null 解除关联，非空须属于当前设备 |
+| `GET /conversations/{id}/matter` | — | `{matter: Matter\|null, bindingRevision}`；尚未绑定时 revision 为 0 |
+| `PUT /conversations/{id}/matter` | requestId、expectedRevision≥0、matterId（必填，可为 null） | `MatterBinding`；expectedRevision 是绑定修订，不是事项修订；同一事项重新绑定也产生新绑定修订 |
+| `GET /matters/{id}/artifacts` | — | `{items: MatterArtifact[], total}`，按 updatedAt 倒序、id 稳定排序 |
+| `POST /matters/{id}/artifacts` | requestId、conversationId、messageId；可选 title、kind | `MatterArtifact`，revision=1、userEdited=false；原消息须为该设备会话内已完成的 assistant 回复 |
+| `GET /artifacts/{id}` | — | `MatterArtifact`，同时校验所属事项存在及设备归属 |
+| `PATCH /artifacts/{id}` | requestId、expectedRevision≥1，以及至少一项 title/markdown/kind | `MatterArtifact`；正文改变后 userEdited 保持 true；改名或改类型本身不将其设为 true |
+| `GET /matters/{id}/history`、`GET /artifacts/{id}/history` | — | `{items: [{revision, at, record}]}`，来自操作账本的结果快照，按修订排序 |
+
+title 创建事项时必填，去除首尾空白后 1–120 字；goal/nextStep 最多 2000 字、context/outcome 最多 6000 字。成果创建 title 默认空，空白时使用事项标题；正文由服务端从原回复取得，移除旧 `[pN]` / `[mN]` 引用标识，非空且最多 50000 字。编辑成果的 title 为 1–120 字、markdown 为非空且最多 50000 字。PATCH 显式 null 仅用于事项 decisionId，其余编辑字段不能以 null 清空；事项 goal/context/nextStep/outcome 可用空字符串清空。expectedRevision 是严格整数，不接受字符串或布尔值。
+
+```ts
+type MatterStatus = 'active' | 'paused' | 'completed'
+type ArtifactKind = 'communication' | 'decision_memo' | 'meeting_prep' | 'action_summary' | 'freeform'
+type WorkSourceRef = { kind: string; id: string; version?: string; [key: string]: unknown }
+interface Matter {
+  id: string; deviceScope: string; title: string; goal: string; context: string
+  nextStep: string; outcome: string; status: MatterStatus; revision: number
+  decisionId: string | null; sources: WorkSourceRef[]; conversationId: string | null
+  createdAt: string; updatedAt: string
+}
+interface MatterArtifact {
+  id: string; matterId: string; deviceScope: string; title: string; kind: ArtifactKind
+  markdown: string; revision: number; userEdited: boolean
+  sourceMessageId: string; sourceConversationId: string; sources: WorkSourceRef[]
+  createdAt: string; updatedAt: string
+}
+interface MatterBinding { matter: Matter | null; bindingRevision: number }
+```
+
+服务端返回的 deviceScope/sources 由服务端生成，当前前端类型只声明展示所需子集。Matter.conversationId 是最近绑定且仍存在、同设备的会话，不表示事项依赖该会话才能存在；一个事项可以关联多段对话，每段对话只有一个当前绑定。成果保存 API 校验原会话、原回复与事项各自的设备归属，当前未额外要求原会话已绑定该事项。没有事项/成果 DELETE、历史恢复或直接创建任意 markdown 成果的端点；完成和暂停通过 PATCH status 表达。
+
+同一存储事务记录编辑结果与 `work_actions` 审计。存储修订冲突或 requestId 冲突返回 `409 detail:{code:"WORK_REVISION_CONFLICT",detail}`；事项/成果不存在或跨设备分别为 `MATTER_NOT_FOUND` / `ARTIFACT_NOT_FOUND`（404）。无效输入为 422；关联判断或原回复无效也可能返回字符串 detail，客户端必须保留 HTTP 状态，不能假设所有错误都有 code。
+
+## 20. 事项、成果与上下文来源
+
+- `work_matters / work_matter_bindings / work_artifacts / work_actions` 增量建在 ontology 数据库。事项记录不是“用户已确认的长期人格”，下一步不是已完成的行动，只有用户填写的 outcome 表示记录的实际结果。
+- 来源种类新增 `matter`、`artifact`，版本由 `digest([id, revision, sources])` 生成。成果保存原 assistant 消息的精确来源版本；随后编辑正文不会移除原始来源链。可本地保存来源不透明的旧回复，但其后模型复用仍要通过来源检查，保存不等于授权。
+- `ContextPlan` 新增 `matterBinding:{matterId,revision}`、`matterSuspended`、`matterHistoryAfterSeq`。默认只召回当前会话明确绑定的 active 事项；暂停/完成事项仅在明确回顾时参与。事项自身授权通过后，才可扩展检索与召回该事项的相关成果。
+- 计划修订、补查指纹及实际模型调用前检查均包含绑定/事项版本条件；切换事项或同事项重新绑定后旧预览不能继续发送。来源撤销、版本变化、依赖缺失/格式异常仍会阻止不安全复用，不把空或不明来源视为无依赖。
+
+详见 [个人上下文](personal-context-plan.md)、[任务路由](task-routing.md) 与 [回复辅助](reply-assistance.md)。本节接口属于知君后端新增能力，未说明 data-engine 已实现对应端点。
+
+## 21. 对话传输与恢复的当前入口
+
+当前普通聊天/原消息重试经 `services/chatStream.ts` 调用原 POST SSE，底层解析仍在 `services/sse.ts`；这不是 Electron SDK 已具备流能力的证明。路由预览支持 AbortSignal。发送端仅在尚未收到流事件、未取消、仍为当前会话，且 HTTP 409 为 ROUTE_CHANGED/PREVIEW_EXPIRED 时，最多重新预览并发送一次，沿用 requestId 与来源；已开始的流、网络失败、取消或来源变化不自动重播。预览内部另有一次受限刷新，仍需重新核对授权。输入恢复保留用户后来输入与辅助来源，不能移除来源后将失败草稿当普通自述重发。第 2 节为初始合同快照，当前请求、附加事件与恢复以 [chatStream.ts](../../frontend/mindos-web/src/services/chatStream.ts)、[conversations.py](../../backend/mindos/conversations.py) 及对应功能文档为准。

@@ -59,7 +59,8 @@ def render_context_plan(plan):
     plan["refs"] = list({digest(ref): ref for ref in refs}.values())
     plan["providedRefs"] = [i["citationId"] for i in [*plan["background"], *plan["evidence"]]]
     plan["system"] = _INSTRUCTION + "\n\n" + "\n\n".join(blocks) if blocks else ""
-    plan["revision"] = digest([focus, plan["background"], plan["evidence"], plan["refs"], plan["excluded"]])
+    plan["revision"] = digest([focus, plan["background"], plan["evidence"], plan["refs"], plan["excluded"],
+                               plan.get("matterBinding"), plan.get("matterSuspended"), plan.get("matterHistoryAfterSeq")])
     return plan
 
 
@@ -80,8 +81,11 @@ def fit_context_plan(plan, max_bytes):
 
 def build_context_plan(router, content, allowed_history, *, provider, purpose="chat",
                        intent="conversation", omit=False, queries=None, complex=False, material_refs=None):
-    from .memory_context import build_focus
+    from .memory_context import build_focus, matter_control, explicit_matter_review
     from .memory_retrieval import confirmed_background, retrieve_claims
+    matter_binding, matter_candidate = context_sources.bound_matter(router, include_inactive=explicit_matter_review(content))
+    control = matter_control(router, content, matter_binding)
+    allowed_history = [m for m in allowed_history if m.get("seq") is None or m["seq"] > control["afterSeq"]]
     focus = build_focus(content, allowed_history)
     search_queries = list(dict.fromkeys([focus["query"], *(queries or [])]))[:4]
     result = {"focus": focus, "background": [], "evidence": [], "refs": [], "excluded": [], "system": ""}
@@ -103,6 +107,9 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
                 raise HTTPException(409, {"code": "CONTEXT_FOCUS_CHANGED", "detail": "形成当前话题的历史权限已变化，请重新组织上下文"})
             refs.append(closure[0]["ref"])
     result["focusRefs"] = refs
+    result["matterBinding"] = matter_binding
+    result["matterSuspended"] = control["suspended"]
+    result["matterHistoryAfterSeq"] = control["afterSeq"]
     if omit or intent == "charter":
         return render_context_plan(result)
 
@@ -120,7 +127,7 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
         if any(s["blocked"] for s in closure):
             excluded(candidate, "来源链或版本无法核实，未使用", restricted=True)
             return None
-        if candidate["category"] in ("history", "summary", "episode", "decision"):
+        if candidate["category"] in ("history", "summary", "episode", "decision", "artifact"):
             before = getattr(router, "context_before_seq", None)
             for source in closure:
                 if source["kind"] != "message":
@@ -145,6 +152,16 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
                 item[key] = candidate[key]
         missing = provider.external and any(not router.allowed(s, service, purpose) for s in closure)
         return {"item": item, "missing": missing, "score": candidate.get("score", 0), "candidate": candidate}
+
+    # A linked matter can expand retrieval only after its own authorization.
+    # Its plain text remains a separately citable source, not a user personality.
+    matter_ready = None
+    if matter_candidate and control["suspended"] is None:
+        matter_ready = resolve(matter_candidate)
+        if matter_ready and not matter_ready["missing"]:
+            search_queries.append(matter_candidate["query"])
+            focus["query"] = (focus["query"] + "\n" + matter_candidate["query"])[:3525]
+            result["focusRefs"].append(matter_ready["item"]["ref"])
 
     # Fetch extra candidates so unapproved identities never occupy the four slots.
     background = confirmed_background(router.onto, conversations=router.convs, scope=router.scope, limit=32, budget=4800)
@@ -190,6 +207,10 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
                     context_sources.decision_candidates, context_sources.material_candidates):
         candidates.extend(adapter(router, search_queries, cutoff=router.mode.get("cutoff", 0) if provider.external else 0)
                           if adapter is context_sources.history_candidates else adapter(router, search_queries))
+    if matter_ready:
+        candidates.append(matter_candidate)
+        if not matter_ready["missing"]:
+            candidates.extend(context_sources.artifact_candidates(router, matter_candidate["ref"]["id"], search_queries))
     explicit_materials = {r["materialId"] for r in material_refs or []}
     candidates = [c for c in candidates if not (c["ref"]["kind"] == "material" and c["ref"]["id"] in explicit_materials)]
     candidates.sort(key=lambda c: (-c.get("score", 0), c["ref"]["kind"], c["ref"]["id"]))
@@ -261,7 +282,7 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
             excluded(ready["candidate"], "本轮已提供一条待验证推测，不再增加推测")
             continue
         if ask is None and ((not result["evidence"] and high) or (explicit_source and high) or lookup_match
-                            or ready["item"]["id"] in direct_needed):
+                            or ready["item"]["id"] in direct_needed or ready["item"]["kind"] == "matter"):
             ask = ready
             if len(result["evidence"]) == limit:
                 removed = result["evidence"].pop()

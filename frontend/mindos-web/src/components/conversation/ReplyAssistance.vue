@@ -2,12 +2,14 @@
 import { onBeforeUnmount, ref, watch } from 'vue'
 import { routedTask, routingRequest } from '@/services/taskRouting'
 import { REPLY_CONTROLS, type ReplyAssistanceInput, type ReplyBatch } from '@/shared/replyAssistance'
+import { isReplySourceError, replyRecoveries } from '@/composables/useReplyRecovery'
 const props = defineProps<{ conversationId: string; messageId: string; disabled?: boolean }>()
 const emit = defineEmits<{ (e: 'insert', text: string, origin: ReplyAssistanceInput): void; (e: 'write'): void }>()
 const batch = ref<ReplyBatch | null>(null)
 const expanded = ref(false)
 const loading = ref(false)
 const error = ref('')
+const stale = ref(false)
 let epoch = 0
 let controller: AbortController | null = null
 let requestId = crypto.randomUUID()
@@ -15,7 +17,7 @@ let pendingRequest: Record<string, unknown> | null = null
 const path = () => `/mindos/conversations/${encodeURIComponent(props.conversationId)}/reply-assistance`
 function cancel() { epoch++; controller?.abort(); controller = null; loading.value = false }
 watch(() => [props.conversationId, props.messageId], async () => {
-  cancel(); batch.value = null; expanded.value = false; error.value = ''; requestId = crypto.randomUUID(); pendingRequest = null
+  cancel(); batch.value = null; expanded.value = false; error.value = ''; stale.value = false; requestId = crypto.randomUUID(); pendingRequest = null
   const attempt = epoch
   try {
     const result = await routingRequest<{ batch: ReplyBatch | null }>(path())
@@ -23,11 +25,16 @@ watch(() => [props.conversationId, props.messageId], async () => {
   } catch { /* Retrieval failure must never block the normal composer. */ }
 }, { immediate: true })
 watch(() => props.disabled, disabled => { if (disabled) cancel() })
+watch(() => replyRecoveries[props.conversationId], issue => {
+  if (!issue || issue.messageId !== props.messageId || (batch.value && !issue.batchIds.includes(batch.value.id))) return
+  cancel(); batch.value = null; pendingRequest = null; requestId = crypto.randomUUID(); stale.value = true
+  expanded.value = true; error.value = '旧候选已失效。可以重新生成回答；输入框的原文和来源仍保留，不会被覆盖。'
+})
 onBeforeUnmount(cancel)
 
 async function generate(change = false, localOnly = false, retry = false) {
   if (props.disabled || loading.value) return
-  expanded.value = true; error.value = ''
+  expanded.value = true; error.value = ''; stale.value = false
   if (batch.value && !change && !localOnly && !retry) return
   if (change || localOnly) requestId = crypto.randomUUID()
   if (!retry || !pendingRequest) pendingRequest = {
@@ -44,6 +51,10 @@ async function generate(change = false, localOnly = false, retry = false) {
   } catch (e) {
     if (attempt !== epoch) return
     error.value = abort.signal.aborted ? '等待超时，仍可自己输入或重试。' : e instanceof Error ? e.message : '暂时没有合适方向，仍可自己说。'
+    if (isReplySourceError(e)) {
+      batch.value = null; pendingRequest = null; requestId = crypto.randomUUID(); stale.value = true
+      error.value += ' 已清理失效候选，可以重新生成；输入原文仍保留。'
+    }
   } finally {
     clearTimeout(timer)
     if (attempt === epoch) { loading.value = false; controller = null }
@@ -74,7 +85,7 @@ function close() { cancel(); expanded.value = false }
       <div class="reply-help__bar">
         <button :disabled="disabled || loading" @click="close(); emit('write')">都不太像，我自己说</button>
         <button v-if="batch && !error" :disabled="disabled || loading" @click="generate(true)">换一组</button>
-        <button v-if="error" :disabled="disabled || loading" @click="generate(false, false, true)">重试</button>
+        <button v-if="error" :disabled="disabled || loading" @click="generate(false, false, !stale)">{{ stale ? '重新生成回答' : '重试' }}</button>
         <button v-if="error" :disabled="disabled || loading" @click="generate(false, true)">改用本地</button>
         <button @click="close">{{ loading ? '取消' : '收起' }}</button>
       </div>

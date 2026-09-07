@@ -1,0 +1,2515 @@
+{
+  "schemaVersion": 1,
+  "operations": [
+    {
+      "id": "get_api_health",
+      "method": "GET",
+      "path": "/api/health",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "patch_api_mindos_artifacts_artifact_id",
+      "method": "PATCH",
+      "path": "/api/mindos/artifacts/{artifactId}",
+      "pathParams": [
+        "artifactId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations",
+      "method": "GET",
+      "path": "/api/mindos/conversations",
+      "pathParams": [],
+      "query": [
+        "limit",
+        "offset",
+        "status",
+        "q"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations",
+      "method": "POST",
+      "path": "/api/mindos/conversations",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "delete_api_mindos_conversations_conversation_id",
+      "method": "DELETE",
+      "path": "/api/mindos/conversations/{conversationId}",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 16777216,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "patch_api_mindos_conversations_conversation_id",
+      "method": "PATCH",
+      "path": "/api/mindos/conversations/{conversationId}",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_charter",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/charter",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_conversations_conversation_id_charter_workspace_workspace_id",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/{conversationId}/charter/workspace/{workspaceId}",
+      "pathParams": [
+        "conversationId",
+        "workspaceId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_charter_workspace_workspace_id_merge",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/charter/workspace/{workspaceId}/merge",
+      "pathParams": [
+        "conversationId",
+        "workspaceId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_charter_workspace_workspace_id_pause",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/charter/workspace/{workspaceId}/pause",
+      "pathParams": [
+        "conversationId",
+        "workspaceId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_charter_workspace_workspace_id_publish",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/charter/workspace/{workspaceId}/publish",
+      "pathParams": [
+        "conversationId",
+        "workspaceId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_charter_workspace_workspace_id_suggest",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/charter/workspace/{workspaceId}/suggest",
+      "pathParams": [
+        "conversationId",
+        "workspaceId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_charter_workspace_start",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/charter/workspace/start",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_decision_draft",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/decision-draft",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_decision_draft_confirm",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/decision-draft/confirm",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_decision_draft_discard",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/decision-draft/discard",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_decision_draft_suggestions",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/decision-draft/suggestions",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_file_consent",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/file-consent",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_files_material_id_preview",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/files/{materialId}/preview",
+      "pathParams": [
+        "conversationId",
+        "materialId"
+      ],
+      "query": [
+        "version",
+        "offset"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_imports",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/imports",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_imports",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/imports",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_imports_batch_id_files_file_id",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/imports/{batchId}/files/{fileId}",
+      "pathParams": [
+        "conversationId",
+        "batchId",
+        "fileId"
+      ],
+      "query": [],
+      "body": "multipart",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_imports_batch_id_files_file_id_failed",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/imports/{batchId}/files/{fileId}/failed",
+      "pathParams": [
+        "conversationId",
+        "batchId",
+        "fileId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_imports_batch_id_files_file_id_retry",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/imports/{batchId}/files/{fileId}/retry",
+      "pathParams": [
+        "conversationId",
+        "batchId",
+        "fileId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_imports_batch_id_retry",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/imports/{batchId}/retry",
+      "pathParams": [
+        "conversationId",
+        "batchId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_imports_batch_id_seal",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/imports/{batchId}/seal",
+      "pathParams": [
+        "conversationId",
+        "batchId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_learning",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/learning",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_learning_propose",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/learning/propose",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_learning_resolve",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/learning/resolve",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_learning_start",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/learning/start",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_learning_suggest",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/learning/suggest",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_matter",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/matter",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_conversations_conversation_id_matter",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/{conversationId}/matter",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_memory_attention",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/memory/attention",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_memory_dismiss",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/memory/dismiss",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_memory_draft_review",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/memory/draft-review",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_memory_pending",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/memory/pending",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_memory_pending_dismiss",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/memory/pending-dismiss",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_messages",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/messages",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "sse",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 16777216,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_outcome",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/outcome",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_outcomes",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/outcomes",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_conversations_conversation_id_references",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/{conversationId}/references",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_reply_assistance",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/reply-assistance",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_reply_assistance",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/reply-assistance",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_routing",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/routing",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_conversations_conversation_id_routing",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/{conversationId}/routing",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_routing_charter_exception",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/routing/charter-exception",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "put_api_mindos_conversations_conversation_id_routing_default_consent",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/{conversationId}/routing/default-consent",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_routing_grant",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/routing/grant",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "put_api_mindos_conversations_conversation_id_routing_handling",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/{conversationId}/routing/handling",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_conversation_id_routing_pending_preview_id",
+      "method": "GET",
+      "path": "/api/mindos/conversations/{conversationId}/routing/pending/{previewId}",
+      "pathParams": [
+        "conversationId",
+        "previewId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_routing_preview",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/routing/preview",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_routing_resume",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/routing/resume",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_conversations_conversation_id_routing_revoke",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/routing/revoke",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_conversations_routing_default",
+      "method": "GET",
+      "path": "/api/mindos/conversations/routing/default",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_conversations_routing_default",
+      "method": "PUT",
+      "path": "/api/mindos/conversations/routing/default",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_folders",
+      "method": "GET",
+      "path": "/api/mindos/folders",
+      "pathParams": [],
+      "query": [
+        "scope"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_folders",
+      "method": "POST",
+      "path": "/api/mindos/folders",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "delete_api_mindos_folders_folder_id",
+      "method": "DELETE",
+      "path": "/api/mindos/folders/{folderId}",
+      "pathParams": [
+        "folderId"
+      ],
+      "query": [
+        "targetFolderId",
+        "moveToRoot"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "patch_api_mindos_folders_folder_id",
+      "method": "PATCH",
+      "path": "/api/mindos/folders/{folderId}",
+      "pathParams": [
+        "folderId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_graph",
+      "method": "GET",
+      "path": "/api/mindos/graph",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_growth_charter",
+      "method": "GET",
+      "path": "/api/mindos/growth/charter",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_growth_decisions",
+      "method": "GET",
+      "path": "/api/mindos/growth/decisions",
+      "pathParams": [],
+      "query": [
+        "status"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_growth_decisions",
+      "method": "POST",
+      "path": "/api/mindos/growth/decisions",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_growth_decisions_decision_id_outcome",
+      "method": "POST",
+      "path": "/api/mindos/growth/decisions/{decisionId}/outcome",
+      "pathParams": [
+        "decisionId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_growth_reviews",
+      "method": "POST",
+      "path": "/api/mindos/growth/reviews",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_knowledge",
+      "method": "GET",
+      "path": "/api/mindos/knowledge",
+      "pathParams": [],
+      "query": [
+        "q",
+        "tag",
+        "folderId",
+        "recycled"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_knowledge",
+      "method": "POST",
+      "path": "/api/mindos/knowledge",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_knowledge_knowledge_id",
+      "method": "GET",
+      "path": "/api/mindos/knowledge/{knowledgeId}",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_knowledge_knowledge_id",
+      "method": "PUT",
+      "path": "/api/mindos/knowledge/{knowledgeId}",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_confirm",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/confirm",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true,
+      "idempotencyHeader": "Idempotency-Key"
+    },
+    {
+      "id": "get_api_mindos_knowledge_knowledge_id_deletion_impact",
+      "method": "GET",
+      "path": "/api/mindos/knowledge/{knowledgeId}/deletion-impact",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_knowledge_knowledge_id_edit_draft",
+      "method": "GET",
+      "path": "/api/mindos/knowledge/{knowledgeId}/edit-draft",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_edit_draft",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/edit-draft",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "put_api_mindos_knowledge_knowledge_id_edit_draft",
+      "method": "PUT",
+      "path": "/api/mindos/knowledge/{knowledgeId}/edit-draft",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_edit_draft_confirm",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/edit-draft/confirm",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true,
+      "idempotencyHeader": "Idempotency-Key"
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_edit_draft_retry",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/edit-draft/retry",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_move",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/move",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_purge",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/purge",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_recycle",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/recycle",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_knowledge_knowledge_id_related",
+      "method": "GET",
+      "path": "/api/mindos/knowledge/{knowledgeId}/related",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_retry_index",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/retry-index",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_knowledge_knowledge_id_sources",
+      "method": "GET",
+      "path": "/api/mindos/knowledge/{knowledgeId}/sources",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_knowledge_knowledge_id_sources",
+      "method": "PUT",
+      "path": "/api/mindos/knowledge/{knowledgeId}/sources",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_tags",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/tags",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_knowledge_knowledge_id_unrecycle",
+      "method": "POST",
+      "path": "/api/mindos/knowledge/{knowledgeId}/unrecycle",
+      "pathParams": [
+        "knowledgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_materials",
+      "method": "GET",
+      "path": "/api/mindos/materials",
+      "pathParams": [],
+      "query": [
+        "type",
+        "status",
+        "keyword",
+        "folderId",
+        "folder",
+        "tag",
+        "recycled"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 16777216,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_analysis",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/analysis",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_deletion_impact",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/deletion-impact",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_draft_card",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/draft-card",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_materials_material_id_draft_card",
+      "method": "PUT",
+      "path": "/api/mindos/materials/{materialId}/draft-card",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_draft_card_confirm",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/draft-card/confirm",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true,
+      "idempotencyHeader": "Idempotency-Key"
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_file",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/file",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "bytes",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 209715200,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_move",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/move",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_parts_part_id_file",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/parts/{partId}/file",
+      "pathParams": [
+        "materialId",
+        "partId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "bytes",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 209715200,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_purge",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/purge",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "delete_api_mindos_materials_material_id_queue",
+      "method": "DELETE",
+      "path": "/api/mindos/materials/{materialId}/queue",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_recycle",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/recycle",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_regenerate",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/regenerate",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_related",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/related",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_summary",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/summary",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_tag_suggestions_suggestion_id_confirm",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/tag-suggestions/{suggestionId}/confirm",
+      "pathParams": [
+        "materialId",
+        "suggestionId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_tags",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/tags",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_unrecycle",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/unrecycle",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_version_impact",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/version-impact",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_versions",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/versions",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_versions",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/versions",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "multipart",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_matters",
+      "method": "GET",
+      "path": "/api/mindos/matters",
+      "pathParams": [],
+      "query": [
+        "status"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_matters",
+      "method": "POST",
+      "path": "/api/mindos/matters",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_matters_matter_id",
+      "method": "GET",
+      "path": "/api/mindos/matters/{matterId}",
+      "pathParams": [
+        "matterId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "patch_api_mindos_matters_matter_id",
+      "method": "PATCH",
+      "path": "/api/mindos/matters/{matterId}",
+      "pathParams": [
+        "matterId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_matters_matter_id_artifacts",
+      "method": "GET",
+      "path": "/api/mindos/matters/{matterId}/artifacts",
+      "pathParams": [
+        "matterId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_matters_matter_id_artifacts",
+      "method": "POST",
+      "path": "/api/mindos/matters/{matterId}/artifacts",
+      "pathParams": [
+        "matterId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_memory_policy",
+      "method": "GET",
+      "path": "/api/mindos/memory-policy",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_memory_policy",
+      "method": "PUT",
+      "path": "/api/mindos/memory-policy",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_nudges_policy",
+      "method": "GET",
+      "path": "/api/mindos/nudges/policy",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_nudges_policy",
+      "method": "PUT",
+      "path": "/api/mindos/nudges/policy",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_ontology_alignment_conversations_conversation_id",
+      "method": "GET",
+      "path": "/api/mindos/ontology/alignment/conversations/{conversationId}",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_ontology_alignment_conversations_conversation_id_consent",
+      "method": "POST",
+      "path": "/api/mindos/ontology/alignment/conversations/{conversationId}/consent",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_ontology_claims",
+      "method": "GET",
+      "path": "/api/mindos/ontology/claims",
+      "pathParams": [],
+      "query": [
+        "section",
+        "trust",
+        "limit"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_ontology_claims",
+      "method": "POST",
+      "path": "/api/mindos/ontology/claims",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_ontology_claims_claim_id",
+      "method": "GET",
+      "path": "/api/mindos/ontology/claims/{claimId}",
+      "pathParams": [
+        "claimId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_ontology_claims_claim_id_alignment",
+      "method": "POST",
+      "path": "/api/mindos/ontology/claims/{claimId}/alignment",
+      "pathParams": [
+        "claimId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_claims_claim_id_alignment_proposals",
+      "method": "POST",
+      "path": "/api/mindos/ontology/claims/{claimId}/alignment/proposals",
+      "pathParams": [
+        "claimId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_claims_claim_id_alignment_revoke",
+      "method": "POST",
+      "path": "/api/mindos/ontology/claims/{claimId}/alignment/revoke",
+      "pathParams": [
+        "claimId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_claims_claim_id_export",
+      "method": "POST",
+      "path": "/api/mindos/ontology/claims/{claimId}/export",
+      "pathParams": [
+        "claimId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_claims_claim_id_review",
+      "method": "POST",
+      "path": "/api/mindos/ontology/claims/{claimId}/review",
+      "pathParams": [
+        "claimId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_consolidate",
+      "method": "POST",
+      "path": "/api/mindos/ontology/consolidate",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_ontology_context_pack",
+      "method": "GET",
+      "path": "/api/mindos/ontology/context-pack",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 16777216,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_ontology_export",
+      "method": "GET",
+      "path": "/api/mindos/ontology/export",
+      "pathParams": [],
+      "query": [
+        "sections",
+        "includeWorking"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 16777216,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_ontology_inbox",
+      "method": "GET",
+      "path": "/api/mindos/ontology/inbox",
+      "pathParams": [],
+      "query": [
+        "limit"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_ontology_projection",
+      "method": "GET",
+      "path": "/api/mindos/ontology/projection",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 16777216,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_ontology_proposals",
+      "method": "GET",
+      "path": "/api/mindos/ontology/proposals",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_ontology_proposals_conflicts_conflict_id_resolve",
+      "method": "POST",
+      "path": "/api/mindos/ontology/proposals/conflicts/{conflictId}/resolve",
+      "pathParams": [
+        "conflictId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_proposals_merges_proposal_id_resolve",
+      "method": "POST",
+      "path": "/api/mindos/ontology/proposals/merges/{proposalId}/resolve",
+      "pathParams": [
+        "proposalId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_ontology_purge",
+      "method": "POST",
+      "path": "/api/mindos/ontology/purge",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_ontology_stats",
+      "method": "GET",
+      "path": "/api/mindos/ontology/stats",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_search",
+      "method": "GET",
+      "path": "/api/mindos/search",
+      "pathParams": [],
+      "query": [
+        "q"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_uploads",
+      "method": "POST",
+      "path": "/api/mindos/uploads",
+      "pathParams": [],
+      "query": [],
+      "body": "multipart",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_uploads_material_id",
+      "method": "GET",
+      "path": "/api/mindos/uploads/{materialId}",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_uploads_material_id_resume",
+      "method": "POST",
+      "path": "/api/mindos/uploads/{materialId}/resume",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_uploads_material_id_retry",
+      "method": "POST",
+      "path": "/api/mindos/uploads/{materialId}/retry",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_zhijun_home",
+      "method": "GET",
+      "path": "/api/mindos/zhijun/home",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_zhijun_onboarding",
+      "method": "GET",
+      "path": "/api/mindos/zhijun/onboarding",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_zhijun_onboarding",
+      "method": "POST",
+      "path": "/api/mindos/zhijun/onboarding",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_zhijun_status",
+      "method": "GET",
+      "path": "/api/mindos/zhijun/status",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_system_mindos_pipeline_status",
+      "method": "GET",
+      "path": "/api/system/mindos-pipeline/status",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "get_api_system_models_chat_provider",
+      "method": "GET",
+      "path": "/api/system/models/chat-provider",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "put_api_system_models_chat_provider",
+      "method": "PUT",
+      "path": "/api/system/models/chat-provider",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_chat_provider_test",
+      "method": "POST",
+      "path": "/api/system/models/chat-provider/test",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "get_api_system_models_external_providers",
+      "method": "GET",
+      "path": "/api/system/models/external-providers",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "post_api_system_models_external_providers",
+      "method": "POST",
+      "path": "/api/system/models/external-providers",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "delete_api_system_models_external_providers_provider_id",
+      "method": "DELETE",
+      "path": "/api/system/models/external-providers/{providerId}",
+      "pathParams": [
+        "providerId"
+      ],
+      "query": [
+        "revision"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "put_api_system_models_external_providers_provider_id",
+      "method": "PUT",
+      "path": "/api/system/models/external-providers/{providerId}",
+      "pathParams": [
+        "providerId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_external_providers_provider_id_activate",
+      "method": "POST",
+      "path": "/api/system/models/external-providers/{providerId}/activate",
+      "pathParams": [
+        "providerId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_external_providers_provider_id_models",
+      "method": "POST",
+      "path": "/api/system/models/external-providers/{providerId}/models",
+      "pathParams": [
+        "providerId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "get_api_system_models_jobs",
+      "method": "GET",
+      "path": "/api/system/models/jobs",
+      "pathParams": [],
+      "query": [
+        "state",
+        "type",
+        "cursor",
+        "limit"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "post_api_system_models_jobs_job_id_cancel",
+      "method": "POST",
+      "path": "/api/system/models/jobs/{jobId}/cancel",
+      "pathParams": [
+        "jobId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "get_api_system_models_material_runtime",
+      "method": "GET",
+      "path": "/api/system/models/material-runtime",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "put_api_system_models_material_runtime",
+      "method": "PUT",
+      "path": "/api/system/models/material-runtime",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_material_runtime_load",
+      "method": "POST",
+      "path": "/api/system/models/material-runtime/load",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "get_api_system_models_material_runtime_models",
+      "method": "GET",
+      "path": "/api/system/models/material-runtime/models",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "post_api_system_models_material_runtime_pull",
+      "method": "POST",
+      "path": "/api/system/models/material-runtime/pull",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_material_runtime_test",
+      "method": "POST",
+      "path": "/api/system/models/material-runtime/test",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_material_runtime_test_inference",
+      "method": "POST",
+      "path": "/api/system/models/material-runtime/test-inference",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "post_api_system_models_material_runtime_unload",
+      "method": "POST",
+      "path": "/api/system/models/material-runtime/unload",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": true
+    },
+    {
+      "id": "get_api_system_models_monitor",
+      "method": "GET",
+      "path": "/api/system/models/monitor",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "models",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_voice_transcribe",
+      "method": "POST",
+      "path": "/api/mindos/voice/transcribe",
+      "pathParams": [],
+      "query": [],
+      "body": "multipart",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    }
+  ]
+}

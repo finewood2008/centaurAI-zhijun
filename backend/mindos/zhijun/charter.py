@@ -15,7 +15,7 @@ from ..stores.charter_draft_store import CharterDraftStore, FIELDS, TEXT_FIELDS,
 from ..stores.conversation_store import ConversationStore, utc_now
 from ..stores.growth_store import GrowthStore, GrowthConflictError
 from ..stores.ontology_store import OntologyStore
-from ..uploads import _device_scope_of
+from ..domain_scope import _device_scope_of
 from .gate import provider_gate, ProviderBusyError
 from .provider import ChatRequest, ProviderError
 

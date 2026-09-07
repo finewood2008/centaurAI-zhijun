@@ -1,6 +1,6 @@
 #!/bin/bash
 # 阶段A CI 检查：Web 运行路径不得启动 Electron（也不得被误当作 Electron 启动命令）。
-#   - 静态断言：npm run web / web:build 脚本不得引用 electron；desktop 必须引用 electron；
+#   - 静态断言：Web不依赖宿主；desktop统一走新shell启动器。
 #   - 可选动态断言（CI_WEB_NO_ELECTRON_RUNTIME=1）：启动 Vite 后进程树无 Electron 可执行文件。
 set -euo pipefail
 
@@ -19,9 +19,15 @@ for s in "$web_script" "$web_build"; do
   esac
 done
 case "$desktop_script" in
-  *electron*) : ;;
-  *) fail "desktop 脚本未引用 electron（$desktop_script）" ;;
+  'bash ../start-desktop.sh') : ;;
+  *) fail "desktop 脚本未指向统一桌面入口（$desktop_script）" ;;
 esac
+if ! grep -q 'frontend/shell/launch.cjs' "$ROOT/start-desktop.sh"; then
+  fail "桌面入口未启动新shell"
+fi
+if grep -E -- '(--no-sandbox|start-backend|frontend/main\.js)' "$ROOT/start-desktop.sh" >/dev/null; then
+  fail "桌面入口仍启动旧后端或关闭sandbox"
+fi
 
 # Web 源码不得反向依赖桌面 IPC / preload。仅检查 package 脚本不足以阻止以后
 # 在 Vue/TypeScript 中直接 import Electron 相关模块。
