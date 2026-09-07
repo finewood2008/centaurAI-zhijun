@@ -31,11 +31,27 @@ const keyword = ref(typeof route.query.keyword === 'string' ? route.query.keywor
 const tag = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
 const importing = ref(false)
-let refreshTimer: ReturnType<typeof setInterval> | null = null
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+let loadedOnce = false
+let disposed = false
 const materialLoadGate = createSessionGate()
 
 function hasActiveMaterial(items: UploadResult[]) {
   return items.some((item) => item.status === 'uploaded' || item.status === 'queued' || item.status === 'processing')
+}
+
+function stopRefreshTimer() {
+  if (refreshTimer !== null) clearTimeout(refreshTimer)
+  refreshTimer = null
+}
+
+function scheduleRefresh() {
+  stopRefreshTimer()
+  if (disposed || !hasActiveMaterial(items.value)) return
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null
+    void loadMaterials()
+  }, 1800)
 }
 
 const knowledgeCardStateMeta: Record<NonNullable<UploadResult['knowledgeCard']>['state'], { label: string; className: string }> = {
@@ -133,8 +149,9 @@ async function loadFolders() {
 }
 
 async function loadMaterials() {
+  stopRefreshTimer()
   const requestSession = materialLoadGate.next()
-  loading.value = true
+  if (!loadedOnce) loading.value = true
   error.value = ''
   try {
     const response = await api.listMaterials({
@@ -147,16 +164,14 @@ async function loadMaterials() {
     })
     if (!materialLoadGate.isCurrent(requestSession)) return
     items.value = response.items
-    if (hasActiveMaterial(items.value) && refreshTimer === null) {
-      refreshTimer = setInterval(loadMaterials, 1800)
-    } else if (!hasActiveMaterial(items.value) && refreshTimer !== null) {
-      clearInterval(refreshTimer)
-      refreshTimer = null
-    }
+    loadedOnce = true
   } catch (e) {
     if (materialLoadGate.isCurrent(requestSession)) error.value = e instanceof Error ? e.message : '原材料加载失败'
   } finally {
-    if (materialLoadGate.isCurrent(requestSession)) loading.value = false
+    if (materialLoadGate.isCurrent(requestSession)) {
+      loading.value = false
+      scheduleRefresh()
+    }
   }
 }
 
@@ -180,7 +195,9 @@ async function importFiles(files: FileList | File[]) {
       }
       transientUploads.value.push(transient)
       try {
-        await api.uploadFile(file, selectedFolderId.value ?? undefined)
+        const uploaded = await api.uploadFile(file, selectedFolderId.value ?? undefined)
+        items.value = [uploaded, ...items.value.filter((item) => item.materialId !== uploaded.materialId)]
+        loadedOnce = true
         accepted += 1
       } catch (e) {
         failed += 1
@@ -370,8 +387,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   materialLoadGate.invalidate()
-  if (refreshTimer !== null) clearInterval(refreshTimer)
+  stopRefreshTimer()
 })
 </script>
 
@@ -477,7 +495,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="loading" class="loading-state">正在加载原材料…</div>
-        <ErrorState v-else-if="error" :message="error" retry-label="重试" @retry="loadMaterials" />
+        <ErrorState v-else-if="error && !displayItems.length" :message="error" retry-label="重试" @retry="loadMaterials" />
         <EmptyState
           v-else-if="!displayItems.length"
           title="暂无原材料"
@@ -491,6 +509,10 @@ onBeforeUnmount(() => {
         </EmptyState>
 
         <div v-else class="ws-table">
+          <p v-if="error" class="ws-table__refresh-error" role="alert">
+            资料状态暂未更新：{{ error }}
+            <button type="button" @click="loadMaterials">重试</button>
+          </p>
           <div class="ws-table__head">共 {{ displayItems.length }} 项资料</div>
           <div class="ws-table__scroll">
             <table class="ws-table__grid">
@@ -939,6 +961,29 @@ onBeforeUnmount(() => {
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
   overflow: hidden;
+}
+
+.ws-table__refresh-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--ws-danger-color, #a6452e);
+  background: var(--ws-danger-bg, #fff4f0);
+  border-bottom: 1px solid var(--ws-danger-border, #efc4b8);
+  font-size: 12px;
+}
+
+.ws-table__refresh-error button {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .ws-table__head {
