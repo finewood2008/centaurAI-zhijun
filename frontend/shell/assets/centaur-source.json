@@ -1,9 +1,40 @@
 {
   "source": "../../mindos-web/logo.jpg",
   "sourceSha256": "9d3fa3428bec533b3656a2b9d373e039faae08a5836dcf518535fe62a775227d",
-  "conversion": "macOS sips: preserve aspect ratio, fit within 1024 square, white padding; iconutil standard sizes",
+  "renderer": "../scripts/render-centaur-icon.swift",
+  "rendererSha256": "e9859945f1aead09514d15d9a5de9a29678ecdd2179ea8117428b7a8c69c8307",
+  "buildScript": "../scripts/build-icons.cjs",
+  "buildScriptSha256": "fa96b0efe4767247a7e127f8c4aa374d38c72d3aa2219eab783577af4084c159",
+  "conversion": "CoreGraphics near-white background mask; original centaur proportionally centered on a warm ivory rounded tile, transparent surround and soft shadow; sips and iconutil standard sizes",
+  "layout": {
+    "backgroundMask": {
+      "fullyTransparentSourcePixels": 1282528,
+      "maximumChroma": 18,
+      "minimumChannelClear": 250,
+      "minimumChannelStart": 240
+    },
+    "canvas": 1024,
+    "illustrationMaxDimension": 736,
+    "shadow": {
+      "blur": 16,
+      "offsetY": -8,
+      "opacity": 0.16
+    },
+    "sourceSize": {
+      "height": 1700,
+      "width": 1280
+    },
+    "tileColorSRGB": [
+      1,
+      0.98,
+      0.945,
+      1
+    ],
+    "tileRadius": 190,
+    "tileSize": 880
+  },
   "files": {
-    "centaur.png": "58cea7091d4de66c2f1ea4787228499de28472b166992baa23ab266ceeb7e980",
-    "centaur.icns": "66991a2b4846a95109a9ca1e1be3de67375e5a67199b4fe5f93649e2d8366389"
+    "centaur.png": "e6c038fb7c709a5019ad9ec041e4744eeea566c12ca6dfa886a91edf783a2ba4",
+    "centaur.icns": "69f78a083bce813d1a0679df0aa6ac2cdce09aad1412ebe6838496cd7cbb1e1d"
   }
 }
