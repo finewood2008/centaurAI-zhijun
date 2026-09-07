@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import type { Phase } from '../../../shared/desktop-contract'
 import { Menu } from 'lucide-vue-next'
 import { useDesktopWorkspace } from './workspace'
+import { connectedDeviceLabel } from './deviceDisplay'
 const props = defineProps<{ workspaceReady: boolean }>()
 const emit = defineEmits<{ (e: 'toggle-menu'): void }>()
 const { controller, state } = useDesktopWorkspace()
@@ -11,6 +12,7 @@ const route = useRoute()
 const phase = computed(() => state.value.snapshot?.phase)
 const labels: Record<Phase, string> = { signed_out: '尚未登录', authenticating: '正在登录', selecting_device: '请选择盒子', connecting: '正在连接盒子', authorizing: '正在验证权限', ready: '正在打开工作区', disconnecting: '正在断开', failed: '连接未就绪' }
 const connectionLabel = computed(() => props.workspaceReady ? '已连接盒子' : phase.value ? labels[phase.value] : '正在初始化')
+const deviceLabel = computed(() => connectedDeviceLabel(state.value.snapshot?.subject ?? null))
 const canChoose = computed(() => !!phase.value && ['ready', 'failed'].includes(phase.value) && !state.value.controlPending)
 const title = computed(() => typeof route.meta.title === 'string' ? route.meta.title : '知君')
 </script>
@@ -19,7 +21,7 @@ const title = computed(() => typeof route.meta.title === 'string' ? route.meta.t
     <button class="product-menu ws-topbar__menu" aria-label="打开导航菜单" @click="emit('toggle-menu')"><Menu :size="20" /></button>
     <h1>{{ title }}</h1>
     <div class="product-connection" role="status"><span class="product-dot" :class="{ connected: workspaceReady }" />{{ connectionLabel }}
-      <span class="product-device" :title="state.snapshot?.subject?.deviceId">{{ state.snapshot?.subject?.deviceId }}</span>
+      <span v-if="deviceLabel" class="product-device" :title="deviceLabel">{{ deviceLabel }}</span>
     </div>
     <button v-if="phase !== 'selecting_device'" :disabled="!canChoose" @click="controller.control('disconnect')">{{ phase === 'failed' ? '重新选择盒子' : '切换盒子' }}</button>
     <button v-else :disabled="state.controlPending || state.devicesLoading" @click="controller.loadDevices()">刷新盒子</button>

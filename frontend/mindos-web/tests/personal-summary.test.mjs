@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { ontologySummary, preferredOntologyView, summaryStatus } from '../src/components/ontology/summary.ts'
+import { createOntologyStatsLoader, ontologyLoadPlan } from '../src/pages/ontologyLoading.ts'
 
 const claim = (id, extras = {}) => ({ id, content: id, section: 'who', trustState: 'confirmed', layer: 'self_declared', scope: 'long_term', firstSeen: '2026-09-01T00:00:00Z', lastReaffirmed: '2026-09-01T00:00:00Z', evidence: [], ...extras })
 const input = [
@@ -30,4 +31,29 @@ assert.equal(preferredOntologyView(null), 'summary')
 assert.equal(preferredOntologyView('list'), 'list')
 assert.equal(preferredOntologyView('map'), 'map')
 assert.equal(preferredOntologyView('summary'), 'summary')
+assert.deepEqual(ontologyLoadPlan('summary', 'who'), { claims: false, overview: true, stats: false })
+assert.deepEqual(ontologyLoadPlan('map', 'who'), { claims: false, overview: true, stats: true })
+assert.deepEqual(ontologyLoadPlan('list', 'who'), { claims: true, overview: false, stats: true })
+assert.deepEqual(ontologyLoadPlan('summary', 'inbox'), { claims: true, overview: false, stats: true })
+
+let reads = 0
+let needed = true
+const completions = []
+const accepted = []
+const loader = createOntologyStatsLoader(
+  () => new Promise(resolve => { reads++; completions.push(resolve) }),
+  () => needed,
+  value => accepted.push(value),
+)
+void loader.load(); void loader.load()
+assert.equal(reads, 1, 'concurrent stats reads are coalesced')
+loader.invalidate(); loader.invalidate()
+completions[0]('stale')
+await new Promise(resolve => setImmediate(resolve))
+assert.equal(reads, 2, 'multiple invalidations produce one latest retry')
+loader.dispose(); needed = false
+completions[1]('after-unmount')
+await new Promise(resolve => setImmediate(resolve))
+assert.deepEqual(accepted, [], 'stale and post-unmount values are discarded without another retry')
+assert.equal(reads, 2, 'dispose prevents another stats read after unmount')
 console.log('personal-summary: exact source text, status separation, lifecycle/time filtering, immutable records and existing view preferences passed')

@@ -1,8 +1,8 @@
 # 知君 Electron SDK 与 data-engine 集成方案
 
-更新：2026-09-06。当前方案已由早期只读调研收敛为 v2 完整产品接入实现；**Admin 已上线，真实 Consumer/SDK/Direct、家庭 AMD 工作区 context 和资料页面验证通过**。本体页面任务回收修复已通过 Shell 回归，修复后 UI 复验及全功能、正式安装包验收仍待完成。见[最新上线与合并记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)。本文不把源码完成、合成测试或健康检查写成端到端交付。
+更新：2026-09-07。当前方案已由早期只读调研收敛为 v2 完整产品接入实现；**Admin 已上线，真实 Consumer/SDK/Direct 已连接家庭和公司 AMD 盒子，工作区 context、首页、资料与本体读取等关键链路验证通过**。桌面产品业务请求统一进入盒端 170 项白名单，Admin 只承担账号、设备和连接票据控制。170 项操作尚未逐项真机执行，全功能与正式安装包验收仍待完成。见[最新上线与合并记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)和[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)。
 
-配套：[架构图](ARCHITECTURE-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域规格](DOMAIN-INTEGRATION-0905.md)、[执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[真实验收](REAL-ACCEPTANCE-0906.md)。
+配套：[架构图](ARCHITECTURE-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)、[领域规格](DOMAIN-INTEGRATION-0905.md)、[执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[真实验收](REAL-ACCEPTANCE-0906.md)。
 
 ## 1. 已确定的集成路线
 

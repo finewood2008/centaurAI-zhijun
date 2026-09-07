@@ -62,6 +62,20 @@ test('real SDK auth coordinates login, signed devices/ticket, safe projection an
   assert.equal(calls.length, 4); await client.dispose();
 });
 
+test('a device without an Admin name falls back to its stable id', async () => {
+  const store = memoryStore();
+  const unnamed = { ...device, deviceName: null };
+  const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+    if (url.endsWith('/auth/password/login')) return reply(token());
+    verifySigned(store, url, init);
+    if (url.endsWith('/devices')) return reply([unnamed]);
+    assert.fail(url);
+  } });
+  await client.signIn(credentials);
+  assert.deepEqual(await client.listDevices(), [{ deviceId: device.deviceId, displayName: device.deviceId, availability: 'online' }]);
+  await client.dispose();
+});
+
 test('parallel 401s rotate once and replay only after SDK coordinator supplies the current token', async () => {
   const store = memoryStore(); let refreshes = 0; let oldReads = 0; let newReads = 0;
   const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { DesktopController } from '../src/desktop/controller.ts'
+import { connectedDeviceLabel } from '../src/desktop/deviceDisplay.ts'
 
 const deferred = () => {
   let resolve
@@ -38,6 +39,13 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
   const controller = new DesktopController(bridge)
   return { controller, bridge, reads, devices, controls, cancellations, emit: next => listener?.(next), get unsubscribed() { return unsubscribed } }
 }
+
+test('connected device label prefers a non-empty name and otherwise uses the device id', () => {
+  assert.equal(connectedDeviceLabel({ accountId: 'account', deviceId: 'box-id', deviceName: '  公司 AMD 盒子  ' }), '公司 AMD 盒子')
+  assert.equal(connectedDeviceLabel({ accountId: 'account', deviceId: 'box-id', deviceName: '   ' }), 'box-id')
+  assert.equal(connectedDeviceLabel({ accountId: 'account', deviceId: 'box-id' }), 'box-id')
+  assert.equal(connectedDeviceLabel(null), '')
+})
 
 test('without a desktop bridge no network fallback or simulated session is started', async () => {
   const controller = new DesktopController(undefined)

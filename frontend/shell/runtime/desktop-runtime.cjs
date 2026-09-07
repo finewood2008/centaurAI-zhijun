@@ -34,6 +34,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   let phase = 'signed_out';
   let accountId = null;
   let deviceId = null;
+  let deviceName = null;
   let session = null;
   let productSession = null;
   let workspaceId = null;
@@ -72,7 +73,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
 
   function snapshot() {
     const result = { protocolVersion: 1, environment: mode, generation, sequence, phase,
-      subject: accountId ? { accountId, ...(deviceId ? { deviceId } : {}), ...(workspaceId ? { workspaceId } : {}) } : null,
+      subject: accountId ? { accountId, ...(deviceId ? { deviceId } : {}), ...(deviceName ? { deviceName } : {}), ...(workspaceId ? { workspaceId } : {}) } : null,
       capabilities: { materialsRead: phase === 'ready', product: phase === 'ready' && Boolean(productSession), streamChat: phase === 'ready' && Boolean(productSession),
         uploads: phase === 'ready' && Boolean(productSession), matters: phase === 'ready' && Boolean(productSession), provisioning: false } };
     if (publicError && phase !== 'ready') result.error = { ...publicError };
@@ -141,6 +142,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     const old = session;
     session = null;
     deviceId = null;
+    deviceName = null;
     return closeSession(old);
   }
   function failure(error, gen) {
@@ -228,12 +230,14 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     if (operation === 'connect') {
       assert(safeText(input));
       assert(['selecting_device', 'ready', 'connecting', 'authorizing', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
-      assert(devices.some((value) => value.deviceId === input), 'ACCESS_DENIED');
+      const selectedDevice = devices.find((value) => value.deviceId === input);
+      assert(selectedDevice, 'ACCESS_DENIED');
       invalidate();
       ticket.generation = generation;
       const gen = generation;
       void detachSession();
       deviceId = input;
+      deviceName = selectedDevice.displayName.trim() || input;
       const binding = { accountId, deviceId };
       publish('connecting');
       try {

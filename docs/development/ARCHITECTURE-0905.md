@@ -1,8 +1,8 @@
 # 知君 Electron / 盒端完整产品架构
 
-更新：2026-09-06。文件名保留 0905 以延续集成基线。**Admin 已上线；真实账号经 SDK/Direct 连接家庭 AMD 盒子、v2 context 与资料页面已通过。** 本体页的本地任务回收漏洞已修复，修复后 UI 复验因桌面窗口不可读待续；全功能与正式安装包验收仍未完成。最新证据见[上线与合并记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)。不能把本地测试、170 项操作清单或菜单可见视为全功能验收。
+更新：2026-09-07。文件名保留 0905 以延续集成基线。**Admin 已上线；真实账号经 SDK/Direct 连接家庭和公司 AMD 盒子，v2 context、首页、资料与本体读取等关键链路已通过。** 当前桌面所有产品业务请求受限于盒端 170 项 catalog，账号与设备控制由 Admin 承担；详细证据见[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)。全功能逐项与正式安装包验收仍未完成。
 
-配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
+配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
 
 ![知君当前完整产品架构](assets/architecture-0905.svg)
 
@@ -100,7 +100,7 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 
 ### 桌面导航与读取延迟（0907 补充）
 
-业务仍经过 renderer → preload/主进程 → Consumer SDK → Agent → DE Gateway → workspace worker。传输使用 HTTP，当前业务协议是 start/poll 两步；renderer 不直接持有盒端鉴权凭据。已完成引导的导航提示仅在当前连接内复用 30 秒，切盒/断线/退出/引导写入失效；这份提示不授予数据访问权限。guard 在异步结果消费前复核连接代次与引导 revision。对话列表优先入队，非关键状态/统计随后读取。详细边界与性能证据见[第二轮跟进](PERFORMANCE-FOLLOWUP-0907.md)。
+业务仍经过 renderer → preload/主进程 → Consumer SDK → Agent → DE Gateway → workspace worker。传输使用 HTTP，当前业务协议是 start/poll 两步；renderer 不直接持有盒端鉴权凭据。已完成引导的导航提示仅在当前连接内复用 30 秒，切盒/断线/退出/引导写入失效；这份提示不授予数据访问权限。guard 在异步结果消费前复核连接代次与引导 revision。对话列表优先入队，非关键状态/统计随后读取。“我的本体”默认摘要已由 3 个业务任务降为 1 个，stats 和分区列表改为切换视图后按需加载。详细边界与性能证据见[第二轮跟进](PERFORMANCE-FOLLOWUP-0907.md)和[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)。
 
 0907 公司环境当前 DE 为 `62ae9b1`、worker 为知君 `eebd58b`（业务源码与此前 `507edb5` 相同），盒端 Agent 保持 `644b1c2`；桌面 native 1.2.1 来自 OS `353f1d9`。此为公司环境记录，不改写上述家庭环境历史验收。
 

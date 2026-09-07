@@ -130,6 +130,7 @@ test('SDK success alone stays authorizing and wrong bridge binding fails closed'
   proof.resolve({ accountId: 'wrong-account', deviceId: 'synthetic-box-a' });
   assert.equal((await connecting).error.code, 'ACCESS_DENIED');
   assert.equal(runtime.snapshot().phase, 'failed');
+  assert.deepEqual(runtime.snapshot().subject, { accountId: 'synthetic-account' });
   assert.equal(runtime.snapshot().capabilities.materialsRead, false);
 });
 
@@ -151,6 +152,7 @@ test('late connection is closed after another device wins', async (t) => {
   await tick();
   assert.equal(late.closed, 1);
   assert.equal(runtime.snapshot().subject.deviceId, 'synthetic-box-b');
+  assert.equal(runtime.snapshot().subject.deviceName, 'b');
 });
 
 test('device switch rejects pending old read before the old response and preserves new subject', async (t) => {
@@ -199,6 +201,9 @@ test('disconnect preserves login, sign-out removes it, and stale contexts cannot
   const runtime = createDesktopRuntime({ mode: 'simulation' });
   t.after(() => runtime.dispose());
   await ready(runtime);
+  assert.deepEqual(runtime.snapshot().subject, {
+    accountId: 'synthetic-account', deviceId: 'synthetic-box-a', deviceName: '模拟盒子 A',
+  });
   const generation = runtime.snapshot().generation;
   assert.equal((await call(runtime, 'disconnect')).ok, true);
   assert.equal(runtime.snapshot().phase, 'selecting_device');
