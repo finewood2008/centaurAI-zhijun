@@ -31,7 +31,7 @@
     "build:desktop": "vue-tsc -b && vite build --config vite.desktop.config.ts",
     "test:desktop": "node --experimental-strip-types --test tests/desktop-ui.test.mjs",
     "test:all": "node --experimental-strip-types --test tests/*.test.mjs",
-    "test:product": "node --test tests/product-transport.test.mjs",
+    "test:product": "node --experimental-strip-types --test tests/product-transport.test.mjs tests/navigation-progress.test.mjs",
     "test:product-navigation": "node tests/product-navigation.e2e.mjs"
   },
   "dependencies": {

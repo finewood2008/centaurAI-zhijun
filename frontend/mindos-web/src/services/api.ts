@@ -1,4 +1,5 @@
-import { isDesktopProduct } from '../shared/productScope.ts'
+import { hasProductScope, isDesktopProduct, onProductScopeReset } from '../shared/productScope.ts'
+import { createNavigationProgressReader } from './navigationProgress.ts'
 import { transportRequest } from './transport.ts'
 // 类型化 API Service：MindOS 浏览器页面统一通过此模块访问 /api/...，
 // 不依赖 window.api / Electron preload / ipcRenderer。
@@ -2350,11 +2351,31 @@ export function getOnboardingProgress() {
   return request<OnboardingProgress>('/mindos/zhijun/onboarding')
 }
 
-export function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
-  return postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
-    action,
-    ...(conversationId ? { conversationId } : {}),
-  })
+const navigationProgress = createNavigationProgressReader(
+  getOnboardingProgress,
+  () => isDesktopProduct() && hasProductScope(),
+)
+onProductScopeReset(navigationProgress.invalidate)
+
+export function getOnboardingProgressForNavigation() {
+  return navigationProgress.read()
+}
+
+export function onboardingNavigationRevision(): number {
+  return navigationProgress.revision()
+}
+
+export async function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
+  navigationProgress.invalidate()
+  try {
+    return await postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
+      action,
+      ...(conversationId ? { conversationId } : {}),
+    })
+  } finally {
+    // Also discard reads started during a write, including an ambiguous failure.
+    navigationProgress.invalidate()
+  }
 }
 
 // ---- P3：整合与裁决、导出 / 全量删除

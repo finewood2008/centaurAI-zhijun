@@ -1347,9 +1347,10 @@ async function askAboutFiles(message: UiMessage, prompt: string) {
 
 onMounted(() => {
   mounted = true
+  // The native transport is serial: enqueue the visible list before background counts.
+  void loadConversations()
   void loadStatus()
   void loadStats()
-  void loadConversations()
 })
 
 onBeforeUnmount(() => {

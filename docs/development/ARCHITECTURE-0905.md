@@ -97,3 +97,7 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 ### 连接失败时的应用框架
 
 账号登录态负责显示导航框架，工作区 `ready` 状态负责挂载业务内容。连接失败时五个导航与偏好仍可见，内容区显示连接恢复操作；业务页和旧工作区状态卸载。账号票据签发错误与原生设备连接错误在主进程分别分类，不能由统一 `TRANSPORT_UNAVAILABLE` 推断设备离线。见[桌面合同补充](DESKTOP-CONTRACT-0905.md)。
+
+### 桌面导航与读取延迟（0907 补充）
+
+业务仍经过 renderer → preload/主进程 → Consumer SDK → Agent → DE Gateway → workspace worker。传输使用 HTTP，当前业务协议是 start/poll 两步；renderer 不直接持有盒端鉴权凭据。已完成引导的导航提示仅在当前连接内复用 30 秒，切盒/断线/退出/引导写入失效；这份提示不授予数据访问权限。guard 在异步结果消费前复核连接代次与引导 revision。对话列表优先入队，非关键状态/统计随后读取。详细边界与性能证据见[第二轮跟进](PERFORMANCE-FOLLOWUP-0907.md)。

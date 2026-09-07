@@ -131,6 +131,10 @@ PDF/DOCX/OCR盒端解析分别46/48/110字符通过；受限voice API返回40字
 
 正式盒端初次匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；后续 Admin 上线与 Agent `644b1c2` 部署、真实连接结果见[最新回执](ADMIN-VERIFY-MASTER-MERGE-0906.md)。
 
+### 0907 导航性能回归要求
+
+`test:product` 包含导航缓存期限、并行读取合并、未完成/错误不缓存、切盒及引导写入微任务竞态回归。桌面仅缓存最多 30 秒的 ready 导航提示，显式 API 和业务授权仍实时检查。连接与引导 revision 必须在 guard 消费前再次核对。对话列表应先于状态/统计入队。HTTP start/poll、SDK 串行和盒端历史扫描仍会影响耗时，不能把合成测试写成真机首屏 SLA。见[跟进与验收记录](PERFORMANCE-FOLLOWUP-0907.md)。
+
 ### 连接失败的定位顺序
 
 先区分账号请求、票据签发和原生连接阶段。新版保留 SDK 原票据校验，并恢复其捕获前的安全 Consumer 错误；账号服务拒绝应用/权限会明确显示 `APPLICATION_AUTHORIZATION_DENIED`，不再统一显示设备网络错误。该错误仍需检查 Admin 应用登记及请求权限，不能仅凭它断言某个后端版本未部署。盒端 HTTP 健康只证明服务运行，不证明账号票据和 P2P 链路已通过。登录后连接失败仍保留导航，内容区维持未连接提示。见[专项修复与验收](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
