@@ -44,6 +44,12 @@ try {
     }
     window.__productTestFail = () => set('failed')
     window.__productTestStage = phase => set(phase)
+    window.__productTestExpire = () => {
+      snapshot = { ...snapshot, phase: 'failed', generation: snapshot.generation + 1, sequence: snapshot.sequence + 1,
+        subject: null, capabilities: { product: false, materialsRead: false },
+        error: { code: 'CONNECTIVITY_SESSION_EXPIRED', message: '连接会话已过期，请重新登录。', recovery: 'user_sign_in' } }
+      subscribers.forEach(fn => fn(snapshot))
+    }
     window.zhijunDesktop = {
       protocolVersion: 1,
       subscribe(fn) { stats.subscriptions++; stats.activeSubscriptions++; subscribers.add(fn); return () => { subscribers.delete(fn); stats.activeSubscriptions-- } },
@@ -122,8 +128,8 @@ try {
   assert.ok(stats.starts.length > 15)
   assert.deepEqual(unexpected, [])
   assert.deepEqual(pageErrors, [])
-  await page.getByRole('button', { name: '退出登录', exact: true }).click()
+  await page.evaluate(() => window.__productTestExpire())
   await page.getByTestId('password-login').waitFor()
-  assert.equal(await navigation.count(), 0, 'workspace unmounts on logout')
-  console.log('product-navigation: logged-in failure keeps navigation without business dispatch, reselect/reconnect recovers, stale page unmounts; five navigation entries, preferences, all 15 page components, shared connection and logout passed with synthetic HTTP errors')
+  assert.equal(await navigation.count(), 0, 'workspace unmounts on confirmed connectivity-session expiry')
+  console.log('product-navigation: logged-in failure keeps navigation without business dispatch, reselect/reconnect recovers, stale page unmounts; five navigation entries, preferences, all 15 page components, shared connection and expiry-to-login passed with synthetic HTTP errors')
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
