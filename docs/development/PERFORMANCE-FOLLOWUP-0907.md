@@ -90,3 +90,11 @@ OS `353f1d9`、SDK 工件 `7c59c44` 已推送到同名集成分支。native 1.2.
 Gateway 现网约有 802 个 jobs、2444 个 events 和 3249 个文件。事件写入原先分别为事件文件和 job 文件各递归扫描一次整个 workspace 配额；本轮在同一跨进程锁内复用一次配额快照，并按第一份文件的实际 allocation 更新后校验第二份文件。AES-GCM、payload reserve、文件与目录 fsync、写入顺序和跨进程配额锁保持不变。单次 `append_event` 的全目录 `_usage` 扫描由 2 次降为 1 次；创建任务的过期清理扫描仍保留。
 
 18:08 的对话 409 来自路由预览内部的 `REDACTION_NOT_READY`。工作区有 3 份隐私资料，其中 1 份安全正文 ready、2 份处于 review_required；旧的自动 evidence 检索因任意一份安全正文未就绪而中断整次普通提问。服务端现在只在自动候选检索中跳过精确的 `REDACTION_NOT_READY`；显式选择资料、来源校验以及其他隐私错误仍严格拒绝，也不会回退读取原始正文。桌面同时把这两个隐私处理中错误码转换为可理解的提示，不再只显示“请求失败（409）”。
+
+### 家庭盒偏好页 422 修复与真机复验（0908）
+
+家庭盒 `192.168.1.18` 上的偏好页 422 不是“记忆整理”写入参数错误。现场日志确认记忆策略 GET 已返回 200，真正失败的是页面同时加载的五个模型配置 GET；盒端旧 `models.py` 把 Gateway 传入的受信上传解析回调误判为实际上传，统一返回 `MODEL_UPLOAD_INVALID`。这与公司盒此前修复的根因一致，因此需要更新盒端 Data Engine 运行代码。
+
+本次从干净的 DE `813a9c0` 生成窄补丁，先复制旧发布形成新的不可变目录 `/home/user/apps/centuarai-data-engine/releases/20260907T234742Z-813a9c0`，只覆盖已经过回归的 `models.py`、`search_service.py`、`materials.py` 与 `store.py`，并通过新的 97 号 systemd drop-in 切换。旧发布目录、原服务配置和切换前文件摘要保存在 `/home/user/apps/centuarai-data-engine/patch-backups/20260907T234742Z-813a9c0`；部署脚本在健康失败时会自动移除 drop-in 并恢复旧服务。未修改 Agent 清单、授权快照、桥接密钥、worker catalog 或业务数据。
+
+切换后 `centaurAI-database.service` 为 active，`NRestarts=0`，`GET /api/health` 返回 200。使用正式 Consumer 账号、`zhijun-desktop`、`zhijun.workspace` 和 Direct-only SDK 连接家庭设备 `AMD AI盒子`，五个模型配置操作均返回内部 HTTP 200；记忆策略读取、切换和恢复也均为 200，最终恢复为 `important`，revision 为 2。首次用临时新客户端立即连接曾被 Agent 返回 `TARGET_NOT_ALLOWED`；核对 manifest、票据和授权快照均正确，等待 7 秒让 5 秒周期的客户端 grant 同步后，同一完整验收通过。不能用放宽 target/scope 或手改授权快照规避该同步窗口。
