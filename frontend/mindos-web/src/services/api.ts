@@ -96,6 +96,10 @@ export async function throwApiError(res: Response): Promise<never> {
       details = parsedDetails.length ? parsedDetails : undefined
       message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
     }
+    else if (body && body.error && typeof body.error === 'object') {
+      if (typeof body.error.message === 'string') message = body.error.message
+      code = typeof body.error.code === 'string' ? body.error.code : undefined
+    }
     if (!code && body && typeof body.code === 'string') code = body.code
     if (message === fallbackMessage && code === 'REDACTION_NOT_READY') {
       message = '部分资料仍在完成隐私处理，请稍后重试。'
@@ -1200,7 +1204,44 @@ export interface ModelActionResponse {
   deduplicated: boolean
 }
 
+export interface RedactionStatus {
+  state: string
+  versionId: string | null
+  policy?: string
+  canReadOriginal: boolean
+  canReview: boolean
+  attempts: { attempt_id: string; kind: 'body' | 'summary'; state: string; error_code: string | null }[]
+}
+
 export const api = {
+  getRedactionStatus: (id: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction`),
+  getRedactionReview: (id: string, kind: string) => request<{
+    text: string
+    originalText: string
+    reasons: string[]
+    inputHash: string
+    replacements: Array<{ start: number; end: number; type: string; required: boolean }>
+    versionId: string
+    attemptId: string
+    kind: string
+    canCorrect: boolean
+  }>(`/mindos/materials/${encodeURIComponent(id)}/redaction/review?kind=${encodeURIComponent(kind)}`),
+  reviewRedaction: (id: string, payload: { versionId: string; attemptId: string; decision: 'approve' | 'reject'; reason: string }) =>
+    postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/review`, payload),
+  correctRedaction: (id: string, payload: {
+    versionId: string
+    attemptId: string
+    kind: string
+    expectedInputHash: string
+    spans: Array<{ start: number; end: number; type: string }>
+    reason: string
+  }, idempotencyKey: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/correct`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS, 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  retryRedaction: (id: string, payload: { versionId: string; kind: string }) =>
+    postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/retry`, payload),
   health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),
   // 后端同一套导入校验规则（与 mindos.validation.validate_import 一致）。

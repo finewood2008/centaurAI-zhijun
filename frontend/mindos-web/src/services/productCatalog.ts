@@ -13,6 +13,7 @@ export interface ProductOperation {
   capability: 'domain' | 'materials' | 'models'
   mutating: boolean
   idempotencyHeader?: 'Idempotency-Key'
+  sensitiveResponse?: boolean
 }
 const operations = [...catalog.operations] as ProductOperation[]
 operations.sort((a, b) => a.pathParams.length - b.pathParams.length || b.path.length - a.path.length)

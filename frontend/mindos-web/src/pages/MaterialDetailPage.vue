@@ -16,6 +16,7 @@ import { applyVersionSourceAction } from '@/shared/versionSources'
 import { useToast } from '@/composables/useToast'
 import LifecycleDangerPanel from '@/components/lifecycle/LifecycleDangerPanel.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import RedactionPanel from '@/components/RedactionPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -860,6 +861,11 @@ async function saveOriginal() {
         </template>
         <p v-if="draftError" class="error-text">{{ draftError }}</p>
       </section>
+      <RedactionPanel
+        v-if="detail.privacyRequired || (detail.privacyStatus && detail.privacyStatus.state !== 'not_required')"
+        :material-id="detail.materialId"
+        @updated="loadDetail(detail.materialId)"
+      />
       <div class="detail-grid">
         <section class="detail-panel preview-panel">
           <div class="panel-title">原始资料 <span class="badge soon">只读</span></div>

@@ -111,7 +111,45 @@ test('catalog is finite, unique, bounded and resolves only exact method/paramete
   const { resolveProductOperation } = modules()('services/productCatalog.ts')
   assert.equal(resolveProductOperation('/api/mindos/conversations/routing/default').operation.path, '/api/mindos/conversations/routing/default')
   assert.deepEqual(resolveProductOperation('/api/mindos/materials/m_test').params, { materialId: 'm_test' })
+  const review = resolveProductOperation('/api/mindos/materials/m_test/redaction/review?kind=body')
+  assert.equal(review.operation.id, 'get_api_mindos_materials_material_id_redaction_review')
+  assert.equal(review.operation.sensitiveResponse, true)
+  assert.deepEqual(review.query, { kind: 'body' })
+  for (const route of [
+    '/api/mindos/materials/m_test/redaction',
+    '/api/mindos/materials/m_test/redaction/review',
+    '/api/mindos/materials/m_test/redaction/correct',
+    '/api/mindos/materials/m_test/redaction/retry',
+  ]) assert.ok(catalog.operations.some(operation => operation.path.replace('{materialId}', 'm_test') === route))
   for (const path of ['https://host/api/mindos/materials', '/api/mindos/materials?extra=1', '/api/mindos/materials?type=image&type=audio', '/api/mindos/materials/%2e%2e', '/api/mindos/materials/a%2fb']) assert.throws(() => resolveProductOperation(path))
+  assert.throws(() => resolveProductOperation('/api/mindos/materials/m_test/redaction/review?extra=body'))
+})
+
+test('redaction review uses the bounded gateway route and correction idempotency key', async () => {
+  const payload = { text: 'candidate', originalText: 'private', reasons: [], inputHash: 'b'.repeat(64), replacements: [], versionId: 'v'.repeat(32), attemptId: 'a'.repeat(32), kind: 'body', canCorrect: true }
+  const { product, calls } = host(JSON.stringify(payload))
+  const { load, client } = desktop(product)
+
+  assert.deepEqual(await load('services/api.ts').api.getRedactionReview('m_test', 'body'), payload)
+  product.poll = host('{"state":"processing"}').product.poll
+  await load('services/api.ts').api.correctRedaction('m_test', {
+    versionId: 'v'.repeat(32), attemptId: 'a'.repeat(32), kind: 'body', expectedInputHash: 'b'.repeat(64),
+    spans: [{ start: 0, end: 1, type: 'person' }], reason: 'checked',
+  }, 'redaction-correction-safe-1')
+
+  const starts = calls.filter(call => call[0] === 'start').map(call => call[1])
+  assert.equal(starts[0].operationId, 'get_api_mindos_materials_material_id_redaction_review')
+  assert.equal(starts[1].operationId, 'post_api_mindos_materials_material_id_redaction_correct')
+  assert.equal(starts[1].requestId, 'redaction-correction-safe-1')
+  client.dispose()
+})
+
+test('nested redaction errors retain their safe message and code', async () => {
+  const failed = host('{"error":{"code":"REDACTION_PERMISSION_DENIED","message":"此操作需要单独授权"}}', 403)
+  const { load, client } = desktop(failed.product)
+  await assert.rejects(load('services/api.ts').api.getRedactionReview('m_test', 'body'), error =>
+    error.status === 403 && error.code === 'REDACTION_PERMISSION_DENIED' && error.message === '此操作需要单独授权')
+  client.dispose()
 })
 
 test('all three original product network entries use installed transport, preserving HTTP errors and SSE', async () => {
