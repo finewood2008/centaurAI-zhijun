@@ -25,7 +25,7 @@ const title = computed(() => typeof route.meta.title === 'string' ? route.meta.t
     </div>
     <button v-if="phase !== 'selecting_device'" :disabled="!canChoose" @click="controller.control('disconnect')">{{ phase === 'failed' ? '重新选择盒子' : '切换盒子' }}</button>
     <button v-else :disabled="state.controlPending || state.devicesLoading" @click="controller.loadDevices()">刷新盒子</button>
-    <button :disabled="state.controlPending" @click="controller.control('signOut')">退出登录</button>
+    <button data-testid="sign-out" :disabled="state.controlPending" @click="controller.control('signOut')">退出登录</button>
   </header>
 </template>
 <style scoped>

@@ -136,6 +136,23 @@ test('all three original product network entries use installed transport, preser
   } finally { globalThis.fetch = originalFetch; client.dispose() }
 })
 
+test('preview and final message keep the domain action id but use distinct Gateway job ids', async () => {
+  const { product, calls } = host('{}')
+  const { client } = desktop(product)
+  const actionId = 'same-domain-action-1234'
+  await (await client.request('/api/mindos/conversations/c_test/routing/preview', {
+    method: 'POST', body: JSON.stringify({ requestId: actionId, content: '合成问题' }),
+  })).json()
+  await (await client.request('/api/mindos/conversations/c_test/messages', {
+    method: 'POST', body: JSON.stringify({ requestId: actionId, content: '合成问题', routeRevision: 'r1' }),
+  })).text()
+  const starts = calls.filter(call => call[0] === 'start').map(call => call[1])
+  assert.equal(starts.length, 2)
+  assert.notEqual(starts[0].requestId, starts[1].requestId)
+  assert.deepEqual(starts.map(request => request.body.requestId), [actionId, actionId])
+  client.dispose()
+})
+
 test('multipart uploads use bounded ordered chunks and only upload handles in operation body', async () => {
   const { product, calls } = host('{"materialId":"m_test"}')
   let received = 0

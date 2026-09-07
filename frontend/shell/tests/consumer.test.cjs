@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { createConsumerClient, validatePassword } = require('../production/consumer-client.cjs');
+const { createConsumerClient, validatePassword, LOGIN_SESSION_MS } = require('../production/consumer-client.cjs');
 const { createDesktopRuntime } = require('../runtime/desktop-runtime.cjs');
 const config = { consumerBaseUrl: 'https://consumer.example.test/prod-api' };
 const credentials = { phone: '13800000000', password: 'Synthetic-pass-1' };
@@ -60,6 +60,29 @@ test('real SDK auth coordinates login, signed devices/ticket, safe projection an
   assert.deepEqual(await client.createSession(device.deviceId, { applicationId: 'synthetic.app' }), { sessionId: 'synthetic' });
   await client.signOut(); assert.equal(await store.load(), undefined);
   assert.equal(calls.length, 4); await client.dispose();
+});
+
+test('encrypted login state restores for at most seven days and normal disposal preserves it', async () => {
+  const store = memoryStore(); let currentNow = 1893456000000;
+  const first = await createConsumerClient({ config, store, now: () => currentNow,
+    fetchImpl: async url => url.endsWith('/login') ? reply(token()) : response() });
+  await first.signIn(credentials);
+  const saved = await store.load();
+  assert.equal(saved.sessionExpiresAt, currentNow + LOGIN_SESSION_MS);
+  await first.dispose();
+  assert.ok(await store.load(), 'closing the app must preserve the encrypted login session');
+
+  const restored = await createConsumerClient({ config, store, now: () => currentNow,
+    fetchImpl: async () => response() });
+  assert.deepEqual(await restored.restore(), { accountId: 'account-synthetic' });
+  await restored.dispose();
+
+  currentNow += LOGIN_SESSION_MS;
+  const expired = await createConsumerClient({ config, store, now: () => currentNow,
+    fetchImpl: async () => { assert.fail('expired local state must not reach the network'); } });
+  assert.equal(await expired.restore(), null);
+  assert.equal(await store.load(), undefined);
+  await expired.dispose();
 });
 
 test('a device without an Admin name falls back to its stable id', async () => {
@@ -146,7 +169,7 @@ test('credential rejection clears the public runtime subject so the user can sig
   const runtime = createDesktopRuntime({ mode: 'production', adapter: client });
   const context = callId => ({ callId, expectedGeneration: runtime.snapshot().generation });
   assert.equal((await runtime.invoke('signInWithPassword', [context('synthetic-login'), credentials], 1)).ok, true);
-  assert.equal((await runtime.invoke('listDevices', [context('synthetic-list')], 1)).error.code, 'AUTHENTICATION_REQUIRED');
+  assert.equal((await runtime.invoke('listDevices', [context('synthetic-list')], 1)).error.code, 'SESSION_EXPIRED');
   assert.equal(runtime.snapshot().subject, null); assert.equal(runtime.snapshot().phase, 'failed');
   assert.equal(await store.load(), undefined); await runtime.dispose();
 });

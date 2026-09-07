@@ -24,9 +24,9 @@ async function sdkRequest(session, request, handshake = false) {
     // mutating handler executed. Never attach pre-dispatch evidence to it.
     if (code === 'SESSION_RESOURCE_EXHAUSTED') throw new DesktopError('SESSION_QUOTA_EXHAUSTED', { remoteCode: code });
     if (['SDK_RESPONSE_TOO_LARGE', 'SDK_RESPONSE_BUFFER_FULL'].includes(code)) fail('RESPONSE_TOO_LARGE');
-    // This native code confirms terminal closure. Reuse the runtime's session
-    // invalidation path; a generic not-ready or HTTP 403 does not prove closure.
-    if (code === 'SDK_CONNECTION_CLOSED') fail('SESSION_EXPIRED');
+    // A closed Direct/P2P session invalidates only the box connection. It must
+    // not erase the independently persisted Consumer account session.
+    if (code === 'SDK_CONNECTION_CLOSED') fail('CONNECTIVITY_SESSION_EXPIRED');
     fail('TRANSPORT_UNAVAILABLE');
   }
 }
@@ -56,7 +56,7 @@ function contextResponse(response, subject, clock, product = false) {
   if (value.accountId !== subject.accountId || value.clientId !== subject.clientId
     || value.deviceId !== subject.deviceId || value.applicationId !== (product ? PRODUCT_APPLICATION : APPLICATION)) fail('ACCESS_DENIED');
   const now = Math.floor(clock() / 1000);
-  if (value.expiresAt <= now) fail('SESSION_EXPIRED');
+  if (value.expiresAt <= now) fail('CONNECTIVITY_SESSION_EXPIRED');
   // The box enforces a <=5-second proof; allow modest desktop clock skew here.
   if (value.expiresAt > now + 30) fail('CONTRACT_MISMATCH');
   return product ? { workspaceId: value.workspaceId, product: true } : { product: false };

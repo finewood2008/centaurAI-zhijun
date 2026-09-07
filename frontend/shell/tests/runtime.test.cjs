@@ -51,6 +51,28 @@ function fixture(overrides = {}) {
   return { adapter, sessions };
 }
 
+test('production startup restores an encrypted login identity before device selection', async (t) => {
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    async restore() { return { accountId: 'restored-account' }; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal(runtime.snapshot().phase, 'authenticating');
+  await tick();
+  assert.equal(runtime.snapshot().phase, 'selecting_device');
+  assert.equal(runtime.snapshot().subject.accountId, 'restored-account');
+});
+
+test('production startup without a valid encrypted login returns to sign-in', async (t) => {
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    async restore() { return null; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal(runtime.snapshot().phase, 'authenticating');
+  await tick();
+  assert.equal(runtime.snapshot().phase, 'signed_out');
+  assert.equal(runtime.snapshot().subject, null);
+});
+
 test('unconfigured mode remains closed even with an injected adapter', async (t) => {
   const runtime = createDesktopRuntime({ adapter: fixture().adapter });
   t.after(() => runtime.dispose());
@@ -279,7 +301,7 @@ test('simulation session.close settles its own request timers and denies wrong b
   const session = await adapter.connect({ accountId: 'synthetic-account', deviceId: 'synthetic-box-a' });
   const pending = session.request({ method: 'GET', path: '/api/mindos/materials?limit=20&offset=0' });
   await session.close();
-  await assert.rejects(pending, (error) => error.code === 'SESSION_EXPIRED');
+  await assert.rejects(pending, (error) => error.code === 'CONNECTIVITY_SESSION_EXPIRED');
 });
 
 test('dispose settles pending authentication and stops new calls/subscriptions', async () => {

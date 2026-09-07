@@ -58,3 +58,11 @@ flowchart LR
 - 产品导航 E2E 拦截 renderer 的 HTTP/HTTPS 请求，并验证所有 15 个页面组件通过 IPC 工作。
 - 当前开发配置使用生产 Admin 和 native 1.2.1 的本机绝对路径；正式安装包仍需生成可分发配置并完成签名、公证与独立外观验收。
 - 盒端 `listClaims` 仍会在 limit 前加载较多数据并逐条读取 evidence；数据量增大后的进一步优化应在正确的 data-engine 集成分支中做批量 evidence 与 scope-aware 聚合，不能在相邻的旧分支脏工作区直接修改或部署。
+
+## 传输任务、业务请求与登录会话边界
+
+Gateway `requestId` 标识一次固定 operation 的传输任务；domain `body.requestId` 标识一次跨预览、授权和正式提交的业务动作。两者不能共用命名空间。桌面适配层现在为每个 start 生成独立 Gateway ID，只让 catalog 明确声明的 `Idempotency-Key` 决定稳定传输 ID，正文业务 ID 原样交给盒端。回归测试覆盖“预览和正式消息保留同一业务 ID，但创建两个不同 Gateway job”的场景。
+
+Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录态使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复，显式退出或账号层 `SESSION_EXPIRED` 会清除。原生盒子会话关闭使用独立的 `CONNECTIVITY_SESSION_EXPIRED`，只断开当前盒子并保留账号。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
+
+业务页面没有直接 HTTP 旁路。现场模型回答证明消息经 Electron main、Connectivity SDK、盒端 Agent、v2 Gateway 和 workspace worker 完整返回；空闲对话页不再周期创建 routing job。附件、画像和其他后台状态只在过渡态继续轮询，终态或空列表停止，用户操作可重新唤醒。

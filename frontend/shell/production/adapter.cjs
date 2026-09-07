@@ -16,6 +16,7 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
     closers.clear();
   }
   return Object.freeze({
+    restore: () => typeof client.restore === 'function' ? client.restore() : Promise.resolve(null),
     signIn: (input, guard) => client.signIn(input, guard),
     listDevices: () => client.listDevices(),
     async connect(binding) {

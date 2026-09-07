@@ -2,6 +2,7 @@
 const crypto = require('node:crypto');
 const { DesktopError } = require('../runtime/public-error.cjs');
 const LIMIT = 256 * 1024;
+const LOGIN_SESSION_MS = 7 * 24 * 60 * 60 * 1000;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\u0000-\u001f\u007f]/u.test(value);
 function fail(code = 'CONTRACT_MISMATCH') { throw new DesktopError(code); }
@@ -11,12 +12,22 @@ function validatePassword(value) {
     || Buffer.byteLength(value.password) < 8 || Buffer.byteLength(value.password) > 72) fail('INVALID_REQUEST');
   return { phone: value.phone, password: value.password };
 }
-function tokens(value, clientId, accountId) {
+function tokens(value, clientId, accountId, now = Date.now) {
   if (!plain(value) || !text(value.accessToken, 16384) || !text(value.refreshToken, 256) || value.refreshToken.length < 40
     || !text(value.accountId, 256) || value.clientId !== clientId || (accountId && value.accountId !== accountId)
     || !Number.isInteger(value.expiresIn) || value.expiresIn < 1 || value.expiresIn > 86400) fail();
   return Object.freeze({ accountId: value.accountId, clientId, accessToken: value.accessToken,
-    refreshToken: value.refreshToken, expiresAt: Date.now() + value.expiresIn * 1000 });
+    refreshToken: value.refreshToken, expiresAt: now() + value.expiresIn * 1000 });
+}
+function storedSession(value, now) {
+  if (!plain(value) || !text(value.accountId, 256) || !text(value.clientId, 256)
+    || !text(value.accessToken, 16384) || !text(value.refreshToken, 256) || value.refreshToken.length < 40
+    || !text(value.identityKey, 128) || !Number.isSafeInteger(value.expiresAt)
+    || !Number.isSafeInteger(value.sessionExpiresAt) || value.sessionExpiresAt <= now
+    || value.sessionExpiresAt > now + LOGIN_SESSION_MS || value.expiresAt > value.sessionExpiresAt) fail('AUTHENTICATION_REQUIRED');
+  return Object.freeze({ accountId: value.accountId, clientId: value.clientId, accessToken: value.accessToken,
+    refreshToken: value.refreshToken, identityKey: value.identityKey, expiresAt: value.expiresAt,
+    sessionExpiresAt: value.sessionExpiresAt });
 }
 function checkEnvelope(result, connectivity = false) {
   if (connectivity && result.applicationDenied) throw new DesktopError('APPLICATION_AUTHORIZATION_DENIED', { phase: 'ticket', httpStatus: result.httpStatus });
@@ -99,23 +110,40 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     } finally { clearTimeout(timer); requests.delete(controller); }
   }
   const auth = factory({
-    load: async () => undefined, // No implicit login or token restoration at startup.
+    load: async () => {
+      const persisted = await store.load();
+      if (persisted === undefined) return undefined;
+      try { return storedSession(persisted, now()); }
+      catch (error) {
+        await store.remove();
+        if (error instanceof DesktopError && error.code === 'AUTHENTICATION_REQUIRED') return undefined;
+        throw error;
+      }
+    },
     save: store.save, remove: store.remove,
-    exchange: async current => ({ ...tokens(checkEnvelope(await request('POST', '/app-api/auth/refresh',
-      { refreshToken: current.refreshToken })), current.clientId, current.accountId), identityKey: current.identityKey }),
-    isSessionRejected: error => error instanceof DesktopError && error.code === 'AUTHENTICATION_REQUIRED',
+    exchange: async current => {
+      if (!Number.isSafeInteger(current.sessionExpiresAt) || current.sessionExpiresAt <= now()) fail('SESSION_EXPIRED');
+      return { ...tokens(checkEnvelope(await request('POST', '/app-api/auth/refresh',
+        { refreshToken: current.refreshToken })), current.clientId, current.accountId, now), identityKey: current.identityKey,
+        sessionExpiresAt: current.sessionExpiresAt };
+    },
+    isSessionRejected: error => error instanceof DesktopError && ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED'].includes(error.code),
   });
   async function protectedRequest(method, route, body) {
     const expected = epoch;
     let response;
     try { response = await auth.authorized(current => request(method, route, body, current), result => result.code === 401); }
     catch (error) {
-      if (['AUTH_SESSION_MISSING', 'AUTH_SESSION_CHANGED', 'AUTH_INVALID_SESSION'].includes(error?.code)) fail('AUTHENTICATION_REQUIRED');
+      if (['AUTH_SESSION_MISSING', 'AUTH_SESSION_CHANGED', 'AUTH_INVALID_SESSION'].includes(error?.code)) fail('SESSION_EXPIRED');
       if (error?.code === 'AUTH_SESSION_STORAGE_FAILED') fail('SECURE_STORAGE_UNAVAILABLE');
+      if (error instanceof DesktopError && error.code === 'AUTHENTICATION_REQUIRED') {
+        await auth.clear();
+        fail('SESSION_EXPIRED');
+      }
       throw error;
     }
     if (disposed || expected !== epoch) fail('AUTHENTICATION_REQUIRED');
-    if (response.code === 401) { await auth.clear(); fail('AUTHENTICATION_REQUIRED'); }
+    if (response.code === 401) { await auth.clear(); fail('SESSION_EXPIRED'); }
     return checkEnvelope(response, route.endsWith('/connectivity/sessions'));
   }
   return Object.freeze({
@@ -132,13 +160,29 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
         platform: { darwin: 'macos', win32: 'windows', linux: 'linux' }[platform] || 'unknown',
         deviceModel: 'Zhijun Desktop', displayName: '知君桌面' }));
       if (!valid()) fail('STALE_GENERATION');
-      const session = { ...tokens(data, identity.clientId), identityKey: credentials.phone };
+      const session = { ...tokens(data, identity.clientId, undefined, now), identityKey: credentials.phone,
+        sessionExpiresAt: now() + LOGIN_SESSION_MS };
       await auth.replace(session);
       if (!valid()) {
         if (expected === epoch) await auth.clear();
         fail('STALE_GENERATION');
       }
       return { accountId: session.accountId };
+    },
+    async restore() {
+      if (disposed) fail('OPERATION_NOT_ALLOWED');
+      try {
+        const current = await auth.current();
+        if (!Number.isSafeInteger(current.sessionExpiresAt) || current.sessionExpiresAt <= now()) {
+          await auth.clear();
+          return null;
+        }
+        return { accountId: current.accountId };
+      } catch (error) {
+        if (['AUTH_SESSION_MISSING', 'AUTH_INVALID_SESSION'].includes(error?.code)) return null;
+        if (error?.code === 'AUTH_SESSION_STORAGE_FAILED') fail('SECURE_STORAGE_UNAVAILABLE');
+        throw error;
+      }
     },
     async listDevices() {
       const data = await protectedRequest('GET', '/app-api/devices');
@@ -168,7 +212,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       await auth.clear();
       if (current) checkEnvelope(await request('POST', '/app-api/auth/logout', { refreshToken: current.refreshToken }, current));
     },
-    async dispose() { disposed = true; invalidate(); await auth.clear(); },
+    async dispose() { disposed = true; invalidate(); },
   });
 }
-module.exports = { createConsumerClient, validatePassword };
+module.exports = { createConsumerClient, validatePassword, LOGIN_SESSION_MS };

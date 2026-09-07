@@ -42,6 +42,9 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
   function requestDefinition(path: string, init: RequestInit): { definition: ProductOperationRequest; operation: ProductOperation } {
     const { operation, params, query } = resolveProductOperation(path, (init.method ?? 'GET').toUpperCase())
     const headers = new Headers(init.headers)
+    // The outer id belongs to one Gateway transport job. Domain requestId values
+    // intentionally survive preview/final and HTTP retries, so reusing them here
+    // would collide across different operations before the final message is sent.
     let requestId: string = crypto.randomUUID()
     const idempotency = headers.get('Idempotency-Key')
     if (idempotency) {
@@ -52,9 +55,6 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     if (operation.body === 'json') {
       if (typeof init.body !== 'string' || new TextEncoder().encode(init.body).byteLength > operation.maxRequestBytes) throw new ProductFailure('请求内容超出限制', 'INVALID_REQUEST', 400)
       try { body = JSON.parse(init.body) } catch { throw new ProductFailure('请求内容无效', 'INVALID_REQUEST', 400) }
-      // Preserve existing stable user action keys across an explicit retry.
-      const actionId = body && typeof body === 'object' && !Array.isArray(body) ? (body as { requestId?: unknown }).requestId : undefined
-      if (!idempotency && typeof actionId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(actionId)) requestId = actionId
     } else if (operation.body === 'none' && init.body != null) throw new ProductFailure('读取请求不能带正文', 'INVALID_REQUEST', 400)
     return { operation, definition: { version: 1, requestId, operationId: operation.id, params, query, body } }
   }

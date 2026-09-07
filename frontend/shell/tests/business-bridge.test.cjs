@@ -61,7 +61,7 @@ test('wrong account, client, device, application, expiry or unexpected response 
       session: { request: async () => response({ ...context(), [key]: 'wrong' }) } }), { code: 'ACCESS_DENIED' });
   }
   for (const [value, code] of [
-    [{ ...context(), expiresAt: 1893456002 }, 'SESSION_EXPIRED'],
+    [{ ...context(), expiresAt: 1893456002 }, 'CONNECTIVITY_SESSION_EXPIRED'],
     [{ ...context(), expiresAt: 1893457000 }, 'CONTRACT_MISMATCH'],
     [{ ...context(), capabilities: ['materials.read', 'materials.write'] }, 'CONTRACT_MISMATCH'],
     [{ ...context(), token: 'synthetic-only' }, 'CONTRACT_MISMATCH'],
@@ -116,7 +116,7 @@ test('closing production authorization discards a late material response', async
 
 test('old Agent manifest and native failures have safe actionable errors without raw exception leakage', async () => {
   for (const [native, expected] of [['REQUEST_TARGET_NOT_ALLOWED', 'BUSINESS_BRIDGE_REQUIRED'],
-    ['SDK_CONNECTION_CLOSED', 'SESSION_EXPIRED'], ['SDK_REQUEST_TIMEOUT', 'REQUEST_TIMEOUT'],
+    ['SDK_CONNECTION_CLOSED', 'CONNECTIVITY_SESSION_EXPIRED'], ['SDK_REQUEST_TIMEOUT', 'REQUEST_TIMEOUT'],
     ['SESSION_RESOURCE_EXHAUSTED', 'SESSION_QUOTA_EXHAUSTED'], ['SDK_REQUEST_LIMIT_REACHED', 'SESSION_QUOTA_EXHAUSTED'],
     ['REQUEST_REPLAYED', 'SESSION_QUOTA_EXHAUSTED'], ['TOO_MANY_REQUESTS', 'RATE_LIMITED'], ['SDK_TOO_MANY_REQUESTS', 'RATE_LIMITED'],
     ['SDK_RESPONSE_TOO_LARGE', 'RESPONSE_TOO_LARGE'],
@@ -146,11 +146,12 @@ test('actual production adapter passes connect -> bridge context -> material req
   assert.equal(closes, 1);
 });
 
-test('confirmed native close invalidates ready while a permission denial preserves the signed-in identity', async () => {
+test('confirmed native close invalidates only the box connection while a permission denial keeps ready', async () => {
   for (const closedNative of [true, false]) {
-    let nativeCloses = 0;
+    let nativeCloses = 0; let signOuts = 0;
     const adapter = await createProductionAdapter({ config: { connectivity: { applicationId } },
       consumer: { current: async () => subject, signIn: async () => subject, dispose: async () => {},
+        signOut: async () => { signOuts++; }, restore: async () => null,
         listDevices: async () => [{ deviceId: subject.deviceId, displayName: 'synthetic box', availability: 'online' }] },
       bridge: createBusinessBridge({ clock }), runtimeFactory: async () => ({ connect: async () => ({
         request: async input => {
@@ -170,14 +171,16 @@ test('confirmed native close invalidates ready while a permission denial preserv
       assert.equal((await invoke('connect', subject.deviceId)).ok, true);
       const generation = runtime.snapshot().generation;
       const result = await invoke('materials.list', { limit: 20, offset: 0 });
-      assert.equal(result.error.code, closedNative ? 'SESSION_EXPIRED' : 'ACCESS_DENIED');
+      assert.equal(result.error.code, closedNative ? 'CONNECTIVITY_SESSION_EXPIRED' : 'ACCESS_DENIED');
       const snapshot = runtime.snapshot();
-      assert.equal(snapshot.subject.accountId, subject.accountId, 'do not turn a read denial into sign-out');
+      assert.equal(snapshot.subject?.accountId, subject.accountId,
+        'a Direct/P2P expiry must preserve the Consumer login session');
       assert.equal(snapshot.capabilities.materialsRead, !closedNative);
       assert.equal(snapshot.phase, closedNative ? 'failed' : 'ready');
       assert.equal(snapshot.generation, generation + (closedNative ? 1 : 0));
       await new Promise(resolve => setImmediate(resolve));
       assert.equal(nativeCloses, closedNative ? 1 : 0);
+      assert.equal(signOuts, 0);
     } finally { await runtime.dispose(); }
   }
 });

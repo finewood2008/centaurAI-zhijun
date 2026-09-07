@@ -19,7 +19,7 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
   let mediaStreams = 0, saves = 0;
   function current() { assert(!closed && isCurrent(), 'STALE_GENERATION'); }
   function reportTerminal(error) {
-    const terminal = error?.sessionTerminal || (['SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error?.code) ? error : undefined);
+    const terminal = error?.sessionTerminal || (['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error?.code) ? error : undefined);
     if (terminal && !terminalReported) { terminalReported = true; onTerminal(terminal); }
   }
   function trimJobs() {
@@ -48,9 +48,9 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
       current(); return P.decodeJson(response);
     } catch (error) {
       if (mutation && error instanceof DesktopError && !error.definitelyNotSent
-          && ['REQUEST_TIMEOUT', 'TRANSPORT_UNAVAILABLE', 'SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error.code)) {
+          && ['REQUEST_TIMEOUT', 'TRANSPORT_UNAVAILABLE', 'SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error.code)) {
         const unknown = new DesktopError('WRITE_OUTCOME_UNKNOWN');
-        if (['SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error.code)) unknown.sessionTerminal = error;
+        if (['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error.code)) unknown.sessionTerminal = error;
         throw unknown;
       }
       throw error;

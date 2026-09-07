@@ -149,6 +149,13 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     if (!isCurrent(gen)) return;
     invalidate();
     void detachSession();
+    if (error instanceof DesktopError && error.code === 'SESSION_EXPIRED') {
+      accountId = null;
+      devices = [];
+      // Credential cleanup belongs to the main process. Start it before the
+      // renderer sees the logged-out snapshot; remote revocation may finish later.
+      void clearIdentity().catch(() => {});
+    }
     publish('failed', error);
   }
   function needAccount() { assert(accountId, 'AUTHENTICATION_REQUIRED'); }
@@ -286,7 +293,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
             return projectMaterialsResponse(response, query);
           } });
       } catch (error) {
-        if (error instanceof DesktopError && error.code === 'SESSION_EXPIRED') failure(error, gen);
+        if (error instanceof DesktopError && ['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED'].includes(error.code)) failure(error, gen);
         throw error;
       }
     }
@@ -320,7 +327,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       return { ok: true, generation: ticket.generation, data };
     } catch (error) {
       if (mode === 'production' && isCurrent(ticket.generation) && error instanceof DesktopError
-          && ['AUTHENTICATION_REQUIRED', 'SECURE_STORAGE_UNAVAILABLE'].includes(error.code)) {
+          && ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED', 'SECURE_STORAGE_UNAVAILABLE'].includes(error.code)) {
         accountId = null;
         devices = [];
         failure(error, ticket.generation);
@@ -343,7 +350,8 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     scheduler.dispose();
     await detachSession();
     await Promise.all([...closing]);
-    // Reuse bounded cleanup; no credentials are persisted by the simulation adapter.
+    // Dispose transports without revoking the encrypted login session. Only an
+    // explicit sign-out or terminal SESSION_EXPIRED removes credentials.
     await closeSession({ close: auth?.dispose ? () => auth.dispose() : clearIdentity });
     accountId = null;
     devices = [];
@@ -352,6 +360,26 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   async function mediaResponse(request) {
     if (phase !== 'ready' || !productSession) return new Response(null, { status: 403 });
     return productSession.mediaResponse(request);
+  }
+
+  if (mode === 'production' && typeof auth?.restore === 'function') {
+    const gen = generation;
+    publish('authenticating');
+    void bounded(callAdapter(() => auth.restore()), gen).then((identity) => {
+      if (!isCurrent(gen)) return;
+      if (identity) {
+        assert(plain(identity) && safeText(identity.accountId), 'CONTRACT_MISMATCH');
+        accountId = identity.accountId;
+        publish('selecting_device');
+      } else {
+        publish('signed_out');
+      }
+    }, (error) => {
+      if (!isCurrent(gen)) return;
+      accountId = null;
+      devices = [];
+      failure(error instanceof DesktopError ? error : new DesktopError('AUTHENTICATION_REQUIRED'), gen);
+    });
   }
   return { invoke, snapshot, subscribe, dispose, mediaResponse };
 }
