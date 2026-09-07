@@ -54,7 +54,7 @@ flowchart LR
 ## 验证边界
 
 - 前端 TypeScript、Desktop 构建通过；Desktop controller 12 项、产品传输 20 项和产品导航 E2E 通过。
-- Shell 全量 140 项通过，包含无名称设备的 ID 回退、生产 Consumer、SDK、业务桥、配额、上传、媒体、身份隔离和 runtime 回归。
+- Shell 全量 143 项通过，包含无名称设备的 ID 回退、生产 Consumer、SDK、业务桥、配额、上传、媒体、身份隔离和 runtime 回归。
 - 产品导航 E2E 拦截 renderer 的 HTTP/HTTPS 请求，并验证所有 15 个页面组件通过 IPC 工作。
 - 当前开发配置使用生产 Admin 和 native 1.2.1 的本机绝对路径；正式安装包仍需生成可分发配置并完成签名、公证与独立外观验收。
 - 盒端 `listClaims` 仍会在 limit 前加载较多数据并逐条读取 evidence；数据量增大后的进一步优化应在正确的 data-engine 集成分支中做批量 evidence 与 scope-aware 聚合，不能在相邻的旧分支脏工作区直接修改或部署。
@@ -63,6 +63,12 @@ flowchart LR
 
 Gateway `requestId` 标识一次固定 operation 的传输任务；domain `body.requestId` 标识一次跨预览、授权和正式提交的业务动作。两者不能共用命名空间。桌面适配层现在为每个 start 生成独立 Gateway ID，只让 catalog 明确声明的 `Idempotency-Key` 决定稳定传输 ID，正文业务 ID 原样交给盒端。回归测试覆盖“预览和正式消息保留同一业务 ID，但创建两个不同 Gateway job”的场景。
 
-Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录态使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复，显式退出或账号层 `SESSION_EXPIRED` 会清除。原生盒子会话关闭使用独立的 `CONNECTIVITY_SESSION_EXPIRED`，只断开当前盒子并保留账号。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
+Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录态使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复。显式退出、账号层 `SESSION_EXPIRED`，以及原生已确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除本地登录记录并显示登录页。普通 `DIRECT_CONNECTION_UNAVAILABLE` 只表示本次盒子直连失败，保留账号供重新选择。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
 
 业务页面没有直接 HTTP 旁路。现场模型回答证明消息经 Electron main、Connectivity SDK、盒端 Agent、v2 Gateway 和 workspace worker 完整返回；空闲对话页不再周期创建 routing job。附件、画像和其他后台状态只在过渡态继续轮询，终态或空列表停止，用户操作可重新唤醒。
+
+## 异地盒子直连边界
+
+办公室连接家里的 `AMD AI盒子` 时，Admin 登录、设备在线列表、Connectivity ticket、Gateway WSS 信令和远端 SDP answer 均已完成，随后在 ICE/DTLS/DataChannel 阶段返回 `DIRECT_CONNECTION_UNAVAILABLE`。因此“在线”只证明盒子的信令通道在线，不代表办公室与家庭网络可以建立端到端 UDP 直连。桌面错误卡片会继续显示 SDK 允许公开的 `DIRECT_TIMEOUT`（直连超时）或 `ICE_FAILED`（ICE 建链失败），但不会展示私有地址、候选地址或凭据。
+
+当前产品合同固定为 `SOVEREIGN_DIRECT_ONLY` / `DIRECT_ONLY`，SDK 只接受 STUN，不会在 Direct 失败时自动转发业务流量。异地网络若受家庭路由器、运营商 CGNAT 或 UDP 防火墙限制，需要更换可穿透的网络，或另立跨 SDK、Admin、Gateway 与盒端 Agent 的 TURN 中继能力变更；不能只在前端改成普通 HTTP 直连盒子 IP。

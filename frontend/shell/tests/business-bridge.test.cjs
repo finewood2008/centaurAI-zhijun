@@ -146,7 +146,7 @@ test('actual production adapter passes connect -> bridge context -> material req
   assert.equal(closes, 1);
 });
 
-test('confirmed native close invalidates only the box connection while a permission denial keeps ready', async () => {
+test('confirmed native close signs out while a permission denial preserves the signed-in identity', async () => {
   for (const closedNative of [true, false]) {
     let nativeCloses = 0; let signOuts = 0;
     const adapter = await createProductionAdapter({ config: { connectivity: { applicationId } },
@@ -173,14 +173,14 @@ test('confirmed native close invalidates only the box connection while a permiss
       const result = await invoke('materials.list', { limit: 20, offset: 0 });
       assert.equal(result.error.code, closedNative ? 'CONNECTIVITY_SESSION_EXPIRED' : 'ACCESS_DENIED');
       const snapshot = runtime.snapshot();
-      assert.equal(snapshot.subject?.accountId, subject.accountId,
-        'a Direct/P2P expiry must preserve the Consumer login session');
+      assert.equal(snapshot.subject?.accountId ?? null, closedNative ? null : subject.accountId,
+        'a confirmed connection-session expiry must return to sign-in');
       assert.equal(snapshot.capabilities.materialsRead, !closedNative);
       assert.equal(snapshot.phase, closedNative ? 'failed' : 'ready');
       assert.equal(snapshot.generation, generation + (closedNative ? 1 : 0));
       await new Promise(resolve => setImmediate(resolve));
       assert.equal(nativeCloses, closedNative ? 1 : 0);
-      assert.equal(signOuts, 0);
+      assert.equal(signOuts, closedNative ? 1 : 0);
     } finally { await runtime.dispose(); }
   }
 });

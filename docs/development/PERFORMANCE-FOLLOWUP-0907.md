@@ -65,7 +65,7 @@ OS `353f1d9`、SDK 工件 `7c59c44` 已推送到同名集成分支。native 1.2.
 
 真机使用公司盒 `AMD-A2A-248` 复测：同一业务 ID 的预览与正式消息均成功，问题“你是哪个模型”收到盒端模型完整回复，界面没有再出现参数错误或 429。前端全量 **78/78**、Shell 全量 **143/143**、Electron E2E **4/4**、产品导航 E2E 与 Desktop 构建通过。
 
-账号登录态另设固定 7 天本地截止时间，凭据只保存在系统加密存储；普通关闭应用会保留，显式退出会先清除本地凭据。重启真机应用两次均自动恢复账号并进入设备选择页。`SESSION_EXPIRED` 只表示 Admin 登录会话失效，会清除账号、设备列表和加密登录记录，发布 `signed_out`，由现有桌面入口显示完整登录页。原生 Direct/P2P 关闭改为 `CONNECTIVITY_SESSION_EXPIRED`，只清当前盒子连接并提示重新连接，不再误清 7 天登录态。Access Token、Connectivity ticket、P2P session、逐请求证明和 workspace lease 继续使用各自短周期。
+账号登录态另设固定 7 天本地截止时间，凭据只保存在系统加密存储；普通关闭应用会保留，显式退出会先清除本地凭据。重启真机应用两次均自动恢复账号并进入设备选择页。`SESSION_EXPIRED` 和已经确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除账号、设备列表和加密登录记录，由现有桌面入口立即显示完整登录页。普通 Direct 建连失败、请求超时和权限拒绝仍保留账号，允许重新选择盒子。Access Token、Connectivity ticket、P2P session、逐请求证明和 workspace lease 继续使用各自短周期。
 
 ### “我的本体”按视图加载（0907 追加）
 

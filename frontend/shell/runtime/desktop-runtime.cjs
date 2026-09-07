@@ -149,7 +149,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     if (!isCurrent(gen)) return;
     invalidate();
     void detachSession();
-    if (error instanceof DesktopError && error.code === 'SESSION_EXPIRED') {
+    if (error instanceof DesktopError && ['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED'].includes(error.code)) {
       accountId = null;
       devices = [];
       // Credential cleanup belongs to the main process. Start it before the
@@ -327,7 +327,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       return { ok: true, generation: ticket.generation, data };
     } catch (error) {
       if (mode === 'production' && isCurrent(ticket.generation) && error instanceof DesktopError
-          && ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED', 'SECURE_STORAGE_UNAVAILABLE'].includes(error.code)) {
+          && ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SECURE_STORAGE_UNAVAILABLE'].includes(error.code)) {
         accountId = null;
         devices = [];
         failure(error, ticket.generation);

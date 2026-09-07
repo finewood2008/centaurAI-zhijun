@@ -24,6 +24,11 @@ const canSignOut = computed(() => !!phase.value && phase.value !== 'signed_out'
 const canDisconnect = computed(() => !!phase.value && ['ready', 'failed'].includes(phase.value)
   && !!state.value.snapshot?.subject && !state.value.controlPending)
 const displayAccount = computed(() => state.value.snapshot?.subject?.accountId ?? '')
+const connectionDiagnostic = computed(() => {
+  if (state.value.error?.detailCode === 'DIRECT_TIMEOUT') return '直连超时'
+  if (state.value.error?.detailCode === 'ICE_FAILED') return 'ICE 建链失败'
+  return ''
+})
 function signIn(): void {
   const credentials = { phone: phone.value, password: password.value }
   password.value = ''
@@ -80,7 +85,7 @@ onBeforeUnmount(() => { password.value = ''; phone.value = '' })
 
         <section v-if="state.error" class="error-card" role="alert" data-testid="error">
           <strong>暂时无法完成操作</strong><p>{{ state.error.message }}</p>
-          <small>{{ state.error.code }}<template v-if="state.error.traceId"> · 关联编号 {{ state.error.traceId }}</template></small>
+          <small>{{ state.error.code }}<template v-if="connectionDiagnostic"> · {{ connectionDiagnostic }}</template><template v-if="state.error.traceId"> · 关联编号 {{ state.error.traceId }}</template></small>
         </section>
         <p v-if="state.notice" class="notice" role="status">{{ state.notice }}</p>
 
