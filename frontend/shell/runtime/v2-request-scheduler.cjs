@@ -1,7 +1,9 @@
 'use strict';
 const { DesktopError } = require('./public-error.cjs');
 const notSent = code => new DesktopError(code, { definitelyNotSent: true });
-const BURST = 8, WINDOW_MS = 60000, WINDOW_REQUESTS = 100, CONTROL_REQUESTS = 8;
+// Five page reads use ten start/poll attempts, plus initial context and one
+// reserved control token. Concurrent native work remains capped separately.
+const BURST = 12, WINDOW_MS = 60000, WINDOW_REQUESTS = 100, CONTROL_REQUESTS = 8;
 
 // One instance belongs to one native SDK session. Rejections and retries consume
 // this budget too; neither idle time nor a new product manager resets it.

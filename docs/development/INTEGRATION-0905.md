@@ -8,7 +8,7 @@
 
 | 决策 | 当前实现 | 发布边界 |
 | --- | --- | --- |
-| SDK | 保留已交付 Connectivity SDK 1.2.0，main 独占 sidecar/Core | 原生 API 是整响应 request/close，不宣称已有 stream/abort |
+| SDK | Connectivity JS SDK 保持 1.2.0，native 升级 1.2.1，main 独占 sidecar/Core | 原生 API 是整响应 request/close，不宣称已有 stream/abort |
 | 产品面 | 15 页、20 路由、2 重定向；170 项共享 catalog | 菜单/路由覆盖不等于逐业务操作实测 |
 | 新身份 | `zhijun-desktop` / `zhijun.workspace` / `remote.p2p` / Direct-only | Admin 独立登记，不能借旧 read scope 写业务 |
 | D03 | v2 独立签名域、原始 body SHA256、Content-Type 与严格路径 | v1 只读应用、路由与签名行为保留 |
@@ -77,7 +77,7 @@ v2 上传状态为 open/complete/cancelled/failed；received 是字节数、next
 | SDK/Core 基线 | request 2 MiB、response 16 MiB；宿主 watchdog 15 秒；Core 单会话 1024 request ID |
 | 新应用 Agent | 每请求/响应 1 MiB、8 并发、120 rpm、会话传输 1 GiB |
 | Gateway | job 上限 600 秒、事件累计 16 MiB并受catalog更小限制；每页32事件/256 KiB、poll最多8秒 |
-| 当前知君 main | poll 实发最多250 ms；突发桶8、平均600 ms补充；滚动60秒全部尝试最多100次，业务预留8个位置给控制 |
+| 当前知君 main | poll 实发最多250 ms；突发桶12、平均600 ms补充；滚动60秒全部尝试最多100次，业务预留8个位置给控制 |
 | Gateway 调度 | 每workspace运行4/排队8、每盒worker4、Owner租约30秒、heartbeat10秒 |
 | 文件/磁盘 | 每文件200 MiB；原始分片512 KiB；workspace存储1 GiB，包含元数据与tombstone |
 
@@ -133,10 +133,16 @@ PDF/DOCX/OCR盒端解析分别46/48/110字符通过；受限voice API返回40字
 
 ### 0907 导航性能回归要求
 
-`test:product` 包含导航缓存期限、并行读取合并、未完成/错误不缓存、切盒及引导写入微任务竞态回归。桌面仅缓存最多 30 秒的 ready 导航提示，显式 API 和业务授权仍实时检查。连接与引导 revision 必须在 guard 消费前再次核对。对话列表应先于状态/统计入队。HTTP start/poll、SDK 串行和盒端历史扫描仍会影响耗时，不能把合成测试写成真机首屏 SLA。见[跟进与验收记录](PERFORMANCE-FOLLOWUP-0907.md)。
+`test:product` 包含导航缓存期限、并行读取合并、未完成/错误不缓存、切盒及引导写入微任务竞态回归。桌面仅缓存最多 30 秒的 ready 导航提示，显式 API 和业务授权仍实时检查。连接与引导 revision 必须在 guard 消费前再次核对。对话列表应先于状态/统计入队。HTTP start/poll、配额等待和盒端历史扫描仍会影响耗时，不能把合成测试写成真机首屏 SLA。见[跟进与验收记录](PERFORMANCE-FOLLOWUP-0907.md)。
 
 ### 连接失败的定位顺序
 
 先区分账号请求、票据签发和原生连接阶段。新版保留 SDK 原票据校验，并恢复其捕获前的安全 Consumer 错误；账号服务拒绝应用/权限会明确显示 `APPLICATION_AUTHORIZATION_DENIED`，不再统一显示设备网络错误。该错误仍需检查 Admin 应用登记及请求权限，不能仅凭它断言某个后端版本未部署。盒端 HTTP 健康只证明服务运行，不证明账号票据和 P2P 链路已通过。登录后连接失败仍保留导航，内容区维持未连接提示。见[专项修复与验收](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
 
 上线前真实账号连接家庭 AMD 盒子复现过该明确授权拒绝，主导航切换及实际 Reload 正常。Admin 登记增量 `44a0950` 现已合入 `2ca211e` 并上线，真实票据、Direct、v2 context 与资料页面已通过。Agent Owner 绑定修复 `644b1c2` 已部署，未改变同一授权快照校验。后续本体并发读取误报容量的本地任务回收漏洞已修复，Shell 128/128 通过；活跃任务、传输限额及未知写不重放规则不变。桌面窗口不可读导致该修复的 UI 复验待续。前端上轮 63/63、Web/Desktop 构建及两类导航回归结果保持有效。
+
+### 0907 native 1.2.1 接入
+
+OS 源码 `353f1d9` 使用全局最多 8 项 request 并发、按 request_id 输出整行响应，关闭前后复核 session；断管/清理超时明确非零退出，未知写入不重放。JS 包仍为 1.2.0，协议仍为 1。六目标工件与哈希位于 SDK `release/electron-sidecars-1.2.1`；macOS arm64 已运行 native smoke，其他目标仅完成交叉构建与工件校验。
+
+`prepare-real.cjs` 固定新版六目标哈希，默认 SDK 输入目录为 `release/electron-sidecars-1.2.1`。既有配置不会自动覆盖：本机先调用导出的 `prepare`，将新版写入独立 `data/desktop/native-1.2.1`，保存原配置后仅切换 sidecarPath/sidecarSha256。旧二进制与配置留作回退；不要把现有定制配置删掉再生成。详细真机结果见[性能跟进](PERFORMANCE-FOLLOWUP-0907.md)。

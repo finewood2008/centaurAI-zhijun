@@ -331,21 +331,21 @@ test('heartbeat obtains its reserved native slot while seven business requests a
 
 test('closing a generation removes queued writes before their native dispatch slot', async () => {
   const f = await stack({ holdMutation: true });
-  // The initial context and six native requests consume the business burst.
-  // The next write is really queued, independently of fixed inter-request gaps.
-  const held = Promise.allSettled(Array.from({ length: 6 }, (_, index) =>
+  // Seven held writes fill the business concurrency slots. The next write
+  // stays queued even when short-burst tokens remain available.
+  const held = Promise.allSettled(Array.from({ length: 7 }, (_, index) =>
     f.session.invoke('start', request('post_api_mindos_conversations', { title: `held-${index}` }))));
   try {
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(f.peer.counts.starts, 6);
+    assert.equal(f.peer.counts.starts, 7);
     const pending = f.session.invoke('start', request('post_api_mindos_conversations', { title: 'queued synthetic' }));
     const result = Promise.allSettled([pending]);
     await new Promise(resolve => setImmediate(resolve));
     f.session.close();
     assert.equal((await result)[0].reason.code, 'STALE_GENERATION');
     await f.clock.run(new Promise(resolve => f.clock.timers.setTimeout(resolve, 5000)));
-    assert.equal(f.peer.counts.starts, 6);
-    assert.equal(f.peer.stats().requestIds, 7);
+    assert.equal(f.peer.counts.starts, 7);
+    assert.equal(f.peer.stats().requestIds, 8);
   } finally { f.peer.releaseHeld(); await f.close(); await held; }
 });
 

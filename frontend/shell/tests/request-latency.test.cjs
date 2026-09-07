@@ -38,8 +38,8 @@ function virtualClock() {
     sleep: ms => new Promise(resolve => timers.setTimeout(resolve, ms)), pending };
 }
 
-// The shipped native sidecar reads the next input only after the current HTTP
-// response. A parallel async stub hides its head-of-line blocking entirely.
+// Model the legacy 1.2.0 lane too: a parallel stub alone would hide
+// regressions when an older native process is still installed.
 function serialPeer(clock, handle) {
   let tail = Promise.resolve();
   const calls = [];
@@ -70,6 +70,31 @@ test('three page reads through the serial native lane do not add a three-second 
     })));
     assert.equal(peer.calls.length, 6);
     assert.ok(clock.now() < 100, `zero-latency page acquired ${clock.now()} ms of local waiting`);
+  } finally { scheduler.close(); }
+});
+
+test('five first-page reads and initial context fit one burst without delaying control', async () => {
+  const clock = virtualClock(), sent = [];
+  let active = 0, peak = 0;
+  const scheduler = createV2Scheduler({ clock: clock.now, timers: clock.timers,
+    send: async request => {
+      sent.push({ label: request.label, at: clock.now() });
+      peak = Math.max(peak, ++active);
+      await clock.sleep(20); active--;
+      return response({});
+    } });
+  try {
+    await clock.run(scheduler.request({ label: 'initial-context' }, { priority: 0 }));
+    await clock.run(Promise.all(Array.from({ length: 5 }, (_, index) => (async () => {
+        await scheduler.request({ label: `read-${index}:start` }, { priority: 2 });
+        await scheduler.request({ label: `read-${index}:poll` }, { priority: 3 });
+      })())));
+    // Control can use the final reserved token after all ten business attempts.
+    await clock.run(scheduler.request({ label: 'heartbeat' }, { priority: 0 }));
+    assert.equal(sent.length, 12);
+    assert.ok(clock.now() <= 100, `first-page batch acquired ${clock.now()} ms of local waiting`);
+    assert.ok(peak <= 8);
+    assert.ok(sent.find(call => call.label === 'heartbeat').at <= 80);
   } finally { scheduler.close(); }
 });
 
@@ -132,8 +157,8 @@ test('a full bucket discards idle fractional refill before a burst at a nonzero 
       send: async () => { attempts.push(clock.now()); return response({}); } });
     try {
       await clock.run(clock.sleep(idleMs));
-      await clock.run(Promise.all(Array.from({ length: 9 }, () => scheduler.request({}, { priority: 0 }))));
-      assert.deepEqual(attempts, [...Array(8).fill(idleMs), idleMs + 600]);
+      await clock.run(Promise.all(Array.from({ length: 13 }, () => scheduler.request({}, { priority: 0 }))));
+      assert.deepEqual(attempts, [...Array(12).fill(idleMs), idleMs + 600]);
     } finally { scheduler.close(); }
   }
 });
