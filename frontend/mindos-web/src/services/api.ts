@@ -355,6 +355,9 @@ export interface MaterialSummary {
   text: string
   status: SummaryStatus
   generatedAt: string | null
+  errorCode?: string | null
+  processingStage?: string | null
+  reasonCode?: string | null
 }
 
 // P14-04：派生分析（标签候选 / 实体抽取）共用派生状态词
@@ -458,9 +461,18 @@ export interface MaterialTagSuggestions {
 }
 
 export interface MaterialDetail extends UploadResult {
+  privacyRequired?: boolean
+  privacyStatus?: {
+    state: 'not_required' | 'processing' | 'review_required' | 'ready' | 'failed'
+    reasonCode: string | null
+  }
   previewUrl: string
   folderPath: string
   metadata: { fileSize: number | null; modifiedAt: string | null }
+  parsing: {
+    status: 'pending' | 'ok' | 'empty' | 'failed' | 'unavailable'
+    contentFormat: 'text' | 'ocr' | 'transcript' | 'mixed' | 'empty' | 'unavailable'
+  }
   summary: MaterialSummary
   // 纯文本预览（截断），仅作预览展示，不代表 AI 摘要
   excerpt: string
@@ -1237,7 +1249,7 @@ export const api = {
     return request<MaterialVersionUploadResult>(`/mindos/materials/${encodeURIComponent(materialId)}/versions`, { method: 'POST', headers: CSRF_HEADERS, body: form })
   },
   getMaterialVersionImpact: (materialId: string) => request<MaterialImpact>(`/mindos/materials/${encodeURIComponent(materialId)}/version-impact`),
-  getMaterialSummary: (materialId: string) => request<{ materialId: string; text: string; status: SummaryStatus; generatedAt: string | null }>(`/mindos/materials/${encodeURIComponent(materialId)}/summary`),
+  getMaterialSummary: (materialId: string) => request<MaterialSummary & { materialId: string }>(`/mindos/materials/${encodeURIComponent(materialId)}/summary`),
   // P14-04：聚合分析（摘要 / 标签候选 / 实体及其状态）
   getMaterialAnalysis: (materialId: string) => request<MaterialAnalysis>(`/mindos/materials/${encodeURIComponent(materialId)}/analysis`),
   reparseMaterial: (materialId: string) =>

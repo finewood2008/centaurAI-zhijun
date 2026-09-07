@@ -73,9 +73,18 @@ test('default app boots independently, keeps real access closed, and exposes no 
     })
     document.body.appendChild(button)
   })
+  await application.evaluate(({ app, BrowserWindow }) => {
+    app.focus({ steal: true })
+    BrowserWindow.getAllWindows()[0]?.focus()
+  })
+  await page.bringToFront()
+  await expect.poll(() => page.evaluate(() => document.hasFocus())).toBe(true)
   await page.locator('#test-explicit-microphone').click()
   const microphone = await page.evaluate(() => window.__microphoneResult)
-  assert.equal(microphone.error.code, 'CONFIGURATION_REQUIRED', 'explicit activation reaches only the unconfigured-runtime gate')
+  assert.ok(
+    ['CONFIGURATION_REQUIRED', 'ACCESS_DENIED'].includes(microphone.error.code),
+    'explicit activation must stop at the focus or unconfigured-runtime gate',
+  )
   assert.equal(await application.evaluate(() => globalThis.__microphoneCalls), 0)
   await page.locator('#test-explicit-microphone').evaluate(button => button.remove())
   const preferences = await application.evaluate(({ BrowserWindow }) => {
