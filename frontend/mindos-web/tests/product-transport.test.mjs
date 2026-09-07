@@ -23,6 +23,59 @@ function modules() {
   return name => load(resolve(src, name))
 }
 const bytes = value => new TextEncoder().encode(value)
+
+test('navigation reuses only ready hints and invalidates on box changes and onboarding writes', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('box-a')
+  let gets = 0, writesFail = false, state = 'ready', conversationId = null
+  load('services/transport.ts').installProductTransport(async (_path, init) => {
+    if (init.method === 'POST') {
+      if (writesFail) throw new Error('lost write response')
+      state = 'not_started'
+    } else gets++
+    return Response.json({ state, conversationId })
+  })
+  const api = load('services/api.ts')
+  let guard
+  load('router/guards.ts').installProductGuards({ beforeEach(fn) { guard = fn }, afterEach() {} })
+  const navigate = path => guard({ path, meta: {} })
+  assert.equal(await navigate('/chat'), true)
+  assert.equal(await navigate('/me'), true)
+  assert.equal(await navigate('/judgment'), true)
+  assert.equal(gets, 1, 'subsequent navigation must not await another start/poll pair')
+  await api.getOnboardingProgress()
+  assert.equal(gets, 2, 'explicit page reads remain fresh')
+  scope.setProductScope('box-b')
+  await navigate('/chat')
+  assert.equal(gets, 3)
+  await api.updateOnboarding('restart')
+  assert.deepEqual(await navigate('/chat'), { path: '/onboarding/chat', replace: true })
+  await navigate('/me')
+  assert.equal(gets, 5, 'incomplete progress must be read again')
+  state = 'ready'
+  await navigate('/chat')
+  writesFail = true
+  await assert.rejects(api.updateOnboarding('restart'), /lost write response/)
+  await navigate('/chat')
+  assert.equal(gets, 7, 'failed writes also invalidate hints')
+  scope.setProductScope(null)
+  await navigate('/chat')
+  assert.equal(gets, 7, 'offline navigation cannot issue business requests')
+  scope.setProductScope('box-c')
+  conversationId = 'old-onboarding-conversation'
+  await navigate('/chat')
+  const changedBox = guard({ path: '/onboarding', meta: { onboardingFlow: true } })
+  queueMicrotask(() => scope.setProductScope('box-d'))
+  assert.equal(await changedBox, true, 'guard must not consume an already-resolved old-box hint')
+  await navigate('/chat')
+  writesFail = false
+  let write
+  const restarted = guard({ path: '/onboarding', meta: { onboardingFlow: true } })
+  queueMicrotask(() => { write = api.updateOnboarding('restart') })
+  assert.equal(await restarted, true, 'guard must not redirect to a stale conversation during restart')
+  await write
+})
+
 const ok = data => ({ ok: true, data, generation: 7 })
 function host(events, status = 200) {
   const calls = []
@@ -81,6 +134,23 @@ test('all three original product network entries use installed transport, preser
     await assert.rejects(load('services/api.ts').api.getKnowledge('k_test'), e => e.status === 409 && e.code === 'REVISION_CONFLICT')
     assert.equal(calls.filter(c => c[0] === 'start').length, 4)
   } finally { globalThis.fetch = originalFetch; client.dispose() }
+})
+
+test('preview and final message keep the domain action id but use distinct Gateway job ids', async () => {
+  const { product, calls } = host('{}')
+  const { client } = desktop(product)
+  const actionId = 'same-domain-action-1234'
+  await (await client.request('/api/mindos/conversations/c_test/routing/preview', {
+    method: 'POST', body: JSON.stringify({ requestId: actionId, content: '合成问题' }),
+  })).json()
+  await (await client.request('/api/mindos/conversations/c_test/messages', {
+    method: 'POST', body: JSON.stringify({ requestId: actionId, content: '合成问题', routeRevision: 'r1' }),
+  })).text()
+  const starts = calls.filter(call => call[0] === 'start').map(call => call[1])
+  assert.equal(starts.length, 2)
+  assert.notEqual(starts[0].requestId, starts[1].requestId)
+  assert.deepEqual(starts.map(request => request.body.requestId), [actionId, actionId])
+  client.dispose()
 })
 
 test('multipart uploads use bounded ordered chunks and only upload handles in operation body', async () => {

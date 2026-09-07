@@ -614,6 +614,20 @@ async function refreshCurrentMetadata(conversationId: string) {
   } catch { /* a failed metadata refresh must not interrupt a successful turn */ }
 }
 
+async function refreshConversationBackground(conversationId: string) {
+  await Promise.allSettled([refreshOutcomes(conversationId, true), loadMapClaims()])
+  if (!alive || streaming.value || currentId.value !== conversationId) return
+  await refreshMemoryAttention(conversationId)
+}
+
+async function refreshAfterTurn(conversationId: string) {
+  await Promise.allSettled([loadConversations(), refreshCurrentMetadata(conversationId)])
+  if (!alive || streaming.value || currentId.value !== conversationId) return
+  await Promise.allSettled([refreshOutcomes(conversationId, true), routingPanel.value?.refresh()])
+  if (!alive || streaming.value || currentId.value !== conversationId) return
+  await refreshMemoryAttention(conversationId)
+}
+
 async function manageConversation(conversation: Conversation, action: string) {
   const candidate = current.value?.id === conversation.id && current.value.metadataRevision >= conversation.metadataRevision ? current.value : conversation
   if (metadataBusy[candidate.id]) return
@@ -706,9 +720,7 @@ async function loadConversation(id: string) {
     closingStreaming.value = false
     turnOutcomes.value = null
     // 成果不是一次性提示：重新打开旧会话时也要能核对这段对话留下了什么。
-    void refreshOutcomes(id, true)
-    void loadMapClaims()
-    void refreshMemoryAttention(id)
+    void refreshConversationBackground(id)
     if (detail.conversation.mode === 'onboarding') {
       onboardingStep.value = stepFromMessages()
     } else {
@@ -1039,7 +1051,6 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           assistant.model = m.model
           assistant.external = m.external
           if (!alive) return
-          void refreshCurrentMetadata(conv.id)
           if (m.mode === 'onboarding') {
             onboardingStep.value = m.onboardingStep ?? stepFromMessages()
             closingStreaming.value = (onboardingStep.value ?? 0) >= ONBOARDING_STEPS.length + 1
@@ -1059,6 +1070,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           if (!alive) return
           if (e.state === 'queued') {
             pollMemoryAttention(conv.id)
+            void alignmentPrivacy.value?.refresh()
             if (conv.mode === 'onboarding') void pollMap()
           } else if (e.state === 'skipped') {
             assistant.extractionNote = extractionSkipNote(e.reason)
@@ -1120,11 +1132,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
     closingStreaming.value = false
     abortController = null
     if (alive && currentId.value === conv.id) {
-      void loadConversations()
-      void refreshCurrentMetadata(conv.id)
-      void refreshOutcomes(conv.id, true)
-      void routingPanel.value?.refresh()
-      void refreshMemoryAttention(conv.id)
+      void refreshAfterTurn(conv.id)
       await scrollToBottom()
     }
   }
@@ -1345,11 +1353,12 @@ async function askAboutFiles(message: UiMessage, prompt: string) {
   await send(prompt, 'brief')
 }
 
-onMounted(() => {
+onMounted(async () => {
   mounted = true
-  void loadStatus()
-  void loadStats()
-  void loadConversations()
+  // Load visible navigation first, then cap non-critical startup reads at two.
+  await loadConversations()
+  if (!alive) return
+  await Promise.allSettled([loadStatus(), loadStats()])
 })
 
 onBeforeUnmount(() => {

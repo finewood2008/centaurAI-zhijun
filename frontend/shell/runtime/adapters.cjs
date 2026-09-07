@@ -32,11 +32,11 @@ function createSimulationAdapter({ delayMs = 15 } = {}) {
       }));
       const session = {
         async authorize() {
-          if (closed) throw new DesktopError('SESSION_EXPIRED');
+          if (closed) throw new DesktopError('CONNECTIVITY_SESSION_EXPIRED');
           return { ...binding };
         },
         request(request) {
-          if (closed) return Promise.reject(new DesktopError('SESSION_EXPIRED'));
+          if (closed) return Promise.reject(new DesktopError('CONNECTIVITY_SESSION_EXPIRED'));
           return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
               timers.delete(timer);
@@ -67,7 +67,7 @@ function createSimulationAdapter({ delayMs = 15 } = {}) {
           closed = true;
           for (const [timer, reject] of timers) {
             clearTimeout(timer);
-            reject(new DesktopError('SESSION_EXPIRED'));
+            reject(new DesktopError('CONNECTIVITY_SESSION_EXPIRED'));
           }
           timers.clear();
           sessions.delete(session);

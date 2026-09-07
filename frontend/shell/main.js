@@ -23,7 +23,9 @@ const mode = !app.isPackaged && process.env.ZHIJUN_DESKTOP_MODE === 'simulation'
 let runtime
 let microphone
 let unsubscribe = () => {}
-const assetRoot = path.resolve(__dirname, '../mindos-web/dist-desktop')
+const assetRoot = app.isPackaged
+  ? path.join(process.resourcesPath, 'mindos-web-dist')
+  : path.resolve(__dirname, '../mindos-web/dist-desktop')
 let window
 let quitting = false
 
@@ -33,7 +35,10 @@ async function createWindow() {
   let config
   if (mode !== 'simulation') {
     const filename = app.isPackaged ? path.join(process.resourcesPath, 'zhijun-product.json') : process.env.ZHIJUN_DESKTOP_CONFIG
-    try { config = await require('./production/config.cjs').loadConfig(filename) } catch { /* Invalid configuration stays closed. */ }
+    try {
+      config = await require('./production/config.cjs').loadConfig(filename,
+        app.isPackaged ? { resourceRoot: process.resourcesPath } : undefined)
+    } catch { /* Invalid configuration stays closed. */ }
   }
   const adapter = config ? await require('./production/adapter.cjs').createProductionAdapter({
     config, directory: app.getPath('userData'), safeStorage,

@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { api, chatImports, type ChatImportBatch, type ChatImportFile, type ChatMaterialRef, type ChatFileService, type ChatFilePreview, type UploadResult } from '@/services/api'
 import { validateImport } from '@/features/import/validation'
 import type { ReplyAssistanceInput } from '@/shared/replyAssistance'
+import { createChatImportPoller, hasTransitionalImports } from './chatImportPolling'
 
 export interface StagedChatFile { id: string; name: string; size: number; file?: File; materialId?: string; version?: number }
 
@@ -30,10 +31,6 @@ export function useChatImports(options: {
   const consentBusy = ref(false)
   const busyBatch = ref<string | null>(null)
   const loadError = ref('')
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let alive = true
-  let generation = 0
-  let lastSignature = ''
   let requestId = crypto.randomUUID()
 
   const files = computed(() => batches.value.flatMap(b => b.files))
@@ -41,40 +38,36 @@ export function useChatImports(options: {
   const filteredLibrary = computed(() => library.value.filter(f => f.fileName.toLowerCase().includes(query.value.toLowerCase())))
   const pendingConsent = computed(() => batches.value.find(b => b.state === 'consent'))
 
-  async function refresh(id = options.conversationId.value) {
-    if (!id) return
-    const epoch = generation
-    try {
-      const data = await chatImports.list(id)
-      if (!alive || epoch !== generation || id !== options.conversationId.value) return
+  const poller = createChatImportPoller({
+    read: id => chatImports.list(id),
+    apply: data => {
       batches.value = data.items
       references.value = data.selection.refs
       localOnly.value = data.selection.localOnly
       service.value = data.service
+    },
+    signature: data => JSON.stringify(data.items.map(b => [b.id, b.state, b.files.map(f => [f.id, f.state])])),
+    isTransitional: data => hasTransitionalImports(data.items),
+    refreshMessages: options.refreshMessages,
+    isTargetCurrent: id => options.conversationId.value === id,
+    onSuccess: () => {
       loadError.value = ''
-      const signature = JSON.stringify(data.items.map(b => [b.id, b.state, b.files.map(f => [f.id, f.state])]))
-      if (signature !== lastSignature) {
-        const refreshed = await options.refreshMessages(id)
-        if (epoch !== generation) return
-        if (refreshed) lastSignature = signature
-      }
-    } catch (error) {
-      if (alive && epoch === generation) loadError.value = error instanceof Error ? error.message : '文件状态暂时无法同步'
-    }
+    },
+    onError: error => {
+      loadError.value = error instanceof Error ? error.message : '文件状态暂时无法同步'
+    },
+  })
+
+  async function refresh(id = options.conversationId.value) {
+    if (id && id === options.conversationId.value) await poller.refresh(id)
   }
 
   watch(options.conversationId, id => {
-    generation++
-    clearTimeout(timer)
+    poller.stop()
     batches.value = []; references.value = []; service.value = null; localOnly.value = false
-    consentRefs.value = null; previewOpen.value = false; lastSignature = ''; loadError.value = ''
+    consentRefs.value = null; previewOpen.value = false; loadError.value = ''
     if (!uploading.value) { staged.value = []; requestId = crypto.randomUUID() }
-    const epoch = generation
-    async function poll() {
-      await refresh(id)
-      if (alive && epoch === generation && id) timer = setTimeout(poll, 2500)
-    }
-    if (id) void poll()
+    if (id) void poller.start(id)
   }, { immediate: true })
 
   function stageFiles(input: FileList | File[]) {
@@ -191,7 +184,7 @@ export function useChatImports(options: {
     const images = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
     if (images.length) { e.preventDefault(); stageFiles(images) }
   }
-  onBeforeUnmount(() => { alive = false; generation++; clearTimeout(timer) })
+  onBeforeUnmount(() => poller.dispose())
   return { staged, batches, references, localOnly, service, uploading, pickerOpen, libraryLoading, libraryError, query, filteredLibrary,
     preview, previewRef, previewError, previewOpen, consentRefs, consentBusy, pendingConsent, busyBatch, loadError, selectedFiles, files,
     stageFiles, stageMaterial, openPicker, send, refresh, chooseReferences, retry, reupload, showConsent, consent, showPreview, drop, paste }

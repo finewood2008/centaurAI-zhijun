@@ -1,8 +1,8 @@
 # 知君 Electron / 盒端完整产品架构
 
-更新：2026-09-06。文件名保留 0905 以延续集成基线。**Admin 已上线；真实账号经 SDK/Direct 连接家庭 AMD 盒子、v2 context 与资料页面已通过。** 本体页的本地任务回收漏洞已修复，修复后 UI 复验因桌面窗口不可读待续；全功能与正式安装包验收仍未完成。最新证据见[上线与合并记录](ADMIN-VERIFY-MASTER-MERGE-0906.md)。不能把本地测试、170 项操作清单或菜单可见视为全功能验收。
+更新：2026-09-07。文件名保留 0905 以延续集成基线。**Admin 已上线；真实账号经 SDK/Direct 连接家庭和公司 AMD 盒子，v2 context、首页、资料与本体读取等关键链路已通过。** 当前桌面所有产品业务请求受限于盒端 170 项 catalog，账号与设备控制由 Admin 承担；详细证据见[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)。全功能逐项与正式安装包验收仍未完成。
 
-配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
+配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
 
 ![知君当前完整产品架构](assets/architecture-0905.svg)
 
@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | Vue renderer | 原页面、草稿、来源授权交互、SSE 消费、受控录音 | 只使用 preload 产品接口；不读取票据、模型密钥、盒端路径 |
 | Electron preload / main | IPC 验参、generation、登录/设备选择、operation policy、上传/下载/保存、媒体句柄、麦克风授权 | main 独占真实 SDK 和凭据；清单外操作拒绝 |
-| Connectivity SDK 1.2.0 | Electron sidecar、Core、Direct 会话与整响应 request/close | 没有原生 SSE/流式 chunk/逐请求取消 API |
+| Connectivity JS SDK 1.2.0 / native 1.2.1 | Electron sidecar、Core、Direct 会话与整响应 request/close | 没有原生 SSE/流式 chunk/逐请求取消 API |
 | Consumer / Gateway / Admin | 账号、设备 Owner、应用 grant、ticket、信令 | 新应用单独登记；不扩大旧 person-data.read 权限 |
 | 盒端 Remote Agent | Direct/Owner/grant/session 每次重验、10 条 v2 RPC 路由、Ed25519 证明 | 不向 renderer 暴露签名密钥，不允许透传原 `/api/**` |
 | DE zhijun_gateway | 验签/nonce、workspace/client/session 绑定、短任务队列、加密事件与文件分片、worker 租约 | 不信任 PC 自带身份头；不自动重放不确定写入 |
@@ -32,7 +32,7 @@
 ```mermaid
 flowchart LR
   UI[Vue 原产品 15 页] -->|typed IPC / operationId| MAIN[Electron main]
-  MAIN --> SDK[SDK 1.2.0 + sidecar + Core]
+  MAIN --> SDK[JS SDK 1.2.0 + native 1.2.1 + Core]
   SDK -->|Direct / 短 RPC| AGENT[Remote Agent]
   AGENT -->|loopback + Ed25519 v2| GW[DE workspace Gateway]
   GW -->|UDS + HMAC| WORKER[独立知君领域 worker]
@@ -56,13 +56,15 @@ flowchart LR
 
 主进程把清单操作编码为 `POST /api/mindos/zhijun/operations`，取得 job ID 后，以 `after/waitMs` 有界轮询。DE 确实执行任务并持久化事件；worker 原 SSE 被转成 `headers/chunk/end/error` 事件，renderer 适配为 ReadableStream 供原 SSE 解析器使用。UTF-8 解码跨块保留状态。
 
-这实现应用层流体验，SDK 本身仍等待每次短 RPC 的完整响应。单次 poll 最长 8 秒、每页最多 32 事件/256 KiB，避免把长聊天放进 SDK 15 秒 watchdog；任务总时长上限 600 秒。取消是显式服务端动作，不能等同数据库回滚。断线、崩溃或超时后的写入结果可能不确定，禁止自动改 requestId 重做。
+这实现应用层流体验，SDK 本身仍等待每次短 RPC 的完整响应。Gateway 协议单次 poll 最长 8 秒、每页最多 32 事件/256 KiB；native 1.2.1 已将 request 改为最多 8 项并发，以 request_id 关联响应；当前桌面 bridge 继续将合法 poll 的实际等待限制为 250 ms，及时释放通道容量。任务总时长上限仍为 600 秒。取消是显式服务端动作，不能等同数据库回滚。断线、崩溃或超时后的写入结果可能不确定，禁止自动改 requestId 重做。
 
 ### 4.2 附件、导入、下载与预览
 
 传输层上传是 v2 暂存：512 KiB 原始字节、0-based index、JSON base64+SHA256；完成时校验整文件 SHA256。业务 operation 引用完成 uploadId，由盒端还原 multipart，保留资料版本、对话附件保护与原字段。它与 DE 历史 Pocket `parts/complete` 1 MiB、1-based 协议不是同一层。
 
 二进制业务响应生成加密 blob，事件仅含描述；主进程有界读取或在本地保存对话框确认后写文件。预览用主进程控制的 `zhijun-media:` 句柄，不暴露盒子 loopback URL。完成上传在没有活跃任务引用后可显式释放，重复 DELETE 幂等；小去重墓碑继续保留。单文件最多 200 MiB，传输会话和 workspace 磁盘各 1 GiB；两者是不同预算。main统一调度心跳、poll与上传并预留请求/编码后字节；真实JS+严格内存Agent的虚拟时钟测试完成400块/243秒、滚动60秒最多101请求，但实际SDK/P2P大文件传输尚未验证。
+
+上述 243 秒为 0906 历史合成记录。0907 第二轮调度使用容量 12 的短突发、600 ms 平均补充，并限制全部尝试滚动 60 秒最多 100 次，给心跳/取消保留余量；新大文件合成结果约 258 秒、窗口最高 93 次。设计与性能证据见[刷新耗时修复](PERFORMANCE-0907.md)，不把虚拟时间记作实际网络吞吐。
 
 ### 4.3 语音与模型
 
@@ -95,3 +97,11 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 ### 连接失败时的应用框架
 
 账号登录态负责显示导航框架，工作区 `ready` 状态负责挂载业务内容。连接失败时五个导航与偏好仍可见，内容区显示连接恢复操作；业务页和旧工作区状态卸载。账号票据签发错误与原生设备连接错误在主进程分别分类，不能由统一 `TRANSPORT_UNAVAILABLE` 推断设备离线。见[桌面合同补充](DESKTOP-CONTRACT-0905.md)。
+
+### 桌面导航与读取延迟（0907 补充）
+
+业务仍经过 renderer → preload/主进程 → Consumer SDK → Agent → DE Gateway → workspace worker。传输使用 HTTP，当前业务协议是 start/poll 两步；renderer 不直接持有盒端鉴权凭据。已完成引导的导航提示仅在当前连接内复用 30 秒，切盒/断线/退出/引导写入失效；这份提示不授予数据访问权限。guard 在异步结果消费前复核连接代次与引导 revision。对话列表优先入队，非关键状态/统计随后读取。“我的本体”默认摘要已由 3 个业务任务降为 1 个，stats 和分区列表改为切换视图后按需加载。详细边界与性能证据见[第二轮跟进](PERFORMANCE-FOLLOWUP-0907.md)和[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)。
+
+0907 公司环境当前 DE 为 `62ae9b1`、worker 为知君 `eebd58b`（业务源码与此前 `507edb5` 相同），盒端 Agent 保持 `644b1c2`；桌面 native 1.2.1 来自 OS `353f1d9`。此为公司环境记录，不改写上述家庭环境历史验收。
+
+任务读取仅检查目标记录的即时 TTL/执行期限；创建、重启恢复与集中清理保留全量扫描，磁盘配额和文件锁语义不变。

@@ -21,6 +21,7 @@ export type PublicErrorCode =
   | 'OPERATION_NOT_ALLOWED'
   | 'ACCESS_DENIED'
   | 'SESSION_EXPIRED'
+  | 'CONNECTIVITY_SESSION_EXPIRED'
   | 'TRANSPORT_UNAVAILABLE'
   | 'DIRECT_CONNECTION_UNAVAILABLE'
   | 'WRITE_OUTCOME_UNKNOWN'
@@ -76,12 +77,12 @@ interface SnapshotBase {
 export type DesktopSnapshot =
   | (SnapshotBase & Readonly<{
       phase: 'ready';
-      subject: Readonly<{ accountId: string; deviceId: string; workspaceId?: string }>;
+      subject: Readonly<{ accountId: string; deviceId: string; deviceName?: string; workspaceId?: string }>;
       capabilities: M0Capabilities & Readonly<{ materialsRead: true }>;
     }>)
   | (SnapshotBase & Readonly<{
       phase: Exclude<Phase, 'ready'>;
-      subject: Readonly<{ accountId: string; deviceId?: string; workspaceId?: string }> | null;
+      subject: Readonly<{ accountId: string; deviceId?: string; deviceName?: string; workspaceId?: string }> | null;
       capabilities: M0Capabilities & Readonly<{ materialsRead: false }>;
       error?: PublicError;
     }>);

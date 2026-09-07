@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "知君桌面宿主：完整产品界面、受控 IPC 与盒端工作区连接",
+  "author": "Zhuhai Qeeshu Technology Co., Ltd.",
   "main": "main.js",
   "scripts": {
     "start": "node launch.cjs",
@@ -10,10 +11,17 @@
     "icons:build": "node scripts/build-icons.cjs",
     "test": "node --test tests/*.test.cjs",
     "test:e2e": "node tests/electron.e2e.cjs",
-    "smoke": "node tests/electron.e2e.cjs"
+    "smoke": "node tests/electron.e2e.cjs",
+    "build:desktop": "npm --prefix ../mindos-web run build:desktop",
+    "package:prepare:mac-arm64": "node scripts/prepare-macos-package.cjs",
+    "package:verify:mac-arm64": "node scripts/verify-macos-package.cjs",
+    "package:smoke:mac-arm64": "node scripts/smoke-macos-package.cjs",
+    "package:mac-arm64": "npm run test && npm --prefix ../mindos-web run test:desktop && npm run test:e2e && npm run build:desktop && npm run package:prepare:mac-arm64 && electron-builder --config electron-builder.yml --mac dmg zip --arm64 --publish never && npm run package:verify:mac-arm64 && npm run package:smoke:mac-arm64"
   },
   "devDependencies": {
-    "electron": "37.10.3"
+    "@electron/asar": "4.3.0",
+    "electron": "37.10.3",
+    "electron-builder": "26.15.3"
   },
   "dependencies": {
     "@nexusaos/connectivity-contracts": "file:vendor/nexusaos-connectivity-contracts-1.0.1.tgz",

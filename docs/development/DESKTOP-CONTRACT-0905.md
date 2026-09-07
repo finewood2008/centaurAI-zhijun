@@ -77,6 +77,6 @@ Agent新应用：1MiB请求/响应、8并发、120rpm、1GiB会话预算；Core�
 
 主进程在 SDK 获取票据前后保留受信任的 Consumer 错误，SDK 原有票据绑定和完整性检查不变。固定应用授权拒绝为 `APPLICATION_AUTHORIZATION_DENIED`；账号服务不可用为 `ACCOUNT_SERVICE_UNAVAILABLE`；明确的原生直连失败为 `DIRECT_CONNECTION_UNAVAILABLE`。超时、401/403、合同错误分别保留；未知错误不推断为应用未注册。公开诊断只允许固定 `phase` / `sdkCode` / `detailCode` 枚举及既有安全字段，不能返回原始正文、凭据、URL 或异常消息。
 
-开发 Dock 与打包图标使用原 `frontend/mindos-web/logo.jpg` 半人马图像，生成资产固定在 shell/assets；页面内“知君”品牌保持原产品样式。修复步骤与实际核验见[专项计划](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
+开发 Dock 与打包图标使用原 `frontend/mindos-web/logo.jpg` 半人马图像；仓库内 Swift/CoreGraphics 渲染器生成带暖白圆角底板、透明外缘和留白的固定 shell/assets 资产，页面内“知君”品牌保持原产品样式。修复步骤与实际核验见[专项计划](CONNECTION-NAVIGATION-ICON-FIX-0906.md)。
 
 上线前补充验证为 shell 126/126、前端 63/63、Web/Desktop 构建及浏览器/隔离 Electron 导航回归通过。Admin 发布后新应用授权拒绝已解除，真实账号通过 Direct 进入 AMD 工作区并读取资料页面。本体并发读取进一步暴露本地终态任务回收遗漏，现按 `jobs.size + pendingStarts` 清理已完成历史，与准入口径一致；取消未确认和结果未知的写入仍占位。Shell 最新 **128/128** 通过，实际本体页面重启复验因桌面窗口不可读待续；所有限额及公开类型均未变。

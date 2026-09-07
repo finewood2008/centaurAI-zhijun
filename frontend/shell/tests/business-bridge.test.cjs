@@ -11,6 +11,32 @@ const context = () => ({ version: 1, ...subject, applicationId, capabilities: ['
 const response = value => ({ status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(value)) });
 const read = () => ({ method: 'GET', relative_path: '/api/mindos/materials?limit=20&offset=0', headers: { Accept: ['application/json'] } });
 
+test('v2 serial-sidecar poll cap preserves zero/short waits and validates the original canonical route first', async () => {
+  const calls = [], id = 'b'.repeat(32);
+  const ctx = { ...context(), version: 2, applicationId: 'zhijun-desktop', workspaceId: 'f'.repeat(64),
+    capabilities: ['product.rpc', 'product.events', 'product.uploads', 'product.blobs'] };
+  const bridge = await createBusinessBridge({ clock, schedulerOptions: { intervalMs: 1 } }).authorize({
+    applicationId: 'zhijun-desktop', subject, session: { request: async input => {
+      calls.push(input); return response(input.relative_path.endsWith('/context') ? ctx : {});
+    } },
+  });
+  try {
+    for (const wait of [0, 1, 249, 250, 251, 8000]) {
+      const path = `/api/mindos/zhijun/operations/${id}?after=42&waitMs=${wait}`;
+      const input = { method: 'GET', relative_path: path, headers: { Accept: ['application/json'] } };
+      await bridge.request(input);
+      assert.equal(calls.at(-1).relative_path, path.replace(/waitMs=\d+$/, `waitMs=${Math.min(wait, 250)}`));
+      assert.equal(input.relative_path, path, 'caller request must remain unchanged');
+    }
+    const count = calls.length;
+    for (const query of ['after=42&waitMs=8001', 'after=42&waitMs=0250', 'waitMs=8000&after=42', 'after=42&waitMs=8000&x=1']) {
+      await assert.rejects(bridge.request({ method: 'GET', relative_path: `/api/mindos/zhijun/operations/${id}?${query}`,
+        headers: { Accept: ['application/json'] } }), { code: 'INVALID_REQUEST' });
+    }
+    assert.equal(calls.length, count);
+  } finally { await bridge.close(); }
+});
+
 test('production bridge verifies context through the same SDK session before permitting a material read', async () => {
   const requests = [];
   const bridge = createBusinessBridge({ clock });
@@ -35,7 +61,7 @@ test('wrong account, client, device, application, expiry or unexpected response 
       session: { request: async () => response({ ...context(), [key]: 'wrong' }) } }), { code: 'ACCESS_DENIED' });
   }
   for (const [value, code] of [
-    [{ ...context(), expiresAt: 1893456002 }, 'SESSION_EXPIRED'],
+    [{ ...context(), expiresAt: 1893456002 }, 'CONNECTIVITY_SESSION_EXPIRED'],
     [{ ...context(), expiresAt: 1893457000 }, 'CONTRACT_MISMATCH'],
     [{ ...context(), capabilities: ['materials.read', 'materials.write'] }, 'CONTRACT_MISMATCH'],
     [{ ...context(), token: 'synthetic-only' }, 'CONTRACT_MISMATCH'],
@@ -90,7 +116,7 @@ test('closing production authorization discards a late material response', async
 
 test('old Agent manifest and native failures have safe actionable errors without raw exception leakage', async () => {
   for (const [native, expected] of [['REQUEST_TARGET_NOT_ALLOWED', 'BUSINESS_BRIDGE_REQUIRED'],
-    ['SDK_CONNECTION_CLOSED', 'SESSION_EXPIRED'], ['SDK_REQUEST_TIMEOUT', 'REQUEST_TIMEOUT'],
+    ['SDK_CONNECTION_CLOSED', 'CONNECTIVITY_SESSION_EXPIRED'], ['SDK_REQUEST_TIMEOUT', 'REQUEST_TIMEOUT'],
     ['SESSION_RESOURCE_EXHAUSTED', 'SESSION_QUOTA_EXHAUSTED'], ['SDK_REQUEST_LIMIT_REACHED', 'SESSION_QUOTA_EXHAUSTED'],
     ['REQUEST_REPLAYED', 'SESSION_QUOTA_EXHAUSTED'], ['TOO_MANY_REQUESTS', 'RATE_LIMITED'], ['SDK_TOO_MANY_REQUESTS', 'RATE_LIMITED'],
     ['SDK_RESPONSE_TOO_LARGE', 'RESPONSE_TOO_LARGE'],
@@ -120,11 +146,12 @@ test('actual production adapter passes connect -> bridge context -> material req
   assert.equal(closes, 1);
 });
 
-test('confirmed native close invalidates ready while a permission denial preserves the signed-in identity', async () => {
+test('confirmed native close signs out while a permission denial preserves the signed-in identity', async () => {
   for (const closedNative of [true, false]) {
-    let nativeCloses = 0;
+    let nativeCloses = 0; let signOuts = 0;
     const adapter = await createProductionAdapter({ config: { connectivity: { applicationId } },
       consumer: { current: async () => subject, signIn: async () => subject, dispose: async () => {},
+        signOut: async () => { signOuts++; }, restore: async () => null,
         listDevices: async () => [{ deviceId: subject.deviceId, displayName: 'synthetic box', availability: 'online' }] },
       bridge: createBusinessBridge({ clock }), runtimeFactory: async () => ({ connect: async () => ({
         request: async input => {
@@ -144,14 +171,16 @@ test('confirmed native close invalidates ready while a permission denial preserv
       assert.equal((await invoke('connect', subject.deviceId)).ok, true);
       const generation = runtime.snapshot().generation;
       const result = await invoke('materials.list', { limit: 20, offset: 0 });
-      assert.equal(result.error.code, closedNative ? 'SESSION_EXPIRED' : 'ACCESS_DENIED');
+      assert.equal(result.error.code, closedNative ? 'CONNECTIVITY_SESSION_EXPIRED' : 'ACCESS_DENIED');
       const snapshot = runtime.snapshot();
-      assert.equal(snapshot.subject.accountId, subject.accountId, 'do not turn a read denial into sign-out');
+      assert.equal(snapshot.subject?.accountId ?? null, closedNative ? null : subject.accountId,
+        'a confirmed connection-session expiry must return to sign-in');
       assert.equal(snapshot.capabilities.materialsRead, !closedNative);
       assert.equal(snapshot.phase, closedNative ? 'failed' : 'ready');
       assert.equal(snapshot.generation, generation + (closedNative ? 1 : 0));
       await new Promise(resolve => setImmediate(resolve));
       assert.equal(nativeCloses, closedNative ? 1 : 0);
+      assert.equal(signOuts, closedNative ? 1 : 0);
     } finally { await runtime.dispose(); }
   }
 });

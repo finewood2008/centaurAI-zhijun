@@ -1,4 +1,5 @@
-import { isDesktopProduct } from '../shared/productScope.ts'
+import { hasProductScope, isDesktopProduct, onProductScopeReset } from '../shared/productScope.ts'
+import { createNavigationProgressReader } from './navigationProgress.ts'
 import { transportRequest } from './transport.ts'
 // 类型化 API Service：MindOS 浏览器页面统一通过此模块访问 /api/...，
 // 不依赖 window.api / Electron preload / ipcRenderer。
@@ -68,7 +69,8 @@ export function buildHeaders(init?: RequestInit): Headers {
 
 /** 把非 2xx 响应解析成 ApiError 并抛出（支持三种后端错误体形状）。 */
 export async function throwApiError(res: Response): Promise<never> {
-  let message = `请求失败（${res.status}）`
+  const fallbackMessage = `请求失败（${res.status}）`
+  let message = fallbackMessage
   let code: string | undefined
   let details: string[] | undefined
   let preview: import('./taskRouting').RoutePreview | undefined
@@ -95,6 +97,11 @@ export async function throwApiError(res: Response): Promise<never> {
       message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
     }
     if (!code && body && typeof body.code === 'string') code = body.code
+    if (message === fallbackMessage && code === 'REDACTION_NOT_READY') {
+      message = '部分资料仍在完成隐私处理，请稍后重试。'
+    } else if (message === fallbackMessage && code === 'MATERIAL_PRIVACY_NOT_READY') {
+      message = '这份资料仍在完成隐私处理，请稍后重试。'
+    }
   } catch {
     // 忽略非 JSON 响应体
   }
@@ -2350,11 +2357,31 @@ export function getOnboardingProgress() {
   return request<OnboardingProgress>('/mindos/zhijun/onboarding')
 }
 
-export function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
-  return postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
-    action,
-    ...(conversationId ? { conversationId } : {}),
-  })
+const navigationProgress = createNavigationProgressReader(
+  getOnboardingProgress,
+  () => isDesktopProduct() && hasProductScope(),
+)
+onProductScopeReset(navigationProgress.invalidate)
+
+export function getOnboardingProgressForNavigation() {
+  return navigationProgress.read()
+}
+
+export function onboardingNavigationRevision(): number {
+  return navigationProgress.revision()
+}
+
+export async function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
+  navigationProgress.invalidate()
+  try {
+    return await postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
+      action,
+      ...(conversationId ? { conversationId } : {}),
+    })
+  } finally {
+    // Also discard reads started during a write, including an ambiguous failure.
+    navigationProgress.invalidate()
+  }
 }
 
 // ---- P3：整合与裁决、导出 / 全量删除

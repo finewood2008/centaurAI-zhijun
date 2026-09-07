@@ -51,6 +51,28 @@ function fixture(overrides = {}) {
   return { adapter, sessions };
 }
 
+test('production startup restores an encrypted login identity before device selection', async (t) => {
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    async restore() { return { accountId: 'restored-account' }; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal(runtime.snapshot().phase, 'authenticating');
+  await tick();
+  assert.equal(runtime.snapshot().phase, 'selecting_device');
+  assert.equal(runtime.snapshot().subject.accountId, 'restored-account');
+});
+
+test('production startup without a valid encrypted login returns to sign-in', async (t) => {
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    async restore() { return null; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal(runtime.snapshot().phase, 'authenticating');
+  await tick();
+  assert.equal(runtime.snapshot().phase, 'signed_out');
+  assert.equal(runtime.snapshot().subject, null);
+});
+
 test('unconfigured mode remains closed even with an injected adapter', async (t) => {
   const runtime = createDesktopRuntime({ adapter: fixture().adapter });
   t.after(() => runtime.dispose());
@@ -130,6 +152,7 @@ test('SDK success alone stays authorizing and wrong bridge binding fails closed'
   proof.resolve({ accountId: 'wrong-account', deviceId: 'synthetic-box-a' });
   assert.equal((await connecting).error.code, 'ACCESS_DENIED');
   assert.equal(runtime.snapshot().phase, 'failed');
+  assert.deepEqual(runtime.snapshot().subject, { accountId: 'synthetic-account' });
   assert.equal(runtime.snapshot().capabilities.materialsRead, false);
 });
 
@@ -151,6 +174,7 @@ test('late connection is closed after another device wins', async (t) => {
   await tick();
   assert.equal(late.closed, 1);
   assert.equal(runtime.snapshot().subject.deviceId, 'synthetic-box-b');
+  assert.equal(runtime.snapshot().subject.deviceName, 'b');
 });
 
 test('device switch rejects pending old read before the old response and preserves new subject', async (t) => {
@@ -199,6 +223,9 @@ test('disconnect preserves login, sign-out removes it, and stale contexts cannot
   const runtime = createDesktopRuntime({ mode: 'simulation' });
   t.after(() => runtime.dispose());
   await ready(runtime);
+  assert.deepEqual(runtime.snapshot().subject, {
+    accountId: 'synthetic-account', deviceId: 'synthetic-box-a', deviceName: '模拟盒子 A',
+  });
   const generation = runtime.snapshot().generation;
   assert.equal((await call(runtime, 'disconnect')).ok, true);
   assert.equal(runtime.snapshot().phase, 'selecting_device');
@@ -274,7 +301,7 @@ test('simulation session.close settles its own request timers and denies wrong b
   const session = await adapter.connect({ accountId: 'synthetic-account', deviceId: 'synthetic-box-a' });
   const pending = session.request({ method: 'GET', path: '/api/mindos/materials?limit=20&offset=0' });
   await session.close();
-  await assert.rejects(pending, (error) => error.code === 'SESSION_EXPIRED');
+  await assert.rejects(pending, (error) => error.code === 'CONNECTIVITY_SESSION_EXPIRED');
 });
 
 test('dispose settles pending authentication and stops new calls/subscriptions', async () => {

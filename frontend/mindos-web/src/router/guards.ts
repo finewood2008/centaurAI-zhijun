@@ -1,6 +1,6 @@
 import type { Router } from 'vue-router'
-import { getOnboardingProgress } from '@/services/api'
-import { hasProductScope, isDesktopProduct } from '@/shared/productScope'
+import { getOnboardingProgressForNavigation, onboardingNavigationRevision } from '@/services/api'
+import { hasProductScope, isDesktopProduct, productScopeEpoch } from '@/shared/productScope'
 
 export function installProductGuards(router: Router): void {
 // 首次引导是产品的一部分，而不是对话页里碰巧出现的一张空白卡。
@@ -8,8 +8,12 @@ export function installProductGuards(router: Router): void {
 router.beforeEach(async (to) => {
   if (isDesktopProduct() && !hasProductScope()) return true
   if (to.path === '/settings') return true
+  const scopeEpoch = productScopeEpoch()
+  const navigationRevision = onboardingNavigationRevision()
   try {
-    const progress = await getOnboardingProgress()
+    const progress = await getOnboardingProgressForNavigation()
+    if (isDesktopProduct() && scopeEpoch !== productScopeEpoch()) return true
+    if (navigationRevision !== onboardingNavigationRevision()) return true
     if (progress.state !== 'ready') {
       const path = progress.conversationId
         ? `/onboarding/c/${encodeURIComponent(progress.conversationId)}`

@@ -53,7 +53,7 @@ v2通过同一SDK session请求 `GET /api/mindos/zhijun/context`，核对账号�
 
 ## 应用图标
 
-开发启动会在 macOS Dock 使用原有半人马图像；Windows/Linux 窗口和打包配置也指向同源资产。原图为 `../mindos-web/logo.jpg`。运行 `npm run icons:build` 可用 macOS 系统工具重建 `assets/centaur.png` 和 `assets/centaur.icns`；不会重绘原图。正式安装包仍需在对应平台构建核验，设置打包配置不代表安装包已经产出。
+开发启动会在 macOS Dock 使用原有半人马图像；Windows/Linux 窗口和打包配置也指向同源资产。原图为 `../mindos-web/logo.jpg`。运行 `npm run icons:build` 会通过仓库内的 Swift/CoreGraphics 脚本去除原图近白背景，在暖白圆角底板外保留真实透明留白，再用 `sips` / `iconutil` 重建 `assets/centaur.png` 和 `assets/centaur.icns`。`assets/centaur-source.json` 记录源图、渲染脚本、构建脚本、布局参数和产物哈希，重复构建应得到相同结果。正式安装包仍需在对应平台构建核验，设置打包配置不代表安装包已经产出。
 
 账号已登录时保留主导航；未连接的业务内容区显示选盒或错误提示。应用授权拒绝和账号服务故障会单独提示，不应据此认定盒子离线。
 

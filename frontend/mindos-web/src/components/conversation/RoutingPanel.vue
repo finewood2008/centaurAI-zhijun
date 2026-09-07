@@ -60,8 +60,7 @@ watch(path, () => {
   includeFiles.value = false; includeCharter.value = false
   void refresh()
 }, { immediate: true })
-const timer = setInterval(() => { if (!props.disabled) void refresh() }, 10000)
-onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort(); clearInterval(timer) })
+onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort() })
 function show() { open.value = true; void refresh() }
 async function change(mode: string) {
   const valid = begin(), target = path.value

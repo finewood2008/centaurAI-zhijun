@@ -14,9 +14,9 @@
 
 当前产品源已同步至 GitHub `22dc9a3`，本次新增功能、审核修复与验证结果见 [上游同步记录](docs/development/UPSTREAM-SYNC-0905.md)。
 
-Electron / 盒端集成当前采用完整产品 v2：原 15 个页面、20 条页面路由和 2 条重定向已装配到独立桌面，170 项受控操作通过主进程、Connectivity SDK 1.2.0 Direct 通道和盒端 Gateway 分发到独立知君领域 worker 或 DE 基础能力。原 Web 开发入口继续可用。架构和开发入口见 [架构图](docs/development/ARCHITECTURE-0905.md)、[集成与部署方案](docs/development/INTEGRATION-0905.md)、[桌面接口](docs/development/DESKTOP-CONTRACT-0905.md)、[领域规格](docs/development/DOMAIN-INTEGRATION-0905.md)。
+Electron / 盒端集成当前采用完整产品 v2：原 15 个页面、20 条页面路由和 2 条重定向已装配到独立桌面，170 项受控操作通过主进程、Connectivity SDK 1.2.0 / native 1.2.1 Direct 通道和盒端 Gateway 分发到独立知君领域 worker 或 DE 基础能力。原 Web 开发入口继续可用。架构和开发入口见 [架构图](docs/development/ARCHITECTURE-0905.md)、[集成与部署方案](docs/development/INTEGRATION-0905.md)、[桌面接口](docs/development/DESKTOP-CONTRACT-0905.md)、[接口去向审计](docs/development/DESKTOP-API-ROUTING-AUDIT-0907.md)、[领域规格](docs/development/DOMAIN-INTEGRATION-0905.md)。
 
-**v2 正式盒子/UI 验收仍待完成，Admin 新应用生产发布路径尚未提供。** 新应用为 `zhijun-desktop / zhijun.workspace`，不能复用旧只读应用扩权。SDK 仍是整响应 request/close；聊天流、上传和导出使用盒端真实短任务、游标事件与分片，并非 SDK 原生流式接口。范围与进度见 [完整产品计划](docs/development/FULL-PRODUCT-INTEGRATION-0906.md)、[真实验收记录](docs/development/REAL-ACCEPTANCE-0906.md)。
+Admin 新应用已发布；正式账号已通过 SDK/Direct 连接家庭和公司 AMD 盒子，v2 context、首页、资料与本体读取等关键链路已验证。新应用为 `zhijun-desktop / zhijun.workspace`，不能复用旧只读应用扩权。SDK 仍是整响应 request/close；聊天流、上传和导出使用盒端真实短任务、游标事件与分片，并非 SDK 原生流式接口。170 项操作尚未逐项真机执行，完整写入、长流、上传、模型、撤销及跨主体矩阵仍按 [完整产品计划](docs/development/FULL-PRODUCT-INTEGRATION-0906.md) 和 [真实验收记录](docs/development/REAL-ACCEPTANCE-0906.md)推进。
 
 早期 v1 只读桥保留兼容：真实登录、授权空资料页、刷新和一次重连已验证；这不表示非空历史资料、完整跨主体矩阵或 v2 已验收。[盒端历史部署](docs/development/BOX-DEPLOYMENT-0906.md)保留原版本和证据。2026-09-06 现有 DE 服务连接 FD 泄漏已单独热修并恢复 HTTP 200，见 [故障记录](docs/reports/CONNECTIVITY-FD-HOTFIX-0906.md)；该修复与 v2 产品发布分开。
 
@@ -127,11 +127,11 @@ backend/{parser,embedder,watcher,vector_store}.py   资料摄取、解析、嵌�
 
 ## 现状与边界
 
-- 原 Web 产品的会话、本体、判断、章程、学习、事项/成果、资料/边界、搜索/图谱及偏好页面已装配进桌面；盒端Agent/DE/worker/catalog已匹配部署，Admin生产登记和真实逐功能验收待完成，不能宣称已全量交付。
+- 原 Web 产品的会话、本体、判断、章程、学习、事项/成果、资料/边界、搜索/图谱及偏好页面已装配进桌面；盒端 Agent/DE/worker/catalog 已匹配部署，Admin 生产登记已上线，关键链路已通过。170 项操作的真实逐功能矩阵仍待完成，不能宣称已全量验收。
 - 录音端口已实现明确按钮授权、最长120秒、16kHz PCM16单声道WAV、盒端本地转写并填入草稿；不自动发送消息。盒端voice API已用合成WAV实测通过；真实麦克风、平台权限和正式SDK/UI仍待实测。
 - 隔离真盒已通过hardware-candidate5全部5项与gateway-candidate6全部10项（60请求、21个completed操作，含知识CRUD/confirm/search/purge）；均为合成主体/输入。首次失败、修复及189项资料相关回归见[审核记录](docs/reports/FULL-PRODUCT-GATEWAY-REVIEW-0906.md)，盒端匹配部署已完成，正式Consumer/SDK/P2P/UI验收仍待Admin生产发布入口与后续端到端验证。
 - 外部模型由DE统一管理，外发必须绑定来源预览、配置和真实同意；模型质量、真实调用、取消及来源撤销仍需验收。
 - 知君新领域目录按账号/设备/所有权代次隔离，DE能力负责canonical资料和模型。旧global不自动迁移，新领域目录不进入DE个人记忆退役清理范围。
 - 原事项/成果新cursor分页、增强业务幂等和清除流程仍是独立规划增量，不能把原列表/history或旧ontology purge描述为已具备这些能力。承诺提醒、完整议题线程、BLE配网等未实现产品规划不因本次传输接入自动完成。
 
-正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](docs/reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin发布及正式Consumer/SDK/P2P/UI验收保持独立待办。
+正式盒端匹配部署的版本、备份、文件哈希、健康与拒绝检查见[部署回执](docs/reports/FULL-PRODUCT-DEPLOYMENT-0906.md)；Admin 上线及关键 Consumer/SDK/P2P/UI 结果见[上线与合并记录](docs/development/ADMIN-VERIFY-MASTER-MERGE-0906.md)，完整操作矩阵继续独立验收。

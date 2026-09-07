@@ -37,13 +37,19 @@ try {
     const result = data => Promise.resolve({ ok: true, generation: snapshot.generation, data })
     const set = phase => {
       snapshot = { ...snapshot, phase, generation: snapshot.generation + 1, sequence: snapshot.sequence + 1,
-        subject: phase === 'signed_out' ? null : { accountId: 'synthetic-owner', ...(phase === 'ready' ? { deviceId: 'synthetic-device', workspaceId: 'synthetic-workspace' } : {}) },
+        subject: phase === 'signed_out' ? null : { accountId: 'synthetic-owner', ...(phase === 'ready' ? { deviceId: 'synthetic-device', deviceName: '合成盒子', workspaceId: 'synthetic-workspace' } : {}) },
         capabilities: { product: phase === 'ready', materialsRead: phase === 'ready' },
         error: phase === 'failed' ? { code: 'TRANSPORT_UNAVAILABLE', message: '合成连接失败', recovery: 'user_reconnect' } : null }
       subscribers.forEach(fn => fn(snapshot)); return result(snapshot)
     }
     window.__productTestFail = () => set('failed')
     window.__productTestStage = phase => set(phase)
+    window.__productTestExpire = () => {
+      snapshot = { ...snapshot, phase: 'failed', generation: snapshot.generation + 1, sequence: snapshot.sequence + 1,
+        subject: null, capabilities: { product: false, materialsRead: false },
+        error: { code: 'CONNECTIVITY_SESSION_EXPIRED', message: '连接会话已过期，请重新登录。', recovery: 'user_sign_in' } }
+      subscribers.forEach(fn => fn(snapshot))
+    }
     window.zhijunDesktop = {
       protocolVersion: 1,
       subscribe(fn) { stats.subscriptions++; stats.activeSubscriptions++; subscribers.add(fn); return () => { subscribers.delete(fn); stats.activeSubscriptions-- } },
@@ -88,6 +94,9 @@ try {
   assert.equal(await page.evaluate(() => window.__productTestStats.starts.length), 0)
   await page.getByTestId('connect-synthetic-device').click()
   await page.getByTestId('workspace-unavailable').waitFor({ state: 'detached' })
+  const connectionStatus = page.getByRole('status').filter({ hasText: '已连接盒子' })
+  assert.match(await connectionStatus.innerText(), /合成盒子/)
+  assert.doesNotMatch(await connectionStatus.innerText(), /synthetic-device/)
 
   for (const label of ['今日来信', '对话', '我的本体', '判断', '资料与边界']) {
     await navigation.getByRole('link', { name: label, exact: true }).click()
@@ -119,8 +128,8 @@ try {
   assert.ok(stats.starts.length > 15)
   assert.deepEqual(unexpected, [])
   assert.deepEqual(pageErrors, [])
-  await page.getByRole('button', { name: '退出登录', exact: true }).click()
+  await page.evaluate(() => window.__productTestExpire())
   await page.getByTestId('password-login').waitFor()
-  assert.equal(await navigation.count(), 0, 'workspace unmounts on logout')
-  console.log('product-navigation: logged-in failure keeps navigation without business dispatch, reselect/reconnect recovers, stale page unmounts; five navigation entries, preferences, all 15 page components, shared connection and logout passed with synthetic HTTP errors')
+  assert.equal(await navigation.count(), 0, 'workspace unmounts on confirmed connectivity-session expiry')
+  console.log('product-navigation: logged-in failure keeps navigation without business dispatch, reselect/reconnect recovers, stale page unmounts; five navigation entries, preferences, all 15 page components, shared connection and expiry-to-login passed with synthetic HTTP errors')
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

@@ -24,6 +24,7 @@ const transientUploads = ref<DisplayMaterial[]>([])
 const displayItems = computed<DisplayMaterial[]>(() => [...transientUploads.value, ...items.value])
 const loading = ref(true)
 const error = ref('')
+const folderError = ref('')
 const type = ref('')
 // 支持从首页失败任务等入口带筛选参数进入（/materials?status=failed）
 const status = ref(typeof route.query.status === 'string' ? route.query.status : '')
@@ -31,11 +32,27 @@ const keyword = ref(typeof route.query.keyword === 'string' ? route.query.keywor
 const tag = ref('')
 const importInput = ref<HTMLInputElement | null>(null)
 const importing = ref(false)
-let refreshTimer: ReturnType<typeof setInterval> | null = null
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+let loadedOnce = false
+let disposed = false
 const materialLoadGate = createSessionGate()
 
 function hasActiveMaterial(items: UploadResult[]) {
   return items.some((item) => item.status === 'uploaded' || item.status === 'queued' || item.status === 'processing')
+}
+
+function stopRefreshTimer() {
+  if (refreshTimer !== null) clearTimeout(refreshTimer)
+  refreshTimer = null
+}
+
+function scheduleRefresh() {
+  stopRefreshTimer()
+  if (disposed || !hasActiveMaterial(items.value)) return
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null
+    void loadMaterials()
+  }, 1800)
 }
 
 const knowledgeCardStateMeta: Record<NonNullable<UploadResult['knowledgeCard']>['state'], { label: string; className: string }> = {
@@ -92,9 +109,9 @@ const flatTree = computed<FlatFolder[]>(() => {
 
 const nameById = computed(() => new Map(folderNodes.value.map((n) => [n.id, n.name])))
 
-function folderDisplayName(id?: number | null): string {
+function folderDisplayName(id?: number | null, fallback = ''): string {
   if (id == null) return '未分类'
-  return nameById.value.get(id) ?? '未分类'
+  return nameById.value.get(id) ?? (fallback.trim() || '未分类')
 }
 
 // 自身 + 全部后代节点 ID（用于删除/选择目标时禁用）
@@ -121,6 +138,7 @@ function toggleExpand(id: number) {
 }
 
 async function loadFolders() {
+  folderError.value = ''
   try {
     const res = await api.listFolderNodes('RAW')
     folderNodes.value = res.items
@@ -128,13 +146,14 @@ async function loadFolders() {
     const parentIds = new Set(res.items.map((n) => n.parentId).filter((p): p is number => p !== null))
     expandedIds.value = new Set(res.items.filter((n) => parentIds.has(n.id)).map((n) => n.id))
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '目录加载失败'
+    folderError.value = e instanceof Error ? e.message : '目录加载失败'
   }
 }
 
 async function loadMaterials() {
+  stopRefreshTimer()
   const requestSession = materialLoadGate.next()
-  loading.value = true
+  if (!loadedOnce) loading.value = true
   error.value = ''
   try {
     const response = await api.listMaterials({
@@ -147,16 +166,14 @@ async function loadMaterials() {
     })
     if (!materialLoadGate.isCurrent(requestSession)) return
     items.value = response.items
-    if (hasActiveMaterial(items.value) && refreshTimer === null) {
-      refreshTimer = setInterval(loadMaterials, 1800)
-    } else if (!hasActiveMaterial(items.value) && refreshTimer !== null) {
-      clearInterval(refreshTimer)
-      refreshTimer = null
-    }
+    loadedOnce = true
   } catch (e) {
     if (materialLoadGate.isCurrent(requestSession)) error.value = e instanceof Error ? e.message : '原材料加载失败'
   } finally {
-    if (materialLoadGate.isCurrent(requestSession)) loading.value = false
+    if (materialLoadGate.isCurrent(requestSession)) {
+      loading.value = false
+      scheduleRefresh()
+    }
   }
 }
 
@@ -180,7 +197,9 @@ async function importFiles(files: FileList | File[]) {
       }
       transientUploads.value.push(transient)
       try {
-        await api.uploadFile(file, selectedFolderId.value ?? undefined)
+        const uploaded = await api.uploadFile(file, selectedFolderId.value ?? undefined)
+        items.value = [uploaded, ...items.value.filter((item) => item.materialId !== uploaded.materialId)]
+        loadedOnce = true
         accepted += 1
       } catch (e) {
         failed += 1
@@ -365,13 +384,13 @@ function openMaterial(item: UploadResult) {
 }
 
 onMounted(async () => {
-  await loadFolders()
-  await loadMaterials()
+  await Promise.allSettled([loadFolders(), loadMaterials()])
 })
 
 onBeforeUnmount(() => {
+  disposed = true
   materialLoadGate.invalidate()
-  if (refreshTimer !== null) clearInterval(refreshTimer)
+  stopRefreshTimer()
 })
 </script>
 
@@ -434,6 +453,10 @@ onBeforeUnmount(() => {
             </div>
           </li>
         </ul>
+        <p v-if="folderError" class="ws-folders__error" role="alert">
+          文件夹暂未更新
+          <button type="button" @click="loadFolders">重试</button>
+        </p>
       </aside>
 
       <!-- 右侧内容区 -->
@@ -477,7 +500,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="loading" class="loading-state">正在加载原材料…</div>
-        <ErrorState v-else-if="error" :message="error" retry-label="重试" @retry="loadMaterials" />
+        <ErrorState v-else-if="error && !displayItems.length" :message="error" retry-label="重试" @retry="loadMaterials" />
         <EmptyState
           v-else-if="!displayItems.length"
           title="暂无原材料"
@@ -491,6 +514,10 @@ onBeforeUnmount(() => {
         </EmptyState>
 
         <div v-else class="ws-table">
+          <p v-if="error" class="ws-table__refresh-error" role="alert">
+            资料状态暂未更新：{{ error }}
+            <button type="button" @click="loadMaterials">重试</button>
+          </p>
           <div class="ws-table__head">共 {{ displayItems.length }} 项资料</div>
           <div class="ws-table__scroll">
             <table class="ws-table__grid">
@@ -509,7 +536,7 @@ onBeforeUnmount(() => {
                 <tr v-for="item in displayItems" :key="item.materialId" @click="!item.transientUpload && openMaterial(item)">
                   <td class="ws-table__name" :title="item.fileName">{{ item.fileName }}</td>
                   <td>{{ formatFileType(item.fileType) }}</td>
-                  <td>{{ folderDisplayName(item.folderId) }}</td>
+                  <td>{{ folderDisplayName(item.folderId, item.folder) }}</td>
                   <td><StatusBadge :meta="materialStatusMeta(item.status)" /></td>
                   <td>
                     <span
@@ -681,6 +708,24 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.ws-folders__error {
+  margin: 0;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
+  color: var(--ws-danger-color, #a6452e);
+  font-size: 12px;
+}
+
+.ws-folders__error button {
+  margin-left: 6px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .ws-folders__li {
@@ -939,6 +984,29 @@ onBeforeUnmount(() => {
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-body-bg, #fff);
   overflow: hidden;
+}
+
+.ws-table__refresh-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--ws-danger-color, #a6452e);
+  background: var(--ws-danger-bg, #fff4f0);
+  border-bottom: 1px solid var(--ws-danger-border, #efc4b8);
+  font-size: 12px;
+}
+
+.ws-table__refresh-error button {
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .ws-table__head {

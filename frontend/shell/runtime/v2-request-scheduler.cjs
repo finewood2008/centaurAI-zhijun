@@ -1,15 +1,19 @@
 'use strict';
 const { DesktopError } = require('./public-error.cjs');
 const notSent = code => new DesktopError(code, { definitelyNotSent: true });
+// Five page reads use ten start/poll attempts, plus initial context and one
+// reserved control token. Concurrent native work remains capped separately.
+const BURST = 12, WINDOW_MS = 60000, WINDOW_REQUESTS = 100, CONTROL_REQUESTS = 8;
 
 // One instance belongs to one native SDK session. Rejections and retries consume
 // this budget too; neither idle time nor a new product manager resets it.
 function createV2Scheduler({ send, clock = () => performance.now(), timers = { setTimeout, clearTimeout },
   intervalMs = 600, queueTimeoutMs = 15000, requestTimeoutMs = 12000,
   maxQueued = 16, maxInFlight = 8, maxRequests = 1000, maxBytes = 1024 ** 3 - 16 * 1024 ** 2 } = {}) {
-  let closed, timer, nextStart = -Infinity, count = 0, bytes = 0, sequence = 0;
+  let closed, timer, count = 0, bytes = 0, sequence = 0;
+  let tokens = BURST, refilledAt = clock();
   let active = 0, businessActive = 0;
-  const queue = [], running = new Set(), reservations = new Set();
+  const queue = [], attempts = [], running = new Set(), reservations = new Set();
   const terminal = error => error?.code === 'SESSION_QUOTA_EXHAUSTED';
   function reserved(field, except) { let sum = 0; for (const value of reservations) if (value !== except) sum += value[field]; return sum; }
   function releaseTransfer(value) { reservations.delete(value); }
@@ -43,25 +47,54 @@ function createV2Scheduler({ send, clock = () => performance.now(), timers = { s
     if (item.priority === 0) return 0;
     return now - item.enqueued >= 3000 ? 1 : item.priority;
   }
+  function refill(now) {
+    const earned = Math.floor((now - refilledAt) / intervalMs);
+    if (earned > 0) {
+      tokens = Math.min(BURST, tokens + earned);
+      refilledAt += earned * intervalMs;
+    }
+    // A full bucket cannot bank even a fractional token while idle. Start its
+    // next refill interval when the first request consumes that full bucket.
+    if (tokens === BURST) refilledAt = now;
+    // Keep boundary attempts for one extra millisecond, including all retries
+    // and heartbeats. A closed 60-second interval never exceeds the hard cap.
+    while (attempts.length && attempts[0] < now - WINDOW_MS) attempts.shift();
+  }
+  function hasSlot(item) {
+    return active < maxInFlight && (item.priority <= 1 || businessActive < maxInFlight - 1);
+  }
+  function readyAt(item, now) {
+    const control = item.priority <= 1;
+    // One burst token and eight rolling-window requests remain available to
+    // heartbeats/cancellation. Aged business reads do not gain this privilege.
+    const required = control ? 1 : 2;
+    let at = Math.max(now, item.ready);
+    if (tokens < required) at = Math.max(at, refilledAt + (required - tokens) * intervalMs);
+    const limit = WINDOW_REQUESTS - (control ? 0 : CONTROL_REQUESTS);
+    if (attempts.length >= limit) at = Math.max(at, attempts[attempts.length - limit] + WINDOW_MS + 1);
+    return at;
+  }
   function arm() {
     timers.clearTimeout(timer);
     if (closed || !queue.length) return;
     const now = clock();
+    refill(now);
     let at = Infinity;
     for (const item of queue) {
       at = Math.min(at, item.expires);
-      if (active < maxInFlight && (item.priority === 0 || businessActive < maxInFlight - 1)) at = Math.min(at, Math.max(nextStart, item.ready));
+      if (hasSlot(item)) at = Math.min(at, readyAt(item, now));
     }
     timer = timers.setTimeout(pump, Math.max(0, at - now));
   }
   function pump() {
     if (closed) return;
     const now = clock();
+    refill(now);
     for (let i = queue.length - 1; i >= 0; i--) if (queue[i].expires <= now) settle(queue.splice(i, 1)[0], notSent('RATE_LIMITED'));
-    const candidates = queue.filter(item => item.ready <= now && active < maxInFlight && (item.priority === 0 || businessActive < maxInFlight - 1));
+    const candidates = queue.filter(item => hasSlot(item) && readyAt(item, now) <= now);
     candidates.sort((a, b) => priority(a, now) - priority(b, now) || a.sequence - b.sequence);
     const item = candidates[0];
-    if (!item || nextStart > now) { arm(); return; }
+    if (!item) { arm(); return; }
     queue.splice(queue.indexOf(item), 1);
     const reservation = reservations.has(item.reservation) ? item.reservation : undefined;
     const requestBytes = item.request.body?.byteLength || 0;
@@ -77,8 +110,8 @@ function createV2Scheduler({ send, clock = () => performance.now(), timers = { s
       const error = notSent('SESSION_QUOTA_EXHAUSTED'); settle(item, error); close(error); return;
     }
     if (reservation) { reservation.requests -= ownRequest; reservation.bytes -= ownBytes; }
-    count++; bytes += requestBytes; active++; if (item.priority !== 0) businessActive++;
-    nextStart = now + intervalMs; running.add(item); item.dispatched = true; item.nativePending = true;
+    count++; bytes += requestBytes; active++; if (item.priority > 1) businessActive++;
+    tokens--; attempts.push(now); running.add(item); item.dispatched = true; item.nativePending = true;
     item.onDispatch?.();
     item.deadline = timers.setTimeout(() => settle(item, new DesktopError('REQUEST_TIMEOUT')), requestTimeoutMs);
     let native;
@@ -100,7 +133,7 @@ function createV2Scheduler({ send, clock = () => performance.now(), timers = { s
         queue.push(item);
       } else { settle(item, error); if (terminal(error)) close(error); }
     }).finally(() => {
-      active--; if (item.priority !== 0) businessActive--; running.delete(item);
+      active--; if (item.priority > 1) businessActive--; running.delete(item);
       item.nativePending = false; if (item.settled) item.completeWork(); arm();
     });
     arm();
