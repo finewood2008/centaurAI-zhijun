@@ -102,4 +102,6 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 
 业务仍经过 renderer → preload/主进程 → Consumer SDK → Agent → DE Gateway → workspace worker。传输使用 HTTP，当前业务协议是 start/poll 两步；renderer 不直接持有盒端鉴权凭据。已完成引导的导航提示仅在当前连接内复用 30 秒，切盒/断线/退出/引导写入失效；这份提示不授予数据访问权限。guard 在异步结果消费前复核连接代次与引导 revision。对话列表优先入队，非关键状态/统计随后读取。详细边界与性能证据见[第二轮跟进](PERFORMANCE-FOLLOWUP-0907.md)。
 
-0907 公司环境当前 DE 为 `20c365c`、worker 为知君 `eebd58b`（业务源码与此前 `507edb5` 相同），盒端 Agent 保持 `644b1c2`；桌面 native 1.2.1 来自 OS `353f1d9`。此为公司环境记录，不改写上述家庭环境历史验收。
+0907 公司环境当前 DE 为 `62ae9b1`、worker 为知君 `eebd58b`（业务源码与此前 `507edb5` 相同），盒端 Agent 保持 `644b1c2`；桌面 native 1.2.1 来自 OS `353f1d9`。此为公司环境记录，不改写上述家庭环境历史验收。
+
+任务读取仅检查目标记录的即时 TTL/执行期限；创建、重启恢复与集中清理保留全量扫描，磁盘配额和文件锁语义不变。

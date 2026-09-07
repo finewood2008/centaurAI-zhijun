@@ -146,3 +146,5 @@ PDF/DOCX/OCR盒端解析分别46/48/110字符通过；受限voice API返回40字
 OS 源码 `353f1d9` 使用全局最多 8 项 request 并发、按 request_id 输出整行响应，关闭前后复核 session；断管/清理超时明确非零退出，未知写入不重放。JS 包仍为 1.2.0，协议仍为 1。六目标工件与哈希位于 SDK `release/electron-sidecars-1.2.1`；macOS arm64 已运行 native smoke，其他目标仅完成交叉构建与工件校验。
 
 `prepare-real.cjs` 固定新版六目标哈希，默认 SDK 输入目录为 `release/electron-sidecars-1.2.1`。既有配置不会自动覆盖：本机先调用导出的 `prepare`，将新版写入独立 `data/desktop/native-1.2.1`，保存原配置后仅切换 sidecarPath/sidecarSha256。旧二进制与配置留作回退；不要把现有定制配置删掉再生成。详细真机结果见[性能跟进](PERFORMANCE-FOLLOWUP-0907.md)。
+
+公司 DE 已升级 `62ae9b1`，含持久事件通知与目标任务过期检查；后端 395 项回归通过，已核对运行摘要与内部业务 200。最终 UI 刷新复验仍待窗口可读；见上述跟进记录。
