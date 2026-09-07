@@ -127,8 +127,14 @@ function createBusinessBridge({ clock = Date.now, heartbeatMs = 10000, heartbeat
         releaseTransfer: value => scheduler?.releaseTransfer(value),
         async request(request, options) {
           if (closed) fail('SESSION_NOT_READY');
-          const normalized = product ? validateWireRequest(request) : materialRequest(request);
+          let normalized = product ? validateWireRequest(request) : materialRequest(request);
           const isPoll = normalized.method === 'GET' && /\/operations\/[^/?]+\?/.test(normalized.relative_path);
+          // SDK 1.2's native sidecar processes requests serially. A long poll
+          // must not hold its sole HTTP lane ahead of reads, close or heartbeat.
+          // Validate the caller's original canonical route before shortening it;
+          // retain the exact operation ID and cursor, including waitMs=0.
+          if (product && isPoll) normalized = { ...normalized,
+            relative_path: normalized.relative_path.replace(/&waitMs=(\d+)$/, (_, wait) => `&waitMs=${Math.min(Number(wait), 250)}`) };
           const isCancel = normalized.relative_path.endsWith('/cancel') || normalized.method === 'DELETE';
           const isContext = normalized.method === 'GET' && normalized.relative_path === '/api/mindos/zhijun/context';
           const response = await send(normalized, { ...options, priority: isContext ? 0 : isCancel ? 1 : isPoll ? 3 : 2 });

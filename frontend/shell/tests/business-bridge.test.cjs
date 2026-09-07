@@ -11,6 +11,32 @@ const context = () => ({ version: 1, ...subject, applicationId, capabilities: ['
 const response = value => ({ status: 200, headers: { 'content-type': 'application/json' }, body: Buffer.from(JSON.stringify(value)) });
 const read = () => ({ method: 'GET', relative_path: '/api/mindos/materials?limit=20&offset=0', headers: { Accept: ['application/json'] } });
 
+test('v2 serial-sidecar poll cap preserves zero/short waits and validates the original canonical route first', async () => {
+  const calls = [], id = 'b'.repeat(32);
+  const ctx = { ...context(), version: 2, applicationId: 'zhijun-desktop', workspaceId: 'f'.repeat(64),
+    capabilities: ['product.rpc', 'product.events', 'product.uploads', 'product.blobs'] };
+  const bridge = await createBusinessBridge({ clock, schedulerOptions: { intervalMs: 1 } }).authorize({
+    applicationId: 'zhijun-desktop', subject, session: { request: async input => {
+      calls.push(input); return response(input.relative_path.endsWith('/context') ? ctx : {});
+    } },
+  });
+  try {
+    for (const wait of [0, 1, 249, 250, 251, 8000]) {
+      const path = `/api/mindos/zhijun/operations/${id}?after=42&waitMs=${wait}`;
+      const input = { method: 'GET', relative_path: path, headers: { Accept: ['application/json'] } };
+      await bridge.request(input);
+      assert.equal(calls.at(-1).relative_path, path.replace(/waitMs=\d+$/, `waitMs=${Math.min(wait, 250)}`));
+      assert.equal(input.relative_path, path, 'caller request must remain unchanged');
+    }
+    const count = calls.length;
+    for (const query of ['after=42&waitMs=8001', 'after=42&waitMs=0250', 'waitMs=8000&after=42', 'after=42&waitMs=8000&x=1']) {
+      await assert.rejects(bridge.request({ method: 'GET', relative_path: `/api/mindos/zhijun/operations/${id}?${query}`,
+        headers: { Accept: ['application/json'] } }), { code: 'INVALID_REQUEST' });
+    }
+    assert.equal(calls.length, count);
+  } finally { await bridge.close(); }
+});
+
 test('production bridge verifies context through the same SDK session before permitting a material read', async () => {
   const requests = [];
   const bridge = createBusinessBridge({ clock });

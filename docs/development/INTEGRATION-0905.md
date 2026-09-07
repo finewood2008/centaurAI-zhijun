@@ -77,10 +77,13 @@ v2 上传状态为 open/complete/cancelled/failed；received 是字节数、next
 | SDK/Core 基线 | request 2 MiB、response 16 MiB；宿主 watchdog 15 秒；Core 单会话 1024 request ID |
 | 新应用 Agent | 每请求/响应 1 MiB、8 并发、120 rpm、会话传输 1 GiB |
 | Gateway | job 上限 600 秒、事件累计 16 MiB并受catalog更小限制；每页32事件/256 KiB、poll最多8秒 |
+| 当前知君 main | poll 实发最多250 ms；突发桶8、平均600 ms补充；滚动60秒全部尝试最多100次，业务预留8个位置给控制 |
 | Gateway 调度 | 每workspace运行4/排队8、每盒worker4、Owner租约30秒、heartbeat10秒 |
 | 文件/磁盘 | 每文件200 MiB；原始分片512 KiB；workspace存储1 GiB，包含元数据与tombstone |
 
 main现以同一会话调度器管理心跳、poll和上传，预留请求数量及编码后字节。确认未派发的限流拒绝才允许同字节有限重试；已派发写入保持不确定结果。真实JS+严格内存Agent配额、虚拟时钟下200MiB/400块在243秒完成，滚动60秒最多101请求；该值不是实际SDK/P2P吞吐。
+
+上段为 0906 历史结果。0907 对已交付串行 sidecar 加入短轮询及受限突发后，同一大文件合成约 258 秒、窗口最高 93 次；页面快读取不再承担每跳固定 600 ms 等待。详见[刷新耗时修复](PERFORMANCE-0907.md)，包含控制余量与持续上传吞吐的取舍。
 
 base64 开销也消耗传输预算。不能通过自动重连刷新额度；额度不足应返回可识别错误。blob 文件字节不计入任务事件 16 MiB，但计入文件与磁盘额度。后台任务、nonce、对象数量和清理均有独立上限，不能把 1 GiB 解释为无限任务数。
 

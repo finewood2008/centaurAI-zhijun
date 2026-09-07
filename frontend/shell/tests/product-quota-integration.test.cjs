@@ -218,7 +218,7 @@ test('200 MiB upload traverses the production stack within native Agent quotas',
     assert.ok(elapsed < 600000, `full upload exceeded 600 seconds: ${elapsed} ms`);
     const rollingMaximum = Math.max(...f.peer.calls.map(first =>
       f.peer.calls.filter(call => call.at >= first.at && call.at <= first.at + 60000).length));
-    assert.ok(rollingMaximum <= 101, `rolling 60-second request maximum was ${rollingMaximum}`);
+    assert.ok(rollingMaximum <= 100, `rolling 60-second request maximum was ${rollingMaximum}`);
     t.diagnostic(`200 MiB complete chain: ${elapsed} virtual ms; rolling 60-second maximum: ${rollingMaximum} native attempts`);
   } finally { await f.close(); }
 });
@@ -330,17 +330,23 @@ test('heartbeat obtains its reserved native slot while seven business requests a
 });
 
 test('closing a generation removes queued writes before their native dispatch slot', async () => {
-  const f = await stack();
+  const f = await stack({ holdMutation: true });
+  // The initial context and six native requests consume the business burst.
+  // The next write is really queued, independently of fixed inter-request gaps.
+  const held = Promise.allSettled(Array.from({ length: 6 }, (_, index) =>
+    f.session.invoke('start', request('post_api_mindos_conversations', { title: `held-${index}` }))));
   try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.peer.counts.starts, 6);
     const pending = f.session.invoke('start', request('post_api_mindos_conversations', { title: 'queued synthetic' }));
     const result = Promise.allSettled([pending]);
-    await new Promise(resolve => setImmediate(resolve)); // Enqueued, but the 600 ms slot has not arrived.
+    await new Promise(resolve => setImmediate(resolve));
     f.session.close();
     assert.equal((await result)[0].reason.code, 'STALE_GENERATION');
     await f.clock.run(new Promise(resolve => f.clock.timers.setTimeout(resolve, 5000)));
-    assert.equal(f.peer.counts.starts, 0);
-    assert.equal(f.peer.stats().requestIds, 1);
-  } finally { await f.close(); }
+    assert.equal(f.peer.counts.starts, 6);
+    assert.equal(f.peer.stats().requestIds, 7);
+  } finally { f.peer.releaseHeld(); await f.close(); await held; }
 });
 
 test('default main budget terminates before the native 1024 request-ID limit and never auto-reconnects', async () => {

@@ -56,13 +56,15 @@ flowchart LR
 
 主进程把清单操作编码为 `POST /api/mindos/zhijun/operations`，取得 job ID 后，以 `after/waitMs` 有界轮询。DE 确实执行任务并持久化事件；worker 原 SSE 被转成 `headers/chunk/end/error` 事件，renderer 适配为 ReadableStream 供原 SSE 解析器使用。UTF-8 解码跨块保留状态。
 
-这实现应用层流体验，SDK 本身仍等待每次短 RPC 的完整响应。单次 poll 最长 8 秒、每页最多 32 事件/256 KiB，避免把长聊天放进 SDK 15 秒 watchdog；任务总时长上限 600 秒。取消是显式服务端动作，不能等同数据库回滚。断线、崩溃或超时后的写入结果可能不确定，禁止自动改 requestId 重做。
+这实现应用层流体验，SDK 本身仍等待每次短 RPC 的完整响应。Gateway 协议单次 poll 最长 8 秒、每页最多 32 事件/256 KiB；已交付 SDK 1.2.0 sidecar 串行处理请求，因此当前桌面 bridge 将合法 poll 的实际等待限制为 250 ms，避免阻挡普通读取和心跳。任务总时长上限仍为 600 秒。取消是显式服务端动作，不能等同数据库回滚。断线、崩溃或超时后的写入结果可能不确定，禁止自动改 requestId 重做。
 
 ### 4.2 附件、导入、下载与预览
 
 传输层上传是 v2 暂存：512 KiB 原始字节、0-based index、JSON base64+SHA256；完成时校验整文件 SHA256。业务 operation 引用完成 uploadId，由盒端还原 multipart，保留资料版本、对话附件保护与原字段。它与 DE 历史 Pocket `parts/complete` 1 MiB、1-based 协议不是同一层。
 
 二进制业务响应生成加密 blob，事件仅含描述；主进程有界读取或在本地保存对话框确认后写文件。预览用主进程控制的 `zhijun-media:` 句柄，不暴露盒子 loopback URL。完成上传在没有活跃任务引用后可显式释放，重复 DELETE 幂等；小去重墓碑继续保留。单文件最多 200 MiB，传输会话和 workspace 磁盘各 1 GiB；两者是不同预算。main统一调度心跳、poll与上传并预留请求/编码后字节；真实JS+严格内存Agent的虚拟时钟测试完成400块/243秒、滚动60秒最多101请求，但实际SDK/P2P大文件传输尚未验证。
+
+上述 243 秒为 0906 历史合成记录。0907 调度改为容量 8 的短突发、600 ms 平均补充，并限制全部尝试滚动 60 秒最多 100 次，给心跳/取消保留余量；新大文件合成结果约 258 秒、窗口最高 93 次。设计与性能证据见[刷新耗时修复](PERFORMANCE-0907.md)，不把虚拟时间记作实际网络吞吐。
 
 ### 4.3 语音与模型
 
