@@ -78,3 +78,22 @@ test('config is explicit HTTPS only, bounded and does not accept credentials or 
   await fs.writeFile(file, JSON.stringify({ version: 1, consumerBaseUrl: base })); assert.equal((await loadConfig(file)).consumerBaseUrl, base);
   await fs.writeFile(file, ' '.repeat(16385)); await assert.rejects(loadConfig(file), { code: 'CONFIGURATION_REQUIRED' });
 });
+
+test('packaged config resolves only a relative sidecar inside the resources root', async t => {
+  const directory = await temporary(t); const resources = path.join(directory, 'Resources');
+  await fs.mkdir(resources);
+  const file = path.join(resources, 'zhijun-product.json');
+  const connectivity = { applicationId: 'zhijun-desktop', purpose: 'zhijun.workspace', requestedScopes: ['remote.p2p'],
+    gatewayHost: 'gateway.remote.qeeshu.com', iceHost: 'gateway.remote.qeeshu.com',
+    sidecarPath: 'connectivity-sidecar/darwin-arm64/nexusaos-connectivity-sidecar', sidecarSha256: 'a'.repeat(64),
+    profile: 'SOVEREIGN_DIRECT_ONLY' };
+  await fs.writeFile(file, JSON.stringify({ version: 1, consumerBaseUrl: base, connectivity }));
+  const loaded = await loadConfig(file, { resourceRoot: resources });
+  assert.equal(loaded.connectivity.sidecarPath,
+    path.join(resources, 'connectivity-sidecar/darwin-arm64/nexusaos-connectivity-sidecar'));
+  for (const sidecarPath of ['/tmp/sidecar', '../sidecar', 'connectivity-sidecar/../sidecar', 'sidecar\\evil']) {
+    await fs.writeFile(file, JSON.stringify({ version: 1, consumerBaseUrl: base,
+      connectivity: { ...connectivity, sidecarPath } }));
+    await assert.rejects(loadConfig(file, { resourceRoot: resources }), { code: 'CONFIGURATION_REQUIRED' });
+  }
+});

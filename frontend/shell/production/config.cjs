@@ -28,7 +28,20 @@ function validateConfig(value) {
   }
   return Object.freeze(result);
 }
-async function loadConfig(filename) {
+function resolvePackagedSidecar(value, resourceRoot) {
+  if (resourceRoot === undefined) return value;
+  requireConfig(typeof resourceRoot === 'string' && path.isAbsolute(resourceRoot));
+  const sidecar = value?.connectivity?.sidecarPath;
+  requireConfig(typeof sidecar === 'string' && sidecar.length <= 512 && !path.isAbsolute(sidecar)
+    && !/[\\\r\n\0]/.test(sidecar));
+  const parts = sidecar.split('/');
+  requireConfig(parts.length > 1 && parts.every(part => part && part !== '.' && part !== '..'));
+  const resolved = path.resolve(resourceRoot, ...parts);
+  requireConfig(resolved.startsWith(`${path.resolve(resourceRoot)}${path.sep}`));
+  return { ...value, connectivity: { ...value.connectivity, sidecarPath: resolved } };
+}
+
+async function loadConfig(filename, options = undefined) {
   if (!filename) return null;
   try {
     requireConfig(path.isAbsolute(filename));
@@ -39,8 +52,9 @@ async function loadConfig(filename) {
       const buffer = Buffer.alloc(16385);
       const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
       requireConfig(bytesRead <= 16384);
-      return validateConfig(JSON.parse(buffer.subarray(0, bytesRead).toString('utf8')));
+      const value = JSON.parse(buffer.subarray(0, bytesRead).toString('utf8'));
+      return validateConfig(resolvePackagedSidecar(value, options?.resourceRoot));
     } finally { await file.close(); }
   } catch { throw new DesktopError('CONFIGURATION_REQUIRED'); }
 }
-module.exports = { validateConfig, loadConfig };
+module.exports = { validateConfig, loadConfig, resolvePackagedSidecar };
