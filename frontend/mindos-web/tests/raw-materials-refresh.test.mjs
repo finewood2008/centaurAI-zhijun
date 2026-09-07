@@ -36,8 +36,46 @@ function fixture(api) {
   new Function('require', 'exports', compiled)(require, exports)
   const scope = Vue.effectScope()
   const ui = scope.run(() => exports.default.setup({}, { expose: () => {} }))
-  return { ui, toasts, close() { unmounts.forEach(callback => callback()); scope.stop() } }
+  return { ui, mounts, toasts, close() { unmounts.forEach(callback => callback()); scope.stop() } }
 }
+
+test('initial folder and material reads start together and materials render without waiting for folders', async () => {
+  const pendingFolders = deferred()
+  const pendingMaterials = deferred()
+  let folderReads = 0
+  let materialReads = 0
+  const f = fixture({
+    listFolderNodes: async () => { folderReads += 1; return pendingFolders.promise },
+    listMaterials: async () => { materialReads += 1; return pendingMaterials.promise },
+  })
+
+  const mounted = f.mounts[0]()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(folderReads, 1)
+  assert.equal(materialReads, 1, 'material loading must not wait for the folder request')
+
+  pendingMaterials.resolve({ items: [{ ...material('ready-row'), folderId: 7, folder: '已有名称' }] })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(f.ui.loading.value, false, 'the table becomes usable while the folder tree is still pending')
+  assert.equal(f.ui.folderDisplayName(7, '已有名称'), '已有名称')
+
+  pendingFolders.resolve({ items: [{ id: 7, name: '最新名称', parentId: null, materialCount: 1, subtreeMaterialCount: 1 }] })
+  await mounted
+  assert.equal(f.ui.folderDisplayName(7, '已有名称'), '最新名称')
+  f.close()
+})
+
+test('folder failure is isolated from a successful material listing', async () => {
+  const f = fixture({
+    listFolderNodes: async () => { throw new Error('目录连接失败') },
+    listMaterials: async () => ({ items: [material('visible-row')] }),
+  })
+  await f.mounts[0]()
+  assert.equal(f.ui.items.value.length, 1)
+  assert.equal(f.ui.error.value, '')
+  assert.equal(f.ui.folderError.value, '目录连接失败')
+  f.close()
+})
 
 test('a background material refresh keeps the populated table visible until the keyed row updates', async () => {
   const pending = deferred()

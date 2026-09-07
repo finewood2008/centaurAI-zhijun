@@ -24,6 +24,7 @@ const transientUploads = ref<DisplayMaterial[]>([])
 const displayItems = computed<DisplayMaterial[]>(() => [...transientUploads.value, ...items.value])
 const loading = ref(true)
 const error = ref('')
+const folderError = ref('')
 const type = ref('')
 // 支持从首页失败任务等入口带筛选参数进入（/materials?status=failed）
 const status = ref(typeof route.query.status === 'string' ? route.query.status : '')
@@ -108,9 +109,9 @@ const flatTree = computed<FlatFolder[]>(() => {
 
 const nameById = computed(() => new Map(folderNodes.value.map((n) => [n.id, n.name])))
 
-function folderDisplayName(id?: number | null): string {
+function folderDisplayName(id?: number | null, fallback = ''): string {
   if (id == null) return '未分类'
-  return nameById.value.get(id) ?? '未分类'
+  return nameById.value.get(id) ?? (fallback.trim() || '未分类')
 }
 
 // 自身 + 全部后代节点 ID（用于删除/选择目标时禁用）
@@ -137,6 +138,7 @@ function toggleExpand(id: number) {
 }
 
 async function loadFolders() {
+  folderError.value = ''
   try {
     const res = await api.listFolderNodes('RAW')
     folderNodes.value = res.items
@@ -144,7 +146,7 @@ async function loadFolders() {
     const parentIds = new Set(res.items.map((n) => n.parentId).filter((p): p is number => p !== null))
     expandedIds.value = new Set(res.items.filter((n) => parentIds.has(n.id)).map((n) => n.id))
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '目录加载失败'
+    folderError.value = e instanceof Error ? e.message : '目录加载失败'
   }
 }
 
@@ -382,8 +384,7 @@ function openMaterial(item: UploadResult) {
 }
 
 onMounted(async () => {
-  await loadFolders()
-  await loadMaterials()
+  await Promise.allSettled([loadFolders(), loadMaterials()])
 })
 
 onBeforeUnmount(() => {
@@ -452,6 +453,10 @@ onBeforeUnmount(() => {
             </div>
           </li>
         </ul>
+        <p v-if="folderError" class="ws-folders__error" role="alert">
+          文件夹暂未更新
+          <button type="button" @click="loadFolders">重试</button>
+        </p>
       </aside>
 
       <!-- 右侧内容区 -->
@@ -531,7 +536,7 @@ onBeforeUnmount(() => {
                 <tr v-for="item in displayItems" :key="item.materialId" @click="!item.transientUpload && openMaterial(item)">
                   <td class="ws-table__name" :title="item.fileName">{{ item.fileName }}</td>
                   <td>{{ formatFileType(item.fileType) }}</td>
-                  <td>{{ folderDisplayName(item.folderId) }}</td>
+                  <td>{{ folderDisplayName(item.folderId, item.folder) }}</td>
                   <td><StatusBadge :meta="materialStatusMeta(item.status)" /></td>
                   <td>
                     <span
@@ -703,6 +708,24 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.ws-folders__error {
+  margin: 0;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
+  color: var(--ws-danger-color, #a6452e);
+  font-size: 12px;
+}
+
+.ws-folders__error button {
+  margin-left: 6px;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .ws-folders__li {

@@ -69,7 +69,8 @@ export function buildHeaders(init?: RequestInit): Headers {
 
 /** 把非 2xx 响应解析成 ApiError 并抛出（支持三种后端错误体形状）。 */
 export async function throwApiError(res: Response): Promise<never> {
-  let message = `请求失败（${res.status}）`
+  const fallbackMessage = `请求失败（${res.status}）`
+  let message = fallbackMessage
   let code: string | undefined
   let details: string[] | undefined
   let preview: import('./taskRouting').RoutePreview | undefined
@@ -96,6 +97,11 @@ export async function throwApiError(res: Response): Promise<never> {
       message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
     }
     if (!code && body && typeof body.code === 'string') code = body.code
+    if (message === fallbackMessage && code === 'REDACTION_NOT_READY') {
+      message = '部分资料仍在完成隐私处理，请稍后重试。'
+    } else if (message === fallbackMessage && code === 'MATERIAL_PRIVACY_NOT_READY') {
+      message = '这份资料仍在完成隐私处理，请稍后重试。'
+    }
   } catch {
     // 忽略非 JSON 响应体
   }

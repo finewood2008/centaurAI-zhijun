@@ -165,6 +165,8 @@ for (const endpoint of [
 }
 assert.match(api, /export function buildHeaders/)
 assert.match(api, /export async function throwApiError/)
+assert.match(api, /部分资料仍在完成隐私处理，请稍后重试/)
+assert.match(api, /这份资料仍在完成隐私处理，请稍后重试/)
 assert.match(api, /export function reviewClaim/)
 assert.match(api, /export type ReviewSurface = 'conversation' \| 'ontology_page' \| 'onboarding' \| 'today'/)
 
