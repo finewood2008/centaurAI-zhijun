@@ -74,3 +74,20 @@ Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中�
 | `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `8ff38baf660627b6547627bde1807007b729f0d79d40aaafdd984df6b3552c4d` |
 
 Shell 146 项、桌面 UI 12 项、Electron E2E 4 项均通过；签名后的 sidecar SHA-256 为 `995597515dee69a38d1bf80af7e5eca3b6898d8526901745d25cad2ec441a93b`。裸 App、DMG、ZIP 资源和签名检查通过，应用从独立临时目录启动后页面为 `zhijun://desktop/desktop.html#/`，标题为“今日来信 · 知君”。该包仍是未公证的内部测试安装包。
+
+## 授权入口与登录记忆后的重新打包
+
+本轮在偏好页补充“在线模型与资料授权”入口，并明确区分资料来源默认授权与桌面端每次向外部模型发送内容前的确认。现有资料授权可以减少资料范围相关的重复选择，但当前桌面连接协议仍要求逐次确认实际外发内容；前端不会把资料默认授权误写为全局免确认开关。
+
+登录页会记住上一次成功登录的手机号。用户勾选“使用系统安全存储记住密码”后，密码只在 Electron 主进程中通过 macOS `safeStorage` 加密并以 `0600` 权限保存；渲染页面只能读取手机号和“是否已保存密码”布尔值，密码输入框始终为空且不会回显。使用已保存密码登录时，解密与提交均留在主进程；取消勾选并成功登录后会覆写为只保留手机号。连接会话过期或主动退出不会自动登录，也不会删除用户明确保存的账号资料。
+
+本次输出：
+
+| 产物 | SHA-256 |
+| --- | --- |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | `fb38ea2c5453dce29f6fb85e3d41b9763c45a43f15904f9ddbb6850fb8d64051` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | `9eb684b9d793a7656c29600604c2eacdd2443ad64d9b18a35dd552d47cdf25eb` |
+
+完整 Shell 155 项、Desktop UI 15 项、Electron E2E 4 项、前端产品传输 24 项均通过，TypeScript 检查和桌面构建成功。签名后的 sidecar SHA-256 为 `d36951919d922558ddbfc815e2aeb12cc5cfd407abd779095327c485d0b564ec`；裸 App、DMG、ZIP 的签名、资源复验和独立启动冒烟检查均通过。
+
+最新 App 已安装到 `/Applications/知君.app`，上一版备份为 `/Applications/知君.app.before-login-memory-20260908`。真机验收完成：退出后登录页自动填入上次手机号，密码框为空并显示安全保存提示；不重新输入密码即可由主进程完成登录，随后成功连接公司盒子 `AMD-A2A-248`。验收过程和仓库文档均未记录真实密码。

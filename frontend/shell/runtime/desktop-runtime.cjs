@@ -7,7 +7,7 @@ const { createSimulationAdapter } = require('./adapters.cjs');
 const { createProductSession, productMethods } = require('./product-session.cjs');
 const { validatePassword } = require('../production/consumer-client.cjs');
 
-const ARG_COUNTS = { getSnapshot: 0, signInWithPassword: 2, beginSignIn: 1, listDevices: 1, connect: 2,
+const ARG_COUNTS = { getSnapshot: 0, getRememberedLogin: 1, signInWithPassword: 2, signInWithSavedPassword: 2, beginSignIn: 1, listDevices: 1, connect: 2,
   disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2,
   ...Object.fromEntries(productMethods.map(method => [`product.${method}`, method === 'requestMicrophone' ? 1 : 2])) };
 const CALL_ID = /^[A-Za-z0-9_-]{8,100}$/;
@@ -175,6 +175,16 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     if (operation === 'getSnapshot') return snapshot();
     const [context, input] = args;
     ensureCurrent(context.expectedGeneration);
+    if (operation === 'getRememberedLogin') {
+      assert(mode === 'production' && auth && typeof auth.getRememberedLogin === 'function', 'OPERATION_NOT_ALLOWED');
+      const gen = generation;
+      const value = await bounded(callAdapter(() => auth.getRememberedLogin()), gen);
+      ensureCurrent(gen);
+      assert(value === null || (plain(value) && exact(value, ['phone', 'passwordSaved'])
+        && typeof value.phone === 'string' && /^1\d{10}$/.test(value.phone)
+        && typeof value.passwordSaved === 'boolean'), 'CONTRACT_MISMATCH');
+      return value;
+    }
     if (operation === 'cancelRead') {
       assert(CALL_ID.test(input) && typeof input === 'string');
       return { delivery: scheduler.cancel({ callId: input, senderId, generation }) ? 'suppressed' : 'not_found',
@@ -202,9 +212,15 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       return snapshot();
     }
     assert(auth, 'CONFIGURATION_REQUIRED');
-    if (operation === 'beginSignIn' || operation === 'signInWithPassword') {
-      assert((mode === 'production') === (operation === 'signInWithPassword'), 'OPERATION_NOT_ALLOWED');
-      const credentials = operation === 'signInWithPassword' ? validatePassword(input) : undefined;
+    if (operation === 'beginSignIn' || operation === 'signInWithPassword' || operation === 'signInWithSavedPassword') {
+      assert((mode === 'production') === (operation !== 'beginSignIn'), 'OPERATION_NOT_ALLOWED');
+      const credentials = operation === 'signInWithPassword'
+        ? validatePassword({ phone: input?.phone, password: input?.password }) : undefined;
+      const rememberPassword = operation === 'signInWithPassword'
+        ? (assert(exact(input, ['phone', 'password']) || exact(input, ['phone', 'password', 'rememberPassword'])),
+          assert(input.rememberPassword === undefined || typeof input.rememberPassword === 'boolean'), input.rememberPassword === true)
+        : operation === 'signInWithSavedPassword'
+          ? (assert(typeof input === 'boolean'), input) : false;
       assert(!signingOut, 'OPERATION_NOT_ALLOWED');
       assert(['signed_out', 'authenticating', 'selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
       invalidate();
@@ -215,7 +231,10 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       devices = [];
       publish('authenticating');
       try {
-        const identity = await bounded(callAdapter(() => auth.signIn(credentials, () => isCurrent(gen))), gen);
+        const guard = () => isCurrent(gen);
+        const identity = await bounded(callAdapter(() => operation === 'signInWithSavedPassword'
+          ? auth.signInSaved(guard, rememberPassword)
+          : auth.signIn(credentials, guard, rememberPassword)), gen);
         ensureCurrent(gen);
         assert(plain(identity) && safeText(identity.accountId), 'CONTRACT_MISMATCH');
         accountId = identity.accountId;

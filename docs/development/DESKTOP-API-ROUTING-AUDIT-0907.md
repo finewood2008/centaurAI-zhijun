@@ -63,7 +63,7 @@ flowchart LR
 
 Gateway `requestId` 标识一次固定 operation 的传输任务；domain `body.requestId` 标识一次跨预览、授权和正式提交的业务动作。两者不能共用命名空间。桌面适配层现在为每个 start 生成独立 Gateway ID，只让 catalog 明确声明的 `Idempotency-Key` 决定稳定传输 ID，正文业务 ID 原样交给盒端。回归测试覆盖“预览和正式消息保留同一业务 ID，但创建两个不同 Gateway job”的场景。
 
-Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录态使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复。显式退出、账号层 `SESSION_EXPIRED`，以及原生已确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除本地登录记录并显示登录页。普通 `DIRECT_CONNECTION_UNAVAILABLE` 只表示本次盒子直连失败，保留账号供重新选择。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
+Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录会话使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复。显式退出、账号层 `SESSION_EXPIRED`，以及原生已确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除会话令牌并显示登录页。上次成功登录的手机号另行加密保存；用户勾选“使用系统安全存储记住密码”后，密码也存入独立加密记录。renderer 只得到手机号和“是否已保存密码”，解密后的密码不离开主进程，过期后也不会自动登录。普通 `DIRECT_CONNECTION_UNAVAILABLE` 只表示本次盒子直连失败，保留账号供重新选择。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
 
 业务页面没有直接 HTTP 旁路。现场模型回答证明消息经 Electron main、Connectivity SDK、盒端 Agent、v2 Gateway 和 workspace worker 完整返回；空闲对话页不再周期创建 routing job。附件、画像和其他后台状态只在过渡态继续轮询，终态或空列表停止，用户操作可重新唤醒。
 

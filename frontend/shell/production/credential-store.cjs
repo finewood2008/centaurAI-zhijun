@@ -17,7 +17,10 @@ function createCredentialStore({ directory, safeStorage, consumerBaseUrl }) {
   function serial(fn) {
     const next = queue.then(fn);
     queue = next.catch(() => {});
-    return next.catch(() => { throw new DesktopError('SECURE_STORAGE_UNAVAILABLE'); });
+    return next.catch((error) => {
+      if (error instanceof DesktopError) throw error;
+      throw new DesktopError('SECURE_STORAGE_UNAVAILABLE');
+    });
   }
   async function ensureRoot() {
     await fs.mkdir(root, { recursive: true, mode: 0o700 });
@@ -37,14 +40,17 @@ function createCredentialStore({ directory, safeStorage, consumerBaseUrl }) {
       return JSON.parse(safeStorage.decryptString(bytes.subarray(0, bytesRead)));
     } finally { await file.close(); }
   }
-  async function save(name, value) {
+  async function save(name, value, guard = () => true) {
     secure(); await ensureRoot();
+    if (!guard()) throw new DesktopError('STALE_GENERATION');
     const bytes = safeStorage.encryptString(JSON.stringify(value));
     if (bytes.length > 65536) throw new Error('Invalid encrypted record');
+    if (!guard()) throw new DesktopError('STALE_GENERATION');
     const temporary = path.join(root, `.${crypto.randomUUID()}.tmp`);
     try {
       const file = await fs.open(temporary, 'wx', 0o600);
       try { await file.writeFile(bytes); await file.sync(); } finally { await file.close(); }
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
       await fs.rename(temporary, path.join(root, name));
     } finally { await fs.rm(temporary, { force: true }); }
   }
@@ -83,6 +89,8 @@ function createCredentialStore({ directory, safeStorage, consumerBaseUrl }) {
     load: () => serial(() => read('session.enc')),
     save: value => serial(() => save('session.enc', value)),
     remove: () => serial(() => fs.rm(path.join(root, 'session.enc'), { force: true })),
+    loadRememberedLogin: () => serial(() => read('remembered-login.enc')),
+    saveRememberedLogin: (value, guard) => serial(() => save('remembered-login.enc', value, guard)),
   });
 }
 module.exports = { createCredentialStore };

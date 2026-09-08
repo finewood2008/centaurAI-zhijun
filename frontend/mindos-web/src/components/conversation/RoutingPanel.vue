@@ -91,7 +91,7 @@ async function saveDefault(enabled: boolean) {
     if (!valid()) return
     state.value = result
     configureDefault.value = false; consentAcknowledge.value = false
-    notice.value = enabled ? '默认授权已开启，适用范围内不再逐次询问。不会自动恢复已暂停的任务。' : '默认授权已关闭。之前逐次批准的授权仍有效，可在下方一并撤销。'
+    notice.value = enabled ? '资料来源默认授权已开启；设备仍会按安全策略核对每次在线发送。不会自动恢复已暂停的任务。' : '资料来源默认授权已关闭。之前逐次批准的授权仍有效，可在下方一并撤销。'
   } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '默认授权未保存' }
   finally { if (valid()) busy.value = false }
 }
@@ -173,8 +173,9 @@ defineExpose({ refresh })
           <button v-else :disabled="busy || disabled" @click="change('local')">{{ conversationId ? '整段仅本地' : '新对话默认本地' }}</button>
         </section>
         <section v-if="state" class="routing-group">
-          <div class="routing-setting-title"><h3><ShieldCheck :size="17" aria-hidden="true" /> 默认授权相关文字</h3><button class="routing-switch" role="switch" aria-label="默认授权相关文字" :aria-checked="!!policy?.active" :disabled="busy || !state.service?.external" @click="toggleDefault"><span /></button></div>
-          <p>开启后，本设备各在线对话及后台理解任务，自动使用所需的对话、个人理解、判断和复盘文字。包括今后新增或修改的相关内容；只发送实际需要的部分。</p>
+          <div class="routing-setting-title"><h3><ShieldCheck :size="17" aria-hidden="true" /> 资料来源默认授权</h3><button class="routing-switch" role="switch" aria-label="资料来源默认授权" :aria-checked="!!policy?.active" :disabled="busy || !state.service?.external" @click="toggleDefault"><span /></button></div>
+          <p>开启后，本设备各在线对话及后台理解任务可自动使用所需的对话、个人理解、判断和复盘文字，包括今后新增或修改的相关内容；只发送实际需要的部分。</p>
+          <p class="routing-fine">此开关减少同一服务和用途下的资料来源授权询问。设备安全通道仍可能要求核对每次在线发送的输入、系统提示和完整来源范围。</p>
           <p v-if="policy?.active">已开启 · {{ policy.serviceName }} · {{ policy.includeFiles ? '包括引用的文件提取文字' : '文件文字仍单独询问' }} · {{ policy.includeCharter ? '包括人生章程与草稿' : '章程与草稿仍单独询问' }} <button class="routing-link" @click="editDefault">修改范围</button></p>
           <p v-if="policy?.serviceChanged" class="routing-warning">服务已变化。之前对 {{ policy.serviceName }} 的默认授权不适用于当前服务，请重新确认。</p>
           <div v-if="configureDefault" class="routing-consent-form">
@@ -183,7 +184,7 @@ defineExpose({ refresh })
             <label><input v-model="includeFiles" type="checkbox" /> 也默认允许引用的文件提取文字及其派生内容（包括今后新增或更新的文件）</label>
             <label><input v-model="includeCharter" type="checkbox" /> 也默认允许人生章程与章程草稿（含必要的历史版本），用于上述对话和理解任务</label>
             <p class="routing-fine">章程默认不包含在旧授权里，需你明确选择。章程引用的文件仍按文件权限核对，不能绕过撤销、删除或失效的来源。</p>
-            <label><input v-model="consentAcknowledge" type="checkbox" /> 我同意把上述范围的必要文字发给此服务，不再逐次询问；已发送的内容无法收回。</label>
+            <label><input v-model="consentAcknowledge" type="checkbox" /> 我同意在上述范围内默认授权资料来源；实际发送仍遵守设备安全确认，已发送的内容无法收回。</label>
             <div class="routing-actions"><button class="routing-primary" :disabled="!consentAcknowledge || busy" @click="saveDefault(true)">确认开启默认授权</button><button :disabled="busy" @click="configureDefault = false">暂不开启</button></div>
           </div>
           <p class="routing-fine">仅本地对话不受影响。换服务需重新确认，来源不明或已删除的内容仍被拦截。关闭开关即停止默认授权；逐次批准的权限可另行撤销。</p>

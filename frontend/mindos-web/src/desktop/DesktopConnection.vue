@@ -9,6 +9,10 @@ const { controller, state } = useDesktopWorkspace()
 const route = useRoute()
 const phone = ref('')
 const password = ref('')
+const rememberedPhone = ref('')
+const passwordSaved = ref(false)
+const rememberPassword = ref(true)
+let rememberedRevision = 0
 const phase = computed(() => state.value.snapshot?.phase)
 const environment = computed(() => state.value.snapshot?.environment ?? 'unconfigured')
 const labels: Record<Phase, string> = {
@@ -30,12 +34,28 @@ const connectionDiagnostic = computed(() => {
   return ''
 })
 function signIn(): void {
-  const credentials = { phone: phone.value, password: password.value }
+  const useSaved = passwordSaved.value && phone.value === rememberedPhone.value && password.value === ''
+  const credentials = { phone: phone.value, password: password.value, rememberPassword: rememberPassword.value }
   password.value = ''
-  void controller.control('signInWithPassword', credentials)
+  void controller.control(useSaved ? 'signInWithSavedPassword' : 'signInWithPassword', useSaved ? rememberPassword.value : credentials)
 }
-watch(phase, next => { if (next === 'signed_out') { phone.value = ''; password.value = '' } })
-onBeforeUnmount(() => { password.value = ''; phone.value = '' })
+async function loadRememberedLogin(): Promise<void> {
+  const revision = ++rememberedRevision
+  const value = await controller.getRememberedLogin()
+  if (revision !== rememberedRevision || !canSignIn.value) return
+  rememberedPhone.value = value?.phone ?? ''
+  phone.value = value?.phone ?? ''
+  passwordSaved.value = !!value?.passwordSaved
+  rememberPassword.value = value?.passwordSaved ?? true
+}
+watch(canSignIn, next => {
+  password.value = ''
+  if (next) void loadRememberedLogin()
+}, { immediate: true })
+watch(phone, next => {
+  if (next !== rememberedPhone.value) passwordSaved.value = false
+})
+onBeforeUnmount(() => { rememberedRevision++; password.value = ''; phone.value = ''; rememberedPhone.value = ''; passwordSaved.value = false })
 </script>
 
 <template>
@@ -78,9 +98,10 @@ onBeforeUnmount(() => { password.value = ''; phone.value = '' })
 
         <form v-if="canSignIn && environment === 'production'" class="login-form" data-testid="password-login" @submit.prevent="signIn">
           <label>手机号<input v-model="phone" data-testid="login-phone" type="tel" inputmode="numeric" autocomplete="username" pattern="1[0-9]{10}" maxlength="11" required /></label>
-          <label>密码<input v-model="password" data-testid="login-password" type="password" autocomplete="current-password" minlength="8" maxlength="72" required /></label>
+          <label>密码<input v-model="password" data-testid="login-password" type="password" autocomplete="current-password" minlength="8" maxlength="72" :required="!passwordSaved" :placeholder="passwordSaved ? '已由系统安全保存，留空即可登录' : ''" /></label>
           <button class="primary" type="submit" data-testid="sign-in">登录知君</button>
-          <p>使用已设置密码的账号登录。密码仅用于本次登录，凭据由系统加密保存。</p>
+          <label class="remember-password"><input v-model="rememberPassword" data-testid="remember-password" type="checkbox" /> 使用系统安全存储记住密码</label>
+          <p>{{ passwordSaved ? '已记住上次账号和密码；密码不会显示在页面中。取消勾选并登录后，只保留账号。' : '会记住上次成功登录的账号；勾选后，密码由系统加密保存且不会显示在页面中。' }}</p>
         </form>
 
         <section v-if="state.error" class="error-card" role="alert" data-testid="error">

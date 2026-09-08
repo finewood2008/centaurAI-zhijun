@@ -126,16 +126,26 @@ export interface MaterialsPage {
 export interface PasswordCredentials {
   readonly phone: string;
   readonly password: string;
+  readonly rememberPassword: boolean;
+}
+
+export interface RememberedLogin {
+  readonly phone: string;
+  readonly passwordSaved: boolean;
 }
 
 export interface ZhijunDesktopV1 {
   readonly protocolVersion: 1;
   getSnapshot(): Promise<Result<DesktopSnapshot>>;
+  /** Returns only the account hint and whether an encrypted password exists. */
+  getRememberedLogin(context: CallContext): Promise<Result<RememberedLogin | null>>;
   /** Preload strips Electron events and returns a local unsubscribe function. */
   subscribe(listener: (snapshot: DesktopSnapshot) => void): () => void;
   beginSignIn(context: CallContext): Promise<Result<DesktopSnapshot>>;
-  /** One-time user input only; no access/refresh tokens cross IPC. */
+  /** Explicit user input only; main may encrypt it when rememberPassword is true. No tokens cross IPC. */
   signInWithPassword(context: CallContext, credentials: PasswordCredentials): Promise<Result<DesktopSnapshot>>;
+  /** The decrypted password stays in the main process. This never signs in automatically. */
+  signInWithSavedPassword(context: CallContext, rememberPassword: boolean): Promise<Result<DesktopSnapshot>>;
   listDevices(context: CallContext): Promise<Result<readonly DeviceSummary[]>>;
   connect(context: CallContext, deviceId: string): Promise<Result<DesktopSnapshot>>;
   disconnect(context: CallContext): Promise<Result<DesktopSnapshot>>;

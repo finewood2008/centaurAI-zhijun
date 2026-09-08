@@ -4,10 +4,11 @@ const { createCredentialStore } = require('./credential-store.cjs');
 const { createConsumerClient } = require('./consumer-client.cjs');
 const { createSdkRuntime, mapConnectionError } = require('./sdk-runtime.cjs');
 
-async function createProductionAdapter({ config, directory, safeStorage, consumer,
+async function createProductionAdapter({ config, directory, safeStorage, consumer, credentialStore,
   bridge, runtimeFactory = createSdkRuntime }) {
-  const client = consumer || await createConsumerClient({ config,
-    store: createCredentialStore({ directory, safeStorage, consumerBaseUrl: config.consumerBaseUrl }) });
+  const store = credentialStore || (directory && config.consumerBaseUrl
+    ? createCredentialStore({ directory, safeStorage, consumerBaseUrl: config.consumerBaseUrl }) : null);
+  const client = consumer || await createConsumerClient({ config, store });
   let epoch = 0;
   const closers = new Set();
   async function closeAll() {
@@ -17,7 +18,40 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
   }
   return Object.freeze({
     restore: () => typeof client.restore === 'function' ? client.restore() : Promise.resolve(null),
-    signIn: (input, guard) => client.signIn(input, guard),
+    async getRememberedLogin() {
+      if (!store) return null;
+      const value = await store.loadRememberedLogin();
+      if (value === undefined) return null;
+      const keys = value && !Array.isArray(value) ? Object.keys(value).sort() : [];
+      if (!value || typeof value.phone !== 'string' || !/^1\d{10}$/.test(value.phone)
+          || (!(keys.length === 1 && keys[0] === 'phone') && !(keys.length === 2 && keys[0] === 'password' && keys[1] === 'phone'))
+          || (Object.hasOwn(value, 'password') && (typeof value.password !== 'string' || /[\r\n\0]/u.test(value.password)
+            || Buffer.byteLength(value.password) < 8 || Buffer.byteLength(value.password) > 72))) {
+        throw new DesktopError('SECURE_STORAGE_UNAVAILABLE');
+      }
+      return { phone: value.phone, passwordSaved: Object.hasOwn(value, 'password') };
+    },
+    async signIn(input, guard, rememberPassword = false) {
+      const identity = await client.signIn(input, guard);
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
+      if (store) await store.saveRememberedLogin({ phone: input.phone, ...(rememberPassword ? { password: input.password } : {}) }, guard);
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
+      return identity;
+    },
+    async signInSaved(guard, rememberPassword = true) {
+      if (!store) throw new DesktopError('AUTHENTICATION_REQUIRED');
+      const value = await store.loadRememberedLogin();
+      const keys = value && !Array.isArray(value) ? Object.keys(value).sort() : [];
+      if (!value || keys.length !== 2 || keys[0] !== 'password' || keys[1] !== 'phone'
+          || typeof value.phone !== 'string' || !/^1\d{10}$/.test(value.phone) || typeof value.password !== 'string'
+          || /[\r\n\0]/u.test(value.password) || Buffer.byteLength(value.password) < 8
+          || Buffer.byteLength(value.password) > 72) throw new DesktopError('AUTHENTICATION_REQUIRED');
+      const identity = await client.signIn({ phone: value.phone, password: value.password }, guard);
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
+      await store.saveRememberedLogin({ phone: value.phone, ...(rememberPassword ? { password: value.password } : {}) }, guard);
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
+      return identity;
+    },
     listDevices: () => client.listDevices(),
     async connect(binding) {
       const expected = epoch;

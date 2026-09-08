@@ -679,7 +679,13 @@ onUnmounted(() => {
         </header>
 
         <div class="rt-form">
-          <RoutingPanel />
+          <div class="rt-routing-card" role="group" aria-label="在线模型与资料授权">
+            <div class="rt-routing-card__copy">
+              <strong>在线模型与资料授权</strong>
+              <span>管理在线或本地处理、资料来源默认授权，以及资料受限时的处理方式。桌面端每次向在线模型发送内容时仍会核对本次输入和完整范围。</span>
+            </div>
+            <RoutingPanel />
+          </div>
           <ExternalProvidersPanel :chat-revision="cRevision" :disabled="cSaving || cTesting" @activated="applyChat($event, true)" @busy="cProviderBusy = $event" />
           <p class="rt-note">{{ cExternal ? '在线通道已启用；仅在对话选择在线理解后使用。' : '在线通道已暂停；本地处理仍可用。' }}<button v-if="cExternal" type="button" class="rt-link" :disabled="cSaving || cProviderBusy" @click="disableExternalChatImmediately">暂停在线通道，使用本地</button></p>
           <div class="rt-field is-none-label">
@@ -1083,6 +1089,35 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.rt-routing-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
+  border-radius: var(--ws-radius, 6px);
+  background: var(--ws-surface-2, #fbf8f1);
+}
+.rt-routing-card__copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.rt-routing-card__copy strong {
+  color: var(--ws-text-primary-color, #1d211f);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rt-routing-card :deep(.routing-panel) {
+  flex-shrink: 0;
+  justify-content: flex-end;
 }
 .rt-form__row {
   display: flex;

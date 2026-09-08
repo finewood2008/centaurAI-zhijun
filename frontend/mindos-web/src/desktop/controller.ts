@@ -1,6 +1,7 @@
 import type {
   CallContext, DesktopSnapshot, DeviceSummary, MaterialStatus, MaterialType,
   MaterialsPage, MaterialsQuery, PasswordCredentials, PublicError, Result, ZhijunDesktopV1,
+  RememberedLogin,
 } from '../../../shared/desktop-contract'
 
 export interface DesktopViewState {
@@ -12,7 +13,7 @@ export interface DesktopViewState {
   readonly query: MaterialsQuery
   readonly loading: boolean
   readonly controlPending: boolean
-  readonly pendingOperation: 'beginSignIn' | 'signInWithPassword' | 'disconnect' | 'signOut' | 'connect' | null
+  readonly pendingOperation: 'beginSignIn' | 'signInWithPassword' | 'signInWithSavedPassword' | 'disconnect' | 'signOut' | 'connect' | null
   readonly error: PublicError | null
   readonly notice: string
 }
@@ -106,7 +107,7 @@ export class DesktopController {
     }
   }
 
-  async control(operation: 'beginSignIn' | 'signInWithPassword' | 'disconnect' | 'signOut' | 'connect', input?: string | PasswordCredentials): Promise<void> {
+  async control(operation: 'beginSignIn' | 'signInWithPassword' | 'signInWithSavedPassword' | 'disconnect' | 'signOut' | 'connect', input?: string | boolean | PasswordCredentials): Promise<void> {
     if (!this.bridge || this.disposed || !this.state.snapshot) return
     if (this.state.controlPending && (operation !== 'signOut' || this.state.pendingOperation === 'signOut')) return
     const revision = ++this.controlRevision
@@ -118,6 +119,8 @@ export class DesktopController {
         ? await this.bridge.connect(context, typeof input === 'string' ? input : '')
         : operation === 'signInWithPassword'
           ? await this.bridge.signInWithPassword(context, input as PasswordCredentials)
+          : operation === 'signInWithSavedPassword'
+            ? await this.bridge.signInWithSavedPassword(context, input !== false)
           : await this.bridge[operation](context)
       if (this.disposed || revision !== this.controlRevision) return
       if (result.ok) this.acceptSnapshot(result.data)
@@ -129,6 +132,16 @@ export class DesktopController {
     } finally {
       if (revision === this.controlRevision) this.patch({ controlPending: false, pendingOperation: null })
     }
+  }
+
+  async getRememberedLogin(): Promise<RememberedLogin | null> {
+    if (!this.bridge || this.disposed || !this.state.snapshot) return null
+    const generation = this.state.snapshot.generation
+    try {
+      const result = await this.bridge.getRememberedLogin(this.context())
+      if (this.disposed || generation !== this.state.snapshot?.generation) return null
+      return result.ok && result.generation === generation ? result.data : null
+    } catch { return null }
   }
 
   async loadDevices(): Promise<void> {

@@ -33,7 +33,7 @@ watch(question, async value => {
       <h2 id="route-title">{{ deConsent ? '是否将本次内容交给在线模型？' : grantable.length ? '这次要让在线模型使用哪些内容？' : '选用的内容暂时不能交给在线模型' }}</h2>
       <p>{{ question.preview.service.name }} · {{ question.preview.service.model }} · {{ question.preview.purposeLabel }}</p>
       <p>{{ deConsent ? '原文件留在盒子。' : '原文件留在本机。' }}下方显示实际拟发送的文字；已发送的内容无法通过撤销授权收回。</p>
-      <p v-if="deConsent" class="route-tip">本次确认仅适用于当前任务、输入、来源版本和接收服务。切换到在线模型或以前批准过资料，不代表允许发送这一次的内容；改动内容后需要重新核对。</p>
+      <p v-if="deConsent" class="route-tip">本次确认仅适用于当前任务、输入、来源版本和接收服务。资料来源默认授权不能代替本次在线发送确认；改动内容后需要重新核对。当前桌面版本没有关闭此确认的总开关。</p>
       <p v-else class="route-tip">相同服务、版本和用途已批准的内容不再询问。在「模型与授权」中可分别设置默认授权，或记住资料受限时的处理方式。</p>
       <p v-if="question.preview.charterBasis?.version" class="route-tip">本轮参考人生章程第 {{ question.preview.charterBasis.version }} 版 · {{ question.preview.charterBasis.clauseIds.length }} 条约定。确认章程不等于允许外发。</p>
       <details v-if="question.preview.charterUnresolved?.length"><summary>有 {{ question.preview.charterUnresolved.length }} 条约定尚需澄清执行方式</summary><p v-for="clause in question.preview.charterUnresolved" :key="clause.id">{{ clause.text }}：{{ clause.reason }}</p></details>
