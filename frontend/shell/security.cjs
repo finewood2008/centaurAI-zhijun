@@ -7,7 +7,19 @@ const SNAPSHOT_CHANNEL = 'zhijun:snapshot'
 const OPERATIONS = new Set(['getSnapshot', 'beginSignIn', 'signInWithPassword', 'listDevices', 'connect',
   'disconnect', 'signOut', 'materials.list', 'cancelRead',
   ...require('./runtime/product-session.cjs').productMethods.map(method => `product.${method}`)])
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: zhijun-media:; media-src zhijun-media:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src zhijun-media:"
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: zhijun-media:; media-src blob: zhijun-media:; font-src 'self'; connect-src zhijun-media: blob:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+
+function shouldBlockRendererRequest(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'zhijun:') return !(url.host === 'desktop' && !url.username && !url.password)
+    if (url.protocol === 'zhijun-media:') return !(url.host === 'session' && !url.username && !url.password
+      && !url.search && !url.hash && /^\/[a-f0-9]{32}$/.test(url.pathname))
+    if (url.protocol === 'blob:') return !value.startsWith('blob:zhijun://desktop/')
+    if (url.protocol === 'data:') return !/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(value)
+    return true
+  } catch { return true }
+}
 
 function isEntryUrl(value) {
   try { const url = new URL(value); url.hash = ''; return url.href === ENTRY_URL } catch { return false }
@@ -31,7 +43,7 @@ function createInvokeHandler(runtime, getContents) {
     return runtime.invoke(operation, args, contents.id)
   }
 }
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
   '.ico': 'image/x-icon', '.woff2': 'font/woff2' }
 // Only bundled assets are readable; this is not a general file proxy.
@@ -61,4 +73,4 @@ function createAssetHandler(assetRoot) {
   }
 }
 module.exports = { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, CSP,
-  isEntryUrl, isTrustedSender, createInvokeHandler, createAssetHandler }
+  isEntryUrl, isTrustedSender, shouldBlockRendererRequest, createInvokeHandler, createAssetHandler }

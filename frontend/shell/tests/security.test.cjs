@@ -5,7 +5,7 @@ const { mkdtemp, mkdir, writeFile, symlink, rm, readFile } = require('node:fs/pr
 const { tmpdir } = require('node:os')
 const path = require('node:path')
 const vm = require('node:vm')
-const { ENTRY_URL, CSP, isEntryUrl, createInvokeHandler, createAssetHandler } = require('../security.cjs')
+const { ENTRY_URL, CSP, isEntryUrl, shouldBlockRendererRequest, createInvokeHandler, createAssetHandler } = require('../security.cjs')
 
 test('IPC checks the exact window, main frame, origin, and operation before dispatch', async () => {
   const calls = []
@@ -46,6 +46,7 @@ test('asset protocol serves only build files, rejects traversal/symlinks and set
   await mkdir(path.join(root, 'assets'), { recursive: true })
   await writeFile(path.join(root, 'desktop.html'), '<html>synthetic</html>')
   await writeFile(path.join(root, 'assets', 'entry-a.js'), 'export const value=1')
+  await writeFile(path.join(root, 'assets', 'worker-a.mjs'), 'export const value=2')
   await writeFile(path.join(directory, 'outside.js'), 'private fixture')
   await symlink(path.join(directory, 'outside.js'), path.join(root, 'assets', 'outside.js'))
   const serve = createAssetHandler(root)
@@ -56,6 +57,8 @@ test('asset protocol serves only build files, rejects traversal/symlinks and set
   assert.equal(entry.headers.get('Permissions-Policy'), 'microphone=(self), camera=(), display-capture=()')
   assert.match(await entry.text(), /synthetic/)
   assert.equal((await serve(new Request('zhijun://desktop/assets/entry-a.js'))).status, 200)
+  const worker = await serve(new Request('zhijun://desktop/assets/worker-a.mjs'))
+  assert.equal(worker.status, 200); assert.equal(worker.headers.get('content-type'), 'text/javascript; charset=utf-8')
   for (const url of ['zhijun://evil/desktop.html', 'file:///desktop.html',
     'zhijun://desktop/assets/%2e%2e%2foutside.js', 'zhijun://desktop/assets/outside.js',
     'zhijun://desktop/desktop.html?file=outside.js', 'zhijun://desktop/other.html']) {
@@ -65,6 +68,35 @@ test('asset protocol serves only build files, rejects traversal/symlinks and set
   }
   assert.equal((await serve(new Request(ENTRY_URL, { method: 'POST' }))).status, 403)
   assert.equal(await (await serve(new Request(ENTRY_URL, { method: 'HEAD' }))).text(), '')
+})
+
+test('desktop document policy allows only the controlled media protocol for previews', async () => {
+  const html = await readFile(path.join(__dirname, '../../mindos-web/desktop.html'), 'utf8')
+  const main = await readFile(path.join(__dirname, '../main.js'), 'utf8')
+  const policy = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/)?.[1]
+  assert.ok(policy)
+  assert.match(policy, /(?:^|; )img-src 'self' data: blob: zhijun-media:(?:;|$)/)
+  assert.match(policy, /(?:^|; )media-src blob: zhijun-media:(?:;|$)/)
+  assert.match(policy, /(?:^|; )connect-src zhijun-media: blob:(?:;|$)/)
+  assert.match(policy, /(?:^|; )worker-src 'self'(?:;|$)/)
+  assert.match(policy, /(?:^|; )frame-src 'none'(?:;|$)/)
+  assert.match(policy, /(?:^|; )object-src 'none'(?:;|$)/)
+  assert.doesNotMatch(policy, /https?:|file:/)
+  assert.match(main, /contextIsolation:\s*true,\s*sandbox:\s*true,\s*nodeIntegration:\s*false/)
+  assert.match(main, /webSecurity:\s*true,\s*webviewTag:\s*false,\s*plugins:\s*false/)
+})
+
+test('renderer request filter allows only application assets and generation-bound media', () => {
+  for (const url of ['https://outside.invalid/a', 'http://127.0.0.1/a', 'ws://outside.invalid/a',
+    'wss://outside.invalid/a', 'file:///private/outside.pdf', 'chrome-extension://viewer/main.js',
+    'chrome://resources/css/text.css', 'custom://outside/value', 'zhijun://outside/desktop.html',
+    'zhijun-media://session/not-a-handle', 'blob:https://outside.invalid/id', 'data:text/html,hello', 'not a url']) {
+    assert.equal(shouldBlockRendererRequest(url), true, url)
+  }
+  for (const url of ['zhijun://desktop/desktop.html', 'zhijun-media://session/' + 'a'.repeat(32),
+    'blob:zhijun://desktop/5b2af8e0-ccdf-4664-b24d-8bb0ef9d1ea1', 'data:image/png;base64,AAAA']) {
+    assert.equal(shouldBlockRendererRequest(url), false, url)
+  }
 })
 
 test('preload exposes narrow methods, strips events, and unsubscribes exactly once', async () => {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ProductImage from '@/components/ui/ProductImage.vue'
+import PdfPreview from '@/components/PdfPreview.vue'
 import { productPreview, releaseProductPreview, saveProductResource } from '@/services/productFiles'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -775,8 +776,9 @@ function clearMainPreview() {
   if (mainPreviewUrl.value) releaseProductPreview(mainPreviewUrl.value)
   mainPreviewUrl.value = ''
 }
-watch(() => detail.value?.previewUrl, async () => {
-  clearMainPreview(); mainPreviewError.value = ''
+async function openMainPreview() {
+  clearMainPreview()
+  mainPreviewError.value = ''
   const value = detail.value
   if (!value || (value.fileType !== 'audio' && !value.fileName.toLowerCase().endsWith('.pdf'))) return
   const ticket = previewRevision
@@ -786,6 +788,10 @@ watch(() => detail.value?.previewUrl, async () => {
     if (ticket !== previewRevision) releaseProductPreview(url)
     else mainPreviewUrl.value = url
   } catch (e) { if (ticket === previewRevision) mainPreviewError.value = e instanceof Error ? e.message : '原件预览不可用' }
+}
+watch(() => detail.value?.previewUrl, () => {
+  clearMainPreview(); mainPreviewError.value = ''
+  if (detail.value?.fileType === 'audio') void openMainPreview()
 })
 onBeforeUnmount(clearMainPreview)
 async function saveOriginal() {
@@ -870,8 +876,14 @@ async function saveOriginal() {
         <section class="detail-panel preview-panel">
           <div class="panel-title">原始资料 <span class="badge soon">只读</span></div>
           <ProductImage v-if="detail.fileType === 'image'" :src="detail.previewUrl" :alt="detail.fileName" class="material-preview image-preview" />
-          <p v-if="mainPreviewError" role="status">{{ mainPreviewError }}</p>
-          <iframe v-if="detail.fileName.toLowerCase().endsWith('.pdf')" :src="mainPreviewUrl || undefined" :title="detail.fileName" class="material-preview document-preview"></iframe>
+          <div v-if="detail.fileName.toLowerCase().endsWith('.pdf')" class="document-open-state">
+            <p v-if="mainPreviewError" role="status">{{ mainPreviewError }}</p>
+            <button v-if="!mainPreviewUrl" class="secondary-btn" type="button" @click="openMainPreview">查看 PDF 原件</button>
+            <template v-else>
+              <button class="secondary-btn sm" type="button" @click="clearMainPreview">关闭 PDF 预览</button>
+              <PdfPreview :src="mainPreviewUrl" :title="detail.fileName" />
+            </template>
+          </div>
          <!-- <div v-else-if="detail.fileType === 'document'" class="document-open-state">
             <p>该文档格式由系统安全托管，可在新窗口中只读打开。</p>
             <button class="secondary-btn" @click="saveOriginal">保存文档</button>

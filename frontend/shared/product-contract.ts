@@ -44,6 +44,6 @@ export interface ProductDesktop {
   uploadCancel(context: CallContext, input: Readonly<{id: string}>): Promise<Result<ProductUpload>>;
   blobRead(context: CallContext, input: Readonly<{id: string; offset: number; limit: number}>): Promise<Result<ProductBlobRead>>;
   save(context: CallContext, input: Readonly<{fileName: string; contentType: string; source: Readonly<{kind:'bytes'; bytes:Uint8Array}> | Readonly<{kind:'blob'; id:string}>}>): Promise<Result<Readonly<{saved: boolean}>>>;
-  openMedia(context: CallContext, request: ProductOperationRequest): Promise<Result<Readonly<{handle:string; url:string; contentType:string}>>>;
+  openMedia(context: CallContext, request: ProductOperationRequest): Promise<Result<Readonly<{handle:string; url:string; contentType:string; size:number}>>>;
   closeMedia(context: CallContext, input: Readonly<{handle:string}>): Promise<Result<Readonly<{closed:boolean}>>>;
 }

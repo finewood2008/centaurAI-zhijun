@@ -288,6 +288,20 @@ test('save cancellation is not reported as an export and preview cannot escape t
   client.dispose()
 })
 
+test('desktop preview preserves the authorized range-capable host URL and closes its handle', async () => {
+  const closed = []
+  const { product } = host('{}')
+  product.openMedia = async () => ok({ handle: 'c'.repeat(32), url: `zhijun-media://session/${'d'.repeat(32)}`, contentType: 'application/pdf', size: 14 })
+  product.closeMedia = async (_context, input) => { closed.push(input.handle); return ok({ closed: true }) }
+  const { client } = desktop(product)
+  const url = await client.preview('/api/mindos/materials/m_test/file')
+  assert.equal(url, `zhijun-media://session/${'d'.repeat(32)}`)
+  client.releasePreview(url)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(closed, ['c'.repeat(32)])
+  client.dispose()
+})
+
 test('desktop online consent is explicit for every prompt, including zero sources and already-approved sources', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('de-consent-test')

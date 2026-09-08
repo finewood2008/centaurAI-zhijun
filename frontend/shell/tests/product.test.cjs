@@ -214,8 +214,12 @@ const mediaRequest = () => request('get_api_mindos_materials_material_id_file', 
 test('media uses generation-bound capability URLs with exact MIME, range validation and close cleanup', async () => {
   const manager = binaryManager(); const media = await manager.invoke('openMedia', mediaRequest());
   assert.match(media.url, /^zhijun-media:\/\/session\/[a-f0-9]{32}$/);
+  assert.equal(media.size, 21);
   const result = await manager.mediaResponse(new Request(media.url, { headers: { Range: 'bytes=2-5' } }));
   assert.equal(result.status, 206); assert.equal(result.headers.get('content-type'), 'image/png'); assert.equal(await result.text(), 'nthe');
+  assert.equal(result.headers.get('cache-control'), 'no-store'); assert.equal(result.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(result.headers.get('access-control-allow-origin'), 'zhijun://desktop'); assert.equal(result.headers.get('vary'), 'Origin');
+  assert.equal(result.headers.get('content-security-policy'), null);
   assert.equal((await manager.mediaResponse(new Request(media.url, { headers: { Range: 'bytes=99-' } }))).status, 416);
   const full = await manager.mediaResponse(new Request(media.url)); assert.equal(await full.text(), 'synthetic image bytes');
   assert.deepEqual(await manager.invoke('closeMedia', { handle: media.handle }), { closed: true });
