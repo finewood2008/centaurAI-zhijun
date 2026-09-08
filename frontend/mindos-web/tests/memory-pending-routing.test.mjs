@@ -37,9 +37,31 @@ function routing(overrides = {}) {
       return copy(states[cid])
     },
     askRoute: async () => ({ action: 'allow', keys: ['x'] }),
+    needsDeConsent: preview => preview.deConsentRequired === true,
+    grantDefaultDeConsent: async () => false,
     ...overrides,
   }
   return { ...mount('RoutingPanel', { conversationId: 'a', disabled: false }, api), api, calls, states }
+}
+
+// A pending task covered by the explicit auto-egress policy gets an exact
+// receipt before resume without opening another dialog.
+{
+  let grants = 0
+  const h = routing({
+    grantDefaultDeConsent: async (_id, preview) => { grants++; assert.equal(preview.defaultAuthorization.applies, true); return true },
+    askRoute: async () => { throw Error('must not open consent') },
+  }); await flush()
+  h.api.routingRequest = async (path, method = 'GET', body) => {
+    h.calls.push({ path, method, body })
+    if (path.includes('/pending/')) return { missing: [], blocked: [], sources: [], deConsentRequired: true, revision: 'auto-preview', defaultAuthorization: { autoEgress: true, applies: true, revision: 3 } }
+    if (path.endsWith('/resume')) return { queuedCount: 1, pendingCount: 0 }
+    return copy(h.states.a)
+  }
+  await h.ui.pending({ task_key: 'extract_turn', preview_id: 'p' })
+  assert.equal(grants, 1)
+  assert.equal(h.calls.filter(c => c.path.endsWith('/resume')).length, 1)
+  h.close()
 }
 
 // Old defaults do not silently expand to charter content; explicit selection is sent.

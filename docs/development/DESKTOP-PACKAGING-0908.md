@@ -91,3 +91,18 @@ Shell 146 项、桌面 UI 12 项、Electron E2E 4 项均通过；签名后的 si
 完整 Shell 155 项、Desktop UI 15 项、Electron E2E 4 项、前端产品传输 24 项均通过，TypeScript 检查和桌面构建成功。签名后的 sidecar SHA-256 为 `d36951919d922558ddbfc815e2aeb12cc5cfd407abd779095327c485d0b564ec`；裸 App、DMG、ZIP 的签名、资源复验和独立启动冒烟检查均通过。
 
 最新 App 已安装到 `/Applications/知君.app`，上一版备份为 `/Applications/知君.app.before-login-memory-20260908`。真机验收完成：退出后登录页自动填入上次手机号，密码框为空并显示安全保存提示；不重新输入密码即可由主进程完成登录，随后成功连接公司盒子 `AMD-A2A-248`。验收过程和仓库文档均未记录真实密码。
+
+## 默认在线发送授权后的重新打包
+
+本轮新增独立的“符合范围时不再逐次确认”开关。它与“资料来源默认授权”分开保存；开启时，桌面仍为每次请求取得短期凭据，盒端会重新核对服务、配置版本、用途和全部资料版本。关闭开关、撤销资料、切换供应商或配置版本变化后，下一次请求立即恢复逐次确认。旧版资料授权升级后不会自动获得免确认权限。
+
+本次完整 `package:mac-arm64` 流水线通过，产物为：
+
+| 产物 | SHA-256 |
+| --- | --- |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | `1b89250ce8fd56d4d9aff2709dd4d166dcfa4ce16517a191d77cdef9030eaccc` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | `b9ec9d9b5b83768df614c09b26c532afa4eda2ee515549fe4fc5b5ae2080e0e4` |
+
+签名后的 sidecar SHA-256 为 `43ff4b11bb9f2311551b41c0a4ec915dfb1a133e2d978a03e152ce5cabc78300`。裸 App、DMG、ZIP 的签名与资源复验通过，独立启动冒烟检查成功。最新 App 已安装到 `/Applications/知君.app`，安装前版本保存在 `/Applications/知君.app.before-standing-consent-20260908`。
+
+公司盒真机验收中，默认授权关闭后界面立即恢复“每次在线发送仍会单独确认”；重新明确勾选范围并启用后，新建在线对话连续两次收到指定的 DeepSeek 回复，均未弹出外发确认。在线通道独立测试成功，耗时约 1496 ms。盒端容器保持 `healthy`、`RestartCount=0`、`OOMKilled=false`。

@@ -5,12 +5,48 @@ from pathlib import Path
 import subprocess
 import sys
 import io
+from types import SimpleNamespace
 
 import pytest
 
 from zhijun_worker.capabilities import CapabilityError, HttpCapabilities, execution
 from zhijun_worker.model import CapabilityProvider
 from tests.test_zhijun_worker import CHILD, workspace
+
+
+def test_default_consent_policy_registration_uses_exact_revisioned_protocol(monkeypatch):
+    from mindos import routing_routes
+    from zhijun_worker import capabilities
+
+    class Port:
+        def __init__(self):
+            self.calls = []
+
+        def call(self, name, payload):
+            self.calls.append((name, payload))
+            return {"registered": True, "revision": payload["policyRevision"]}
+
+    port = Port()
+    monkeypatch.setenv("ZHIJUN_WORKSPACE_ID", "workspace-fixture")
+    monkeypatch.setattr(capabilities, "require", lambda: port)
+    policy = {"enabled": True, "autoEgress": True, "revision": 4,
+              "service": "service-fixture", "purposes": ["chat"],
+              "includeFiles": False, "includeCharter": True}
+    provider = SimpleNamespace(configuration_revision="a" * 64)
+    routing_routes._register_default_policy(policy, provider)
+    routing_routes._register_default_policy({**policy, "enabled": False, "revision": 5})
+    routing_routes._register_default_policy({**policy, "revision": 5}, action="revoke", key="claim:one")
+    assert port.calls == [
+        ("domain.consent-policy.register", {
+            "action": "enable", "policyRevision": 4, "serviceId": "service-fixture",
+            "configurationRevision": "a" * 64, "purposes": ["chat"],
+            "includeFiles": False, "includeCharter": True, "autoEgress": True,
+        }),
+        ("domain.consent-policy.register", {"action": "disable", "policyRevision": 5}),
+        ("domain.consent-policy.register", {
+            "action": "revoke", "key": "claim:one", "policyRevision": 5,
+        }),
+    ]
 
 
 def test_capability_url_and_execution_binding(tmp_path):
@@ -174,7 +210,8 @@ def test_real_online_preview_grant_and_exact_prompt_receipt(tmp_path):
     fixture = CAPABILITY_FIXTURE.replace("external=False", "external=not payload.get('localOnly',False)")
     fixture = fixture.replace("        if name=='materials.evidence':return []", """        if name=='models.consent.issue':
             import time
-            assert set(payload)=={'previewRevision','conversationId','purpose','serviceId','configurationRevision','selectedSources','grantId'}
+            assert set(payload)=={'previewRevision','conversationId','purpose','serviceId','configurationRevision','selectedSources','authorization','grantId'}
+            assert payload['authorization']=={'kind':'explicit'}
             return {'consentId':'synthetic-de-consent','expiresAt':time.time()+600}
         if name=='models.consent.revoke':return {'revoked':True}
         if name=='materials.evidence':return []""")

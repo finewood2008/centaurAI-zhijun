@@ -2,7 +2,7 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ChevronDown, ShieldCheck } from 'lucide-vue-next'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
-import { askRoute, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
+import { askRoute, grantDefaultDeConsent, needsDeConsent, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
 const props = defineProps<{ conversationId?: string; disabled?: boolean }>()
 const emit = defineEmits<{ (e: 'mode', value: string): void }>()
 const state = ref<any>(null)
@@ -15,6 +15,7 @@ const configureDefault = ref(false)
 const consentAcknowledge = ref(false)
 const includeFiles = ref(false)
 const includeCharter = ref(false)
+const autoEgress = ref(false)
 const configureHandling = ref(false)
 const handlingAction = ref<'omit' | 'local'>('omit')
 const path = computed(() => props.conversationId ? routePath(props.conversationId) : '/mindos/conversations/routing/default')
@@ -63,7 +64,7 @@ watch(path, () => {
   open.value = false; state.value = null; error.value = ''; notice.value = ''
   acknowledge.value = false; configureDefault.value = false; consentAcknowledge.value = false
   configureHandling.value = false
-  includeFiles.value = false; includeCharter.value = false
+  includeFiles.value = false; includeCharter.value = false; autoEgress.value = false
   void refresh()
 }, { immediate: true })
 onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort(); readController?.abort() })
@@ -86,20 +87,26 @@ async function saveDefault(enabled: boolean) {
   try {
     const result = await routingRequest(target + '/default-consent', 'PUT', {
       enabled, includeFiles: includeFiles.value, includeCharter: includeCharter.value, acknowledge: consentAcknowledge.value,
+      autoEgress: autoEgress.value,
       serviceId: state.value.service?.id || '', expectedRevision: policy.value?.revision || 0,
     })
     if (!valid()) return
     state.value = result
     configureDefault.value = false; consentAcknowledge.value = false
-    notice.value = enabled ? '资料来源默认授权已开启；设备仍会按安全策略核对每次在线发送。不会自动恢复已暂停的任务。' : '资料来源默认授权已关闭。之前逐次批准的授权仍有效，可在下方一并撤销。'
+    notice.value = enabled ? `默认授权已开启；${autoEgress.value ? '符合范围的在线请求不再逐次弹窗。' : '每次在线发送仍会单独确认。'}不会自动恢复已暂停的任务。` : '默认授权已关闭。之前逐次批准的授权仍有效，可在下方一并撤销。'
   } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '默认授权未保存' }
   finally { if (valid()) busy.value = false }
 }
 function toggleDefault() {
   if (policy.value?.active) void saveDefault(false)
-  else { includeFiles.value = false; includeCharter.value = false; consentAcknowledge.value = false; configureDefault.value = true }
+  else { includeFiles.value = false; includeCharter.value = false; autoEgress.value = false; consentAcknowledge.value = false; configureDefault.value = true }
 }
-function editDefault() { includeFiles.value = !!policy.value?.includeFiles; includeCharter.value = !!policy.value?.includeCharter; consentAcknowledge.value = false; configureDefault.value = true }
+function editDefault(enableAuto = policy.value?.autoEgress) { includeFiles.value = !!policy.value?.includeFiles; includeCharter.value = !!policy.value?.includeCharter; autoEgress.value = !!enableAuto; consentAcknowledge.value = false; configureDefault.value = true }
+function toggleAutoEgress() {
+  if (!policy.value?.autoEgress) { editDefault(true); return }
+  includeFiles.value = !!policy.value?.includeFiles; includeCharter.value = !!policy.value?.includeCharter
+  autoEgress.value = false; consentAcknowledge.value = true; void saveDefault(true)
+}
 async function saveHandling(enabled: boolean) {
   const valid = begin(), target = actionPath.value
   try {
@@ -134,11 +141,15 @@ async function pending(task: any, reprepare = false) {
     if (!reprepare) {
       const preview = await routingRequest<RoutePreview>(target + '/pending/' + task.preview_id, 'GET', undefined, abort.signal)
       if (!valid()) return
-      const choice = preview.missing.length ? await askRoute(preview, false, abort.signal) : { action: 'allow' as const, keys: [] }
-      if (!valid() || choice.action === 'cancel') return
-      if (choice.action === 'allow' && choice.keys?.length) await routingRequest(target + '/grant', 'POST', { revision: preview.revision, keys: choice.keys }, abort.signal)
-      if (!valid()) return
-      localOnly = choice.action === 'local'
+      if (await grantDefaultDeConsent(props.conversationId || 'default', preview, abort.signal)) {
+        // The resumed worker rebuilds and rechecks the same task before egress.
+      } else {
+        const choice = preview.missing.length || needsDeConsent(preview) ? await askRoute(preview, false, abort.signal) : { action: 'allow' as const, keys: [] }
+        if (!valid() || choice.action === 'cancel') return
+        if (choice.action === 'allow' && (choice.keys?.length || needsDeConsent(preview))) await routingRequest(target + '/grant', 'POST', { revision: preview.revision, keys: needsDeConsent(preview) ? preview.sources.map(source => source.key) : choice.keys }, abort.signal)
+        if (!valid()) return
+        localOnly = choice.action === 'local'
+      }
     }
     const result = await routingRequest<{ queuedCount?: number; pendingCount?: number }>(target + '/resume', 'POST', { task: task.task_key, localOnly }, abort.signal)
     if (!valid()) return
@@ -177,14 +188,17 @@ defineExpose({ refresh })
           <p>开启后，本设备各在线对话及后台理解任务可自动使用所需的对话、个人理解、判断和复盘文字，包括今后新增或修改的相关内容；只发送实际需要的部分。</p>
           <p class="routing-fine">此开关减少同一服务和用途下的资料来源授权询问。设备安全通道仍可能要求核对每次在线发送的输入、系统提示和完整来源范围。</p>
           <p v-if="policy?.active">已开启 · {{ policy.serviceName }} · {{ policy.includeFiles ? '包括引用的文件提取文字' : '文件文字仍单独询问' }} · {{ policy.includeCharter ? '包括人生章程与草稿' : '章程与草稿仍单独询问' }} <button class="routing-link" @click="editDefault">修改范围</button></p>
+          <div v-if="policy?.active" class="routing-setting-title"><h3>符合范围时不再逐次确认</h3><button class="routing-switch" role="switch" aria-label="符合范围时不再逐次确认" :aria-checked="!!policy?.autoEgress" :disabled="busy" @click="toggleAutoEgress"><span /></button></div>
+          <p v-if="policy?.active" class="routing-fine">{{ policy.autoEgress ? '已开启。盒端仍为每次请求签发短期凭据，并在发送前复核服务、配置、用途和资料范围。' : '未开启。当前仍会在每次向在线模型发送前显示完整范围。' }}</p>
           <p v-if="policy?.serviceChanged" class="routing-warning">服务已变化。之前对 {{ policy.serviceName }} 的默认授权不适用于当前服务，请重新确认。</p>
           <div v-if="configureDefault" class="routing-consent-form">
             <p><strong>授权给 {{ state.service?.name }}</strong></p>
             <p>用途：日常对话、回复辅助、判断草稿与候选、个人理解与校准、情境推演及复盘、摘要、今日来信和理解整理。此开关不授权上传原文件、通用导出或训练个人模型；外部服务的数据保留规则以该服务说明为准。</p>
             <label><input v-model="includeFiles" type="checkbox" /> 也默认允许引用的文件提取文字及其派生内容（包括今后新增或更新的文件）</label>
             <label><input v-model="includeCharter" type="checkbox" /> 也默认允许人生章程与章程草稿（含必要的历史版本），用于上述对话和理解任务</label>
+            <label><input v-model="autoEgress" type="checkbox" /> 符合上述服务、用途和资料范围时，不再逐次显示在线发送确认</label>
             <p class="routing-fine">章程默认不包含在旧授权里，需你明确选择。章程引用的文件仍按文件权限核对，不能绕过撤销、删除或失效的来源。</p>
-            <label><input v-model="consentAcknowledge" type="checkbox" /> 我同意在上述范围内默认授权资料来源；实际发送仍遵守设备安全确认，已发送的内容无法收回。</label>
+            <label><input v-model="consentAcknowledge" type="checkbox" /> 我同意在上述范围内默认授权资料来源{{ autoEgress ? '，并默认发送本轮输入、必要系统提示及这些资料' : '' }}；已发送的内容无法收回。</label>
             <div class="routing-actions"><button class="routing-primary" :disabled="!consentAcknowledge || busy" @click="saveDefault(true)">确认开启默认授权</button><button :disabled="busy" @click="configureDefault = false">暂不开启</button></div>
           </div>
           <p class="routing-fine">仅本地对话不受影响。换服务需重新确认，来源不明或已删除的内容仍被拦截。关闭开关即停止默认授权；逐次批准的权限可另行撤销。</p>

@@ -682,7 +682,7 @@ onUnmounted(() => {
           <div class="rt-routing-card" role="group" aria-label="在线模型与资料授权">
             <div class="rt-routing-card__copy">
               <strong>在线模型与资料授权</strong>
-              <span>管理在线或本地处理、资料来源默认授权，以及资料受限时的处理方式。桌面端每次向在线模型发送内容时仍会核对本次输入和完整范围。</span>
+              <span>管理在线或本地处理、资料来源默认授权、符合范围时免逐次确认，以及资料受限时的处理方式。</span>
             </div>
             <RoutingPanel />
           </div>

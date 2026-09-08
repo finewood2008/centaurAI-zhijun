@@ -68,4 +68,12 @@
 
 聊天发送端的 `streamChat` 另只允许在收到首个流事件之前，针对上述两类 HTTP 409 重新预览并重发一次，沿用请求标识及来源且要求仍在当前会话。流开始后、网络失败、取消或来源变化不自动重播；不能把两层各自的受限恢复写成对所有错误的统一重试。
 
+## 2026-09-08：桌面常驻授权协议
+
+桌面端默认授权增加 `autoEgress`，并与资料来源范围分开显示。旧记录通过增量迁移补为 `false`。只有用户在当前设备上明确勾选免逐次确认后，路由预览才可能返回 `defaultAuthorization.applies=true`；该值由领域 worker 根据当前策略、配置修订、完整来源和章程冲突计算，renderer 不自行推断。
+
+符合条件时，renderer 用预览修订和 `defaultPolicyRevision` 调用原 `/routing/grant`。领域 worker 使用 CAS 重读策略和来源，随后以 `authorization={kind: default, policyRevision}` 请求 Data Engine；这条分支只签发当前请求的短期回执，不写永久来源授权。Data Engine 持久保存绑定 workspace/账号授权版本、service、配置修订、规范化目标地址、用途、文件/章程范围、排除项和策略修订的策略。盒端 Gateway 还会把策略登记操作绑定到对应的前台 `default-consent` 或 `revoke` HTTP 请求，后台任务和伪造的 renderer 请求不能单独登记策略。
+
+Data Engine 在回执签发和实际 `model.stream`/`model.complete_json` 前分别复核策略；默认回执最长 1800 秒并精确绑定 request digest 与来源 stamp。策略或模型配置变化、账号授权版本变化、单项排除、禁用和来源变化都会拒绝旧默认回执。显式逐次授权使用 `authorization={kind: explicit}`，不受无关默认策略修改影响。worker 本地回执及盒端 binding 都会清理过期记录，盒端每 workspace 最多保留 512 条 binding；排除项限制为 1024 条且编码后不超过 256 KiB。
+
 完整事项 API 见 [接口契约第 19 节](zhijun-api-contract.md#19-事项与成果合同--版本-work-2026-09-05)。实现核对：[routing.py](../../backend/mindos/zhijun/routing.py)、[routing_routes.py](../../backend/mindos/routing_routes.py)、[routing_store.py](../../backend/mindos/stores/routing_store.py)、[taskRouting.ts](../../frontend/mindos-web/src/services/taskRouting.ts)。新增回归入口 `test_routing_source_snapshots`、`test_routing_backlog` 与 `chat-stream.test.mjs`，本段不声明它们已由本次同步执行。

@@ -457,10 +457,16 @@ class Router:
         handling_notice = (request.debug or {}).get("handlingNotice", "")
         if not handling_notice and skipped:
             handling_notice = f"有 {skipped} 项受限或暂不可用资料，本轮未引用；需要时请补充"
+        configuration_revision = getattr(provider, "configuration_revision", "")
+        policy_active = policy["enabled"] and policy["service"] == service["id"] and purpose in policy["purposes"]
+        policy_configuration_matches = not policy.get("autoEgress") or policy.get("configurationRevision") == configuration_revision
+        policy_applies = bool(policy_active and policy.get("autoEgress", False) and not missing
+                              and policy_configuration_matches and not any(s["blocked"] for s in items) and not charter_conflict)
         payload = {"conversationId": self.cid, "purpose": purpose, "purposeLabel": PURPOSES[purpose],
                    "service": service, "mode": self.store.mode(self.mode_owner), "sources": items,
-                   "defaultAuthorization": {"enabled": policy["enabled"] and policy["service"] == service["id"],
-                                            "revision": policy["revision"], "includeFiles": policy["includeFiles"], "includeCharter": policy.get("includeCharter", False)},
+                   "defaultAuthorization": {"enabled": policy_active, "revision": policy["revision"],
+                                            "includeFiles": policy["includeFiles"], "includeCharter": policy.get("includeCharter", False),
+                                            "autoEgress": bool(policy_active and policy.get("autoEgress", False)), "applies": policy_applies},
                    "missing": missing, "blocked": [s["key"] for s in items if s["blocked"]],
                    "handlingPreference": handling, "handlingNotice": handling_notice,
                    "charterBasis": charter_policy.basis(charter), "charterConflict": charter_conflict,
@@ -508,6 +514,39 @@ class Router:
         if files:
             ChatImportStore(self.convs).grant(files, service)
         self.store.grant(self.scope, selected, service, preview["purpose"])
+
+    def authorize_default(self, preview, policy_revision):
+        """Issue one exact DE receipt from an explicitly enabled standing policy.
+
+        This path never converts policy-covered sources into durable per-source
+        grants, so narrowing or disabling the policy takes effect immediately.
+        """
+        if self.mode != preview["mode"]:
+            fail("ROUTE_CHANGED", "处理模式已变化，请重新预览")
+        provider = self.provider()
+        service = service_info(provider)["id"]
+        policy = self.store.policy(self.scope)
+        declared = preview.get("defaultAuthorization") or {}
+        if (policy["revision"] != policy_revision or declared.get("revision") != policy_revision
+                or not policy.get("enabled") or not policy.get("autoEgress") or policy.get("service") != service
+                or policy.get("configurationRevision") != getattr(provider, "configuration_revision", "")
+                or preview["service"]["id"] != service or preview["purpose"] not in policy.get("purposes", [])
+                or not declared.get("applies") or preview.get("missing") or preview.get("blocked")
+                or preview.get("charterConflict")):
+            fail("DEFAULT_CONSENT_CHANGED", "在线内容默认授权范围已变化，请重新核对")
+        source_cache, source_budget = {}, {"nodes": 0}
+        fresh = {s["key"]: s for old in preview["sources"]
+                 for s in self.resolve(old["ref"], _cache=source_cache, _budget=source_budget)}
+        for old in preview["sources"]:
+            current = fresh.get(old["key"])
+            if (not current or current["blocked"] or current["version"] != old["version"]
+                    or not self.permission(current, service, preview["purpose"], policy)):
+                fail("SOURCE_CHANGED", "来源已变化或超出默认授权范围，请重新核对")
+        import os
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            from zhijun_worker.consent import issue
+            issue(preview, [source["key"] for source in preview["sources"]], provider,
+                  default_policy_revision=policy_revision)
 
 
 @dataclass
