@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { GlobalWorkerOptions, getDocument, type PDFDocumentLoadingTask, type PDFDocumentProxy, type RenderTask } from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{ src: string; title: string }>()
 GlobalWorkerOptions.workerSrc = workerUrl
@@ -10,12 +10,16 @@ const host = ref<HTMLElement | null>(null)
 const canvas = ref<HTMLCanvasElement | null>(null)
 const pageNumber = ref(1)
 const pageCount = ref(0)
+const paintedPage = ref(0)
 const loading = ref(false)
 const error = ref('')
 let documentTask: PDFDocumentLoadingTask | null = null
 let documentValue: PDFDocumentProxy | null = null
 let renderTask: RenderTask | null = null
 let fetchController: AbortController | null = null
+let resizeObserver: ResizeObserver | null = null
+let resizeTimer: number | null = null
+let lastRenderedCssWidth = 0
 let revision = 0
 const MAX_PDF_BYTES = 64 * 1024 * 1024
 const MAX_CANVAS_AXIS = 8192
@@ -32,6 +36,8 @@ async function disposeDocument() {
   if (task) {
     try { await task.destroy() } catch { /* cancellation and teardown are best-effort */ }
   }
+  lastRenderedCssWidth = 0
+  paintedPage.value = 0
 }
 
 async function readBoundedPdf(response: Response, signal: AbortSignal): Promise<Uint8Array> {
@@ -65,16 +71,45 @@ async function readBoundedPdf(response: Response, signal: AbortSignal): Promise<
   return data
 }
 
-async function renderPage(ticket = revision) {
+function desiredCssWidth() {
+  return Math.max(280, Math.min((host.value?.clientWidth ?? 0) - 24, 920))
+}
+
+function canvasAppearsBlank(target: HTMLCanvasElement) {
+  const sample = document.createElement('canvas')
+  sample.width = 32
+  sample.height = 32
+  const context = sample.getContext('2d', { alpha: false, willReadFrequently: true })
+  if (!context) return false
+  context.drawImage(target, 0, 0, sample.width, sample.height)
+  const pixels = context.getImageData(0, 0, sample.width, sample.height).data
+  for (let index = 0; index < pixels.length; index += 4) {
+    if (pixels[index] < 248 || pixels[index + 1] < 248 || pixels[index + 2] < 248) return false
+  }
+  return true
+}
+
+function waitForPaint() {
+  return new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+}
+
+async function renderPage(ticket = revision, retryBlank = true) {
   if (!documentValue || !canvas.value || !host.value || ticket !== revision) return
-  renderTask?.cancel()
+  const previousTask = renderTask
+  renderTask = null
+  if (previousTask) {
+    previousTask.cancel()
+    try { await previousTask.promise } catch { /* the replacement render owns the canvas next */ }
+  }
+  if (!documentValue || !canvas.value || !host.value || ticket !== revision) return
   loading.value = true
   error.value = ''
   try {
-    const page = await documentValue.getPage(pageNumber.value)
+    const targetPageNumber = pageNumber.value
+    const page = await documentValue.getPage(targetPageNumber)
     if (ticket !== revision) return
     const initial = page.getViewport({ scale: 1 })
-    const cssWidth = Math.max(280, Math.min(host.value.clientWidth - 24, 920))
+    const cssWidth = desiredCssWidth()
     const scale = cssWidth / initial.width
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2)
     const viewport = page.getViewport({ scale: scale * pixelRatio })
@@ -85,19 +120,42 @@ async function renderPage(ticket = revision) {
     target.height = Math.ceil(viewport.height)
     const context = target.getContext('2d', { alpha: false })
     if (!context) throw new Error('PDF_CANVAS_UNAVAILABLE')
-    renderTask = page.render({ canvasContext: context, viewport, background: '#ffffff' })
-    await renderTask.promise
+    const task = page.render({ canvasContext: context, viewport, background: '#ffffff' })
+    renderTask = task
+    await task.promise
+    if (renderTask === task) renderTask = null
+    lastRenderedCssWidth = cssWidth
+    if (retryBlank && canvasAppearsBlank(target)) {
+      await waitForPaint()
+      if (ticket === revision) {
+        await renderPage(ticket, false)
+        return
+      }
+    }
+    if (ticket === revision && pageNumber.value === targetPageNumber) paintedPage.value = targetPageNumber
   } catch (cause) {
     if (ticket === revision && (cause as { name?: string })?.name !== 'RenderingCancelledException') error.value = 'PDF 页面暂时无法显示，请重试。'
   } finally {
-    if (ticket === revision) loading.value = false
+    if (ticket === revision) {
+      loading.value = false
+      void nextTick(scheduleResizeRender)
+    }
   }
+}
+
+function scheduleResizeRender() {
+  if (!documentValue || loading.value || renderTask || Math.abs(desiredCssWidth() - lastRenderedCssWidth) < 2) return
+  if (resizeTimer !== null) window.clearTimeout(resizeTimer)
+  resizeTimer = window.setTimeout(() => {
+    resizeTimer = null
+    if (!loading.value && !renderTask && Math.abs(desiredCssWidth() - lastRenderedCssWidth) >= 2) void renderPage()
+  }, 80)
 }
 
 async function load() {
   const ticket = ++revision
   await disposeDocument()
-  pageNumber.value = 1; pageCount.value = 0; error.value = ''
+  pageNumber.value = 1; pageCount.value = 0; paintedPage.value = 0; error.value = ''
   if (!props.src || ticket !== revision) return
   loading.value = true
   const controller = new AbortController()
@@ -134,22 +192,31 @@ function changePage(offset: number) {
 }
 
 watch(() => props.src, load, { immediate: true })
+onMounted(() => {
+  resizeObserver = new ResizeObserver(scheduleResizeRender)
+  if (host.value) resizeObserver.observe(host.value)
+})
 onBeforeUnmount(() => {
   revision++
+  resizeObserver?.disconnect()
+  resizeObserver = null
+  if (resizeTimer !== null) window.clearTimeout(resizeTimer)
+  resizeTimer = null
   void disposeDocument()
 })
 </script>
 
 <template>
-  <div ref="host" class="pdf-preview" :aria-label="`${title} PDF 预览`">
+  <div ref="host" class="pdf-preview" :aria-label="`${title} PDF 预览`" :aria-busy="loading">
     <div v-if="pageCount > 1" class="pdf-preview__toolbar">
       <button type="button" :disabled="loading || pageNumber <= 1" @click="changePage(-1)">上一页</button>
       <span aria-live="polite">第 {{ pageNumber }} / {{ pageCount }} 页</span>
       <button type="button" :disabled="loading || pageNumber >= pageCount" @click="changePage(1)">下一页</button>
     </div>
     <p v-if="loading && !pageCount" class="pdf-preview__state">正在打开 PDF…</p>
+    <p v-else-if="loading && paintedPage !== pageNumber" class="pdf-preview__state">正在渲染 PDF…</p>
     <p v-if="error" class="pdf-preview__state pdf-preview__error" role="alert">{{ error }}</p>
-    <canvas v-show="!error && pageCount" ref="canvas" class="pdf-preview__canvas" role="img" :aria-label="`${title}，第 ${pageNumber} 页`"></canvas>
+    <canvas v-show="!error && pageCount && paintedPage === pageNumber" ref="canvas" class="pdf-preview__canvas" role="img" :aria-label="`${title}，第 ${pageNumber} 页`"></canvas>
   </div>
 </template>
 
