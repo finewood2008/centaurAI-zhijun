@@ -4,6 +4,12 @@ from dataclasses import asdict
 from .capabilities import require, CapabilityError
 
 
+def _stream_error_message(code):
+    if code == "MODEL_RESPONSE_EMPTY":
+        return "模型没有返回可显示的正文，请重试当前模式；原消息和章程草稿仍保留"
+    return "模型能力调用失败"
+
+
 class CapabilityProvider:
     def __init__(self, *, local_only=False):
         self.local_only = local_only
@@ -58,7 +64,8 @@ class CapabilityProvider:
             if not terminal:
                 raise CapabilityError("CAPABILITY_STREAM_INTERRUPTED", 502)
         except CapabilityError as exc:
-            raise ProviderError("模型能力调用失败", status_code=exc.status, code=exc.code, retryable=exc.status in {429, 502, 503, 504}) from None
+            raise ProviderError(_stream_error_message(exc.code), status_code=exc.status, code=exc.code,
+                                retryable=exc.status in {429, 502, 503, 504}) from None
 
     def complete_json(self, request):
         from mindos.zhijun.provider import ProviderError

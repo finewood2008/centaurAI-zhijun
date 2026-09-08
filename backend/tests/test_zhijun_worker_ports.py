@@ -61,6 +61,10 @@ def test_model_provider_fails_closed_and_stream_contract(monkeypatch):
     request = ChatRequest("system", [{"role": "user", "content": "test"}])
     provider = CapabilityProvider(local_only=True)
     assert list(provider.stream(request)) == [TextDelta("分段"), Done("stop")]
+    port.events = [{"type": "error", "code": "MODEL_RESPONSE_EMPTY"}]
+    with pytest.raises(ProviderError, match="没有返回可显示的正文") as empty:
+        list(provider.stream(request))
+    assert empty.value.code == "MODEL_RESPONSE_EMPTY"
     port.events = [{"type": "text", "text": "partial"}]
     with pytest.raises(ProviderError, match="模型能力调用失败"):
         list(provider.stream(request))

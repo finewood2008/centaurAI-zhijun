@@ -744,9 +744,14 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
     if intent == "charter" and omit:
         system.append("本轮选择不使用资料，尚未读取人生章程；不能凭历史回答猜测当前填写状态。")
     history.append({"role": "user", "content": content})
+    # Charter turns commonly include the current Markdown draft and ask the
+    # model to reconcile it conversationally. Reasoning models may consume a
+    # 1K completion budget before emitting any visible text, so give this
+    # explicit task the same output room as deep/deliberate conversations.
+    response_max_tokens = 4096 if depth == "deep" or mode == "deliberate" or intent == "charter" else 1024
     from .context_bridge import fit_for_request
     context_plan = fit_for_request(router, p, context_plan, "\n\n".join(system), history,
-        4096 if depth == "deep" or mode == "deliberate" else 1024)
+        response_max_tokens)
     if context_plan["system"]:
         system.append(context_plan["system"])
     # Budget selection changes visible evidence, never a planner's dependency chain.
@@ -787,7 +792,7 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
     # charter exception contract, not ordinary source consent/idempotency.
     exception_capable = any(c["control"] == "local_only" for c in charter_policy.scope_policy(router.scope)["controls"])
     req = ChatRequest(system="\n\n".join(system), messages=history,
-                      max_tokens=4096 if depth == "deep" or mode == "deliberate" else 1024,
+                      max_tokens=response_max_tokens,
                       effort="medium" if depth == "deep" or mode == "deliberate" else "low",
                       debug={"userText": content, "mode": router.conv.get("mode"), "turnMode": mode, "onboardingTopic": onboarding_topic,
                              "lightOnboarding": router.conv.get("mode") == "onboarding", "userTurns": sum(m["role"] == "user" for m in all_messages) + 1,
