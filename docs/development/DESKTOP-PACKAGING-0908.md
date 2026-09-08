@@ -24,24 +24,35 @@ npm ci
 npm run package:mac-arm64
 ```
 
-该入口依次执行 Shell 144 项测试、桌面 UI 12 项测试、Electron E2E 4 项、桌面 Vite 构建、sidecar 签名与配置生成、DMG/ZIP 构建，以及裸 App、DMG、ZIP 三份内容的签名和资源复验。最后把裸 App 移动到独立临时目录启动，通过本机 DevTools 端点确认 `zhijun://desktop/desktop.html#/` 已创建“知君”页面，再关闭测试进程并清理目录。
+该入口依次执行 Shell 146 项测试、桌面 UI 12 项测试、Electron E2E 4 项、桌面 Vite 构建、sidecar 签名与配置生成、DMG/ZIP 构建，以及裸 App、DMG、ZIP 三份内容的签名和资源复验。最后把裸 App 移动到独立临时目录启动，通过本机 DevTools 端点确认 `zhijun://desktop/desktop.html#/` 已创建“知君”页面，再关闭测试进程并清理目录。
+
+## PDF 原件预览
+
+Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中会出现空白页，并依赖浏览器扩展资源，不适合当前关闭插件、禁止 frame 的桌面安全策略。桌面端现固定使用 Apache-2.0 的 `pdfjs-dist@4.10.38`，由同源 `.mjs` Worker 把 PDF 页面绘制到 Canvas。PDF.js 5.x 使用的 `Uint8Array.toHex()` 与当前 Electron 37.10.3 运行时不兼容，因此没有使用 5.x。
+
+原件预览改为用户点击“查看 PDF 原件”后才打开。宿主返回 32 字节随机能力句柄对应的 `zhijun-media://session/<handle>`，页面切换、切盒、关闭预览或组件卸载时会立即中止读取、销毁 PDF.js 任务并关闭句柄。读取上限为 64 MiB；画布单轴上限 8192 像素、总像素上限 1600 万，PDF.js eval 被关闭。图片和音频继续直接使用支持 Range 的能力 URL，避免完整复制为 Blob 后增加内存和首帧等待。
+
+渲染器请求从协议黑名单改为精确允许 `zhijun://desktop`、合法 `zhijun-media` 句柄，以及受限的同源 Blob/图片 Data URL。`frame-src` 和 `object-src` 均为 `none`，Electron 插件保持关闭。自定义静态资源处理器已补充 `.mjs` JavaScript MIME，CSP 仅允许同源 Worker。
 
 ## 本次产物与验收
 
-源码基线为 `dev/zhijun-integrate-20260907` 的 `2b2aaa3` 加本轮打包代码。实际输出：
+源码基线为 `dev/zhijun-integrate-20260908` 的 `63f2f2e`。实际输出：
 
 | 产物 | 大小 | SHA-256 |
 | --- | ---: | --- |
-| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 107.7 MiB | `40f53051375bb6c9dcb3600f5edcb55da949f2054e94eb394a05af4b9b01d71e` |
-| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 106.9 MiB | `6b10130420ff2c1342fb915ac9ea9da1979675290d1af5bcef12be823f82d734` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 108.2 MiB | `c8cd64bf487153ab42fc9c32dc3fbbe42670d66ffbad5736d07fb8d49ff46b79` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `42ba3ef41bf0253fc49a5fec174b04b058dec5511b30fb5ce3c6aea237fe186e` |
 
 复验结果：
 
-- Shell 144 / Desktop UI 12 / Electron E2E 4 全部通过；桌面构建成功。
+- 完整 Web 86 项、Shell 146 项、Desktop UI 12 项、Electron E2E 4 项全部通过；桌面构建成功。
+- 真实 Electron 37.10.3 通过 `zhijun://desktop` 加载 PDF.js 4.10.38 Worker，并把两页 PDF 夹具的第一页绘制为 833×1178 Canvas；像素检查与导出图片均确认存在实际文字内容。
+- `npm audit --omit=dev --registry=https://registry.npmjs.org` 为 0 个漏洞；PDF.js 许可证为 Apache-2.0。
 - 裸 App、挂载后的 DMG App、解压后的 ZIP App 均通过 `codesign --verify --deep --strict`。
 - Bundle ID 为 `com.qeeshu.zhijun`，应用版本 `0.1.0`，麦克风用途说明存在。
 - ASAR 共 40 个条目，Shell、生产适配器、产品策略和半人马图标均存在；桌面页面与产品操作目录位于受控资源目录。
-- sidecar 为 macOS ARM64，签名后 SHA-256 为 `dc38813af2172276eeef174afacb5fca3647e2896f1470122eacae86e3b2f916`，包内配置一致。
+- sidecar 为 macOS ARM64，签名后 SHA-256 为 `b48b8ff6271bcb47b28008dad22a34fcafbbbe5dd792b97e09985c839eabfd67`，包内配置一致。
 - 将裸 App 复制到独立临时目录后，进程保持运行并创建一个标题为“今日来信 · 知君”的窗口，随后已正常关闭测试进程并清理临时目录。
+- 家庭盒管理面仍显示在线，但最终复验时本机到 `192.168.1.18:22` 超时，Direct 返回 `DIRECT_CONNECTION_UNAVAILABLE`，因此这次 PDF 渲染器改动采用真实 Electron + 本地 PDF 夹具验收；此前同一盒子的原件读取、隐私复核状态和 1977 字解析结果已完成真机验证。本条不把当前不可达状态写成盒端通过。
 
 `release/` 与 `package-resources/` 是构建输出，不提交 Git；重新打包会因签名时间戳产生不同的最终哈希，应以当次验证输出为准。
