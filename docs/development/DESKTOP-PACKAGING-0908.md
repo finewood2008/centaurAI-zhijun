@@ -63,3 +63,14 @@ Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中�
 - 盒端 8618、8619、8620 的 `/api/health` 均返回 200；新知君容器为 healthy，`RestartCount=0`、`OOMKilled=false`，整机 boot ID 未变化。PDF 内嵌 CFF 字体会产生 Chromium OTS 警告，但实际页面已经通过像素验收，不影响本文件显示。
 
 `release/` 与 `package-resources/` 是构建输出，不提交 Git；重新打包会因签名时间戳产生不同的最终哈希，应以当次验证输出为准。
+
+## 在线理解修复后的重新打包
+
+在线模型 403 根因修复后重新执行完整 `package:mac-arm64` 流水线。新包包含稳定错误码的具体中文提示；当盒端外发治理、供应商域名或模型流媒体类型配置错误时，不再只显示通用 `请求失败（403）`。本轮输出为：
+
+| 产物 | 大小 | SHA-256 |
+| --- | ---: | --- |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 108.2 MiB | `42b3409c78869951107042e8eeb7e248cf7e60e827e0ac40f641daf334ed7714` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `8ff38baf660627b6547627bde1807007b729f0d79d40aaafdd984df6b3552c4d` |
+
+Shell 146 项、桌面 UI 12 项、Electron E2E 4 项均通过；签名后的 sidecar SHA-256 为 `995597515dee69a38d1bf80af7e5eca3b6898d8526901745d25cad2ec441a93b`。裸 App、DMG、ZIP 资源和签名检查通过，应用从独立临时目录启动后页面为 `zhijun://desktop/desktop.html#/`，标题为“今日来信 · 知君”。该包仍是未公证的内部测试安装包。

@@ -54,6 +54,17 @@ export interface MindosAccessContext {
 /** API 根路径；SSE 流式客户端（services/sse.ts）与 request 共用。 */
 export const API_BASE = BASE
 
+const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  REDACTION_NOT_READY: '部分资料仍在完成隐私处理，请稍后重试。',
+  MATERIAL_PRIVACY_NOT_READY: '这份资料仍在完成隐私处理，请稍后重试。',
+  outbound_governance_disabled: '盒子的在线理解授权服务尚未启用，请更新盒子配置后重试。',
+  remote_model_target_not_allowlisted: '在线模型地址未通过盒子的网络安全校验，请检查供应商服务地址。',
+  MODEL_STREAM_INCOMPLETE: '在线模型响应提前中断，请稍后重试。',
+  MODEL_STREAM_MEDIA_TYPE_INVALID: '在线模型服务地址返回了网页而不是模型数据，请检查地址是否包含正确的 API 路径。',
+  UNSUPPORTED_MEDIA_TYPE: '请求的媒体类型不受支持，请检查文件或请求格式。',
+  WORKSPACE_MEDIA_TYPE_INVALID: '盒子返回的媒体类型不符合接口要求，请更新盒端服务后重试。',
+}
+
 /**
  * 统一请求头：system-models 的读取与写入接口均要求 X-Requested-By——它让跨站请求
  * 触发 CORS 预检，而后端只接受 loopback 请求。统一在 API 边界注入，避免 GET 漏带；
@@ -101,11 +112,7 @@ export async function throwApiError(res: Response): Promise<never> {
       code = typeof body.error.code === 'string' ? body.error.code : undefined
     }
     if (!code && body && typeof body.code === 'string') code = body.code
-    if (message === fallbackMessage && code === 'REDACTION_NOT_READY') {
-      message = '部分资料仍在完成隐私处理，请稍后重试。'
-    } else if (message === fallbackMessage && code === 'MATERIAL_PRIVACY_NOT_READY') {
-      message = '这份资料仍在完成隐私处理，请稍后重试。'
-    }
+    if (message === fallbackMessage && code && API_ERROR_MESSAGES[code]) message = API_ERROR_MESSAGES[code]
   } catch {
     // 忽略非 JSON 响应体
   }
