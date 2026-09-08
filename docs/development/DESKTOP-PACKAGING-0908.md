@@ -38,12 +38,12 @@ Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中�
 
 ## 本次产物与验收
 
-源码基线为 `dev/zhijun-integrate-20260908` 的 `f0b2bc4`。实际输出：
+源码基线为 `dev/zhijun-integrate-20260908` 的 `6dec0cb`。实际输出：
 
 | 产物 | 大小 | SHA-256 |
 | --- | ---: | --- |
-| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 108.2 MiB | `9b8d171032ac9a2b1adb73b4c96ff8aa6165331ebbc5e5f4839f34822cab3c5d` |
-| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `2d382fd320cee5fda47c4a2d82c3f5ed5c59035983978415f9137a5a8caf2cbf` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 108.2 MiB | `a345ac147c1a9623a4dac38be84a356f6598447da6a6b13cba076cd9a9b01d10` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `c498f18027b66f77eb629cede735e1b3b0dbe2ebb61e6ee955ddebf295229b85` |
 
 复验结果：
 
@@ -53,9 +53,10 @@ Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中�
 - 裸 App、挂载后的 DMG App、解压后的 ZIP App 均通过 `codesign --verify --deep --strict`。
 - Bundle ID 为 `com.qeeshu.zhijun`，应用版本 `0.1.0`，麦克风用途说明存在。
 - ASAR 共 40 个条目，Shell、生产适配器、产品策略和半人马图标均存在；桌面页面与产品操作目录位于受控资源目录。
-- sidecar 为 macOS ARM64，签名后 SHA-256 为 `9da2041c1069468affec2f00642f621c05fb24891d6bfdc5ebcd983ce19188c4`，包内配置一致。
+- sidecar 为 macOS ARM64，签名后 SHA-256 为 `0bedb9304c29c33f061b06c753865bc5c2e829748e2acd7ee3f69966543d6761`，包内配置一致。
 - 将裸 App 复制到独立临时目录后，进程保持运行并创建一个标题为“今日来信 · 知君”的窗口，随后已正常关闭测试进程并清理临时目录。
 - 公司网络下使用本次已签裸 App 和已保存的加密登录状态，成功连接设备名 `AMD-A2A-248`；设备名称优先于设备 ID 显示。原材料列表加载约 1007 ms，含 3 条真实资料；PDF 详情首屏约 504 ms。
+- 对话详情加载改为主详情优先、辅助区错峰挂载并取消过期请求。开发版连接同一公司盒连续交替打开已有会话，6 次详情可用时间为 395、588、486、631、1855、2356 ms；该测量发生在 Gateway 扫描节流上线前，后两次仍反映盒端历史任务与网络波动。
 - 对盒内 1.8 MiB、12 页的真实 PDF 首次点击预览，4114 ms 内完成下载与第 1 页绘制。过程中先后出现“正在打开 PDF”和“正在渲染 PDF”，绘制完成前 Canvas 始终隐藏；完成画布为 560×315，对 200×200 缩略采样得到 23581 个非白像素、13086 个深色像素，确认不再是空白页。
 - 同一材料的隐私状态返回“需要人工复核”，当前账号明确显示具有原件权限；“查看并复核”在约 462 ms 内成功打开两个受控候选块，关闭后页面清除了候选 DOM，没有提交批准、拒绝或修正写操作。
 - 盒端 8618、8619、8620 的 `/api/health` 均返回 200；新知君容器为 healthy，`RestartCount=0`、`OOMKilled=false`，整机 boot ID 未变化。PDF 内嵌 CFF 字体会产生 Chromium OTS 警告，但实际页面已经通过像素验收，不影响本文件显示。
