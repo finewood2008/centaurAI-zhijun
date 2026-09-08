@@ -72,3 +72,5 @@ Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本�
 办公室连接家里的 `AMD AI盒子` 时，Admin 登录、设备在线列表、Connectivity ticket、Gateway WSS 信令和远端 SDP answer 均已完成，随后在 ICE/DTLS/DataChannel 阶段返回 `DIRECT_CONNECTION_UNAVAILABLE · DIRECT_TIMEOUT`。因此“在线”只证明盒子的信令通道在线，不代表办公室与家庭网络可以建立端到端 UDP 直连。桌面错误卡片会显示 SDK 允许公开的“直连超时”或“ICE 建链失败”，但不会展示私有地址、候选地址或凭据。同一应用随即重选公司盒 `AMD-A2A-248`，约 6 秒内恢复完整工作区，证明本次修改没有破坏正常 Direct 链路。
 
 当前产品合同固定为 `SOVEREIGN_DIRECT_ONLY` / `DIRECT_ONLY`，SDK 只接受 STUN，不会在 Direct 失败时自动转发业务流量。异地网络若受家庭路由器、运营商 CGNAT 或 UDP 防火墙限制，需要更换可穿透的网络，或另立跨 SDK、Admin、Gateway 与盒端 Agent 的 TURN 中继能力变更；不能只在前端改成普通 HTTP 直连盒子 IP。
+
+2026-09-08 在 Mac `192.168.100.118/24` 上再次复验：Admin 会话恢复及两台在线设备列表均成功，公网 HTTPS/WSS 入口与 UDP STUN 正常；公司、家庭设备分别连接仍都返回 `SDK_DIRECT_UNAVAILABLE / DIRECT_TIMEOUT`。使用真实 Direct 失败 session 申请 `TURN_ONLY`，线上 Admin 返回 `APPLICATION_AUTHORIZATION_DENIED`。这确认当前远程失败位于产品明确禁止回退的 Direct 路径，而不是 renderer/API 路由遗漏。

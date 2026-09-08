@@ -107,4 +107,10 @@ Gateway 现网约有 802 个 jobs、2444 个 events 和 3249 个文件。事件�
 
 在尚未部署新的 Gateway 扫描节流时，使用开发版连接公司 `AMD-A2A-248`，对两段已有会话交替打开 6 次，详情可用时间为 395、588、486、631、1855、2356 ms。此前同一盒子的旧构建连续切换约为 7.2–7.7 秒；第一版仅减少首屏请求后会因辅助请求立即回灌，后续仍升至 9 秒以上。新结果说明首要内容不再长期排在辅助任务之后，但后两次仍受盒端任务创建扫描和约 96 ms 平均网络往返影响，不能把它描述为稳定低于一秒。
 
-本轮前端 86/86、Shell 146/146、Desktop UI 12/12、Electron E2E 4/4 通过。完整签名包已重新构建并完成资源校验与启动冒烟测试。Gateway 侧节流提交已通过 104 项定向回归；由于验收期间公司盒 `192.168.0.7` 在容器切换前失去网络响应，该服务端提交尚未切换为运行版本，恢复网络后须补做部署和同一组连续切换复测。
+本轮前端 86/86、Shell 146/146、Desktop UI 12/12、Electron E2E 4/4 通过。完整签名包已重新构建并完成资源校验与启动冒烟测试。Gateway 侧节流提交已通过 104 项定向回归；验收期间 Mac 从公司盒所在的 `192.168.0.x` 切换到 `192.168.100.118/24`，旧私网地址不再可路由。该服务端提交尚未切换为运行版本，回到公司盒所在网段后须补做部署和同一组连续切换复测。
+
+### 换网后的 Direct 连接边界（0908）
+
+在 `192.168.100.118/24` 网络使用最新签名包复验，账号加密会话恢复成功，Admin 返回公司与家庭两台设备均在线；Admin HTTPS、Gateway 443 及 UDP STUN 3478 均可达，STUN Binding 能返回当前公网映射。逐台连接均在已取票后的 Direct ICE/DataChannel 阶段返回 `SDK_DIRECT_UNAVAILABLE / DIRECT_TIMEOUT`。因此两台同时失败不能归因于资料 API、Gateway job 或盒端 Data Engine。
+
+使用一次真实 Direct 超时的 session 证据继续申请 `TURN_ONLY` 票据，线上 Admin 对 `zhijun-desktop` 返回 `APPLICATION_AUTHORIZATION_DENIED`。当前客户端配置也固定为 `SOVEREIGN_DIRECT_ONLY / DIRECT_ONLY`，sidecar 1.2.1 只接受 STUN 票据。要支持这类受限 NAT 网络，需要先确定产品是否允许加密 TURN 中继，随后同时修改 Admin 应用授权、Connectivity SDK/sidecar 和桌面路径状态展示；不能通过增加 Direct 重试、访问盒子私网 IP 或在前端静默改走普通 HTTP 解决。

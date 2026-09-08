@@ -4,6 +4,8 @@
 
 配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
 
+当前网络策略为 `SOVEREIGN_DIRECT_ONLY / DIRECT_ONLY`。Admin 与 Gateway 只承担认证、票据和信令，业务数据通过 WebRTC DataChannel；STUN 可达不等于任意两端 NAT 都能建立直连。2026-09-08 在另一外部网络对公司、家庭两台盒均复现 `DIRECT_TIMEOUT`，且线上 Admin 拒绝知君的 `TURN_ONLY` 票据。TURN 中继是跨 Admin、SDK/sidecar、Agent 与 UI 的独立能力和数据路径决策，不属于前端重试优化。
+
 ![知君当前完整产品架构](assets/architecture-0905.svg)
 
 ## 1. 当前实现与历史证据

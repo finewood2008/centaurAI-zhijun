@@ -29,6 +29,8 @@
 
 ## 3. 身份与网络合同
 
+2026-09-08 换网复验补充：Mac 位于 `192.168.100.118/24` 时，Admin 登录、两台设备在线列表、公网 Gateway 443 和 UDP STUN 3478 均正常，但公司与家庭盒都在 Direct 阶段返回 `DIRECT_TIMEOUT`。携带该失败会话申请 `TURN_ONLY` 时，线上 Admin 对 `zhijun-desktop` 返回 `APPLICATION_AUTHORIZATION_DENIED`。现网合同仍是 `SOVEREIGN_DIRECT_ONLY / DIRECT_ONLY`；跨 NAT 成功不是当前版本保证。若产品决定支持 TURN，必须显式显示中继路径并同步升级 Admin 授权、SDK/sidecar 和桌面状态合同。
+
 ### 3.1 v2 的 10 条固定 RPC
 
 以下均相对 `/api/mindos/zhijun`；`{id}` 必须是 32 位小写 hex。
