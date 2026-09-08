@@ -2339,8 +2339,8 @@ export function updateConversation(conversationId: string, payload: { expectedRe
   })
 }
 
-export function getConversation(conversationId: string) {
-  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`)
+export function getConversation(conversationId: string, signal?: AbortSignal) {
+  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`, { signal })
 }
 
 export function getConversationOutcomes(conversationId: string) {

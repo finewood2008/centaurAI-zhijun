@@ -27,9 +27,11 @@ assert.deepEqual(retainNewerConversationMetadata(delayed, newest), { ...newest, 
 assert.equal(retainNewerConversationMetadata(newest, delayed), newest)
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8')
-const [page, list, rename, api] = await Promise.all([
+const [page, list, rename, api, charter, replyAssistance, routingPanel] = await Promise.all([
   read('../src/pages/ConversationPage.vue'), read('../src/components/conversation/ConversationList.vue'),
   read('../src/components/conversation/RenameConversationDialog.vue'), read('../src/services/api.ts'),
+  read('../src/components/conversation/CharterConversation.vue'), read('../src/components/conversation/ReplyAssistance.vue'),
+  read('../src/components/conversation/RoutingPanel.vue'),
 ])
 assert.match(page, /conversationListAbort\?\.abort\(\)/)
 assert.match(page, /conversationListGate\.isCurrent\(ticket\)/)
@@ -41,7 +43,7 @@ assert.match(page, /res\.hasMore/)
 assert.match(page, /current\.value = rememberConversationMetadata\(detail\.conversation\)/)
 assert.match(page, /messageId\) void revealMessage\(messageId\)/)
 assert.match(page, /typeof route\.query\.message === 'string'\) return/)
-assert.match(page, /await Promise\.allSettled\(\[refreshOutcomes\(conversationId, true\), loadMapClaims\(\)\]\)/)
+assert.match(page, /if \(current\.value\?\.mode === 'onboarding'\) reads\.push\(loadMapClaims\(\)\)/)
 assert.match(page, /await Promise\.allSettled\(\[loadConversations\(\), refreshCurrentMetadata\(conversationId\)\]\)/)
 assert.match(page, /await loadConversations\(\)[\s\S]*await Promise\.allSettled\(\[loadStatus\(\), loadStats\(\)\]\)/)
 const metadataRefresh = page.slice(page.indexOf('async function refreshCurrentMetadata('), page.indexOf('async function manageConversation('))
@@ -61,7 +63,19 @@ assert.match(rename, /@cancel\.prevent="close"/)
 assert.match(rename, /watch\(\(\) => props\.conversation\?\.id/)
 assert.match(rename, /returnFocus\.focus\(\{ preventScroll: true \}\)/)
 assert.match(api, /options: number \| ConversationListOptions = 50, signal\?: AbortSignal/)
+assert.match(api, /getConversation\(conversationId: string, signal\?: AbortSignal\)/)
 assert.match(api, /method: 'PATCH'/)
+const detailLoad = page.slice(page.indexOf('async function loadConversation('), page.indexOf('function resetToLanding('))
+assert.ok(detailLoad.indexOf('current.value = null') < detailLoad.indexOf('await getConversation(id, controller.signal)'), 'old content is cleared before loading another conversation')
+assert.match(detailLoad, /conversationDetailAbort\?\.abort\(\)/)
+assert.match(page, /conversationId: importsConversationId/)
+assert.match(page, /schedule\(1, 600\)[\s\S]*schedule\(5, 3000/)
+assert.match(page, /<RoutingPanel v-if="!currentId \|\| loadedConversationId"/)
+assert.match(page, /<AlignmentPrivacy v-if="loadedConversationId && conversationAuxPhase >= 2 && routingMode === 'legacy'"/)
+assert.match(charter, /watch\(\(\) => props\.conversationId,/)
+assert.doesNotMatch(charter, /watch\(\(\) => \[props\.conversationId, props\.messageId\]/)
+assert.match(replyAssistance, /routingRequest<\{ batch: ReplyBatch \| null \}>\(path\(\), 'GET', undefined, abort\.signal\)/)
+assert.match(routingPanel, /routingRequest\(target, 'GET', undefined, controller\.signal\)/)
 const composer = await read('../src/components/conversation/Composer.vue')
 assert.match(composer, /previous \|\| LANDING_DRAFT/)
 assert.match(composer, /storedDraft\(next \|\| LANDING_DRAFT\)/)

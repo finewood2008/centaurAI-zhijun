@@ -36,6 +36,7 @@ let sequence = 0
 let mutation = 0
 let alive = true
 let pendingController: AbortController | null = null
+let readController: AbortController | null = null
 function begin() {
   pendingController?.abort(); pendingController = null
   const ticket = ++mutation, target = path.value
@@ -44,15 +45,20 @@ function begin() {
 }
 async function refresh() {
   if (busy.value) return
+  readController?.abort()
+  const controller = new AbortController()
+  readController = controller
   const target = path.value, ticket = ++sequence
   try {
-    const next = await routingRequest(target)
+    const next = await routingRequest(target, 'GET', undefined, controller.signal)
     if (target !== path.value || ticket !== sequence) return
     state.value = next; error.value = ''; emit('mode', next.mode.mode)
-  } catch (e) { if (ticket === sequence) error.value = e instanceof Error ? e.message : '设置读取失败' }
+  } catch (e) { if (ticket === sequence && !controller.signal.aborted) error.value = e instanceof Error ? e.message : '设置读取失败' }
+  finally { if (readController === controller) readController = null }
 }
 watch(path, () => {
   pendingController?.abort(); pendingController = null
+  readController?.abort(); readController = null
   mutation++; sequence++; busy.value = false
   open.value = false; state.value = null; error.value = ''; notice.value = ''
   acknowledge.value = false; configureDefault.value = false; consentAcknowledge.value = false
@@ -60,7 +66,7 @@ watch(path, () => {
   includeFiles.value = false; includeCharter.value = false
   void refresh()
 }, { immediate: true })
-onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort() })
+onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort(); readController?.abort() })
 function show() { open.value = true; void refresh() }
 async function change(mode: string) {
   const valid = begin(), target = path.value
