@@ -32,16 +32,18 @@ Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中�
 
 原件预览改为用户点击“查看 PDF 原件”后才打开。宿主返回 32 字节随机能力句柄对应的 `zhijun-media://session/<handle>`，页面切换、切盒、关闭预览或组件卸载时会立即中止读取、销毁 PDF.js 任务并关闭句柄。读取上限为 64 MiB；画布单轴上限 8192 像素、总像素上限 1600 万，PDF.js eval 被关闭。图片和音频继续直接使用支持 Range 的能力 URL，避免完整复制为 Blob 后增加内存和首帧等待。
 
+真机复验发现，PDF.js 首次绘制期间 Canvas 已经进入布局，用户会短暂看到一块白色区域；容器随后变化宽度时又可能取消正在进行的绘制。本轮增加明确的“正在打开 PDF / 正在渲染 PDF”状态，只在当前页绘制完成后展示 Canvas；空白绘制会在下一次 paint 后重试一次。尺寸监听只在当前任务结束后重绘，并等待旧任务取消完成后再复用 Canvas，避免首屏白页和重复取消。
+
 渲染器请求从协议黑名单改为精确允许 `zhijun://desktop`、合法 `zhijun-media` 句柄，以及受限的同源 Blob/图片 Data URL。`frame-src` 和 `object-src` 均为 `none`，Electron 插件保持关闭。自定义静态资源处理器已补充 `.mjs` JavaScript MIME，CSP 仅允许同源 Worker。
 
 ## 本次产物与验收
 
-源码基线为 `dev/zhijun-integrate-20260908` 的 `63f2f2e`。实际输出：
+源码基线为 `dev/zhijun-integrate-20260908` 的 `f0b2bc4`。实际输出：
 
 | 产物 | 大小 | SHA-256 |
 | --- | ---: | --- |
-| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 108.2 MiB | `c8cd64bf487153ab42fc9c32dc3fbbe42670d66ffbad5736d07fb8d49ff46b79` |
-| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `42ba3ef41bf0253fc49a5fec174b04b058dec5511b30fb5ce3c6aea237fe186e` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | 108.2 MiB | `9b8d171032ac9a2b1adb73b4c96ff8aa6165331ebbc5e5f4839f34822cab3c5d` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | 107.4 MiB | `2d382fd320cee5fda47c4a2d82c3f5ed5c59035983978415f9137a5a8caf2cbf` |
 
 复验结果：
 
@@ -51,8 +53,11 @@ Electron/Chromium 的内置 PDF 查看器在 `zhijun-media:` 自定义协议中�
 - 裸 App、挂载后的 DMG App、解压后的 ZIP App 均通过 `codesign --verify --deep --strict`。
 - Bundle ID 为 `com.qeeshu.zhijun`，应用版本 `0.1.0`，麦克风用途说明存在。
 - ASAR 共 40 个条目，Shell、生产适配器、产品策略和半人马图标均存在；桌面页面与产品操作目录位于受控资源目录。
-- sidecar 为 macOS ARM64，签名后 SHA-256 为 `b48b8ff6271bcb47b28008dad22a34fcafbbbe5dd792b97e09985c839eabfd67`，包内配置一致。
+- sidecar 为 macOS ARM64，签名后 SHA-256 为 `9da2041c1069468affec2f00642f621c05fb24891d6bfdc5ebcd983ce19188c4`，包内配置一致。
 - 将裸 App 复制到独立临时目录后，进程保持运行并创建一个标题为“今日来信 · 知君”的窗口，随后已正常关闭测试进程并清理临时目录。
-- 家庭盒管理面仍显示在线，但最终复验时本机到 `192.168.1.18:22` 超时，Direct 返回 `DIRECT_CONNECTION_UNAVAILABLE`，因此这次 PDF 渲染器改动采用真实 Electron + 本地 PDF 夹具验收；此前同一盒子的原件读取、隐私复核状态和 1977 字解析结果已完成真机验证。本条不把当前不可达状态写成盒端通过。
+- 公司网络下使用本次已签裸 App 和已保存的加密登录状态，成功连接设备名 `AMD-A2A-248`；设备名称优先于设备 ID 显示。原材料列表加载约 1007 ms，含 3 条真实资料；PDF 详情首屏约 504 ms。
+- 对盒内 1.8 MiB、12 页的真实 PDF 首次点击预览，4114 ms 内完成下载与第 1 页绘制。过程中先后出现“正在打开 PDF”和“正在渲染 PDF”，绘制完成前 Canvas 始终隐藏；完成画布为 560×315，对 200×200 缩略采样得到 23581 个非白像素、13086 个深色像素，确认不再是空白页。
+- 同一材料的隐私状态返回“需要人工复核”，当前账号明确显示具有原件权限；“查看并复核”在约 462 ms 内成功打开两个受控候选块，关闭后页面清除了候选 DOM，没有提交批准、拒绝或修正写操作。
+- 盒端 8618、8619、8620 的 `/api/health` 均返回 200；新知君容器为 healthy，`RestartCount=0`、`OOMKilled=false`，整机 boot ID 未变化。PDF 内嵌 CFF 字体会产生 Chromium OTS 警告，但实际页面已经通过像素验收，不影响本文件显示。
 
 `release/` 与 `package-resources/` 是构建输出，不提交 Git；重新打包会因签名时间戳产生不同的最终哈希，应以当次验证输出为准。
