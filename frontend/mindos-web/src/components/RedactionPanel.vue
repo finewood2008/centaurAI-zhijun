@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
 import { api, type RedactionStatus } from '@/services/api'
+import { shouldRefreshDetailAfterRedactionTransition } from '@/composables/redactionTransition'
 
 const props = defineProps<{ materialId: string }>()
 const emit = defineEmits<{ updated: [] }>()
@@ -29,7 +30,7 @@ async function refresh(current = epoch) {
     const oldState = status.value?.state
     status.value = next
     error.value = ''
-    if (next.state !== oldState && ['ready', 'pending_summary'].includes(next.state)) emit('updated')
+    if (shouldRefreshDetailAfterRedactionTransition(oldState, next.state)) emit('updated')
     if (['pending', 'processing', 'pending_summary', 'stale'].includes(next.state) && polls++ < 120) {
       timer = setTimeout(() => { void refresh(current) }, 3000)
     }

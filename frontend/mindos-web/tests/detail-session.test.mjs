@@ -6,7 +6,10 @@
 //
 // 运行：node --experimental-strip-types tests/detail-session.test.mjs
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { createSessionGate } from '../src/composables/sessionGate.ts'
+
+const detailSource = await readFile(new URL('../src/pages/MaterialDetailPage.vue', import.meta.url), 'utf8')
 
 function deferred() {
   let resolve
@@ -111,6 +114,8 @@ async function run() {
   await testDelayedDetailResponseDoesNotOverwriteNewMaterial()
   await testDelayedRelatedResponseDoesNotOverwriteNewMaterial()
   await testRetryTargetFrozenBeforeAwait()
+  assert.match(detailSource, /async function loadDetail\(materialId: string, options: \{ background\?: boolean \} = \{\}\)[\s\S]*?stopCardIndexPolling\(\)/)
+  assert.match(detailSource, /pollSession !== cardIndexPollSession \|\| detail\.value\?\.materialId !== materialId/)
   console.log('detail-session: 3 tests OK')
 }
 

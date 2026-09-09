@@ -37,8 +37,17 @@ let loadedOnce = false
 let disposed = false
 const materialLoadGate = createSessionGate()
 
+const activeKnowledgeCardStates = new Set<NonNullable<UploadResult['knowledgeCard']>['state']>([
+  'generating', 'confirming', 'indexing',
+])
+
 function hasActiveMaterial(items: UploadResult[]) {
-  return items.some((item) => item.status === 'uploaded' || item.status === 'queued' || item.status === 'processing')
+  return items.some((item) => (
+    item.status === 'uploaded'
+    || item.status === 'queued'
+    || item.status === 'processing'
+    || Boolean(item.knowledgeCard && activeKnowledgeCardStates.has(item.knowledgeCard.state))
+  ))
 }
 
 function stopRefreshTimer() {

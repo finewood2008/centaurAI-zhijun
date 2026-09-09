@@ -10,6 +10,13 @@ const compiled = ts.transpileModule(compileScript(parse(source).descriptor, { id
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText
 const deferred = () => { let resolve; const promise = new Promise(yes => { resolve = yes }); return { promise, resolve } }
+const waitFor = async (predicate, timeoutMs = 200) => {
+  const deadline = Date.now() + timeoutMs
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('waitFor timed out')
+    await new Promise(resolve => setImmediate(resolve))
+  }
+}
 const material = (materialId, status = 'available') => ({
   materialId, fileName: `${materialId}.txt`, fileType: 'document', status, jobId: '', errorMessage: null,
   folder: '', folderId: null, createdAt: '2026-09-07T00:00:00Z', materialFamilyId: materialId,
@@ -112,6 +119,56 @@ test('an accepted upload replaces its transient row before the follow-up listing
   assert.equal(f.ui.importing.value, false)
   assert.equal(f.toasts.at(-1).type, 'success')
   f.close()
+})
+
+test('knowledge-card transition states keep refreshing after material processing is complete', async () => {
+  const originalSetTimeout = globalThis.setTimeout
+  const originalClearTimeout = globalThis.clearTimeout
+  const timers = []
+  let timerId = 0
+  globalThis.setTimeout = (callback, delay) => {
+    const timer = { id: ++timerId, callback, delay, active: true }
+    timers.push(timer)
+    return timer.id
+  }
+  globalThis.clearTimeout = (id) => {
+    const timer = timers.find(candidate => candidate.id === id)
+    if (timer) timer.active = false
+  }
+
+  let reads = 0
+  const states = ['generating', 'confirming', 'indexing', 'draft']
+  const card = state => ({ state, knowledgeId: null, indexState: null, errorCode: null })
+  const f = fixture({
+    listMaterials: async () => {
+      reads += 1
+      return {
+        items: [{
+          ...material('card-row'),
+          knowledgeCard: card(states[reads - 1]),
+        }],
+      }
+    },
+  })
+  try {
+    await f.ui.loadMaterials()
+    for (const [index, state] of states.slice(0, -1).entries()) {
+      const scheduled = timers.find(timer => timer.active)
+      assert.equal(scheduled?.delay, 1800, `a ${state} card must schedule another list read`)
+      scheduled.active = false
+      scheduled.callback()
+      await waitFor(() => reads === index + 2)
+    }
+    assert.equal(
+      timers.some(timer => timer.active),
+      false,
+      'a draft card is terminal for automatic list refresh',
+    )
+  } finally {
+    f.close()
+    globalThis.setTimeout = originalSetTimeout
+    globalThis.clearTimeout = originalClearTimeout
+  }
 })
 
 assert.match(source, /v-else-if="error && !displayItems\.length"/)

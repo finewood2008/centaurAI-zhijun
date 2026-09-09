@@ -106,3 +106,33 @@ Shell 146 项、桌面 UI 12 项、Electron E2E 4 项均通过；签名后的 si
 签名后的 sidecar SHA-256 为 `43ff4b11bb9f2311551b41c0a4ec915dfb1a133e2d978a03e152ce5cabc78300`。裸 App、DMG、ZIP 的签名与资源复验通过，独立启动冒烟检查成功。最新 App 已安装到 `/Applications/知君.app`，安装前版本保存在 `/Applications/知君.app.before-standing-consent-20260908`。
 
 公司盒真机验收中，默认授权关闭后界面立即恢复“每次在线发送仍会单独确认”；重新明确勾选范围并启用后，新建在线对话连续两次收到指定的 DeepSeek 回复，均未弹出外发确认。在线通道独立测试成功，耗时约 1496 ms。盒端容器保持 `healthy`、`RestartCount=0`、`OOMKilled=false`。
+
+## 材料草稿轮询修复后的重新打包
+
+材料处理完成不再等同于知识卡片处理完成。原材料列表会在卡片处于 `generating`、`confirming` 或 `indexing` 时继续局部读取，进入草稿或其他终态后停止；已有表格在后台读取期间保持显示。详情页对生成中的草稿使用独立、可取消且最长 200 秒的轮询，不再依赖摘要或分析任务碰巧触发刷新。切换材料、卸载页面、用户开始编辑、草稿进入终态或达到时限都会停止；每次异步返回前复核材料、revision 和编辑状态，避免旧结果覆盖新页面或本地修改。旧知识卡片索引轮询也增加连接代次校验，阻止已取消的在途请求重新挂起定时器。
+
+完整前端 93 项、Shell 155 项、Desktop UI 15 项和 Electron E2E 4 项通过，TypeScript 检查和桌面生产构建成功。完整 `package:mac-arm64` 流水线生成：
+
+| 产物 | SHA-256 |
+| --- | --- |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | `72b65e2639384152330c761db493e633c2936014390dc5d1fefbdbe7c21fd5b8` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | `8a3052f7f627c25f7315e5be44b9ba08e7a1dbc3d45d5f01b103aafa866f9208` |
+
+签名后的 sidecar SHA-256 为 `30f3c59b87c7d56d2f94528eae2247aba4afb3bf61a1996371e3619bd848d105`。裸 App、DMG、ZIP 的签名和资源复验通过，独立临时目录启动冒烟检查得到 `zhijun://desktop/desktop.html#/` 和标题“今日来信 · 知君”。该桌面修复与 Data Engine 的公开草稿契约修复配套：盒端生成结果可正常返回，桌面能够在后台过渡期间更新对应区域。
+
+## 材料详情局部刷新与最终真机验收
+
+隐私状态组件原先在首次读取到 `ready` 时也向父页面发送 `updated`。父页面收到事件后进入全局 `loading`，卸载隐私组件；重新挂载后组件再次把同一个初始状态当作更新，形成持续的详情全局刷新循环。用户看到的“正在读取状态”和页面闪动来自这个循环，它也放大了盒端读取压力。
+
+隐私组件现在只在已有前态且状态真正变化到终态时通知父页面。真实状态变化后的详情同步改为后台加载：保留当前详情、草稿输入和滚动位置，请求失败只显示局部错误。新增状态迁移回归覆盖首次水合不刷新、真实状态变化刷新，以及父页面必须使用后台加载；材料草稿轮询仍保留材料 ID、revision、本地编辑和连接代次保护。
+
+完整 `package:mac-arm64` 流水线通过：Shell **155 passed**、Desktop UI **15 passed**、Electron E2E **4 passed**、前端 **94 passed**，TypeScript 和桌面生产构建成功。裸 App、DMG、ZIP 的签名与资源复验通过，独立启动冒烟成功。最终产物为：
+
+| 产物 | SHA-256 |
+| --- | --- |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.dmg` | `58499c92755dc15c0ca4ebc5517866906855d62730a2cb5cd8de1ee3e80919b5` |
+| `frontend/shell/release/Zhijun-0.1.0-mac-arm64.zip` | `77ebedc373f0116fcc1d7e715298c48b506ccd4373593007d3fef7bff42a7400` |
+
+签名后的 sidecar SHA-256 为 `a5c46e37eb6122cde44dc08a779e0ea1ec5b46607f52cd33f74540dbd54bb8ce`。新 App 已安装到 `/Applications/知君.app`，安装前版本保存在 `/Applications/知君.app.before-material-detail-20260909`。
+
+家庭盒真机验收中，使用系统安全存储中已保存的账号完成登录并连接 `AMD AI盒子`。材料 `半人马组织介绍.md` 的知识卡片标题和正文均非空，原始 Markdown 正文完整展示，隐私状态为“安全正文与摘要已就绪”；连续观察 12 秒没有出现“正在读取状态”“正在加载资料详情”或“材料详情缺少完整公开字段”。随后交替执行 20 次真实详情/草稿产品桥接读取，全部成功，页面保持当前路由和已有内容。盒端进程保持 active、`NRestarts=0`，文件描述符为 53，`card_ledger.db` 相关描述符为 0。

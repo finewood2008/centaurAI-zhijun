@@ -8,7 +8,7 @@ import { FileText } from 'lucide-vue-next'
 import { api, type ContentPart, type DerivedRelations, type DerivedTagSuggestions, type DerivedEntities, type EmbeddedImage, type EntityExtraction, type EntityType, type MaterialAnalysis, type MaterialDetail, type MaterialDraftCard, type MaterialImpact, type RelatedRecommendation, type RelationExtraction, type TranscriptSegment, type UploadResult } from '@/services/api'
 import { createSummaryPoller } from '@/composables/useSummaryPolling'
 import { createAnalysisPoller } from '@/composables/useAnalysisPolling'
-import { createGeneratedDraftRefresher } from '@/composables/useGeneratedDraftRefresh'
+import { createGeneratedDraftPoller } from '@/composables/useGeneratedDraftRefresh'
 import { createSessionGate } from '@/composables/sessionGate'
 import { createEntityTagAdder } from '@/composables/useEntityTagAdd'
 import { materialStatusLabel } from '@/shared/status'
@@ -90,6 +90,7 @@ const applyingVersionAction = ref('')
 const versionActions = ref<Record<string, 'keep' | 'replace' | 'keepBoth' | 'manual'>>({})
 let versionPollTimer: ReturnType<typeof setTimeout> | null = null
 let cardIndexPollTimer: ReturnType<typeof setTimeout> | null = null
+let cardIndexPollSession = 0
 // P14-04/P0-1 智能分析（标签候选 / 实体抽取 / 关系三元组）：来自派生缓存，异步生成，轮询防串台。
 // 候选与正式标签在 UI/API/数据上严格区分：候选仅有建议语义，用户逐条确认后才写入。
 const analysis = ref<{ tagSuggestions: DerivedTagSuggestions; entities: DerivedEntities; relations: DerivedRelations } | null>(null)
@@ -158,7 +159,7 @@ const detailLoadGate = createSessionGate()
 const relatedLoadGate = createSessionGate()
 // P14-04 智能分析加载请求代次：防「A 的分析结果延迟返回后覆盖已切换的资料 B 的候选/实体」
 const analysisLoadGate = createSessionGate()
-const generatedDraftRefresher = createGeneratedDraftRefresher<MaterialDraftCard & { materialId?: string }>({
+const generatedDraftPoller = createGeneratedDraftPoller<MaterialDraftCard & { materialId?: string }>({
   fetch: (materialId) => api.getMaterialDraftCard(materialId),
   currentMaterialId: () => detail.value?.materialId ?? null,
   currentDraft: () => draft.value,
@@ -169,6 +170,11 @@ const generatedDraftRefresher = createGeneratedDraftRefresher<MaterialDraftCard 
     draftContent.value = latest.content
     takeDraftSnapshot()
   },
+  onTimeout: (materialId) => {
+    if (detail.value?.materialId === materialId && draft.value?.status === 'pending' && !draftDirty.value) {
+      draftError.value = '知识卡片生成时间较长，请稍后刷新处理状态。'
+    }
+  },
 })
 const summaryPoller = createSummaryPoller({
   fetch: (materialId) => api.getMaterialSummary(materialId),
@@ -176,7 +182,6 @@ const summaryPoller = createSummaryPoller({
     // 二次校验：仅当当前详情仍是该资料时才写回（防止旧请求覆盖新资料摘要）
     if (detail.value && detail.value.materialId === materialId) {
       detail.value.summary = { text: result.text, status: result.status, generatedAt: result.generatedAt }
-      void generatedDraftRefresher.refresh(materialId)
     }
   },
   onTimeout: (materialId) => {
@@ -195,7 +200,6 @@ const analysisPoller = createAnalysisPoller({
       analysis.value = { tagSuggestions: result.tagSuggestions, entities: result.entities, relations: result.relations }
       detail.value.summary = { text: result.summary.text, status: result.summary.status, generatedAt: result.summary.generatedAt }
       analysisWaitExpired.value = false
-      void generatedDraftRefresher.refresh(materialId)
     }
   },
   onTimeout: (materialId) => {
@@ -328,6 +332,10 @@ async function reparseMaterial() {
     summaryWaitExpired.value = false
     summaryPoller.start(materialId)
     analysisPoller.start(materialId)
+    if (draft.value && !draft.value.confirmed) {
+      draft.value = { ...draft.value, status: 'pending' }
+      generatedDraftPoller.start(materialId)
+    }
   } catch (e) {
     if (analysisLoadGate.isCurrent(requestSession) && detail.value?.materialId === materialId) {
       analysisError.value = e instanceof Error ? e.message : '重新解析失败'
@@ -426,22 +434,27 @@ function stopVersionPolling() {
 }
 
 function stopCardIndexPolling() {
+  cardIndexPollSession += 1
   if (cardIndexPollTimer) clearTimeout(cardIndexPollTimer)
   cardIndexPollTimer = null
 }
 
 function pollCardIndexUntilTerminal(materialId: string) {
   stopCardIndexPolling()
+  const pollSession = ++cardIndexPollSession
   const poll = async () => {
+    if (pollSession !== cardIndexPollSession || detail.value?.materialId !== materialId) return
     try {
       const result = await api.getMaterialDetail(materialId)
-      if (detail.value?.materialId !== materialId) return
+      if (pollSession !== cardIndexPollSession || detail.value?.materialId !== materialId) return
       const next = result.draftCard
       if (!next?.confirmed) return
       draft.value = next
       if (next.indexState === 'indexing') cardIndexPollTimer = setTimeout(poll, 1800)
     } catch {
-      cardIndexPollTimer = setTimeout(poll, 3000)
+      if (pollSession === cardIndexPollSession && detail.value?.materialId === materialId) {
+        cardIndexPollTimer = setTimeout(poll, 3000)
+      }
     }
   }
   cardIndexPollTimer = setTimeout(poll, 1200)
@@ -690,17 +703,22 @@ async function loadRelated(materialId: string) {
   }
 }
 
-async function loadDetail(materialId: string) {
-  loading.value = true
-  error.value = ''
+async function loadDetail(materialId: string, options: { background?: boolean } = {}) {
+  const background = options.background === true
+  if (!background) {
+    loading.value = true
+    error.value = ''
+  }
+  draftError.value = ''
   currentTime.value = 0
   stopVersionPolling()
+  stopCardIndexPolling()
   versionImpact.value = null
   versionActions.value = {}
   // 路由切换：先取消旧资料的摘要轮询，避免旧结果覆盖新页面
   summaryPoller.stop()
   analysisPoller.stop()
-  generatedDraftRefresher.invalidate()
+  generatedDraftPoller.stop()
   summaryWaitExpired.value = false
   const requestSession = detailLoadGate.next()
   try {
@@ -714,6 +732,9 @@ async function loadDetail(materialId: string) {
     draftTitle.value = result.draftCard?.title ?? ''
     draftContent.value = result.draftCard?.content ?? ''
     takeDraftSnapshot()
+    if (result.draftCard?.status === 'pending' && !privacyBlocking.value) {
+      generatedDraftPoller.start(materialId)
+    }
     loadVersions(materialId)
     if (result.supersedesMaterialId && result.status === 'available') loadVersionImpact(materialId)
     if (result.status === 'uploaded' || result.status === 'queued' || result.status === 'processing') {
@@ -731,12 +752,14 @@ async function loadDetail(materialId: string) {
     if (!privacyBlocking.value) loadAnalysis()
   } catch (e) {
     if (detailLoadGate.isCurrent(requestSession) && route.params.materialId === materialId) {
-      error.value = e instanceof Error ? e.message : '资料详情加载失败'
+      const message = e instanceof Error ? e.message : '资料详情加载失败'
+      if (background) draftError.value = message
+      else error.value = message
     }
   } finally {
     // loading 只允许最新请求归位，避免旧请求误关新请求的加载态
     if (detailLoadGate.isCurrent(requestSession) && route.params.materialId === materialId) {
-      loading.value = false
+      if (!background) loading.value = false
     }
   }
 }
@@ -759,11 +782,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onDraftBeforeUnload)
   summaryPoller.stop()
   analysisPoller.stop()
-  generatedDraftRefresher.invalidate()
+  generatedDraftPoller.stop()
   stopVersionPolling()
   stopCardIndexPolling()
   detailLoadGate.invalidate()
   analysisLoadGate.invalidate()
+})
+
+watch(draftDirty, (dirty) => {
+  if (dirty) generatedDraftPoller.stop()
 })
 
 const mainPreviewUrl = ref('')
@@ -870,7 +897,7 @@ async function saveOriginal() {
       <RedactionPanel
         v-if="detail.privacyRequired || (detail.privacyStatus && detail.privacyStatus.state !== 'not_required')"
         :material-id="detail.materialId"
-        @updated="loadDetail(detail.materialId)"
+        @updated="loadDetail(detail.materialId, { background: true })"
       />
       <div class="detail-grid">
         <section class="detail-panel preview-panel">
