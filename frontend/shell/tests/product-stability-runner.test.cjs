@@ -15,10 +15,11 @@ const available = value => ({ status: 'available', value });
 
 function manifest(extra = {}) {
   return validateManifest({ version: 1, deviceId: 'centauros-device-0001', host: '192.168.0.7', sshUser: 'user',
-    topology: 'systemd', ...extra });
+    topology: 'systemd', expectedOllamaBackend: 'cpu_avx2', ...extra });
 }
 
-function evidence({ bootId = '11111111-2222-3333-4444-555555555555', pid = '100', restarts = '0', oom = 'oom 0\noom_kill 0' } = {}) {
+function evidence({ bootId = '11111111-2222-3333-4444-555555555555', pid = '100', containerPid = 200,
+  restarts = '0', oom = 'oom 0\noom_kill 0', backend = 'cpu_avx2' } = {}) {
   const properties = Object.fromEntries(['MainPID', 'NRestarts', 'ActiveState', 'SubState', 'Result', 'ControlGroup',
     'CPUQuotaPerSecUSec', 'MemoryHigh', 'MemoryMax', 'MemorySwapMax', 'TasksMax', 'OOMPolicy']
     .map(key => [key, available(key === 'MainPID' ? pid : key === 'NRestarts' ? restarts : key === 'ControlGroup' ? '/system.slice/test.service' : 'ok')]));
@@ -27,10 +28,13 @@ function evidence({ bootId = '11111111-2222-3333-4444-555555555555', pid = '100'
   const unit = { status: 'available', properties, cgroup: { status: 'available', files } };
   return { schemaVersion: 1, mode: 'live', system: { bootId: available(bootId), uptimeAndIdleSeconds: available('10.0 5.0'), memTotalKiB: available(1024) },
     systemd: { 'ollama.service': unit, 'centaurai-database.service': unit, 'centauros-remote-agent.service': unit },
-    docker: { status: 'available', containers: [], truncated: false },
+    docker: { status: 'available', containers: [{ id: 'c'.repeat(64), name: 'zhijun-integration-0907', pid: containerPid,
+      state: 'running', oomKilled: false, restartCount: 0,
+      resources: { Memory: 1, MemorySwap: 1, NanoCpus: 1, CpuQuota: 1, CpuPeriod: 1, PidsLimit: 1 } }], truncated: false },
     thermal: { status: 'available', sensors: [{ sensor: '/sys/temp', type: 'cpu', millidegreesC: available(42000) }], truncated: false },
     previousBootKernel: { status: 'available', scope: 'ignored', linesExamined: 4,
       counts: { oom: 0, thermal: 0, machineCheck: 0, watchdog: 0, gpuFault: 0, storageError: 0 } },
+    ollamaCompute: { status: 'available', scope: 'current_boot_last_2000_service_lines', linesExamined: 12, backend },
     secret: 'must-be-removed' };
 }
 
@@ -39,10 +43,13 @@ test('manifest requires one explicit device and host and never supplies a fallba
   assert.equal(value.rounds, 10);
   assert.equal(value.deviceId, 'centauros-device-0001');
   assert.equal(value.host, '192.168.0.7');
+  assert.equal(value.expectedOllamaBackend, 'cpu_avx2');
   assert.deepEqual(value.requiredUnits, ['ollama.service', 'centaurai-database.service', 'centauros-remote-agent.service']);
   assert.throws(() => validateManifest({ ...value, fallbackHost: '192.168.1.18' }), AcceptanceError);
-  assert.throws(() => validateManifest({ version: 1, host: '192.168.0.7', sshUser: 'user', topology: 'systemd' }), AcceptanceError);
-  assert.throws(() => validateManifest({ version: 1, deviceId: value.deviceId, host: '-oProxyCommand=bad', sshUser: 'user', topology: 'systemd' }), AcceptanceError);
+  assert.throws(() => validateManifest({ version: 1, host: '192.168.0.7', sshUser: 'user', topology: 'systemd', expectedOllamaBackend: 'cpu_avx2' }), AcceptanceError);
+  assert.throws(() => validateManifest({ version: 1, deviceId: value.deviceId, host: '-oProxyCommand=bad', sshUser: 'user', topology: 'systemd', expectedOllamaBackend: 'cpu_avx2' }), AcceptanceError);
+  assert.throws(() => validateManifest({ version: 1, deviceId: value.deviceId, host: '192.168.0.7', sshUser: 'user', topology: 'systemd' }), AcceptanceError);
+  assert.throws(() => manifest({ expectedOllamaBackend: 'cpu_avx2 --unsafe' }), AcceptanceError);
   assert.equal(parseArgs(['--manifest', '/tmp/device.json', '--rounds', '3', '--preflight']).rounds, 3);
 });
 
@@ -67,6 +74,20 @@ test('resource evidence keeps its allowlist and detects reboot, PID and OOM chan
   assert.ok(result.issues.includes('BOOT_ID_CHANGED'));
   assert.ok(result.issues.includes('UNIT_MAINPID_CHANGED:ollama.service'));
   assert.ok(result.issues.includes('CGROUP_OOM_KILL_CHANGED:centaurai-database.service'));
+  const backend = compareResourceEvidence(first, sanitizeResourceEvidence(evidence({ backend: 'vulkan' })), manifest());
+  assert.ok(backend.issues.includes('OLLAMA_BACKEND_UNEXPECTED:after'));
+  const unknown = sanitizeResourceEvidence(evidence({ backend: 'future-secret-backend' }));
+  assert.deepEqual(unknown.ollamaCompute, { status: 'unavailable', reason: 'invalid_backend_evidence' });
+});
+
+test('hybrid topology requires a stable nonzero PID for every named container', () => {
+  const hybrid = manifest({ topology: 'hybrid', requiredContainers: ['zhijun-integration-0907'] });
+  const first = sanitizeResourceEvidence(evidence());
+  assert.equal(compareResourceEvidence(first, sanitizeResourceEvidence(evidence()), hybrid).passed, true);
+  const changed = compareResourceEvidence(first, sanitizeResourceEvidence(evidence({ containerPid: 201 })), hybrid);
+  assert.ok(changed.issues.includes('CONTAINER_PID_CHANGED:zhijun-integration-0907'));
+  const missing = compareResourceEvidence(first, sanitizeResourceEvidence(evidence({ containerPid: 0 })), hybrid);
+  assert.ok(missing.issues.includes('CONTAINER_PID_UNAVAILABLE:zhijun-integration-0907'));
 });
 
 test('SSH evidence ignores user config, uses one explicit host and a fixed remote command', async () => {

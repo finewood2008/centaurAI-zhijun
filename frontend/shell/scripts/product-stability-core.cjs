@@ -26,6 +26,7 @@ const CGROUP_FILES = [
 ];
 const DOCKER_RESOURCES = ['Memory', 'MemorySwap', 'NanoCpus', 'CpuQuota', 'CpuPeriod', 'PidsLimit'];
 const KERNEL_COUNTERS = ['oom', 'thermal', 'machineCheck', 'watchdog', 'gpuFault', 'storageError'];
+const OLLAMA_BACKENDS = new Set(['cpu_avx2', 'cpu', 'rocm', 'vulkan', 'cuda', 'metal']);
 
 class AcceptanceError extends Error {
   constructor(code, stage, meta = {}) {
@@ -77,10 +78,10 @@ function parseArgs(argv) {
 }
 
 function validateManifest(value) {
-  const allowed = ['version', 'deviceId', 'host', 'sshUser', 'sshPort', 'topology', 'requiredContainers', 'rounds'];
+  const allowed = ['version', 'deviceId', 'host', 'sshUser', 'sshPort', 'topology', 'requiredContainers', 'rounds', 'expectedOllamaBackend'];
   if (!plain(value) || value.version !== 1 || Object.keys(value).some(key => !allowed.includes(key))
       || !safeId(value.deviceId) || !safeHost(value.host) || !safeUser(value.sshUser)
-      || !['systemd', 'hybrid'].includes(value.topology)) {
+      || !['systemd', 'hybrid'].includes(value.topology) || !OLLAMA_BACKENDS.has(value.expectedOllamaBackend)) {
     throw new AcceptanceError('INVALID_MANIFEST', 'manifest');
   }
   const sshPort = value.sshPort ?? 22;
@@ -100,7 +101,7 @@ function validateManifest(value) {
     : ['ollama.service', 'centauros-remote-agent.service'];
   return Object.freeze({ version: 1, deviceId: value.deviceId, host: value.host, sshUser: value.sshUser,
     sshPort, topology: value.topology, requiredContainers: Object.freeze([...requiredContainers]),
-    requiredUnits: Object.freeze(requiredUnits), rounds });
+    requiredUnits: Object.freeze(requiredUnits), expectedOllamaBackend: value.expectedOllamaBackend, rounds });
 }
 
 async function readJsonFile(filename, maximum = 16384) {
@@ -185,6 +186,7 @@ function sanitizeResourceEvidence(value) {
     docker = { status: value.docker.status, containers: value.docker.containers.slice(0, 16).map(item => ({
       id: typeof item?.id === 'string' ? item.id.slice(0, 128) : '', name: typeof item?.name === 'string' ? item.name.slice(0, 128) : '',
       state: typeof item?.state === 'string' ? item.state.slice(0, 32) : 'unknown',
+      pid: Number.isSafeInteger(item?.pid) && item.pid >= 0 ? item.pid : null,
       oomKilled: typeof item?.oomKilled === 'boolean' ? item.oomKilled : null,
       restartCount: Number.isSafeInteger(item?.restartCount) ? item.restartCount : null,
       resources: Object.fromEntries(DOCKER_RESOURCES.map(key => [key, Number.isSafeInteger(item?.resources?.[key]) ? item.resources[key] : null])),
@@ -202,7 +204,17 @@ function sanitizeResourceEvidence(value) {
       linesExamined: Number.isSafeInteger(value.previousBootKernel.linesExamined) ? value.previousBootKernel.linesExamined : 0,
       counts: Object.fromEntries(KERNEL_COUNTERS.map(key => [key, Number.isSafeInteger(value.previousBootKernel.counts?.[key]) ? value.previousBootKernel.counts[key] : 0])) }
     : { status: 'unavailable', reason: typeof value.previousBootKernel?.reason === 'string' ? value.previousBootKernel.reason.slice(0, 128) : 'unavailable' };
-  return { schemaVersion: 1, mode: value.mode === 'live' ? 'live' : 'fixture', system, systemd, docker, thermal, previousBootKernel };
+  let ollamaCompute;
+  if (value.ollamaCompute?.status === 'available' && OLLAMA_BACKENDS.has(value.ollamaCompute.backend)) {
+    ollamaCompute = { status: 'available', scope: typeof value.ollamaCompute.scope === 'string'
+      ? value.ollamaCompute.scope.slice(0, 128) : 'current_boot_bounded_journal',
+    linesExamined: Number.isSafeInteger(value.ollamaCompute.linesExamined) ? value.ollamaCompute.linesExamined : 0,
+    backend: value.ollamaCompute.backend };
+  } else {
+    ollamaCompute = { status: 'unavailable', reason: value.ollamaCompute?.status === 'unavailable'
+      && typeof value.ollamaCompute.reason === 'string' ? value.ollamaCompute.reason.slice(0, 128) : 'invalid_backend_evidence' };
+  }
+  return { schemaVersion: 1, mode: value.mode === 'live' ? 'live' : 'fixture', system, systemd, docker, thermal, previousBootKernel, ollamaCompute };
 }
 
 function evidenceBootId(evidence) {
@@ -231,6 +243,10 @@ function compareResourceEvidence(before, after, manifest) {
   const firstBoot = evidenceBootId(before), lastBoot = evidenceBootId(after);
   if (!firstBoot || !lastBoot) issues.push('BOOT_ID_UNAVAILABLE');
   else if (firstBoot !== lastBoot) issues.push('BOOT_ID_CHANGED');
+  for (const [phase, evidence] of [['before', before], ['after', after]]) {
+    if (evidence.ollamaCompute?.status !== 'available') issues.push(`OLLAMA_BACKEND_UNAVAILABLE:${phase}`);
+    else if (evidence.ollamaCompute.backend !== manifest.expectedOllamaBackend) issues.push(`OLLAMA_BACKEND_UNEXPECTED:${phase}`);
+  }
   for (const unit of manifest.requiredUnits) {
     if (!UNIT_NAMES.has(unit) || before.systemd?.[unit]?.status !== 'available' || after.systemd?.[unit]?.status !== 'available') {
       issues.push(`UNIT_EVIDENCE_UNAVAILABLE:${unit}`); continue;
@@ -251,6 +267,8 @@ function compareResourceEvidence(before, after, manifest) {
     const first = firstContainers.get(name), last = lastContainers.get(name);
     if (!first || !last) { issues.push(`CONTAINER_EVIDENCE_UNAVAILABLE:${name}`); continue; }
     if (!first.id || first.id !== last.id) issues.push(`CONTAINER_ID_CHANGED:${name}`);
+    if (!Number.isSafeInteger(first.pid) || !Number.isSafeInteger(last.pid) || first.pid <= 0 || last.pid <= 0) issues.push(`CONTAINER_PID_UNAVAILABLE:${name}`);
+    else if (first.pid !== last.pid) issues.push(`CONTAINER_PID_CHANGED:${name}`);
     if (first.restartCount === null || last.restartCount === null) issues.push(`CONTAINER_RESTART_UNAVAILABLE:${name}`);
     else if (first.restartCount !== last.restartCount) issues.push(`CONTAINER_RESTART_CHANGED:${name}`);
     if (first.oomKilled !== false || last.oomKilled !== false) issues.push(`CONTAINER_OOM:${name}`);
@@ -475,7 +493,8 @@ async function executeRound({ product, runId, round, deadline, guard = work => w
 
 function safePlan(manifest, rounds) {
   return { schemaVersion: 1, mode: 'plan', deviceId: manifest.deviceId, host: manifest.host,
-    topology: manifest.topology, rounds, fixtureBytes: { minimum: MARKDOWN_MIN, target: MARKDOWN_TARGET, maximum: MARKDOWN_MAX },
+    topology: manifest.topology, expectedOllamaBackend: manifest.expectedOllamaBackend, rounds,
+    fixtureBytes: { minimum: MARKDOWN_MIN, target: MARKDOWN_TARGET, maximum: MARKDOWN_MAX },
     operations: ['post_api_mindos_uploads', 'get_api_mindos_uploads_material_id',
       'get_api_mindos_materials_material_id_analysis', 'get_api_mindos_materials_material_id_draft_card',
       'get_api_mindos_materials_material_id_summary', 'get_api_mindos_materials_material_id',

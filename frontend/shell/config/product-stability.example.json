@@ -5,6 +5,7 @@
   "sshUser": "user",
   "sshPort": 22,
   "topology": "hybrid",
+  "expectedOllamaBackend": "cpu_avx2",
   "requiredContainers": [
     "zhijun-integration-0907",
     "mindos-legacy-0907"
