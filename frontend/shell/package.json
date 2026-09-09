@@ -1,6 +1,6 @@
 {
   "name": "zhijun-shell",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "知君桌面宿主：完整产品界面、受控 IPC 与盒端工作区连接",
   "author": "Zhuhai Qeeshu Technology Co., Ltd.",
@@ -16,7 +16,8 @@
     "package:prepare:mac-arm64": "node scripts/prepare-macos-package.cjs",
     "package:verify:mac-arm64": "node scripts/verify-macos-package.cjs",
     "package:smoke:mac-arm64": "node scripts/smoke-macos-package.cjs",
-    "package:mac-arm64": "npm run test && npm --prefix ../mindos-web run test:desktop && npm run test:e2e && npm run build:desktop && npm run package:prepare:mac-arm64 && electron-builder --config electron-builder.yml --mac dmg zip --arm64 --publish never && npm run package:verify:mac-arm64 && npm run package:smoke:mac-arm64"
+    "package:version:bump": "npm version patch --no-git-tag-version",
+    "package:mac-arm64": "npm run test && npm --prefix ../mindos-web run test:desktop && npm run test:e2e && npm run build:desktop && npm run package:version:bump && npm run package:prepare:mac-arm64 && electron-builder --config electron-builder.yml --mac dmg zip --arm64 --publish never && npm run package:verify:mac-arm64 && npm run package:smoke:mac-arm64"
   },
   "devDependencies": {
     "@electron/asar": "4.3.0",
@@ -37,7 +38,11 @@
         "NSMicrophoneUsageDescription": "在你点击录音时使用麦克风，停止后将录音发送到已连接的盒子转为文字。转写结果仅填入输入框，不会自动发送消息。"
       }
     },
-    "win": { "icon": "assets/centaur.png" },
-    "linux": { "icon": "assets/centaur.png" }
+    "win": {
+      "icon": "assets/centaur.png"
+    },
+    "linux": {
+      "icon": "assets/centaur.png"
+    }
   }
 }
