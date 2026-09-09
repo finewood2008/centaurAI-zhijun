@@ -38,6 +38,14 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
       if (!guard()) throw new DesktopError('STALE_GENERATION');
       return identity;
     },
+    sendRegistrationCode: phone => client.sendRegistrationCode(phone),
+    async register(input, guard, rememberPassword = false) {
+      const identity = await client.register(input, guard);
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
+      if (store) await store.saveRememberedLogin({ phone: input.phone, ...(rememberPassword ? { password: input.password } : {}) }, guard);
+      if (!guard()) throw new DesktopError('STALE_GENERATION');
+      return identity;
+    },
     async signInSaved(guard, rememberPassword = true) {
       if (!store) throw new DesktopError('AUTHENTICATION_REQUIRED');
       const value = await store.loadRememberedLogin();
@@ -53,6 +61,7 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
       return identity;
     },
     listDevices: () => client.listDevices(),
+    claimDevice: claimToken => client.claimDevice(claimToken),
     async connect(binding) {
       const expected = epoch;
       // D03 is not a URL/config toggle. Only an implemented, trusted main adapter

@@ -129,6 +129,14 @@ export interface PasswordCredentials {
   readonly rememberPassword: boolean;
 }
 
+export interface RegistrationCredentials extends PasswordCredentials {
+  readonly code: string;
+}
+
+export interface RegistrationCodeReceipt {
+  readonly expiresIn: number;
+}
+
 export interface RememberedLogin {
   readonly phone: string;
   readonly passwordSaved: boolean;
@@ -146,7 +154,13 @@ export interface ZhijunDesktopV1 {
   signInWithPassword(context: CallContext, credentials: PasswordCredentials): Promise<Result<DesktopSnapshot>>;
   /** The decrypted password stays in the main process. This never signs in automatically. */
   signInWithSavedPassword(context: CallContext, rememberPassword: boolean): Promise<Result<DesktopSnapshot>>;
+  /** Sends an SMS registration proof. Debug codes and provider details never cross IPC. */
+  sendRegistrationCode(context: CallContext, phone: string): Promise<Result<RegistrationCodeReceipt>>;
+  /** Registers the Consumer account and enters the authenticated device-selection state. */
+  registerWithPassword(context: CallContext, credentials: RegistrationCredentials): Promise<Result<DesktopSnapshot>>;
   listDevices(context: CallContext): Promise<Result<readonly DeviceSummary[]>>;
+  /** Redeems a user-entered Admin claim code for the authenticated account. */
+  claimDevice(context: CallContext, claimToken: string): Promise<Result<DeviceSummary>>;
   connect(context: CallContext, deviceId: string): Promise<Result<DesktopSnapshot>>;
   disconnect(context: CallContext): Promise<Result<DesktopSnapshot>>;
   signOut(context: CallContext): Promise<Result<DesktopSnapshot>>;

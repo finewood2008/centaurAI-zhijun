@@ -158,6 +158,36 @@ test('legacy password login defaults remember to false and the flag stays outsid
   assert.equal(JSON.stringify(runtime.snapshot()).includes(credentials.password), false);
 });
 
+test('production registration enters device selection and a claim becomes selectable', async t => {
+  const calls = [];
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    sendRegistrationCode: async phone => { calls.push(['code', phone]); return { expiresIn: 300 }; },
+    register: async (credentials, guard, remember) => {
+      calls.push(['register', credentials, remember, guard()]); return { accountId: 'new-account' };
+    },
+    claimDevice: async token => {
+      calls.push(['claim', token]); return { deviceId: 'claimed-device-1', displayName: '新盒子', availability: 'unknown' };
+    },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal((await call(runtime, 'sendRegistrationCode', '13800000000')).data.expiresIn, 300);
+  const registration = { phone: '13800000000', password: 'Synthetic-password-1', code: '123456', rememberPassword: true };
+  assert.equal((await call(runtime, 'registerWithPassword', registration)).ok, true);
+  assert.equal(runtime.snapshot().phase, 'selecting_device');
+  assert.equal(runtime.snapshot().subject.accountId, 'new-account');
+  assert.equal((await call(runtime, 'listDevices')).ok, true);
+  const claimed = await call(runtime, 'claimDevice', 'ABCD-EFGH-JK2M-NP3Q');
+  assert.deepEqual(claimed.data, { deviceId: 'claimed-device-1', displayName: '新盒子', availability: 'unknown' });
+  assert.deepEqual(calls, [
+    ['code', '13800000000'],
+    ['register', { phone: registration.phone, password: registration.password, code: registration.code }, true, true],
+    ['claim', 'ABCD-EFGH-JK2M-NP3Q'],
+  ]);
+  for (const malformed of [{ ...registration, rememberPassword: 'yes' }, { ...registration, extra: true }]) {
+    assert.equal((await call(runtime, 'registerWithPassword', malformed)).error.code, 'INVALID_REQUEST');
+  }
+});
+
 test('unconfigured mode remains closed even with an injected adapter', async (t) => {
   const runtime = createDesktopRuntime({ adapter: fixture().adapter });
   t.after(() => runtime.dispose());

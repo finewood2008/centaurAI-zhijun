@@ -149,6 +149,11 @@ test('unknown mode stays unconfigured; unknown hash cannot enter legacy business
 test('configured Consumer shows password login; UTF-8 overbudget input is cleared and rejected before authentication', async t => {
   const { page } = await openApp(t, '', { version: 1, consumerBaseUrl: 'https://consumer.example.test/prod-api' })
   await expect(page.getByTestId('environment')).toContainText('账号服务已配置')
+  await expect(page.getByTestId('show-register')).toBeVisible()
+  await page.getByTestId('show-register').click()
+  await expect(page.getByTestId('registration')).toBeVisible()
+  await expect(page.getByTestId('send-registration-code')).toBeVisible()
+  await page.getByTestId('show-login').click()
   await page.getByTestId('login-phone').fill('13800000000')
   await page.getByTestId('login-password').fill('汉'.repeat(25))
   await page.getByTestId('sign-in').click()

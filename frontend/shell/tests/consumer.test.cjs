@@ -62,6 +62,74 @@ test('real SDK auth coordinates login, signed devices/ticket, safe projection an
   assert.equal(calls.length, 4); await client.dispose();
 });
 
+test('registration drops debug SMS data and claim binds one idempotency key into signed body and header', async () => {
+  const store = memoryStore(); const calls = [];
+  const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+    calls.push({ url, init });
+    if (url.endsWith('/auth/sms/send')) {
+      assert.deepEqual(JSON.parse(init.body), { phone: credentials.phone });
+      assert.equal(init.headers.authorization, undefined);
+      return reply({ expiresIn: 300, debugCode: 'private-debug-code' });
+    }
+    if (url.endsWith('/auth/password/register')) {
+      const body = JSON.parse(init.body);
+      assert.equal(body.phone, credentials.phone); assert.equal(body.code, '123456');
+      assert.equal(body.password, credentials.password); assert.equal(body.clientId, 'client-synthetic');
+      return reply(token());
+    }
+    verifySigned(store, url, init);
+    if (url.endsWith('/device-claims/redeem')) {
+      const body = JSON.parse(init.body);
+      assert.equal(init.headers['idempotency-key'], body.idempotencyKey);
+      assert.match(body.idempotencyKey, /^[0-9a-f-]{36}$/);
+      assert.equal(body.claimToken, '0111AAAABBBBCCCC');
+      return reply({ deviceId: device.deviceId, deviceName: '认领盒子', bindingId: 'binding-1', ownershipEpoch: 1,
+        state: 'consumed', idempotent: false, consumedAt: '2026-09-09T00:00:00Z' });
+    }
+    assert.fail(url);
+  } });
+  const receipt = await client.sendRegistrationCode(credentials.phone);
+  assert.deepEqual(receipt, { expiresIn: 300 });
+  assert.equal(JSON.stringify(receipt).includes('private-debug-code'), false);
+  assert.deepEqual(await client.register({ ...credentials, code: '123456' }), { accountId: 'account-synthetic' });
+  assert.deepEqual(await client.claimDevice('OILI-AAAA-BBBB-CCCC'),
+    { deviceId: device.deviceId, displayName: '认领盒子', availability: 'unknown' });
+  assert.equal(calls.length, 3);
+  await client.dispose();
+});
+
+test('claim retries reuse the same idempotency key after an ambiguous network failure', async () => {
+  const store = memoryStore(); const keys = []; let attempts = 0;
+  const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+    if (url.endsWith('/login')) return reply(token());
+    verifySigned(store, url, init);
+    const body = JSON.parse(init.body); keys.push([body.idempotencyKey, init.headers['idempotency-key']]);
+    attempts++;
+    if (attempts === 1) throw new Error('synthetic disconnect');
+    return reply({ deviceId: device.deviceId, deviceName: null, bindingId: 'binding-1', ownershipEpoch: 1,
+      state: 'consumed', idempotent: true, consumedAt: '2026-09-09T00:00:00Z' });
+  } });
+  await client.signIn(credentials);
+  await assert.rejects(client.claimDevice('ABCD-EFGH-JK2M-NP3Q'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
+  await client.claimDevice('ABCD EFGH JK2M NP3Q');
+  assert.equal(keys[0][0], keys[0][1]); assert.equal(keys[1][0], keys[1][1]); assert.equal(keys[0][0], keys[1][0]);
+  await client.dispose();
+});
+
+test('claim rejects malformed codes locally before a signed network request', async () => {
+  const store = memoryStore(); let claims = 0;
+  const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+    if (url.endsWith('/login')) return reply(token());
+    claims++; return reply({});
+  } });
+  await client.signIn(credentials);
+  for (const value of ['123456', 'ABCD-EFGH-JK2M-NP3U', 'ABCD-EFGH-JK2M-NP3QR', 'ABCD\0EFGHJK2MNP3Q']) {
+    await assert.rejects(client.claimDevice(value), { code: 'INVALID_REQUEST' });
+  }
+  assert.equal(claims, 0);
+  await client.dispose();
+});
+
 test('encrypted login state restores for at most seven days and normal disposal preserves it', async () => {
   const store = memoryStore(); let currentNow = 1893456000000;
   const first = await createConsumerClient({ config, store, now: () => currentNow,

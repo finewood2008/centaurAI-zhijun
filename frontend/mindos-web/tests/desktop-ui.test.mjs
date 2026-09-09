@@ -32,6 +32,7 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
     getSnapshot: async () => ok(initial.generation, initial),
     subscribe: callback => { listener = callback; return () => { unsubscribed = true; listener = undefined } },
     beginSignIn: invoke('beginSignIn'), signInWithPassword: invoke('signInWithPassword'), signInWithSavedPassword: invoke('signInWithSavedPassword'),
+    sendRegistrationCode: invoke('sendRegistrationCode'), registerWithPassword: invoke('registerWithPassword'), claimDevice: invoke('claimDevice'),
     getRememberedLogin: async context => ok(context.expectedGeneration, null),
     connect: invoke('connect'), disconnect: invoke('disconnect'), signOut: invoke('signOut'),
     listDevices: context => { const result = deferred(); devices.push({ context, ...result }); return result.promise },
@@ -204,6 +205,34 @@ test('password input only goes to the narrow action, never controller state, and
   await signingIn
   assert.equal(f.controller.state.snapshot.subject, null)
   assert.equal(f.controller.state.snapshot.generation, 2)
+  f.controller.dispose()
+})
+
+test('registration and device claim use narrow IPC calls and refresh claimed devices', async () => {
+  const f = fixture({ ...snapshot('signed_out', 0, 0), environment: 'production' })
+  await f.controller.start()
+  const sending = f.controller.sendRegistrationCode('13800000000')
+  assert.equal(f.controls[0].operation, 'sendRegistrationCode')
+  f.controls[0].resolve(ok(0, { expiresIn: 300 }))
+  assert.equal(await sending, 300)
+  const credentials = { phone: '13800000000', password: 'Synthetic-password-1', code: '123456', rememberPassword: true }
+  const registering = f.controller.control('registerWithPassword', credentials)
+  assert.equal(f.controls[1].operation, 'registerWithPassword')
+  assert.equal(JSON.stringify(f.controller.state).includes(credentials.password), false)
+  f.controls[1].resolve(ok(1, { ...snapshot('selecting_device', 1, 2), environment: 'production' }))
+  await registering
+  assert.equal(f.devices.length, 1)
+  f.devices[0].resolve(ok(1, []))
+  await tick()
+  const claiming = f.controller.claimDevice('ABCD-EFGH-JK2M-NP3Q')
+  assert.equal(f.controls[2].operation, 'claimDevice')
+  f.controls[2].resolve(ok(1, { deviceId: 'device-claimed-1', displayName: '新盒子', availability: 'unknown' }))
+  await tick()
+  assert.equal(f.devices.length, 2)
+  f.devices[1].resolve(ok(1, [{ deviceId: 'device-claimed-1', displayName: '新盒子', availability: 'online' }]))
+  assert.equal(await claiming, true)
+  assert.equal(f.controller.state.devices[0].displayName, '新盒子')
+  assert.match(f.controller.state.notice, /已认领盒子/)
   f.controller.dispose()
 })
 
