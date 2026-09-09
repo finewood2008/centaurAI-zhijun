@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import type { Phase } from '../../../shared/desktop-contract'
+import { isValidClaimToken, normalizeClaimToken } from './claimToken'
 import { useDesktopWorkspace } from './workspace'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -90,8 +91,8 @@ function register(): void {
 }
 async function claimDevice(): Promise<void> {
   formError.value = ''
-  const value = claimToken.value.trim()
-  if (value.length < 6) { formError.value = '请输入盒身标签或管理员提供的设备认领码。'; return }
+  const value = normalizeClaimToken(claimToken.value)
+  if (!isValidClaimToken(value)) { formError.value = '请输入管理员生成的 16 位设备认领码。'; return }
   if (await controller.claimDevice(value)) claimToken.value = ''
 }
 async function loadRememberedLogin(): Promise<void> {
@@ -188,7 +189,7 @@ onBeforeUnmount(() => {
 
         <section v-if="phase === 'selecting_device'" class="device-section" aria-labelledby="devices-title">
           <form class="claim-card" data-testid="device-claim" @submit.prevent="claimDevice">
-            <div><h2>认领新盒子</h2><p>输入盒身标签或管理员提供的认领码。认领成功后，这台盒子会加入当前账号。</p></div>
+            <div><h2>认领新盒子</h2><p>输入管理员生成的 16 位一次性认领码。认领成功后，这台盒子会加入当前账号。</p></div>
             <label><span class="sr-only">设备认领码</span><input v-model="claimToken" data-testid="claim-token" autocomplete="off" maxlength="64" placeholder="请输入设备认领码" required /></label>
             <button class="primary" type="submit" :disabled="state.controlPending" data-testid="claim-device">{{ state.pendingOperation === 'claimDevice' ? '正在认领…' : '认领盒子' }}</button>
           </form>
