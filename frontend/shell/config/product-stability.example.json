@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "deviceId": "centauros-replace-with-device-id",
+  "host": "192.168.0.7",
+  "sshUser": "user",
+  "sshPort": 22,
+  "topology": "hybrid",
+  "requiredContainers": [
+    "zhijun-integration-0907",
+    "mindos-legacy-0907"
+  ],
+  "rounds": 10
+}
