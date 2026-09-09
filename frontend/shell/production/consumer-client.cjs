@@ -45,6 +45,9 @@ function checkEnvelope(result, connectivity = false, purpose = 'auth') {
   if (result.code === 403) reject('ACCESS_DENIED');
   if (result.code === 429) reject('RATE_LIMITED');
   if (purpose === 'registration' && (result.code === 602 || ['AUTH_RATE_LIMITED', 'SMS_DAILY_LIMIT'].includes(remoteCode))) reject('RATE_LIMITED');
+  if (purpose === 'claim' && ['DEVICE_ALREADY_CLAIMED', 'DEVICE_ALREADY_BOUND', 'CLAIM_TOKEN_ALREADY_CONSUMED'].includes(remoteCode)) reject('DEVICE_ALREADY_CLAIMED');
+  if (purpose === 'claim' && remoteCode === 'CLAIM_TOKEN_EXPIRED') reject('CLAIM_CODE_EXPIRED');
+  if (purpose === 'claim' && ['CLAIM_TOKEN_INVALID', 'CLAIM_TOKEN_REVOKED', 'CLAIM_TOKEN_STATE_INVALID'].includes(remoteCode)) reject('CLAIM_CODE_INVALID');
   if (purpose === 'claim' && [400, 404, 409, 410, 422].includes(result.code)) reject('INVALID_REQUEST');
   if (purpose === 'registration' && ([400, 409, 422].includes(result.code)
       || ['SMS_CODE_INVALID', 'PASSWORD_ALREADY_SET', 'PASSWORD_INVALID'].includes(remoteCode))) reject('INVALID_REQUEST');
@@ -230,10 +233,9 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       }).filter(device => device.allowed).map(({ allowed, ...device }) => device);
     },
     async claimDevice(input) {
-      if (typeof input !== 'string' || input.length < 6 || input.length > 64 || /[\u0000-\u001f\u007f]/u.test(input)) fail('INVALID_REQUEST');
-      const claimToken = input.toUpperCase().replaceAll('-', '').split(/\s+/u).join('')
-        .replaceAll('O', '0').replaceAll('I', '1').replaceAll('L', '1');
-      if (!/^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{16}$/.test(claimToken)) fail('INVALID_REQUEST');
+      if (typeof input !== 'string' || input.length > 64 || /[\u0000-\u001f\u007f]/u.test(input)) fail('INVALID_REQUEST');
+      const claimToken = input.trim();
+      if (!/^\d{6}$/.test(claimToken)) fail('INVALID_REQUEST');
       let idempotencyKey = claimAttempts.get(claimToken);
       if (!idempotencyKey) {
         if (claimAttempts.size >= 32) claimAttempts.delete(claimAttempts.keys().next().value);

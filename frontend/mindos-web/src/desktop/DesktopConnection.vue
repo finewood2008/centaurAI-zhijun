@@ -92,7 +92,7 @@ function register(): void {
 async function claimDevice(): Promise<void> {
   formError.value = ''
   const value = normalizeClaimToken(claimToken.value)
-  if (!isValidClaimToken(value)) { formError.value = '请输入管理员生成的 16 位设备认领码。'; return }
+  if (!isValidClaimToken(value)) { formError.value = '请输入管理员生成的 6 位数字设备认领码。'; return }
   if (await controller.claimDevice(value)) claimToken.value = ''
 }
 async function loadRememberedLogin(): Promise<void> {
@@ -189,8 +189,8 @@ onBeforeUnmount(() => {
 
         <section v-if="phase === 'selecting_device'" class="device-section" aria-labelledby="devices-title">
           <form class="claim-card" data-testid="device-claim" @submit.prevent="claimDevice">
-            <div><h2>认领新盒子</h2><p>输入管理员生成的 16 位一次性认领码。认领成功后，这台盒子会加入当前账号。</p></div>
-            <label><span class="sr-only">设备认领码</span><input v-model="claimToken" data-testid="claim-token" autocomplete="off" maxlength="64" placeholder="请输入设备认领码" required /></label>
+            <div><h2>认领新盒子</h2><p>输入管理员生成的 6 位一次性认领码。认领成功后立即失效；如需更换归属，请联系管理员处理。</p></div>
+            <label><span class="sr-only">设备认领码</span><input v-model="claimToken" data-testid="claim-token" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="请输入 6 位认领码" required /></label>
             <button class="primary" type="submit" :disabled="state.controlPending" data-testid="claim-device">{{ state.pendingOperation === 'claimDevice' ? '正在认领…' : '认领盒子' }}</button>
           </form>
           <p v-if="formError" class="form-error" role="alert">{{ formError }}</p>

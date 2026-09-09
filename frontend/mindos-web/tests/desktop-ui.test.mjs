@@ -224,7 +224,7 @@ test('registration and device claim use narrow IPC calls and refresh claimed dev
   assert.equal(f.devices.length, 1)
   f.devices[0].resolve(ok(1, []))
   await tick()
-  const claiming = f.controller.claimDevice('ABCD-EFGH-JK2M-NP3Q')
+  const claiming = f.controller.claimDevice('123456')
   assert.equal(f.controls[2].operation, 'claimDevice')
   f.controls[2].resolve(ok(1, { deviceId: 'device-claimed-1', displayName: '新盒子', availability: 'unknown' }))
   await tick()

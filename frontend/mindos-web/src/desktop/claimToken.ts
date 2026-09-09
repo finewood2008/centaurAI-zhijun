@@ -1,8 +1,7 @@
-const CLAIM_TOKEN_PATTERN = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{16}$/
+const CLAIM_TOKEN_PATTERN = /^\d{6}$/
 
 export function normalizeClaimToken(value: string): string {
-  return value.trim().toUpperCase().replace(/[\s-]/gu, '')
-    .replace(/O/gu, '0').replace(/[IL]/gu, '1')
+  return value.trim()
 }
 
 export function isValidClaimToken(value: string): boolean {

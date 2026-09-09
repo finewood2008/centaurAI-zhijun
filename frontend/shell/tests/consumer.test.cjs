@@ -82,7 +82,7 @@ test('registration drops debug SMS data and claim binds one idempotency key into
       const body = JSON.parse(init.body);
       assert.equal(init.headers['idempotency-key'], body.idempotencyKey);
       assert.match(body.idempotencyKey, /^[0-9a-f-]{36}$/);
-      assert.equal(body.claimToken, '0111AAAABBBBCCCC');
+      assert.equal(body.claimToken, '123456');
       return reply({ deviceId: device.deviceId, deviceName: '认领盒子', bindingId: 'binding-1', ownershipEpoch: 1,
         state: 'consumed', idempotent: false, consumedAt: '2026-09-09T00:00:00Z' });
     }
@@ -92,7 +92,7 @@ test('registration drops debug SMS data and claim binds one idempotency key into
   assert.deepEqual(receipt, { expiresIn: 300 });
   assert.equal(JSON.stringify(receipt).includes('private-debug-code'), false);
   assert.deepEqual(await client.register({ ...credentials, code: '123456' }), { accountId: 'account-synthetic' });
-  assert.deepEqual(await client.claimDevice('OILI-AAAA-BBBB-CCCC'),
+  assert.deepEqual(await client.claimDevice(' 123456 '),
     { deviceId: device.deviceId, displayName: '认领盒子', availability: 'unknown' });
   assert.equal(calls.length, 3);
   await client.dispose();
@@ -110,8 +110,8 @@ test('claim retries reuse the same idempotency key after an ambiguous network fa
       state: 'consumed', idempotent: true, consumedAt: '2026-09-09T00:00:00Z' });
   } });
   await client.signIn(credentials);
-  await assert.rejects(client.claimDevice('ABCD-EFGH-JK2M-NP3Q'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
-  await client.claimDevice('ABCD EFGH JK2M NP3Q');
+  await assert.rejects(client.claimDevice('654321'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
+  await client.claimDevice('654321');
   assert.equal(keys[0][0], keys[0][1]); assert.equal(keys[1][0], keys[1][1]); assert.equal(keys[0][0], keys[1][0]);
   await client.dispose();
 });
@@ -123,11 +123,36 @@ test('claim rejects malformed codes locally before a signed network request', as
     claims++; return reply({});
   } });
   await client.signIn(credentials);
-  for (const value of ['123456', 'ABCD-EFGH-JK2M-NP3U', 'ABCD-EFGH-JK2M-NP3QR', 'ABCD\0EFGHJK2MNP3Q']) {
+  for (const value of ['12345', '1234567', '123 456', '１２３４５６', 'AMD-A2A-248', 'ABCD-EFGH-JK2M-NP3Q', '12\n3456']) {
     await assert.rejects(client.claimDevice(value), { code: 'INVALID_REQUEST' });
   }
   assert.equal(claims, 0);
   await client.dispose();
+});
+
+test('claim exposes safe, actionable states for expired and already-claimed codes', async () => {
+  for (const [remoteCode, code] of [
+    ['CLAIM_TOKEN_EXPIRED', 'CLAIM_CODE_EXPIRED'],
+    ['CLAIM_TOKEN_INVALID', 'CLAIM_CODE_INVALID'],
+    ['CLAIM_TOKEN_REVOKED', 'CLAIM_CODE_INVALID'],
+    ['CLAIM_TOKEN_ALREADY_CONSUMED', 'DEVICE_ALREADY_CLAIMED'],
+    ['DEVICE_ALREADY_CLAIMED', 'DEVICE_ALREADY_CLAIMED'],
+    ['DEVICE_ALREADY_BOUND', 'DEVICE_ALREADY_CLAIMED'],
+  ]) {
+    const store = memoryStore();
+    const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+      if (url.endsWith('/login')) return reply(token());
+      return reply({ errorCode: remoteCode }, remoteCode === 'CLAIM_TOKEN_EXPIRED' ? 410 : 409);
+    } });
+    await client.signIn(credentials);
+    await assert.rejects(client.claimDevice('123456'), error => {
+      assert.equal(error.code, code);
+      assert.equal(error.remoteCode, remoteCode);
+      assert.equal(String(error.message).includes(remoteCode), false);
+      return true;
+    });
+    await client.dispose();
+  }
 });
 
 test('encrypted login state restores for at most seven days and normal disposal preserves it', async () => {
