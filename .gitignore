@@ -47,6 +47,8 @@ gbrain_data/
 watch_folder/*
 !watch_folder/.gitkeep
 .remote-mcp-test/
+# Codex 本地诊断、部署脚本与临时验证文件，不应进入版本库。
+.codex-tmp/
 # 前端构建产物，由源码构建生成，不应入库
 frontend/mindos-web/dist/
 frontend/mindos-web/dist-desktop/
