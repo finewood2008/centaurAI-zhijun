@@ -12,6 +12,11 @@ export type { SseFrame }
 
 export type SseHandlers = Record<string, (data: unknown) => void>
 
+export interface SseStreamOptions {
+  /** Domain events that complete this stream even if the HTTP body stays open. */
+  terminalEvents?: readonly string[]
+}
+
 /**
  * 发起流式 POST。流开始前的非 2xx 抛 ApiError；流中的每一帧按 event 名分发到
  * handlers（data 解析为 JSON，解析失败时原样传字符串）。signal 用于中断。
@@ -21,6 +26,7 @@ export async function streamPost(
   body: unknown,
   handlers: SseHandlers,
   signal?: AbortSignal,
+  options: SseStreamOptions = {},
 ): Promise<void> {
   const headers = buildHeaders()
   headers.set('Content-Type', 'application/json')
@@ -36,29 +42,53 @@ export async function streamPost(
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder('utf-8')
+  const terminalEvents = new Set(options.terminalEvents ?? [])
   let buffer = ''
+  let terminalReached = false
+  let reachedEof = false
   const dispatch = (frame: SseFrame) => {
+    if (terminalReached) return
+    const terminal = terminalEvents.has(frame.event)
     const handler = handlers[frame.event]
-    if (!handler) return
+    if (!handler) {
+      terminalReached = terminal
+      return
+    }
     let payload: unknown = frame.data
     try {
       payload = JSON.parse(frame.data)
     } catch {
       // 非 JSON 数据原样透传
     }
-    handler(payload)
+    try {
+      handler(payload)
+    } finally {
+      terminalReached = terminal
+    }
   }
   try {
-    for (;;) {
+    while (!terminalReached) {
       const { value, done } = await reader.read()
-      if (done) break
+      if (done) {
+        reachedEof = true
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
       buffer = parseSseChunk(buffer, dispatch)
     }
-    buffer += decoder.decode()
-    // 流结束时若尾部还有未以空行收尾的完整帧，补一个分隔符再解析一次
-    if (buffer.trim()) parseSseChunk(`${buffer}\n\n`, dispatch)
+    if (reachedEof) {
+      buffer += decoder.decode()
+      // 流结束时若尾部还有未以空行收尾的完整帧，补一个分隔符再解析一次
+      if (buffer.trim()) parseSseChunk(`${buffer}\n\n`, dispatch)
+    }
   } finally {
+    if (terminalReached && !reachedEof) {
+      try {
+        await reader.cancel()
+      } catch {
+        // 业务终态已经送达；底层流可能已同时因断连或取消而关闭。
+      }
+    }
     try {
       reader.releaseLock()
     } catch {

@@ -36,6 +36,8 @@ function harness(send, preview = async (_cid, body) => ({ ...body, routeRevision
   })
   assert.equal(await h.streamChat('conversation-1', original, { meta() {}, token: d => tokens.push(d.t) }, new AbortController().signal), true)
   assert.equal(h.calls.length, 2); assert.equal(h.previews.length, 1)
+  assert.deepEqual(h.calls[0][4].terminalEvents, ['message_done', 'error'])
+  assert.deepEqual(h.calls[1][4].terminalEvents, ['message_done', 'error'])
   assert.deepEqual(tokens, ['可以先明确沟通目标。'])
   assert.equal(h.calls[0][1].routeRevision, 'old-preview'); assert.equal(h.calls[1][1].routeRevision, 'new-preview')
   assert.equal(h.calls[1][1].localOnly, true, 'explicit choices from fresh authorization are honored')

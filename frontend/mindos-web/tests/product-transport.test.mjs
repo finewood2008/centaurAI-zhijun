@@ -174,6 +174,30 @@ test('all three original product network entries use installed transport, preser
   } finally { globalThis.fetch = originalFetch; client.dispose() }
 })
 
+test('chat domain terminal events finish without HTTP EOF and cancel the remote operation', { timeout: 2000 }, async () => {
+  for (const terminalEvent of ['message_done', 'error']) {
+    const { product, calls } = host('{}')
+    let polls = 0
+    product.poll = async () => {
+      polls++
+      if (polls === 1) return ok({ id: 'a'.repeat(32), state: 'running', cursor: 2, hasMore: false, events: [
+        { seq: 1, kind: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } },
+        { seq: 2, kind: 'chunk', data: bytes(`event: ${terminalEvent}\ndata: {"status":"complete"}\n\n`) },
+      ] })
+      return new Promise(() => {})
+    }
+    const { load, client } = desktop(product)
+    const seen = []
+    await load('services/sse.ts').streamPost('/mindos/conversations/c_test/messages', { content: '合成文本' }, {
+      [terminalEvent]: value => seen.push(value),
+    }, undefined, { terminalEvents: ['message_done', 'error'] })
+    assert.deepEqual(seen, [{ status: 'complete' }])
+    assert.equal(calls.filter(call => call[0] === 'cancel').length, 1)
+    assert.ok(polls <= 2)
+    client.dispose()
+  }
+})
+
 test('preview and final message keep the domain action id but use distinct Gateway job ids', async () => {
   const { product, calls } = host('{}')
   const { client } = desktop(product)
@@ -219,6 +243,27 @@ test('abort settles pending headers and requests remote cancellation once withou
   assert.equal(calls.filter(c => c[0] === 'cancel').length, 1)
   assert.equal(calls.filter(c => c[0] === 'start').length, 1)
   finishPoll(ok({ id: 'a'.repeat(32), state: 'cancelled', cursor: 0, hasMore: false, events: [] }))
+  client.dispose()
+})
+
+test('abort after response headers still reaches the desktop stream and remote operation', { timeout: 2000 }, async () => {
+  const { product, calls } = host('{}')
+  let polls = 0
+  product.poll = async () => {
+    polls++
+    if (polls === 1) return ok({ id: 'a'.repeat(32), state: 'running', cursor: 1, hasMore: false, events: [
+      { seq: 1, kind: 'headers', status: 200, headers: { 'content-type': 'application/json' } },
+    ] })
+    return new Promise(() => {})
+  }
+  const { load, client } = desktop(product)
+  const abort = new AbortController()
+  const response = await load('services/transport.ts').transportRequest('/api/mindos/materials', { signal: abort.signal })
+  const reading = response.text()
+  abort.abort()
+  await assert.rejects(reading, error => error.name === 'AbortError')
+  assert.equal(calls.filter(call => call[0] === 'cancel').length, 1)
+  assert.equal(calls.filter(call => call[0] === 'start').length, 1)
   client.dispose()
 })
 

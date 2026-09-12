@@ -3,6 +3,8 @@ import { streamPost, type SseHandlers } from './sse'
 import { canRefreshRoute, prepareChatRoute } from './taskRouting'
 import { reportReplyFailure } from '@/composables/useReplyRecovery'
 
+const CHAT_TERMINAL_EVENTS = ['message_done', 'error'] as const
+
 /** Only an HTTP rejection before streaming can be re-previewed automatically.
  * The request identity and source ancestry survive; permissions are checked again.
  * A started stream, changed source, network failure or cancellation is never replayed.
@@ -23,7 +25,9 @@ export async function streamChat(
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       signal?.throwIfAborted()
-      await streamPost(`/mindos/conversations/${encodeURIComponent(conversationId)}/messages`, request, guardedHandlers, signal)
+      await streamPost(`/mindos/conversations/${encodeURIComponent(conversationId)}/messages`, request, guardedHandlers, signal, {
+        terminalEvents: CHAT_TERMINAL_EVENTS,
+      })
       return true
     } catch (error) {
       if (attempt === 0 && !received && !signal?.aborted && error instanceof ApiError && error.status === 409 && canRefreshRoute(error)) {
