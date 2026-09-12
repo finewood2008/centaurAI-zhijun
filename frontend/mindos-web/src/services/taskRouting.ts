@@ -13,12 +13,20 @@ export interface RoutePreview {
   excluded: Array<{ id: string; reason: string }>
   request: { system: string; messages: Array<{ role: string; content: string }> }
   contextPlan?: import('./api').ContextPlan
+  defaultAuthorization?: { enabled: boolean; revision: number; includeFiles?: boolean; includeCharter?: boolean; autoEgress?: boolean; applies?: boolean }
   charterBasis?: { scope: string; charterId: string; version: number; clauseIds: string[] }
   charterConflict?: { code: string; detail: string; charterId: string; charterVersion: number; clauses: Array<{ id: string; version: number; text: string; control: string }>; canOverride: boolean; exceptionKey: string; notice?: string } | null
   charterUnresolved?: Array<{ id: string; text: string; reason: string }>
 }
 export function needsDeConsent(preview: RoutePreview): boolean {
   return isDesktopProduct() && preview.service.external && preview.deConsentRequired === true
+}
+export function canUseDefaultDeConsent(preview: RoutePreview): boolean {
+  // Eligibility is computed by the trusted domain worker. The grant endpoint
+  // and DE gateway independently re-read the policy and exact preview.
+  return needsDeConsent(preview) && preview.defaultAuthorization?.applies === true
+    && preview.defaultAuthorization.autoEgress === true
+    && Number.isInteger(preview.defaultAuthorization.revision) && preview.defaultAuthorization.revision > 0
 }
 function consentKeys(preview: RoutePreview, choice: RouteChoice): string[] | undefined {
   // DE receipts cover this exact request, including every source, even when the list is empty.
@@ -52,6 +60,24 @@ export async function routingRequest<T = any>(path: string, method = 'GET', data
 }
 export const routePath = (id: string) => `/mindos/conversations/${encodeURIComponent(id)}/routing`
 
+export async function grantDefaultDeConsent(id: string, preview: RoutePreview, signal?: AbortSignal): Promise<boolean> {
+  if (!canUseDefaultDeConsent(preview)) return false
+  try {
+    await routingRequest(routePath(id) + '/grant', 'POST', {
+      revision: preview.revision,
+      keys: preview.sources.map(source => source.key),
+      defaultPolicyRevision: preview.defaultAuthorization!.revision,
+    }, signal)
+    return true
+  } catch (error) {
+    if (!signal?.aborted && error && typeof error === 'object'
+        && ['DEFAULT_CONSENT_CHANGED', 'MODEL_DEFAULT_CONSENT_CHANGED',
+          'WORKSPACE_DEFAULT_CONSENT_CHANGED', 'WORKSPACE_DEFAULT_CONSENT_MISMATCH']
+          .includes(String((error as { code?: unknown }).code))) return false
+    throw error
+  }
+}
+
 /** A stale preview may be rebuilt, never interpreted as permission to bypass it. */
 export function canRefreshRoute(error: unknown): boolean {
   return !!error && typeof error === 'object' && (error as { status?: unknown }).status === 409
@@ -78,6 +104,7 @@ export async function prepareChatRoute(id: string, body: Record<string, unknown>
         return null
       }
       if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) return { ...data, routeRevision: preview.revision }
+      if (await grantDefaultDeConsent(id, preview, signal)) continue
       const choice = await askRoute(preview, true, signal)
       if (choice.action === 'cancel') return null
       if (choice.action === 'local') data = { ...data, localOnly: true }
@@ -112,6 +139,7 @@ export async function routedTask<T>(id: string, path: string, body: object, sign
       if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) {
         return await routingRequest<T>(path, 'POST', { ...data, routeRevision: preview.revision }, signal)
       }
+      if (await grantDefaultDeConsent(id, preview, signal)) continue
       const choice = await askRoute(preview, false, signal)
       if (choice.action === 'cancel') throw new Error('已取消生成，已填写的内容没有变化。')
       if (choice.action === 'local') data = { ...data, localOnly: true }

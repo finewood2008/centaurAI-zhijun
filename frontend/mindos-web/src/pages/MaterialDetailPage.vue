@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ProductImage from '@/components/ui/ProductImage.vue'
+import PdfPreview from '@/components/PdfPreview.vue'
 import { productPreview, releaseProductPreview, saveProductResource } from '@/services/productFiles'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -7,6 +8,7 @@ import { FileText } from 'lucide-vue-next'
 import { api, type ContentPart, type DerivedRelations, type DerivedTagSuggestions, type DerivedEntities, type EmbeddedImage, type EntityExtraction, type EntityType, type MaterialAnalysis, type MaterialDetail, type MaterialDraftCard, type MaterialImpact, type RelatedRecommendation, type RelationExtraction, type TranscriptSegment, type UploadResult } from '@/services/api'
 import { createSummaryPoller } from '@/composables/useSummaryPolling'
 import { createAnalysisPoller } from '@/composables/useAnalysisPolling'
+import { createGeneratedDraftPoller } from '@/composables/useGeneratedDraftRefresh'
 import { createSessionGate } from '@/composables/sessionGate'
 import { createEntityTagAdder } from '@/composables/useEntityTagAdd'
 import { materialStatusLabel } from '@/shared/status'
@@ -15,6 +17,7 @@ import { applyVersionSourceAction } from '@/shared/versionSources'
 import { useToast } from '@/composables/useToast'
 import LifecycleDangerPanel from '@/components/lifecycle/LifecycleDangerPanel.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import RedactionPanel from '@/components/RedactionPanel.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -87,6 +90,7 @@ const applyingVersionAction = ref('')
 const versionActions = ref<Record<string, 'keep' | 'replace' | 'keepBoth' | 'manual'>>({})
 let versionPollTimer: ReturnType<typeof setTimeout> | null = null
 let cardIndexPollTimer: ReturnType<typeof setTimeout> | null = null
+let cardIndexPollSession = 0
 // P14-04/P0-1 智能分析（标签候选 / 实体抽取 / 关系三元组）：来自派生缓存，异步生成，轮询防串台。
 // 候选与正式标签在 UI/API/数据上严格区分：候选仅有建议语义，用户逐条确认后才写入。
 const analysis = ref<{ tagSuggestions: DerivedTagSuggestions; entities: DerivedEntities; relations: DerivedRelations } | null>(null)
@@ -106,6 +110,18 @@ const derivedGenerationPending = computed(() => {
     ),
   )
 })
+const privacyReviewRequired = computed(() => detail.value?.privacyStatus?.state === 'review_required')
+const privacyProcessing = computed(() => detail.value?.privacyStatus?.state === 'processing')
+const privacyFailed = computed(() => detail.value?.privacyStatus?.state === 'failed')
+const privacyBlocking = computed(() => privacyReviewRequired.value || privacyProcessing.value || privacyFailed.value)
+const draftGenerationPending = computed(() => draft.value?.status === 'pending' || privacyBlocking.value)
+const draftBadge = computed(() => {
+  if (draft.value?.confirmed) return '已确认'
+  if (privacyReviewRequired.value) return '待隐私复核'
+  if (privacyProcessing.value || draft.value?.status === 'pending') return '生成中'
+  if (privacyFailed.value || draft.value?.status === 'failed') return '生成失败'
+  return '草稿'
+})
 // 正在确认的候选 suggestionId（同一时刻只允许一个确认请求在途）
 const confirming = ref('')
 // P14-04：正在把实体作为标签写入的 entityId（同一时刻只允许一个在途）
@@ -117,6 +133,22 @@ const currentTime = ref(0)
 const contentParts = computed<ContentPart[]>(() =>
   [...(detail.value?.contentParts ?? [])].sort((a, b) => a.ordinal - b.ordinal),
 )
+const parsingLabel = computed(() => {
+  const parsing = detail.value?.parsing
+  const method = parsing?.contentFormat === 'ocr' || detail.value?.fileType === 'image'
+    ? 'OCR'
+    : parsing?.contentFormat === 'transcript' || detail.value?.fileType === 'audio'
+      ? '音频转写'
+      : parsing?.contentFormat === 'mixed'
+        ? '混合内容解析'
+        : '正文解析'
+  if (parsing?.status === 'ok') return `${method}成功`
+  if (parsing?.status === 'empty') return `${method}完成，但未识别到可用文字`
+  if (parsing?.status === 'failed') return `${method}失败`
+  if (parsing?.status === 'pending') return `${method}处理中`
+  if (detail.value?.status === 'available' && detail.value?.text) return `${method}成功`
+  return '尚无解析结果'
+})
 // P14-02：内嵌图片（受控预览 + OCR）
 const embeddedImages = computed<EmbeddedImage[]>(() => detail.value?.embeddedImages ?? [])
 // 摘要轮询（初次进入仍在生成的材料）；手动刷新统一通过“重新解析”。
@@ -127,6 +159,23 @@ const detailLoadGate = createSessionGate()
 const relatedLoadGate = createSessionGate()
 // P14-04 智能分析加载请求代次：防「A 的分析结果延迟返回后覆盖已切换的资料 B 的候选/实体」
 const analysisLoadGate = createSessionGate()
+const generatedDraftPoller = createGeneratedDraftPoller<MaterialDraftCard & { materialId?: string }>({
+  fetch: (materialId) => api.getMaterialDraftCard(materialId),
+  currentMaterialId: () => detail.value?.materialId ?? null,
+  currentDraft: () => draft.value,
+  isDirty: () => draftDirty.value,
+  apply: (latest) => {
+    draft.value = latest
+    draftTitle.value = latest.title
+    draftContent.value = latest.content
+    takeDraftSnapshot()
+  },
+  onTimeout: (materialId) => {
+    if (detail.value?.materialId === materialId && draft.value?.status === 'pending' && !draftDirty.value) {
+      draftError.value = '知识卡片生成时间较长，请稍后刷新处理状态。'
+    }
+  },
+})
 const summaryPoller = createSummaryPoller({
   fetch: (materialId) => api.getMaterialSummary(materialId),
   onResult: (materialId, result) => {
@@ -283,6 +332,10 @@ async function reparseMaterial() {
     summaryWaitExpired.value = false
     summaryPoller.start(materialId)
     analysisPoller.start(materialId)
+    if (draft.value && !draft.value.confirmed) {
+      draft.value = { ...draft.value, status: 'pending' }
+      generatedDraftPoller.start(materialId)
+    }
   } catch (e) {
     if (analysisLoadGate.isCurrent(requestSession) && detail.value?.materialId === materialId) {
       analysisError.value = e instanceof Error ? e.message : '重新解析失败'
@@ -381,22 +434,27 @@ function stopVersionPolling() {
 }
 
 function stopCardIndexPolling() {
+  cardIndexPollSession += 1
   if (cardIndexPollTimer) clearTimeout(cardIndexPollTimer)
   cardIndexPollTimer = null
 }
 
 function pollCardIndexUntilTerminal(materialId: string) {
   stopCardIndexPolling()
+  const pollSession = ++cardIndexPollSession
   const poll = async () => {
+    if (pollSession !== cardIndexPollSession || detail.value?.materialId !== materialId) return
     try {
       const result = await api.getMaterialDetail(materialId)
-      if (detail.value?.materialId !== materialId) return
+      if (pollSession !== cardIndexPollSession || detail.value?.materialId !== materialId) return
       const next = result.draftCard
       if (!next?.confirmed) return
       draft.value = next
       if (next.indexState === 'indexing') cardIndexPollTimer = setTimeout(poll, 1800)
     } catch {
-      cardIndexPollTimer = setTimeout(poll, 3000)
+      if (pollSession === cardIndexPollSession && detail.value?.materialId === materialId) {
+        cardIndexPollTimer = setTimeout(poll, 3000)
+      }
     }
   }
   cardIndexPollTimer = setTimeout(poll, 1200)
@@ -645,15 +703,22 @@ async function loadRelated(materialId: string) {
   }
 }
 
-async function loadDetail(materialId: string) {
-  loading.value = true
-  error.value = ''
+async function loadDetail(materialId: string, options: { background?: boolean } = {}) {
+  const background = options.background === true
+  if (!background) {
+    loading.value = true
+    error.value = ''
+  }
+  draftError.value = ''
   currentTime.value = 0
   stopVersionPolling()
+  stopCardIndexPolling()
   versionImpact.value = null
   versionActions.value = {}
   // 路由切换：先取消旧资料的摘要轮询，避免旧结果覆盖新页面
   summaryPoller.stop()
+  analysisPoller.stop()
+  generatedDraftPoller.stop()
   summaryWaitExpired.value = false
   const requestSession = detailLoadGate.next()
   try {
@@ -667,6 +732,9 @@ async function loadDetail(materialId: string) {
     draftTitle.value = result.draftCard?.title ?? ''
     draftContent.value = result.draftCard?.content ?? ''
     takeDraftSnapshot()
+    if (result.draftCard?.status === 'pending' && !privacyBlocking.value) {
+      generatedDraftPoller.start(materialId)
+    }
     loadVersions(materialId)
     if (result.supersedesMaterialId && result.status === 'available') loadVersionImpact(materialId)
     if (result.status === 'uploaded' || result.status === 'queued' || result.status === 'processing') {
@@ -677,19 +745,21 @@ async function loadDetail(materialId: string) {
     }
     loadRelated(detail.value.materialId)
     // 摘要仍在后台生成时自动轮询，直到 ok/failed/unavailable/skipped
-    if (detail.value.summary.status === 'pending') {
+    if (detail.value.summary.status === 'pending' && !privacyBlocking.value) {
       summaryPoller.start(detail.value.materialId)
     }
     // P14-04：读取聚合分析（标签候选 / 实体），pending 时内部启动轮询
-    loadAnalysis()
+    if (!privacyBlocking.value) loadAnalysis()
   } catch (e) {
     if (detailLoadGate.isCurrent(requestSession) && route.params.materialId === materialId) {
-      error.value = e instanceof Error ? e.message : '资料详情加载失败'
+      const message = e instanceof Error ? e.message : '资料详情加载失败'
+      if (background) draftError.value = message
+      else error.value = message
     }
   } finally {
     // loading 只允许最新请求归位，避免旧请求误关新请求的加载态
     if (detailLoadGate.isCurrent(requestSession) && route.params.materialId === materialId) {
-      loading.value = false
+      if (!background) loading.value = false
     }
   }
 }
@@ -712,10 +782,15 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onDraftBeforeUnload)
   summaryPoller.stop()
   analysisPoller.stop()
+  generatedDraftPoller.stop()
   stopVersionPolling()
   stopCardIndexPolling()
   detailLoadGate.invalidate()
   analysisLoadGate.invalidate()
+})
+
+watch(draftDirty, (dirty) => {
+  if (dirty) generatedDraftPoller.stop()
 })
 
 const mainPreviewUrl = ref('')
@@ -728,8 +803,9 @@ function clearMainPreview() {
   if (mainPreviewUrl.value) releaseProductPreview(mainPreviewUrl.value)
   mainPreviewUrl.value = ''
 }
-watch(() => detail.value?.previewUrl, async () => {
-  clearMainPreview(); mainPreviewError.value = ''
+async function openMainPreview() {
+  clearMainPreview()
+  mainPreviewError.value = ''
   const value = detail.value
   if (!value || (value.fileType !== 'audio' && !value.fileName.toLowerCase().endsWith('.pdf'))) return
   const ticket = previewRevision
@@ -739,6 +815,10 @@ watch(() => detail.value?.previewUrl, async () => {
     if (ticket !== previewRevision) releaseProductPreview(url)
     else mainPreviewUrl.value = url
   } catch (e) { if (ticket === previewRevision) mainPreviewError.value = e instanceof Error ? e.message : '原件预览不可用' }
+}
+watch(() => detail.value?.previewUrl, () => {
+  clearMainPreview(); mainPreviewError.value = ''
+  if (detail.value?.fileType === 'audio') void openMainPreview()
 })
 onBeforeUnmount(clearMainPreview)
 async function saveOriginal() {
@@ -762,10 +842,10 @@ async function saveOriginal() {
     <template v-else-if="detail">
       <div class="detail-actions">
         <template v-if="detail.status === 'available' && draft && !draft.confirmed">
-          <button class="secondary-btn" type="button" :disabled="derivedGenerationPending || savingDraft || confirmingDraft" @click="reparseMaterial">{{ derivedGenerationPending ? '正在生成…' : '重新解析' }}</button>
-          <button class="primary-btn" type="button" :disabled="savingDraft || confirmingDraft" @click="confirmDraft">{{ confirmingDraft ? '确认中…' : '确认' }}</button>
-          <button class="secondary-btn" type="button" :disabled="savingDraft || confirmingDraft" @click="rethinkDraft">再想想</button>
-          <button class="secondary-btn sm" type="button" :disabled="savingDraft || confirmingDraft" @click="saveDraft">{{ savingDraft ? '保存中…' : '保存草稿' }}</button>
+          <button class="secondary-btn" type="button" :disabled="derivedGenerationPending || draftGenerationPending || savingDraft || confirmingDraft" @click="reparseMaterial">{{ privacyReviewRequired ? '等待隐私复核' : derivedGenerationPending || draftGenerationPending ? '正在生成…' : '重新解析' }}</button>
+          <button class="primary-btn" type="button" :disabled="draftGenerationPending || savingDraft || confirmingDraft" @click="confirmDraft">{{ confirmingDraft ? '确认中…' : '确认' }}</button>
+          <button class="secondary-btn" type="button" :disabled="draftGenerationPending || savingDraft || confirmingDraft" @click="rethinkDraft">再想想</button>
+          <button class="secondary-btn sm" type="button" :disabled="draftGenerationPending || savingDraft || confirmingDraft" @click="saveDraft">{{ savingDraft ? '保存中…' : '保存草稿' }}</button>
         </template>
         <LifecycleDangerPanel
           compact
@@ -786,25 +866,51 @@ async function saveOriginal() {
         @cancel="cancelLeave"
       />
       <section v-if="detail.status === 'available' && draft" class="detail-panel draft-card-panel">
-        <div class="panel-title">知识卡片 <span class="badge soon">{{ draft?.cardState === 'confirmed' ? '已确认' : '草稿' }}</span></div>
+        <div class="panel-title">知识卡片 <span class="badge soon">{{ draftBadge }}</span></div>
         <template v-if="draft?.confirmed">
           <p class="detail-text">该卡片已确认。{{ indexStatusText }}</p>
           <button v-if="draft.indexState === 'index_failed' || draft.indexState === 'none'" class="secondary-btn sm" type="button" :disabled="retryingIndex" @click="retryCardIndex">{{ retryingIndex ? '重试中…' : '重试索引' }}</button>
           <button v-if="draft.knowledgeId" class="secondary-btn sm" type="button" @click="router.push(`/knowledge/${draft.knowledgeId}`)">查看知识卡片</button>
         </template>
         <template v-else>
-          <label class="draft-field">标题<input v-model="draftTitle" type="text" maxlength="200" :disabled="savingDraft || confirmingDraft"></label>
-          <label class="draft-field">正文<textarea v-model="draftContent" rows="12" :disabled="savingDraft || confirmingDraft"></textarea></label>
-          <p class="detail-text">当前材料的标签、摘要、正文、实体和关系均保留在本详情页中，确认时以此草稿正文创建知识卡片。</p>
+          <div v-if="privacyReviewRequired" class="processing-notice" role="status">
+            <strong>安全正文待复核</strong>
+            <p>PDF 已解析完成，盒子正在等待受控隐私复核。复核完成后再刷新状态，安全正文和知识卡片会继续生成。</p>
+            <button class="secondary-btn sm" type="button" @click="loadDetail(detail.materialId)">刷新处理状态</button>
+          </div>
+          <div v-else-if="privacyProcessing" class="processing-notice" role="status">
+            <strong>正在生成安全正文</strong>
+            <p>PDF 已解析完成，隐私处理完成后会继续生成摘要和知识卡片。</p>
+            <button class="secondary-btn sm" type="button" @click="loadDetail(detail.materialId)">刷新处理状态</button>
+          </div>
+          <div v-else-if="privacyFailed" class="processing-notice error-text" role="alert">
+            安全正文处理失败，请检查盒端隐私处理任务后重试。
+          </div>
+          <template v-else>
+            <label class="draft-field">标题<input v-model="draftTitle" type="text" maxlength="200" :disabled="draftGenerationPending || savingDraft || confirmingDraft"></label>
+            <label class="draft-field">正文<textarea v-model="draftContent" rows="12" :placeholder="draftGenerationPending ? '正在生成知识卡片正文…' : ''" :disabled="draftGenerationPending || savingDraft || confirmingDraft"></textarea></label>
+            <p class="detail-text">当前材料的标签、摘要、正文、实体和关系均保留在本详情页中，确认时以此草稿正文创建知识卡片。</p>
+          </template>
         </template>
         <p v-if="draftError" class="error-text">{{ draftError }}</p>
       </section>
+      <RedactionPanel
+        v-if="detail.privacyRequired || (detail.privacyStatus && detail.privacyStatus.state !== 'not_required')"
+        :material-id="detail.materialId"
+        @updated="loadDetail(detail.materialId, { background: true })"
+      />
       <div class="detail-grid">
         <section class="detail-panel preview-panel">
           <div class="panel-title">原始资料 <span class="badge soon">只读</span></div>
           <ProductImage v-if="detail.fileType === 'image'" :src="detail.previewUrl" :alt="detail.fileName" class="material-preview image-preview" />
-          <p v-if="mainPreviewError" role="status">{{ mainPreviewError }}</p>
-          <iframe v-if="detail.fileName.toLowerCase().endsWith('.pdf')" :src="mainPreviewUrl || undefined" :title="detail.fileName" class="material-preview document-preview"></iframe>
+          <div v-if="detail.fileName.toLowerCase().endsWith('.pdf')" class="document-open-state">
+            <p v-if="mainPreviewError" role="status">{{ mainPreviewError }}</p>
+            <button v-if="!mainPreviewUrl" class="secondary-btn" type="button" @click="openMainPreview">查看 PDF 原件</button>
+            <template v-else>
+              <button class="secondary-btn sm" type="button" @click="clearMainPreview">关闭 PDF 预览</button>
+              <PdfPreview :src="mainPreviewUrl" :title="detail.fileName" />
+            </template>
+          </div>
          <!-- <div v-else-if="detail.fileType === 'document'" class="document-open-state">
             <p>该文档格式由系统安全托管，可在新窗口中只读打开。</p>
             <button class="secondary-btn" @click="saveOriginal">保存文档</button>
@@ -814,6 +920,7 @@ async function saveOriginal() {
             <p class="audio-hint">播放时点击下方转写片段可跳转到对应时刻。</p>
           </div>
           <div class="panel-title text-title">{{ detail.textLabel }}</div>
+          <p class="parse-state" role="status">{{ parsingLabel }}</p>
           <template v-if="detail.fileType === 'audio'">
             <div v-if="detail.transcript.length" class="transcript-list">
               <button
@@ -851,6 +958,9 @@ async function saveOriginal() {
           <p v-else-if="detail.status === 'processing' || detail.status === 'uploaded' || detail.status === 'queued'" class="detail-text">
             正在解析文档正文。扫描版 PDF 需要逐页 OCR，处理完成后将显示解析文本。
           </p>
+          <p v-else-if="privacyReviewRequired" class="detail-text">原文件已解析；安全正文等待盒端隐私复核，当前不会展示原始解析内容。</p>
+          <p v-else-if="privacyProcessing" class="detail-text">原文件已解析；正在生成可安全展示的正文。</p>
+          <p v-else-if="privacyFailed" class="detail-text error-text">安全正文处理失败，请检查盒端任务。</p>
           <pre v-else class="detail-text preformatted">{{ detail.text || '暂无解析结果。' }}</pre>
         </section>
         <section class="detail-panel">
@@ -866,7 +976,9 @@ async function saveOriginal() {
             <p class="detail-text">{{ detail.summary.text }}</p>
           </template>
           <template v-else-if="detail.summary.status === 'pending'">
-            <p class="detail-text">{{ summaryWaitExpired ? '仍在后台生成摘要，可刷新页面查看' : '摘要生成中…' }}</p>
+            <p v-if="privacyReviewRequired" class="detail-text">安全正文复核完成后再生成摘要。</p>
+            <p v-else-if="privacyProcessing" class="detail-text">安全正文生成后再生成摘要。</p>
+            <p v-else class="detail-text">{{ summaryWaitExpired ? '仍在后台生成摘要，可刷新页面查看' : '摘要生成中…' }}</p>
           </template>
           <template v-else-if="detail.summary.status === 'skipped'">
             <p class="detail-text">暂无摘要（该资料无可用文本）</p>

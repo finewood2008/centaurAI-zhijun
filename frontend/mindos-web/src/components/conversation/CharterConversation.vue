@@ -40,8 +40,8 @@ function schedule(attempt = 0) {
   if (attempt >= 12 || workspace.value?.status !== 'active') return
   timer = setTimeout(async () => { await refresh(); schedule(attempt + 1) }, 5000)
 }
-watch(() => [props.conversationId, props.messageId], async ([id], old) => {
-  if (id !== old?.[0]) { controller?.abort(); if (timer) clearTimeout(timer); open.value = false; state.value = null; error.value = ''; busy.value = false; startRequest = crypto.randomUUID() }
+watch(() => props.conversationId, async (id, old) => {
+  if (id !== old) { controller?.abort(); if (timer) clearTimeout(timer); open.value = false; state.value = null; error.value = ''; busy.value = false; startRequest = crypto.randomUUID() }
   await refresh(); schedule()
 }, { immediate: true })
 async function start() {

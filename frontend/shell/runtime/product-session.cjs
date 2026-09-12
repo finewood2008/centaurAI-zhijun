@@ -283,7 +283,7 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
       }
     }
     const handle = crypto.randomBytes(16).toString('hex'); media.set(handle, blob);
-    return { handle, url: `zhijun-media://session/${handle}`, contentType: blob.contentType };
+    return { handle, url: `zhijun-media://session/${handle}`, contentType: blob.contentType, size: blob.size };
     } finally { pendingMedia--; }
   }
   function closeMedia(input) {
@@ -293,7 +293,11 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     return { closed: result };
   }
   async function mediaResponse(request) {
-    const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; sandbox" };
+    // Media is consumed by native image/audio elements or the bundled PDF.js
+    // canvas renderer. The capability URL is unguessable and generation-bound;
+    // the strict MIME allowlist plus nosniff prevents binary data becoming script.
+    const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+      'Access-Control-Allow-Origin': 'zhijun://desktop', 'Vary': 'Origin' };
     try {
       current(); const url = new URL(request.url);
       assert(url.protocol === 'zhijun-media:' && url.host === 'session' && !url.search && !url.hash && !url.username && !url.password

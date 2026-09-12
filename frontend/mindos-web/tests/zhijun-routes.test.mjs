@@ -81,7 +81,7 @@ assert.doesNotMatch(conversation, /import (NudgeStrip|NextStepsPanel) from/)
 assert.doesNotMatch(conversation, /router\.(push|replace)\('\/'\)/)
 // 成果回执能跨页面重开；本体边界说明移出图内，避免顶端碰撞。
 assert.match(conversation, /async function refreshConversationBackground\(conversationId: string\)[\s\S]*refreshOutcomes\(conversationId, true\)/)
-assert.match(conversation, /turnOutcomes\.value = null[\s\S]*refreshConversationBackground\(id\)/)
+assert.match(conversation, /schedule\(5, 3000, \(\) => void refreshConversationBackground\(conversationId\)\)/)
 assert.match(selfMap, /v-if="compact"[\s\S]*zj-map__ring-label--boundary/)
 assert.match(selfMap, /class="zj-map__boundary-note"/)
 assert.match(selfMap, /已确认且已校准/)

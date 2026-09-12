@@ -15,11 +15,12 @@ def _sources(preview):
                    for source in preview["sources"]), key=lambda source: source["key"])
 
 
-def _binding(preview, provider):
+def _binding(preview, provider, authorization):
     # Consent cannot silently transfer to another prompt, source version, mode or destination.
     return {"conversationId": preview["conversationId"], "purpose": preview["purpose"],
             "serviceId": provider.service_id, "configurationRevision": provider.configuration_revision,
-            "sources": _sources(preview), "request": preview["request"], "mode": preview["mode"]}
+            "sources": _sources(preview), "request": preview["request"], "mode": preview["mode"],
+            "authorization": authorization}
 
 
 def _db():
@@ -32,21 +33,24 @@ def _db():
     return store
 
 
-def issue(preview, keys, provider):
+def issue(preview, keys, provider, *, default_policy_revision=None):
     if not provider.external:
         raise CapabilityError("CONSENT_EXTERNAL_SERVICE_REQUIRED", 409)
     # Every source in this exact payload must be visible in the user's current grant action.
     if set(keys) != {source["key"] for source in preview["sources"]}:
         raise CapabilityError("CONSENT_ALL_SOURCES_REQUIRED", 409)
+    authorization = ({"kind": "default", "policyRevision": default_policy_revision}
+                     if default_policy_revision is not None else {"kind": "explicit"})
     dto = {"previewRevision": preview["revision"], "conversationId": preview["conversationId"],
            "purpose": preview["purpose"], "serviceId": provider.service_id,
-           "configurationRevision": provider.configuration_revision, "selectedSources": _sources(preview)}
+           "configurationRevision": provider.configuration_revision, "selectedSources": _sources(preview),
+           "authorization": authorization}
     grant_id = hashlib.sha256(canonical(dto).encode()).hexdigest()
     response = require().call("models.consent.issue", {**dto, "grantId": grant_id})
     if (type(response) is not dict or not isinstance(response.get("consentId"), str)
             or type(response.get("expiresAt")) not in (int, float) or response["expiresAt"] <= time.time()):
         raise CapabilityError("CAPABILITY_CONSENT_CONTRACT", 502)
-    binding = hashlib.sha256(canonical(_binding(preview, provider)).encode()).hexdigest()
+    binding = hashlib.sha256(canonical(_binding(preview, provider, authorization)).encode()).hexdigest()
     store = _db()
     with store._lock, store._connect() as db:
         db.execute("DELETE FROM workspace_consent_receipts WHERE expires_at<=?", (time.time(),))
@@ -57,11 +61,15 @@ def issue(preview, keys, provider):
 
 
 def receipt(preview, provider):
-    binding = hashlib.sha256(canonical(_binding(preview, provider)).encode()).hexdigest()
     store = _db()
+    authorizations = [{"kind": "explicit"}]
+    policy = preview.get("defaultAuthorization") or {}
+    if policy.get("applies") and type(policy.get("revision")) is int:
+        authorizations.append({"kind": "default", "policyRevision": policy["revision"]})
     with store._connect() as db:
-        row = db.execute("SELECT grant_id,consent_id FROM workspace_consent_receipts WHERE binding=? AND expires_at>?",
-                         (binding, time.time())).fetchone()
+        row = next((found for authorization in authorizations if (found := db.execute(
+            "SELECT grant_id,consent_id FROM workspace_consent_receipts WHERE binding=? AND expires_at>?",
+            (hashlib.sha256(canonical(_binding(preview, provider, authorization)).encode()).hexdigest(), time.time())).fetchone())), None)
     if not row:
         raise CapabilityError("MODEL_EGRESS_CONSENT_REQUIRED", 409)
     return {"grantId": row[0], "consentId": row[1]}

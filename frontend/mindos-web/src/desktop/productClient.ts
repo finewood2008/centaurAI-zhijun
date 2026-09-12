@@ -254,6 +254,10 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
       ignore(product.closeMedia(context(value), { handle: resource.handle }))
       throw new ProductFailure('原件地址无效')
     }
+    if (!resource.contentType || resource.size <= 0 || resource.size > operation.maxResponseBytes) {
+      ignore(product.closeMedia(context(value), { handle: resource.handle }))
+      throw new ProductFailure('原件内容无效')
+    }
     media.set(resource.url, { handle: resource.handle, generation: value.generation })
     return resource.url
   }

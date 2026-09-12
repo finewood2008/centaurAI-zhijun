@@ -65,7 +65,7 @@ OS `353f1d9`、SDK 工件 `7c59c44` 已推送到同名集成分支。native 1.2.
 
 真机使用公司盒 `AMD-A2A-248` 复测：同一业务 ID 的预览与正式消息均成功，问题“你是哪个模型”收到盒端模型完整回复，界面没有再出现参数错误或 429。加入原材料局部刷新回归后，前端全量 **80/80**、Shell 全量 **143/143**、Electron E2E **4/4**、产品导航 E2E 与 Desktop 构建通过。
 
-账号登录态另设固定 7 天本地截止时间，凭据只保存在系统加密存储；普通关闭应用会保留，显式退出会先清除本地凭据。重启真机应用两次均自动恢复账号并进入设备选择页。`SESSION_EXPIRED` 和已经确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除账号、设备列表和加密登录记录，由现有桌面入口立即显示完整登录页。普通 Direct 建连失败、请求超时和权限拒绝仍保留账号，允许重新选择盒子。Access Token、Connectivity ticket、P2P session、逐请求证明和 workspace lease 继续使用各自短周期。
+账号登录会话另设固定 7 天本地截止时间，只保存在系统加密存储；普通关闭应用会保留，显式退出会先清除会话令牌。重启真机应用两次均自动恢复账号并进入设备选择页。`SESSION_EXPIRED` 和已经确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除账号、设备列表和会话令牌，由现有桌面入口立即显示完整登录页。登录页另有独立的加密登录资料：手机号自动回填，密码仅在用户勾选“使用系统安全存储记住密码”后保存；页面只显示“已保存”状态，密码不回传 renderer，且过期后不自动登录。普通 Direct 建连失败、请求超时和权限拒绝仍保留账号，允许重新选择盒子。Access Token、Connectivity ticket、P2P session、逐请求证明和 workspace lease 继续使用各自短周期。
 
 ### “我的本体”按视图加载（0907 追加）
 
@@ -98,3 +98,19 @@ Gateway 现网约有 802 个 jobs、2444 个 events 和 3249 个文件。事件�
 本次从干净的 DE `813a9c0` 生成窄补丁，先复制旧发布形成新的不可变目录 `/home/user/apps/centuarai-data-engine/releases/20260907T234742Z-813a9c0`，只覆盖已经过回归的 `models.py`、`search_service.py`、`materials.py` 与 `store.py`，并通过新的 97 号 systemd drop-in 切换。旧发布目录、原服务配置和切换前文件摘要保存在 `/home/user/apps/centuarai-data-engine/patch-backups/20260907T234742Z-813a9c0`；部署脚本在健康失败时会自动移除 drop-in 并恢复旧服务。未修改 Agent 清单、授权快照、桥接密钥、worker catalog 或业务数据。
 
 切换后 `centaurAI-database.service` 为 active，`NRestarts=0`，`GET /api/health` 返回 200。使用正式 Consumer 账号、`zhijun-desktop`、`zhijun.workspace` 和 Direct-only SDK 连接家庭设备 `AMD AI盒子`，五个模型配置操作均返回内部 HTTP 200；记忆策略读取、切换和恢复也均为 200，最终恢复为 `important`，revision 为 2。首次用临时新客户端立即连接曾被 Agent 返回 `TARGET_NOT_ALLOWED`；核对 manifest、票据和授权快照均正确，等待 7 秒让 5 秒周期的客户端 grant 同步后，同一完整验收通过。不能用放宽 target/scope 或手改授权快照规避该同步窗口。
+
+### 对话详情优先加载（0908）
+
+公司盒上打开已有对话时，详情请求原来与导入关联、事项、章程、回复辅助、学习建议、结果、待核对和本体关系等读取同时进入 Direct 调度队列。一次点击会立即形成多项 Gateway start/poll；历史任务较多时，主详情会被辅助请求和任务目录扫描共同拖慢。连续切换还会保留上一会话的在途读取，既浪费配额，也可能短暂把旧内容显示在新路由下。
+
+桌面端现把会话详情设为首要请求：路由切换立即取消上一条详情及辅助读取，清空旧会话内容；详情确认属于当前路由后才挂载辅助区。导入关联在 600 ms 后加载，事项与对齐在 1200 ms 后加载，章程、回复与学习、结果与待核对依次错峰到 1800/2400/3000 ms。普通对话不再读取最多 500 条、模板未消费的本体关系；首次认识流程仍保留该读取。辅助组件自己的初始读取也支持取消，避免快速切换后的过期交付。
+
+在尚未部署新的 Gateway 扫描节流时，使用开发版连接公司 `AMD-A2A-248`，对两段已有会话交替打开 6 次，详情可用时间为 395、588、486、631、1855、2356 ms。此前同一盒子的旧构建连续切换约为 7.2–7.7 秒；第一版仅减少首屏请求后会因辅助请求立即回灌，后续仍升至 9 秒以上。新结果说明首要内容不再长期排在辅助任务之后，但后两次仍受盒端任务创建扫描和约 96 ms 平均网络往返影响，不能把它描述为稳定低于一秒。
+
+本轮前端 86/86、Shell 146/146、Desktop UI 12/12、Electron E2E 4/4 通过。完整签名包已重新构建并完成资源校验与启动冒烟测试。Gateway 侧节流提交已通过 104 项定向回归；验收期间 Mac 从公司盒所在的 `192.168.0.x` 切换到 `192.168.100.118/24`，旧私网地址不再可路由。该服务端提交尚未切换为运行版本，回到公司盒所在网段后须补做部署和同一组连续切换复测。
+
+### 换网后的 Direct 连接边界（0908）
+
+在 `192.168.100.118/24` 网络使用最新签名包复验，账号加密会话恢复成功，Admin 返回公司与家庭两台设备均在线；Admin HTTPS、Gateway 443 及 UDP STUN 3478 均可达，STUN Binding 能返回当前公网映射。逐台连接均在已取票后的 Direct ICE/DataChannel 阶段返回 `SDK_DIRECT_UNAVAILABLE / DIRECT_TIMEOUT`。因此两台同时失败不能归因于资料 API、Gateway job 或盒端 Data Engine。
+
+使用一次真实 Direct 超时的 session 证据继续申请 `TURN_ONLY` 票据，线上 Admin 对 `zhijun-desktop` 返回 `APPLICATION_AUTHORIZATION_DENIED`。当前客户端配置也固定为 `SOVEREIGN_DIRECT_ONLY / DIRECT_ONLY`，sidecar 1.2.1 只接受 STUN 票据。要支持这类受限 NAT 网络，需要先确定产品是否允许加密 TURN 中继，随后同时修改 Admin 应用授权、Connectivity SDK/sidecar 和桌面路径状态展示；不能通过增加 Direct 重试、访问盒子私网 IP 或在前端静默改走普通 HTTP 解决。

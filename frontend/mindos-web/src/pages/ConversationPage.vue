@@ -425,6 +425,7 @@ async function refreshOutcomes(conversationId: string, showCard = false) {
 const showOutcomesCard = computed(() => !streaming.value && !!current.value && hasConversationOutcomes(turnOutcomes.value))
 
 const loadGate = createSessionGate()
+let conversationDetailAbort: AbortController | null = null
 const pollGate = createSessionGate()
 const memoryLoadGate = createSessionGate()
 const memoryAttention = ref<ConversationMemoryAttention | null>(null)
@@ -441,6 +442,31 @@ const currentId = computed(() => {
   const id = route.params.conversationId
   return typeof id === 'string' && id ? id : null
 })
+const loadedConversationId = computed(() => !messagesLoading.value && current.value?.id === currentId.value ? currentId.value : null)
+const conversationAuxPhase = ref(0)
+const importsConversationId = computed(() => conversationAuxPhase.value >= 1 ? loadedConversationId.value : null)
+let conversationAuxTimers: number[] = []
+function clearConversationAuxiliary() {
+  for (const timer of conversationAuxTimers) window.clearTimeout(timer)
+  conversationAuxTimers = []
+  conversationAuxPhase.value = 0
+}
+function scheduleConversationAuxiliary(conversationId: string) {
+  clearConversationAuxiliary()
+  const schedule = (phase: number, delay: number, task?: () => void) => {
+    conversationAuxTimers.push(window.setTimeout(() => {
+      if (!alive || loadedConversationId.value !== conversationId) return
+      conversationAuxPhase.value = phase
+      task?.()
+    }, delay))
+  }
+  // 直连通道按任务持久化和轮询。把非首屏读取错开，避免再次堵住下一次详情读取。
+  schedule(1, 600)
+  schedule(2, 1200)
+  schedule(3, 1800)
+  schedule(4, 2400)
+  schedule(5, 3000, () => void refreshConversationBackground(conversationId))
+}
 
 // 建档入口只由显式引导路由 / query 打开。正常 /chat 已由全局引导状态守卫放行，
 // 不能再根据「没有会话 / 本体为空」倒推出尚未完成引导（用户可能刚删完对话）。
@@ -615,7 +641,9 @@ async function refreshCurrentMetadata(conversationId: string) {
 }
 
 async function refreshConversationBackground(conversationId: string) {
-  await Promise.allSettled([refreshOutcomes(conversationId, true), loadMapClaims()])
+  const reads: Promise<unknown>[] = [refreshOutcomes(conversationId, true)]
+  if (current.value?.mode === 'onboarding') reads.push(loadMapClaims())
+  await Promise.allSettled(reads)
   if (!alive || streaming.value || currentId.value !== conversationId) return
   await refreshMemoryAttention(conversationId)
 }
@@ -699,12 +727,27 @@ function toUi(m: Message): UiMessage {
 }
 
 async function loadConversation(id: string) {
+  conversationDetailAbort?.abort()
+  clearConversationAuxiliary()
+  const controller = new AbortController()
+  conversationDetailAbort = controller
   const session = loadGate.next()
   clearMemoryAttention()
   messagesLoading.value = true
   messagesError.value = ''
+  // 路由先于详情返回。立即移除上一段会话，避免以新 ID 挂载旧消息的附属读取，
+  // 也避免用户在等待时短暂看到另一段会话的内容。
+  current.value = null
+  messages.value = []
+  draft.value = null
+  decision.value = null
+  turnOutcomes.value = null
+  mapClaims.value = []
+  routingMode.value = 'unknown'
+  alignmentLocalOnly.value = false
+  let loaded = false
   try {
-    const detail = await getConversation(id)
+    const detail = await getConversation(id, controller.signal)
     if (!loadGate.isCurrent(session)) return
     current.value = rememberConversationMetadata(detail.conversation)
     messages.value = detail.messages.map(toUi)
@@ -719,8 +762,7 @@ async function loadConversation(id: string) {
     reviewSaveError.value = ''
     closingStreaming.value = false
     turnOutcomes.value = null
-    // 成果不是一次性提示：重新打开旧会话时也要能核对这段对话留下了什么。
-    void refreshConversationBackground(id)
+    loaded = true
     if (detail.conversation.mode === 'onboarding') {
       onboardingStep.value = stepFromMessages()
     } else {
@@ -730,6 +772,7 @@ async function loadConversation(id: string) {
     else await scrollToBottom()
   } catch (err) {
     if (!loadGate.isCurrent(session)) return
+    if (controller.signal.aborted) return
     if (err instanceof ApiError && err.status === 404) {
       toast({ type: 'error', message: '会话不存在' })
       router.replace(guidedOnboarding.value ? '/onboarding' : '/chat')
@@ -737,11 +780,18 @@ async function loadConversation(id: string) {
     }
     messagesError.value = friendlyError(err, '会话加载失败')
   } finally {
-    if (loadGate.isCurrent(session)) messagesLoading.value = false
+    if (conversationDetailAbort === controller) conversationDetailAbort = null
+    if (loadGate.isCurrent(session)) {
+      messagesLoading.value = false
+      if (loaded) scheduleConversationAuxiliary(id)
+    }
   }
 }
 
 function resetToLanding() {
+  conversationDetailAbort?.abort()
+  conversationDetailAbort = null
+  clearConversationAuxiliary()
   loadGate.invalidate()
   clearMemoryAttention()
   current.value = null
@@ -1327,7 +1377,7 @@ function onCite(assistant: UiMessage, index: number) {
 }
 
 const imports = reactive(useChatImports({
-  conversationId: currentId,
+  conversationId: importsConversationId,
   ensure: async () => (await ensureConversation(showIntro.value ? 'onboarding' : 'chat')).id,
   refreshMessages: async id => {
     if (streaming.value || messagesLoading.value || currentId.value !== id) return false
@@ -1369,6 +1419,9 @@ onBeforeUnmount(() => {
   clearTimeout(conversationSearchTimer)
   clearTimeout(highlightTimer)
   loadGate.invalidate()
+  conversationDetailAbort?.abort()
+  conversationDetailAbort = null
+  clearConversationAuxiliary()
   clearMemoryAttention()
   draftPollGate.invalidate()
   mapPollGate.invalidate()
@@ -1444,8 +1497,8 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="zj-page__tools">
-          <RoutingPanel ref="routingPanel" :conversation-id="currentId || undefined" :disabled="streaming" @mode="routingMode = $event" />
-          <MatterWorkspace v-if="currentId && !guidedOnboarding" ref="matterWorkspace" :conversation-id="currentId" :suspension="matterSuspension" :disabled="streaming || messagesLoading" @prepare="text => composerRef?.appendText(text)" />
+          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="routingMode = $event" />
+          <MatterWorkspace v-if="loadedConversationId && conversationAuxPhase >= 2 && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
           <button v-if="decision" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('review')">观察与复盘</button>
@@ -1457,7 +1510,7 @@ onBeforeUnmount(() => {
 
       <div class="zj-page__body">
       <div class="zj-page__stream">
-      <AlignmentPrivacy v-if="currentId" ref="alignmentPrivacy" :conversation-id="currentId" :streaming="streaming" :managed="routingMode !== 'legacy'" @local-only="alignmentLocalOnly = $event" />
+      <AlignmentPrivacy v-if="loadedConversationId && conversationAuxPhase >= 2 && routingMode === 'legacy'" ref="alignmentPrivacy" :conversation-id="loadedConversationId" :streaming="streaming" :managed="false" @local-only="alignmentLocalOnly = $event" />
       <div ref="listRef" class="zj-page__messages">
         <div v-if="showIntro" class="zj-intro">
           <Sparkles :size="22" aria-hidden="true" />
@@ -1523,7 +1576,7 @@ onBeforeUnmount(() => {
             </div>
             <ProvenanceStrip v-if="m.role === 'assistant' && m.provenance" :provenance="m.provenance" :meta="m.turnMeta" />
             <p v-if="m.role === 'user' && m.meta?.replyAssistance" class="zj-turn__note">{{ (m.meta.replyAssistance as any).kind === 'assisted' ? '由 AI 候选辅助起草，你已发送' : '对话操作' }}</p>
-            <ReplyAssistance v-if="currentId && m.id === replyTarget" :conversation-id="currentId" :message-id="m.id" :disabled="streaming || messagesLoading"
+            <ReplyAssistance v-if="loadedConversationId && conversationAuxPhase >= 4 && m.id === replyTarget" :conversation-id="loadedConversationId" :message-id="m.id" :disabled="streaming"
               @insert="(text, origin) => composerRef?.insertReply(text, origin)" @write="composerRef?.focus()" />
             <div v-if="m.role === 'assistant' && !m.streaming && ['error', 'aborted'].includes(m.status)" class="zj-file-followups">
               <span>{{ contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '消息已保留，未自动切换模型。' }}</span>
@@ -1542,7 +1595,7 @@ onBeforeUnmount(() => {
               @dismiss="memoryPlacement && dismissMemory('claim', memoryPlacement.claim.id, true)" />
           </div>
         </template>
-        <CharterConversation v-if="currentId" :key="currentId" :conversation-id="currentId" :onboarding="guidedOnboarding"
+        <CharterConversation v-if="loadedConversationId && conversationAuxPhase >= 3" :key="loadedConversationId" :conversation-id="loadedConversationId" :onboarding="guidedOnboarding"
           :message-id="replyTarget" :disabled="streaming || messagesLoading" :claims="mapClaims" :requested="route.query.charter === '1'"
           @finished="finishLightOnboarding" @attention="charterAttention = $event" @topics="onboardingTopics = $event" @reviewed="loadMapClaims" />
         <OutcomesCard v-if="showOutcomesCard && turnOutcomes" :outcomes="turnOutcomes" />
@@ -1640,7 +1693,7 @@ onBeforeUnmount(() => {
         </section>
         </div>
         <div v-show="workspaceTab === 'review'" id="workspace-review" role="tabpanel" aria-labelledby="workspace-review-tab">
-        <LearningCard v-if="decision && currentId" :key="`learning-${currentId}-${decision.id}`" :conversation-id="currentId" :decision="decision" />
+        <LearningCard v-if="decision && loadedConversationId && conversationAuxPhase >= 4" :key="`learning-${loadedConversationId}-${decision.id}`" :conversation-id="loadedConversationId" :decision="decision" />
         <ReviewOutcomePanel
           v-if="isReview && decision"
           :decision="decision"

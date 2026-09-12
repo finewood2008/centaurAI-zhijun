@@ -1367,6 +1367,85 @@
       "mutating": false
     },
     {
+      "id": "get_api_mindos_materials_material_id_redaction",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/redaction",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_materials_material_id_redaction_review",
+      "method": "GET",
+      "path": "/api/mindos/materials/{materialId}/redaction/review",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [
+        "kind"
+      ],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 16777216,
+      "capability": "materials",
+      "mutating": false,
+      "sensitiveResponse": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_redaction_review",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/redaction/review",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_redaction_correct",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/redaction/correct",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true,
+      "idempotencyHeader": "Idempotency-Key"
+    },
+    {
+      "id": "post_api_mindos_materials_material_id_redaction_retry",
+      "method": "POST",
+      "path": "/api/mindos/materials/{materialId}/redaction/retry",
+      "pathParams": [
+        "materialId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "materials",
+      "mutating": true
+    },
+    {
       "id": "get_api_mindos_materials_material_id_deletion_impact",
       "method": "GET",
       "path": "/api/mindos/materials/{materialId}/deletion-impact",

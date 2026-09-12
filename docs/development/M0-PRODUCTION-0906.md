@@ -22,7 +22,7 @@
 影响 `frontend/shell/production/`、宿主/runtime/preload/安全白名单、`frontend/shared`、桌面 Vue/controller、shell 依赖锁、vendor 归档和相关文档。本阶段相邻仓库只读；后续D03已在各自隔离worktree实现，原data-engine既有未提交变更未合入。
 
 1. 未配置时不发请求；配置只由 main 从显式文件读取，renderer 无权设置服务地址、应用身份或sidecar路径。
-2. 按现有 Admin 密码登录与 ECDSA-SHA256 签名合同执行；密码只作一次登录输入，access/refresh/private key 不通过 IPC，凭据只使用独立 safeStorage 加密目录；不可用时拒绝明文降级。
+2. 按现有 Admin 密码登录与 ECDSA-SHA256 签名合同执行；access/refresh/private key 不通过 IPC，凭据只使用独立 safeStorage 加密目录，不可用时拒绝明文降级。上次成功账号自动回填；只有用户勾选“使用系统安全存储记住密码”才保存密码。renderer 只能读取手机号与 `passwordSaved`，使用保存密码登录时由主进程解密并提交。
 3. 一份 SDK auth coordinator 服务设备/票据调用；换账号/退出/超时后旧登录和刷新不恢复身份，401只允许一次受控刷新，业务写不重放。
 4. SDK包固定哈希并仅 main import；native host 验证 sidecar 哈希和固定参数，业务桥验证失败时不进入ready，不用P2P ticket替代data-engine业务票据。
 5. 登录页/模拟路径、权限与错误边界、Web/Desktop构建、隔离测试通过；真实网络/账号/设备结果单独记录，不以合成fixture代替。
@@ -53,7 +53,7 @@ Admin 源码基线 `8ff6e888fb17ce268527755d6795c9d68b5b5305`：
 
 所有账号受保护请求共用实际SDK `createElectronConsumerAuth`。只在明确401时共享刷新并重试一次；403不猜测为撤销，不自动重试超时/丢包，更不重放业务写入。登录提交凭据前检查client epoch和runtime代次，超时或退出后的迟到结果不会形成隐藏登录。刷新凭据拒绝后清空公开主体，允许重新登录。
 
-显式退出首先清理本地令牌，再尝试远端logout；远端失败会提示失败，不能声称服务器已撤销。关闭应用仅清理本地登录并关闭所持SDK资源，下一次打开仍需登录；同一登录账号的客户端密钥保留以复用注册身份；切换手机号使用独立clientId/P-256密钥。账号索引整体加密，不把手机号作为文件名，最多保留32个账号身份。Admin `_upsert_client` 不允许跨账号复用clientId，因此不能只按安装实例共用一把身份密钥。当前 Electron 37 使用同步 safeStorage，系统钥匙串交互可能阻塞主线程，应用计时器不能保证截断系统提示；后续已用真实macOS safeStorage验证临时合成凭据；签名安装包仍待完成。[Electron 官方说明](https://www.electronjs.org/docs/latest/api/safe-storage)
+显式退出首先清理本地会话令牌，再尝试远端 logout；远端失败会提示失败，不能声称服务器已撤销。关闭应用会关闭所持 SDK 资源，但 7 天内可从加密会话恢复。手机号及用户选择保存的密码使用独立 `remembered-login.enc`，不会因会话过期而自动登录；取消勾选并成功登录后以仅手机号记录原子覆盖。登录保存还受 runtime generation 守卫，旧登录的迟到回调不能覆盖新账号。同一登录账号的客户端密钥保留以复用注册身份；切换手机号使用独立clientId/P-256密钥。账号索引整体加密，不把手机号作为文件名，最多保留32个账号身份。Admin `_upsert_client` 不允许跨账号复用clientId，因此不能只按安装实例共用一把身份密钥。当前 Electron 37 使用同步 safeStorage，系统钥匙串交互可能阻塞主线程，应用计时器不能保证截断系统提示；后续已用真实macOS safeStorage验证临时合成凭据；签名安装包仍待完成。[Electron 官方说明](https://www.electronjs.org/docs/latest/api/safe-storage)
 
 ## 启动正式账号入口
 

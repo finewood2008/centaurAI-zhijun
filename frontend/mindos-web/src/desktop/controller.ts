@@ -1,6 +1,7 @@
 import type {
   CallContext, DesktopSnapshot, DeviceSummary, MaterialStatus, MaterialType,
   MaterialsPage, MaterialsQuery, PasswordCredentials, PublicError, Result, ZhijunDesktopV1,
+  RememberedLogin, RegistrationCredentials,
 } from '../../../shared/desktop-contract'
 
 export interface DesktopViewState {
@@ -12,7 +13,8 @@ export interface DesktopViewState {
   readonly query: MaterialsQuery
   readonly loading: boolean
   readonly controlPending: boolean
-  readonly pendingOperation: 'beginSignIn' | 'signInWithPassword' | 'disconnect' | 'signOut' | 'connect' | null
+  readonly pendingOperation: 'beginSignIn' | 'signInWithPassword' | 'signInWithSavedPassword' | 'sendRegistrationCode'
+    | 'registerWithPassword' | 'claimDevice' | 'disconnect' | 'signOut' | 'connect' | null
   readonly error: PublicError | null
   readonly notice: string
 }
@@ -106,7 +108,7 @@ export class DesktopController {
     }
   }
 
-  async control(operation: 'beginSignIn' | 'signInWithPassword' | 'disconnect' | 'signOut' | 'connect', input?: string | PasswordCredentials): Promise<void> {
+  async control(operation: 'beginSignIn' | 'signInWithPassword' | 'signInWithSavedPassword' | 'registerWithPassword' | 'disconnect' | 'signOut' | 'connect', input?: string | boolean | PasswordCredentials | RegistrationCredentials): Promise<void> {
     if (!this.bridge || this.disposed || !this.state.snapshot) return
     if (this.state.controlPending && (operation !== 'signOut' || this.state.pendingOperation === 'signOut')) return
     const revision = ++this.controlRevision
@@ -118,6 +120,10 @@ export class DesktopController {
         ? await this.bridge.connect(context, typeof input === 'string' ? input : '')
         : operation === 'signInWithPassword'
           ? await this.bridge.signInWithPassword(context, input as PasswordCredentials)
+          : operation === 'registerWithPassword'
+            ? await this.bridge.registerWithPassword(context, input as RegistrationCredentials)
+          : operation === 'signInWithSavedPassword'
+            ? await this.bridge.signInWithSavedPassword(context, input !== false)
           : await this.bridge[operation](context)
       if (this.disposed || revision !== this.controlRevision) return
       if (result.ok) this.acceptSnapshot(result.data)
@@ -129,6 +135,58 @@ export class DesktopController {
     } finally {
       if (revision === this.controlRevision) this.patch({ controlPending: false, pendingOperation: null })
     }
+  }
+
+  async sendRegistrationCode(phone: string): Promise<number | null> {
+    if (!this.bridge || this.disposed || !this.state.snapshot || this.state.controlPending) return null
+    const revision = ++this.controlRevision
+    const generation = this.state.snapshot.generation
+    this.patch({ controlPending: true, pendingOperation: 'sendRegistrationCode', error: null, notice: '' })
+    try {
+      const result = await this.bridge.sendRegistrationCode(this.context(), phone)
+      if (this.disposed || revision !== this.controlRevision || generation !== this.state.snapshot?.generation) return null
+      if (!result.ok) { this.acceptError(result); return null }
+      this.patch({ notice: `验证码已发送，请查看手机短信；验证码 ${result.data.expiresIn} 秒内有效。` })
+      return result.data.expiresIn
+    } catch {
+      if (revision === this.controlRevision && generation === this.state.snapshot?.generation) this.patch({ error: unavailable() })
+      return null
+    } finally {
+      if (revision === this.controlRevision) this.patch({ controlPending: false, pendingOperation: null })
+    }
+  }
+
+  async claimDevice(claimToken: string): Promise<boolean> {
+    if (!this.bridge || this.disposed || !this.state.snapshot || this.state.controlPending) return false
+    const revision = ++this.controlRevision
+    const generation = this.state.snapshot.generation
+    let claimed: DeviceSummary | null = null
+    this.patch({ controlPending: true, pendingOperation: 'claimDevice', error: null, notice: '' })
+    try {
+      const result = await this.bridge.claimDevice(this.context(), claimToken)
+      if (this.disposed || revision !== this.controlRevision || generation !== this.state.snapshot?.generation) return false
+      if (!result.ok) { this.acceptError(result); return false }
+      claimed = result.data
+      this.patch({ devices: [...this.state.devices.filter(device => device.deviceId !== claimed?.deviceId), claimed],
+        notice: `已认领盒子“${claimed.displayName}”，正在刷新设备列表。` })
+    } catch {
+      if (revision === this.controlRevision && generation === this.state.snapshot?.generation) this.patch({ error: unavailable() })
+      return false
+    } finally {
+      if (revision === this.controlRevision) this.patch({ controlPending: false, pendingOperation: null })
+    }
+    if (claimed) await this.loadDevices()
+    return Boolean(claimed)
+  }
+
+  async getRememberedLogin(): Promise<RememberedLogin | null> {
+    if (!this.bridge || this.disposed || !this.state.snapshot) return null
+    const generation = this.state.snapshot.generation
+    try {
+      const result = await this.bridge.getRememberedLogin(this.context())
+      if (this.disposed || generation !== this.state.snapshot?.generation) return null
+      return result.ok && result.generation === generation ? result.data : null
+    } catch { return null }
   }
 
   async loadDevices(): Promise<void> {

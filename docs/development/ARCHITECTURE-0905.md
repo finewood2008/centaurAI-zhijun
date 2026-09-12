@@ -4,6 +4,8 @@
 
 配套：[集成与部署](INTEGRATION-0905.md)、[桌面合同](DESKTOP-CONTRACT-0905.md)、[接口去向审计](DESKTOP-API-ROUTING-AUDIT-0907.md)、[领域集成](DOMAIN-INTEGRATION-0905.md)、[完整产品执行计划](FULL-PRODUCT-INTEGRATION-0906.md)、[正式验收记录](REAL-ACCEPTANCE-0906.md)。
 
+当前网络策略为 `SOVEREIGN_DIRECT_ONLY / DIRECT_ONLY`。Admin 与 Gateway 只承担认证、票据和信令，业务数据通过 WebRTC DataChannel；STUN 可达不等于任意两端 NAT 都能建立直连。2026-09-08 在另一外部网络对公司、家庭两台盒均复现 `DIRECT_TIMEOUT`，且线上 Admin 拒绝知君的 `TURN_ONLY` 票据。TURN 中继是跨 Admin、SDK/sidecar、Agent 与 UI 的独立能力和数据路径决策，不属于前端重试优化。
+
 ![知君当前完整产品架构](assets/architecture-0905.svg)
 
 ## 1. 当前实现与历史证据
@@ -104,4 +106,30 @@ canonical 资料事件通过持久 outbox 进入 Gateway；Gateway 仅在有效�
 
 0907 公司环境当前 DE 为 `62ae9b1`、worker 为知君 `eebd58b`（业务源码与此前 `507edb5` 相同），盒端 Agent 保持 `644b1c2`；桌面 native 1.2.1 来自 OS `353f1d9`。此为公司环境记录，不改写上述家庭环境历史验收。
 
+### 在线默认授权的双端校验（0908 补充）
+
+资料来源默认授权和免逐次确认是两个独立权限。只有用户另外开启 `autoEgress`，且 preview 的服务、供应商配置指纹、用途、文件/章程范围和来源版本全部匹配时，桌面才请求默认授权收据。worker 不写永久逐条 grant，而是把策略修订传给 Data Engine；Data Engine 在收据签发和实际模型调用两个时点重新校验持久策略。收据仍绑定本次请求摘要并在短期内失效。
+
+```mermaid
+sequenceDiagram
+  participant UI as Vue 对话
+  participant W as 知君 worker
+  participant DE as Data Engine
+  participant LLM as 在线模型
+  UI->>W: preview（服务/用途/完整来源）
+  W-->>UI: defaultAuthorization.applies + policyRevision
+  UI->>W: grant(defaultPolicyRevision)
+  W->>DE: issue receipt（策略修订+精确请求绑定）
+  DE->>DE: 复核策略、配置和来源范围
+  DE-->>W: 短期 receipt
+  W->>DE: model-stream（receipt）
+  DE->>DE: 调用前再次复核
+  DE->>LLM: 仅发送本次所需内容
+```
+
+关闭开关、撤销资料、切换服务或修改供应商配置都会推进修订，使旧 preview 和旧收据失效。桌面收到策略不匹配时回到可见逐次确认；历史资料授权迁移时 `autoEgress=false`，不静默扩大外发权限。
+
 任务读取仅检查目标记录的即时 TTL/执行期限；创建、重启恢复与集中清理保留全量扫描，磁盘配额和文件锁语义不变。
+# 对话读取调度补充（2026-09-08）
+
+对话路由进入后先获取当前会话详情并校验路由 ID，再逐步挂载导入关联、事项、对齐、章程、回复辅助、学习、结果和待核对等读取区。切换会话或离开页面会通过 `AbortSignal` 取消上一会话的详情及辅助读取，当前页不得消费过期响应。普通对话不加载首次认识流程专用的全量本体关系。该调度只改变读取时序，不改变 Direct HTTP、Gateway operation、owner/workspace 绑定或写入幂等合同。

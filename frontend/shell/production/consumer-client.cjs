@@ -12,6 +12,14 @@ function validatePassword(value) {
     || Buffer.byteLength(value.password) < 8 || Buffer.byteLength(value.password) > 72) fail('INVALID_REQUEST');
   return { phone: value.phone, password: value.password };
 }
+function validatePhone(value) {
+  if (typeof value !== 'string' || !/^1\d{10}$/.test(value)) fail('INVALID_REQUEST');
+  return value;
+}
+function validateRegistration(value) {
+  if (!plain(value) || Object.keys(value).length !== 3 || !/^\d{6}$/.test(value.code)) fail('INVALID_REQUEST');
+  return { ...validatePassword({ phone: value.phone, password: value.password }), code: value.code };
+}
 function tokens(value, clientId, accountId, now = Date.now) {
   if (!plain(value) || !text(value.accessToken, 16384) || !text(value.refreshToken, 256) || value.refreshToken.length < 40
     || !text(value.accountId, 256) || value.clientId !== clientId || (accountId && value.accountId !== accountId)
@@ -29,11 +37,20 @@ function storedSession(value, now) {
     refreshToken: value.refreshToken, identityKey: value.identityKey, expiresAt: value.expiresAt,
     sessionExpiresAt: value.sessionExpiresAt });
 }
-function checkEnvelope(result, connectivity = false) {
+function checkEnvelope(result, connectivity = false, purpose = 'auth') {
+  const remoteCode = plain(result.data) && text(result.data.errorCode, 128) ? result.data.errorCode : undefined;
+  const reject = code => { throw new DesktopError(code, { httpStatus: result.httpStatus, ...(remoteCode ? { remoteCode } : {}) }); };
   if (connectivity && result.applicationDenied) throw new DesktopError('APPLICATION_AUTHORIZATION_DENIED', { phase: 'ticket', httpStatus: result.httpStatus });
-  if (result.code === 401) fail('AUTHENTICATION_REQUIRED');
-  if (result.code === 403) fail('ACCESS_DENIED');
-  if (result.code === 429) fail('RESOURCE_EXHAUSTED');
+  if (result.code === 401) reject('AUTHENTICATION_REQUIRED');
+  if (result.code === 403) reject('ACCESS_DENIED');
+  if (result.code === 429) reject('RATE_LIMITED');
+  if (purpose === 'registration' && (result.code === 602 || ['AUTH_RATE_LIMITED', 'SMS_DAILY_LIMIT'].includes(remoteCode))) reject('RATE_LIMITED');
+  if (purpose === 'claim' && ['DEVICE_ALREADY_CLAIMED', 'DEVICE_ALREADY_BOUND', 'CLAIM_TOKEN_ALREADY_CONSUMED'].includes(remoteCode)) reject('DEVICE_ALREADY_CLAIMED');
+  if (purpose === 'claim' && remoteCode === 'CLAIM_TOKEN_EXPIRED') reject('CLAIM_CODE_EXPIRED');
+  if (purpose === 'claim' && ['CLAIM_TOKEN_INVALID', 'CLAIM_TOKEN_REVOKED', 'CLAIM_TOKEN_STATE_INVALID'].includes(remoteCode)) reject('CLAIM_CODE_INVALID');
+  if (purpose === 'claim' && [400, 404, 409, 410, 422].includes(result.code)) reject('INVALID_REQUEST');
+  if (purpose === 'registration' && ([400, 409, 422].includes(result.code)
+      || ['SMS_CODE_INVALID', 'PASSWORD_ALREADY_SET', 'PASSWORD_INVALID'].includes(remoteCode))) reject('INVALID_REQUEST');
   if (result.code !== 200 || result.success === false) {
     if (connectivity) throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'ticket', httpStatus: result.httpStatus });
     fail('AUTHENTICATION_FAILED');
@@ -47,14 +64,16 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
   let epoch = 0;
   let disposed = false;
   const requests = new Set();
+  const claimAttempts = new Map();
   function invalidate() { ++epoch; for (const controller of requests) controller.abort(); }
 
-  async function request(method, route, body, signed) {
+  async function request(method, route, body, signed, extraHeaders = undefined) {
     const expected = epoch;
     if (requests.size >= 8) fail('RESOURCE_EXHAUSTED');
     const bytes = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
     if (bytes.length > LIMIT) fail('INVALID_REQUEST');
-    const headers = { accept: 'application/json', 'cache-control': 'no-store', ...(bytes.length ? { 'content-type': 'application/json' } : {}) };
+    const headers = { accept: 'application/json', 'cache-control': 'no-store', ...(bytes.length ? { 'content-type': 'application/json' } : {}),
+      ...(extraHeaders || {}) };
     if (signed) {
       const identity = await store.identity(signed.identityKey);
       if (identity.clientId !== signed.clientId) fail('AUTHENTICATION_REQUIRED');
@@ -129,10 +148,10 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     },
     isSessionRejected: error => error instanceof DesktopError && ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED'].includes(error.code),
   });
-  async function protectedRequest(method, route, body) {
+  async function protectedRequest(method, route, body, extraHeaders) {
     const expected = epoch;
     let response;
-    try { response = await auth.authorized(current => request(method, route, body, current), result => result.code === 401); }
+    try { response = await auth.authorized(current => request(method, route, body, current, extraHeaders), result => result.code === 401); }
     catch (error) {
       if (['AUTH_SESSION_MISSING', 'AUTH_SESSION_CHANGED', 'AUTH_INVALID_SESSION'].includes(error?.code)) fail('SESSION_EXPIRED');
       if (error?.code === 'AUTH_SESSION_STORAGE_FAILED') fail('SECURE_STORAGE_UNAVAILABLE');
@@ -144,30 +163,45 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     }
     if (disposed || expected !== epoch) fail('AUTHENTICATION_REQUIRED');
     if (response.code === 401) { await auth.clear(); fail('SESSION_EXPIRED'); }
-    return checkEnvelope(response, route.endsWith('/connectivity/sessions'));
+    return checkEnvelope(response, route.endsWith('/connectivity/sessions'), route === '/app-api/device-claims/redeem' ? 'claim' : 'auth');
+  }
+  async function establishSession(credentials, route, body, guard) {
+    invalidate(); const expected = epoch;
+    const valid = () => !disposed && expected === epoch && guard();
+    await auth.clear();
+    const identity = await store.identity(credentials.phone);
+    if (!valid()) fail('STALE_GENERATION');
+    const data = checkEnvelope(await request('POST', route, { ...body,
+      clientId: identity.clientId, clientPublicKey: identity.publicKey,
+      platform: { darwin: 'macos', win32: 'windows', linux: 'linux' }[platform] || 'unknown',
+      deviceModel: 'Zhijun Desktop', displayName: '知君桌面' }), false, route.endsWith('/register') ? 'registration' : 'auth');
+    if (!valid()) fail('STALE_GENERATION');
+    const session = { ...tokens(data, identity.clientId, undefined, now), identityKey: credentials.phone,
+      sessionExpiresAt: now() + LOGIN_SESSION_MS };
+    await auth.replace(session);
+    if (!valid()) {
+      if (expected === epoch) await auth.clear();
+      fail('STALE_GENERATION');
+    }
+    return { accountId: session.accountId };
   }
   return Object.freeze({
     async signIn(input, guard = () => true) {
       if (disposed) fail('OPERATION_NOT_ALLOWED');
       const credentials = validatePassword(input);
-      invalidate(); const expected = epoch;
-      const valid = () => !disposed && expected === epoch && guard();
-      await auth.clear();
-      const identity = await store.identity(credentials.phone);
-      if (!valid()) fail('STALE_GENERATION');
-      const data = checkEnvelope(await request('POST', '/app-api/auth/password/login', { ...credentials,
-        clientId: identity.clientId, clientPublicKey: identity.publicKey,
-        platform: { darwin: 'macos', win32: 'windows', linux: 'linux' }[platform] || 'unknown',
-        deviceModel: 'Zhijun Desktop', displayName: '知君桌面' }));
-      if (!valid()) fail('STALE_GENERATION');
-      const session = { ...tokens(data, identity.clientId, undefined, now), identityKey: credentials.phone,
-        sessionExpiresAt: now() + LOGIN_SESSION_MS };
-      await auth.replace(session);
-      if (!valid()) {
-        if (expected === epoch) await auth.clear();
-        fail('STALE_GENERATION');
-      }
-      return { accountId: session.accountId };
+      return establishSession(credentials, '/app-api/auth/password/login', credentials, guard);
+    },
+    async sendRegistrationCode(input) {
+      if (disposed) fail('OPERATION_NOT_ALLOWED');
+      const phone = validatePhone(input);
+      const data = checkEnvelope(await request('POST', '/app-api/auth/sms/send', { phone }), false, 'registration');
+      if (!plain(data) || !Number.isInteger(data.expiresIn) || data.expiresIn < 1 || data.expiresIn > 3600) fail();
+      return { expiresIn: data.expiresIn };
+    },
+    async register(input, guard = () => true) {
+      if (disposed) fail('OPERATION_NOT_ALLOWED');
+      const credentials = validateRegistration(input);
+      return establishSession(credentials, '/app-api/auth/password/register', credentials, guard);
     },
     async restore() {
       if (disposed) fail('OPERATION_NOT_ALLOWED');
@@ -198,6 +232,31 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
           availability: device.online ? 'online' : 'offline', allowed: device.scopes.includes('remote.p2p') };
       }).filter(device => device.allowed).map(({ allowed, ...device }) => device);
     },
+    async claimDevice(input) {
+      if (typeof input !== 'string' || input.length > 64 || /[\u0000-\u001f\u007f]/u.test(input)) fail('INVALID_REQUEST');
+      const claimToken = input.trim();
+      if (!/^\d{6}$/.test(claimToken)) fail('INVALID_REQUEST');
+      let idempotencyKey = claimAttempts.get(claimToken);
+      if (!idempotencyKey) {
+        if (claimAttempts.size >= 32) claimAttempts.delete(claimAttempts.keys().next().value);
+        idempotencyKey = crypto.randomUUID();
+        claimAttempts.set(claimToken, idempotencyKey);
+      }
+      let data;
+      try {
+        data = await protectedRequest('POST', '/app-api/device-claims/redeem',
+          { claimToken, idempotencyKey }, { 'idempotency-key': idempotencyKey });
+      } catch (error) {
+        if (!(error instanceof DesktopError) || !['REQUEST_TIMEOUT', 'ACCOUNT_SERVICE_UNAVAILABLE'].includes(error.code)) {
+          claimAttempts.delete(claimToken);
+        }
+        throw error;
+      }
+      claimAttempts.delete(claimToken);
+      if (!plain(data) || !text(data.deviceId, 64) || !/^[A-Za-z0-9._:-]{8,64}$/.test(data.deviceId)
+        || (data.deviceName != null && !text(data.deviceName, 128)) || data.state !== 'consumed') fail();
+      return { deviceId: data.deviceId, displayName: data.deviceName || data.deviceId, availability: 'unknown' };
+    },
     async createSession(deviceId, body) {
       if (typeof deviceId !== 'string' || !/^[A-Za-z0-9._:-]{8,64}$/.test(deviceId)) fail('INVALID_REQUEST');
       // This POST only retries an explicit pre-handler 401, never a lost result or business write.
@@ -212,7 +271,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       await auth.clear();
       if (current) checkEnvelope(await request('POST', '/app-api/auth/logout', { refreshToken: current.refreshToken }, current));
     },
-    async dispose() { disposed = true; invalidate(); },
+    async dispose() { disposed = true; claimAttempts.clear(); invalidate(); },
   });
 }
-module.exports = { createConsumerClient, validatePassword, LOGIN_SESSION_MS };
+module.exports = { createConsumerClient, validatePassword, validateRegistration, validatePhone, LOGIN_SESSION_MS };

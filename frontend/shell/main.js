@@ -5,11 +5,11 @@ const { access } = require('node:fs/promises')
 const { APP_ICON, installDockIcon } = require('./app-icon.cjs')
 const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
 const { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, isEntryUrl,
-  createInvokeHandler, createAssetHandler } = require('./security.cjs')
+  shouldBlockRendererRequest, createInvokeHandler, createAssetHandler } = require('./security.cjs')
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'zhijun', privileges: { standard: true, secure: true, supportFetchAPI: true } },
-  { scheme: 'zhijun-media', privileges: { standard: true, secure: true, stream: true } },
+  { scheme: 'zhijun-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
 ])
 app.setName('知君桌面')
 // Tests use new temporary directories; development uses a separate app profile.
@@ -59,8 +59,8 @@ async function createWindow() {
   isolatedSession.setPermissionCheckHandler(microphone.check)
   isolatedSession.on('will-download', event => event.preventDefault())
   isolatedSession.webRequest.onBeforeRequest(
-    { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*', 'file://*/*'] },
-    (_details, callback) => callback({ cancel: true }),
+    { urls: ['<all_urls>'] },
+    (details, callback) => callback({ cancel: shouldBlockRendererRequest(details.url) }),
   )
   await isolatedSession.protocol.handle('zhijun', createAssetHandler(assetRoot))
   await isolatedSession.protocol.handle('zhijun-media', request => runtime.mediaResponse(request))
@@ -70,7 +70,7 @@ async function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), session: isolatedSession,
       contextIsolation: true, sandbox: true, nodeIntegration: false,
-      webSecurity: true, webviewTag: false,
+      webSecurity: true, webviewTag: false, plugins: false,
     },
   })
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

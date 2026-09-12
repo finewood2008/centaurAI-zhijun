@@ -73,6 +73,121 @@ test('production startup without a valid encrypted login returns to sign-in', as
   assert.equal(runtime.snapshot().subject, null);
 });
 
+test('remembered-login IPC projects metadata and validates exact shape, mode, flag and generation', async t => {
+  let value = { phone: '13800000000', passwordSaved: true }, metadataReads = 0, savedLogins = 0;
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    getRememberedLogin: async () => { metadataReads++; return value; },
+    signInSaved: async () => { savedLogins++; return { accountId: 'synthetic-account' }; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.deepEqual((await call(runtime, 'getRememberedLogin')).data, value);
+  assert.equal(runtime.snapshot().subject, null);
+  assert.equal(savedLogins, 0);
+  const generation = runtime.snapshot().generation;
+  for (const input of [null, 1, 'true', {}, { rememberPassword: true }]) {
+    assert.equal((await call(runtime, 'signInWithSavedPassword', input)).error.code, 'INVALID_REQUEST');
+  }
+  assert.equal(savedLogins, 0);
+  value = { phone: '13800000000', passwordSaved: true, password: 'Synthetic-private-password' };
+  const malformed = await call(runtime, 'getRememberedLogin');
+  assert.equal(malformed.error.code, 'CONTRACT_MISMATCH');
+  assert.equal(JSON.stringify(malformed).includes('Synthetic-private-password'), false);
+  value = { phone: 13800000000, passwordSaved: false };
+  assert.equal((await call(runtime, 'getRememberedLogin')).error.code, 'CONTRACT_MISMATCH');
+  await call(runtime, 'signOut');
+  const count = metadataReads;
+  assert.equal((await call(runtime, 'getRememberedLogin', undefined, { generation })).error.code, 'STALE_GENERATION');
+  assert.equal(metadataReads, count);
+  const simulation = createDesktopRuntime({ mode: 'simulation' });
+  t.after(() => simulation.dispose());
+  assert.equal((await call(simulation, 'getRememberedLogin')).error.code, 'OPERATION_NOT_ALLOWED');
+});
+
+test('remembered-login storage timeout settles the IPC without authenticating', async t => {
+  const stalled = deferred();
+  const runtime = createDesktopRuntime({ mode: 'production', timeoutMs: 20,
+    adapter: fixture({ getRememberedLogin: () => stalled.promise }).adapter });
+  t.after(() => runtime.dispose());
+  const fallback = setTimeout(() => stalled.resolve({ phone: '13800000000', passwordSaved: true }), 150);
+  try {
+    const result = await call(runtime, 'getRememberedLogin');
+    assert.equal(result.ok, false, 'a hung storage adapter must not hang or later succeed after the IPC deadline');
+    assert.equal(result.error.code, 'REQUEST_TIMEOUT');
+    assert.equal(runtime.snapshot().subject, null);
+  } finally { clearTimeout(fallback); stalled.resolve(null); }
+});
+
+test('saved-password login is explicit, receives the exact remember flag, and stale completion cannot restore an account', async t => {
+  const login = deferred(); let guard, flag, logins = 0;
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    getRememberedLogin: async () => ({ phone: '13800000000', passwordSaved: true }),
+    signInSaved: (isCurrent, rememberPassword) => { guard = isCurrent; flag = rememberPassword; logins++; return login.promise; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  await call(runtime, 'getRememberedLogin');
+  assert.equal(logins, 0);
+  const pending = call(runtime, 'signInWithSavedPassword', false);
+  await tick();
+  assert.equal(flag, false);
+  assert.equal(guard(), true);
+  assert.equal(runtime.snapshot().phase, 'authenticating');
+  await call(runtime, 'signOut');
+  assert.equal(guard(), false);
+  assert.equal((await pending).error.code, 'STALE_GENERATION');
+  login.resolve({ accountId: 'stale-synthetic-account' });
+  await tick();
+  assert.equal(runtime.snapshot().subject, null);
+  assert.equal(logins, 1);
+  assert.deepEqual((await call(runtime, 'getRememberedLogin')).data, { phone: '13800000000', passwordSaved: true });
+});
+
+test('legacy password login defaults remember to false and the flag stays outside the auth credential body', async t => {
+  const calls = [];
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    signIn: async (credentials, guard, flag) => { calls.push({ credentials, flag, current: guard() }); return { accountId: 'synthetic-account' }; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  const credentials = { phone: '13800000000', password: 'Synthetic-password-1' };
+  for (const input of [{ ...credentials, rememberPassword: 'true' }, { ...credentials, rememberPassword: true, token: 'synthetic-forged' }]) {
+    assert.equal((await call(runtime, 'signInWithPassword', input)).error.code, 'INVALID_REQUEST');
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await call(runtime, 'signInWithPassword', credentials)).ok, true);
+  assert.equal((await call(runtime, 'signInWithPassword', { ...credentials, rememberPassword: true })).ok, true);
+  assert.deepEqual(calls, [{ credentials, flag: false, current: true }, { credentials, flag: true, current: true }]);
+  assert.equal(JSON.stringify(runtime.snapshot()).includes(credentials.password), false);
+});
+
+test('production registration enters device selection and a claim becomes selectable', async t => {
+  const calls = [];
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    sendRegistrationCode: async phone => { calls.push(['code', phone]); return { expiresIn: 300 }; },
+    register: async (credentials, guard, remember) => {
+      calls.push(['register', credentials, remember, guard()]); return { accountId: 'new-account' };
+    },
+    claimDevice: async token => {
+      calls.push(['claim', token]); return { deviceId: 'claimed-device-1', displayName: '新盒子', availability: 'unknown' };
+    },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal((await call(runtime, 'sendRegistrationCode', '13800000000')).data.expiresIn, 300);
+  const registration = { phone: '13800000000', password: 'Synthetic-password-1', code: '123456', rememberPassword: true };
+  assert.equal((await call(runtime, 'registerWithPassword', registration)).ok, true);
+  assert.equal(runtime.snapshot().phase, 'selecting_device');
+  assert.equal(runtime.snapshot().subject.accountId, 'new-account');
+  assert.equal((await call(runtime, 'listDevices')).ok, true);
+  const claimed = await call(runtime, 'claimDevice', 'ABCD-EFGH-JK2M-NP3Q');
+  assert.deepEqual(claimed.data, { deviceId: 'claimed-device-1', displayName: '新盒子', availability: 'unknown' });
+  assert.deepEqual(calls, [
+    ['code', '13800000000'],
+    ['register', { phone: registration.phone, password: registration.password, code: registration.code }, true, true],
+    ['claim', 'ABCD-EFGH-JK2M-NP3Q'],
+  ]);
+  for (const malformed of [{ ...registration, rememberPassword: 'yes' }, { ...registration, extra: true }]) {
+    assert.equal((await call(runtime, 'registerWithPassword', malformed)).error.code, 'INVALID_REQUEST');
+  }
+});
+
 test('unconfigured mode remains closed even with an injected adapter', async (t) => {
   const runtime = createDesktopRuntime({ adapter: fixture().adapter });
   t.after(() => runtime.dispose());

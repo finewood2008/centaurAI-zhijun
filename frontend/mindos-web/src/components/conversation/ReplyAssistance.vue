@@ -19,10 +19,12 @@ function cancel() { epoch++; controller?.abort(); controller = null; loading.val
 watch(() => [props.conversationId, props.messageId], async () => {
   cancel(); batch.value = null; expanded.value = false; error.value = ''; stale.value = false; requestId = crypto.randomUUID(); pendingRequest = null
   const attempt = epoch
+  const abort = new AbortController(); controller = abort
   try {
-    const result = await routingRequest<{ batch: ReplyBatch | null }>(path())
+    const result = await routingRequest<{ batch: ReplyBatch | null }>(path(), 'GET', undefined, abort.signal)
     if (attempt === epoch && result.batch?.messageId === props.messageId) batch.value = result.batch
   } catch { /* Retrieval failure must never block the normal composer. */ }
+  finally { if (attempt === epoch) controller = null }
 }, { immediate: true })
 watch(() => props.disabled, disabled => { if (disabled) cancel() })
 watch(() => replyRecoveries[props.conversationId], issue => {

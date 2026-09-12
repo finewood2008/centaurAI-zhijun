@@ -115,3 +115,13 @@ shell最终117项Node与vue-tsc通过，独立15项配额验证已包含在117�
 知君clean head `735e341`（代码`58dac31`）、DE`015c659`与OS`5f5f4c9`已匹配发布，363个文件与已验candidate源码一致。已备份16个SQLite和旧Agent二进制/manifest/90/95配置；现场manifest保留原2个应用，仅增加zhijun-desktop。release为`/home/user/apps/centuarai-data-engine/releases/20260906T051053Z-zhijun-015c659`。
 
 DE PID3184701、Agent PID3184868 active，live8618健康200、未签名v2 context401，来源强制enforce、debug=0。这一轮是正式运行服务的部署和基础检查，前述5/5与10/10则来自隔离合成主体测试，两者不合并为Consumer/UI全功能验收。Admin`44a0950`仍未生产部署且缺发布入口；正式Consumer/SDK/P2P/UI和实际麦克风继续pending。具体哈希、备份和稳定性证据见[部署回执](../reports/FULL-PRODUCT-DEPLOYMENT-0906.md)及[原始receipt](../reports/evidence/deployment-receipt.json)。
+
+## 2026-09-08 公司盒章程在线模型复验
+
+用户在 `AMD-A2A-248` 的章程对话中选择“在线理解”与 `deepseek-v4-flash`。原请求在 1024 token 输出预算下运行约 21 秒后返回 `MODEL_RESPONSE_EMPTY`：流正常结束，但没有可展示正文；这不是盒子断连、Admin 授权或 Provider 403。
+
+知君提交 `493fda8` 将明确章程意图的聊天输出预算提高为 4096 token，并保持普通聊天 1024 token；能力适配器同时为 `MODEL_RESPONSE_EMPTY` 返回“没有可显示正文、原消息和草稿仍保留”的受控提示。相关命令分别通过 30 项（含 5 subtests）和 123 项后端回归。
+
+修复部署到 `/srv/zhijun-integration-0907/release-493fda8-charter/zhijun`，原容器保留为 `zhijun-integration-0907-rollback-20260908-model-empty`。新容器健康状态为 `healthy`。桌面重新登录、连接公司盒、打开原失败会话并点击“重试当前模式”，在一次性来源授权后得到可见回复。盒端审计记录：`state=complete`、`provider=openai`、`model=deepseek-v4-flash`、`taskContext=charter`、`max_tokens=4096`、输入/输出 1847/220 token、耗时 9565 ms。回复只提出一个必要问题；章程工作稿继续标记“尚未生效”，没有自动发布。
+
+本次关闭的是该在线章程对话的空正文故障。章程建议合并、发布、修订冲突以及 170 项完整产品矩阵仍按完整验收清单分别执行，不能由这一条真机通过替代。

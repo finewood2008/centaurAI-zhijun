@@ -5,9 +5,10 @@ const { normalizeMaterialsQuery, buildMaterialsRequest, projectMaterialsResponse
 const { createReadScheduler } = require('./read-scheduler.cjs');
 const { createSimulationAdapter } = require('./adapters.cjs');
 const { createProductSession, productMethods } = require('./product-session.cjs');
-const { validatePassword } = require('../production/consumer-client.cjs');
+const { validatePassword, validateRegistration, validatePhone } = require('../production/consumer-client.cjs');
 
-const ARG_COUNTS = { getSnapshot: 0, signInWithPassword: 2, beginSignIn: 1, listDevices: 1, connect: 2,
+const ARG_COUNTS = { getSnapshot: 0, getRememberedLogin: 1, signInWithPassword: 2, signInWithSavedPassword: 2,
+  sendRegistrationCode: 2, registerWithPassword: 2, beginSignIn: 1, listDevices: 1, claimDevice: 2, connect: 2,
   disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2,
   ...Object.fromEntries(productMethods.map(method => [`product.${method}`, method === 'requestMicrophone' ? 1 : 2])) };
 const CALL_ID = /^[A-Za-z0-9_-]{8,100}$/;
@@ -175,10 +176,31 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     if (operation === 'getSnapshot') return snapshot();
     const [context, input] = args;
     ensureCurrent(context.expectedGeneration);
+    if (operation === 'getRememberedLogin') {
+      assert(mode === 'production' && auth && typeof auth.getRememberedLogin === 'function', 'OPERATION_NOT_ALLOWED');
+      const gen = generation;
+      const value = await bounded(callAdapter(() => auth.getRememberedLogin()), gen);
+      ensureCurrent(gen);
+      assert(value === null || (plain(value) && exact(value, ['phone', 'passwordSaved'])
+        && typeof value.phone === 'string' && /^1\d{10}$/.test(value.phone)
+        && typeof value.passwordSaved === 'boolean'), 'CONTRACT_MISMATCH');
+      return value;
+    }
     if (operation === 'cancelRead') {
       assert(CALL_ID.test(input) && typeof input === 'string');
       return { delivery: scheduler.cancel({ callId: input, senderId, generation }) ? 'suppressed' : 'not_found',
         remoteCancellation: 'not_supported' };
+    }
+    if (operation === 'sendRegistrationCode') {
+      assert(mode === 'production' && auth && typeof auth.sendRegistrationCode === 'function', 'OPERATION_NOT_ALLOWED');
+      assert(!accountId && ['signed_out', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
+      const phone = validatePhone(input);
+      const gen = generation;
+      const value = await bounded(callAdapter(() => auth.sendRegistrationCode(phone)), gen);
+      ensureCurrent(gen);
+      assert(plain(value) && exact(value, ['expiresIn']) && Number.isInteger(value.expiresIn)
+        && value.expiresIn >= 1 && value.expiresIn <= 3600, 'CONTRACT_MISMATCH');
+      return value;
     }
     if (operation === 'signOut' || operation === 'disconnect') {
       invalidate();
@@ -202,9 +224,21 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       return snapshot();
     }
     assert(auth, 'CONFIGURATION_REQUIRED');
-    if (operation === 'beginSignIn' || operation === 'signInWithPassword') {
-      assert((mode === 'production') === (operation === 'signInWithPassword'), 'OPERATION_NOT_ALLOWED');
-      const credentials = operation === 'signInWithPassword' ? validatePassword(input) : undefined;
+    if (operation === 'beginSignIn' || operation === 'signInWithPassword' || operation === 'signInWithSavedPassword'
+        || operation === 'registerWithPassword') {
+      assert((mode === 'production') === (operation !== 'beginSignIn'), 'OPERATION_NOT_ALLOWED');
+      const credentials = operation === 'signInWithPassword'
+        ? validatePassword({ phone: input?.phone, password: input?.password })
+        : operation === 'registerWithPassword'
+          ? validateRegistration({ phone: input?.phone, password: input?.password, code: input?.code }) : undefined;
+      const rememberPassword = operation === 'signInWithPassword'
+        ? (assert(exact(input, ['phone', 'password']) || exact(input, ['phone', 'password', 'rememberPassword'])),
+          assert(input.rememberPassword === undefined || typeof input.rememberPassword === 'boolean'), input.rememberPassword === true)
+        : operation === 'registerWithPassword'
+          ? (assert(exact(input, ['phone', 'password', 'code', 'rememberPassword'])),
+            assert(typeof input.rememberPassword === 'boolean'), input.rememberPassword)
+        : operation === 'signInWithSavedPassword'
+          ? (assert(typeof input === 'boolean'), input) : false;
       assert(!signingOut, 'OPERATION_NOT_ALLOWED');
       assert(['signed_out', 'authenticating', 'selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
       invalidate();
@@ -215,7 +249,12 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       devices = [];
       publish('authenticating');
       try {
-        const identity = await bounded(callAdapter(() => auth.signIn(credentials, () => isCurrent(gen))), gen);
+        const guard = () => isCurrent(gen);
+        const identity = await bounded(callAdapter(() => operation === 'signInWithSavedPassword'
+          ? auth.signInSaved(guard, rememberPassword)
+          : operation === 'registerWithPassword'
+            ? auth.register(credentials, guard, rememberPassword)
+            : auth.signIn(credentials, guard, rememberPassword)), gen);
         ensureCurrent(gen);
         assert(plain(identity) && safeText(identity.accountId), 'CONTRACT_MISMATCH');
         accountId = identity.accountId;
@@ -233,6 +272,17 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       assert(revision === devicesRevision, 'STALE_GENERATION');
       devices = validateDevices(result);
       return devices.map((value) => ({ ...value }));
+    }
+    if (operation === 'claimDevice') {
+      assert(typeof auth.claimDevice === 'function', 'OPERATION_NOT_ALLOWED');
+      assert(['selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
+      assert(safeText(input, 64) && input.trim().length >= 6);
+      const gen = generation;
+      const claimed = await bounded(callAdapter(() => auth.claimDevice(input.trim())), gen);
+      ensureCurrent(gen);
+      const projected = validateDevices([claimed])[0];
+      devices = [...devices.filter(value => value.deviceId !== projected.deviceId), projected];
+      return { ...projected };
     }
     if (operation === 'connect') {
       assert(safeText(input));

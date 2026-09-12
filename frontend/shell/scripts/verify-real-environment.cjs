@@ -3,6 +3,10 @@
 const net = require('node:net');
 const { consumerBaseUrl } = require('../config/zhijun-product.example.json');
 const { gatewayHost } = require('../config/zhijun-connectivity.json');
+const deviceHosts = (process.env.ZHIJUN_DEVICE_HOSTS || '').split(',').map(value => value.trim()).filter(Boolean);
+if (deviceHosts.some(host => !/^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(host))) {
+  throw new Error('ZHIJUN_DEVICE_HOSTS must contain comma-separated IPv4 addresses');
+}
 async function httpsCheck(url, consumer = false) {
   try {
     const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' } });
@@ -38,12 +42,12 @@ async function tcpCheck(host) {
   });
 }
 (async () => {
-  const [consumer, gatewayLive, gatewayReady, homeDevice, officeDevice] = await Promise.all([
+  const [consumer, gatewayLive, gatewayReady, devices] = await Promise.all([
     httpsCheck(`${consumerBaseUrl}/app-api/devices`, true), httpsCheck(`https://${gatewayHost}/health/live`),
-    httpsCheck(`https://${gatewayHost}/health/ready`), tcpCheck('192.168.1.18'), tcpCheck('192.168.31.248'),
+    httpsCheck(`https://${gatewayHost}/health/ready`), Promise.all(deviceHosts.map(tcpCheck)),
   ]);
   console.log(JSON.stringify({ checkedAt: new Date().toISOString(), result: 'partial',
     scope: 'anonymous-network-preflight', realLoginValidated: false, realDeviceValidated: false,
-    consumer, gatewayLive, gatewayReady, homeDevice, officeDevice }, null, 2));
+    consumer, gatewayLive, gatewayReady, devices }, null, 2));
   if (![consumer, gatewayLive, gatewayReady].every(check => check.passed)) process.exitCode = 1;
 })();

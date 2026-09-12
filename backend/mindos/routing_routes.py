@@ -32,8 +32,10 @@ class Mode(BaseModel):
 
 
 class Grant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     revision: str = Field(min_length=64, max_length=64)
     keys: list[str] = Field(default_factory=list, max_length=200)
+    defaultPolicyRevision: int | None = Field(default=None, ge=1)
 
 
 class Revoke(BaseModel):
@@ -45,6 +47,7 @@ class DefaultConsent(BaseModel):
     enabled: bool
     includeFiles: bool = False
     includeCharter: bool = False
+    autoEgress: bool = False
     acknowledge: bool = False
     serviceId: str = Field(default="", max_length=64)
     expectedRevision: int = Field(ge=0)
@@ -166,12 +169,12 @@ def state(conversation_id: str, request: Request):
     try:
         p = build_provider()
         check_service(p)
-        service, error = service_info(p), ""
+        service, configuration_revision, error = service_info(p), getattr(p, "configuration_revision", ""), ""
     except Exception as exc:
-        service, error = None, str(exc)
+        service, configuration_revision, error = None, "", str(exc)
     return {"mode": r.mode, "service": service, "error": error,
             "handlingPreference": handling_state(r.store, r.scope, service),
-            "defaultAuthorization": policy_state(r.store, r.scope, service),
+            "defaultAuthorization": policy_state(r.store, r.scope, service, configuration_revision),
             "pending": active_pending(r),
             "notice": "在线模式会发送日常消息；文件、画像和受保护历史另行授权。已发送内容无法收回。"}
 
@@ -216,7 +219,11 @@ def grant(conversation_id: str, req: Grant, request: Request):
     p = r.store.get_preview(req.revision, r.cid)
     if not p:
         fail("PREVIEW_EXPIRED", "预览已过期，请重新核对")
-    r.authorize({**p, "revision": req.revision}, req.keys)
+    preview = {**p, "revision": req.revision}
+    if req.defaultPolicyRevision is not None:
+        r.authorize_default(preview, req.defaultPolicyRevision)
+    else:
+        r.authorize(preview, req.keys)
     return {"granted": req.keys}
 
 
@@ -239,24 +246,27 @@ def charter_exception(conversation_id: str, req: CharterException, request: Requ
 
 def revoke(conversation_id: str, req: Revoke, request: Request):
     r = router_for(conversation_id, request)
-    r.store.revoke(r.scope, req.key)
+    policy = r.store.revoke(r.scope, req.key)
     import os
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
         from zhijun_worker.consent import revoke as revoke_de
         revoke_de(req.key)
+        _register_default_policy(policy, action="revoke", key=req.key)
     return {"revoked": True, "notice": "已停止后续使用；无法收回已经发送的内容"}
 
 
-def policy_state(store, scope, service):
+def policy_state(store, scope, service, configuration_revision=""):
     p = store.policy(scope)
+    configuration_changed = bool(p.get("autoEgress") and p.get("configurationRevision") != configuration_revision)
     return {**p, "active": p["enabled"] and p["service"] == (service or {}).get("id"),
-            "serviceChanged": p["enabled"] and p["service"] != (service or {}).get("id")}
+            "serviceChanged": p["enabled"] and (p["service"] != (service or {}).get("id") or configuration_changed)}
 
 
 def set_default_consent(conversation_id: str, req: DefaultConsent, request: Request):
     r = router_for(conversation_id, request)
     policy = r.store.policy(r.scope)
     service, name = policy["service"], policy["serviceName"]
+    provider = None
     if req.enabled:
         provider = build_provider()
         check_service(provider)
@@ -266,14 +276,49 @@ def set_default_consent(conversation_id: str, req: DefaultConsent, request: Requ
         service, name = info["id"], info["name"]
     from .zhijun.routing import PURPOSES
     try:
-        r.store.set_policy(r.scope, enabled=req.enabled, service=service, service_name=name,
-                           include_files=req.includeFiles if req.enabled else policy["includeFiles"],
-                           include_charter=req.includeCharter if req.enabled else policy["includeCharter"],
-                           purposes=list(PURPOSES) if req.enabled else policy["purposes"],
-                           expected_revision=req.expectedRevision)
+        saved = r.store.set_policy(r.scope, enabled=req.enabled, service=service, service_name=name,
+                                   include_files=req.includeFiles if req.enabled else policy["includeFiles"],
+                                   include_charter=req.includeCharter if req.enabled else policy["includeCharter"],
+                                   auto_egress=req.autoEgress if req.enabled else False,
+                                   configuration_revision=getattr(provider, "configuration_revision", "") if req.enabled else policy.get("configurationRevision", ""),
+                                   purposes=list(PURPOSES) if req.enabled else policy["purposes"],
+                                   expected_revision=req.expectedRevision)
     except ValueError as exc:
         fail("DEFAULT_CONSENT_CHANGED", str(exc))
+    import os
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        try:
+            _register_default_policy(saved, provider)
+        except Exception:
+            # An enable must fail closed when DE could not persist the standing
+            # policy. Roll back locally so the UI cannot claim auto-send works.
+            if saved["enabled"]:
+                r.store.set_policy(r.scope, enabled=False, service=saved["service"], service_name=saved["serviceName"],
+                                   include_files=saved["includeFiles"], include_charter=saved["includeCharter"],
+                                   auto_egress=False, configuration_revision=saved.get("configurationRevision", ""),
+                                   purposes=saved["purposes"], expected_revision=saved["revision"])
+            raise
     return default_state(request) if conversation_id == "default" else state(conversation_id, request)
+
+
+def _register_default_policy(policy, provider=None, *, action=None, key=None):
+    import os
+    if not os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        return
+    from zhijun_worker.capabilities import require
+    if action == "revoke":
+        payload = {"action": "revoke", "key": key, "policyRevision": policy["revision"]}
+    elif policy["enabled"]:
+        provider = provider or build_provider()
+        payload = {"action": "enable", "policyRevision": policy["revision"],
+                   "serviceId": policy["service"],
+                   "configurationRevision": getattr(provider, "configuration_revision", ""),
+                   "purposes": policy["purposes"], "includeFiles": bool(policy["includeFiles"]),
+                   "includeCharter": bool(policy.get("includeCharter", False)),
+                   "autoEgress": bool(policy.get("autoEgress", False))}
+    else:
+        payload = {"action": "disable", "policyRevision": policy["revision"]}
+    require().call("domain.consent-policy.register", payload)
 
 
 def audits(conversation_id: str, request: Request):
@@ -289,12 +334,12 @@ def default_state(request: Request):
     try:
         provider = build_provider()
         check_service(provider)
-        service, error = service_info(provider), ""
+        service, configuration_revision, error = service_info(provider), getattr(provider, "configuration_revision", ""), ""
     except Exception as exc:
-        service, error = None, str(exc)
+        service, configuration_revision, error = None, "", str(exc)
     return {"mode": store.mode("default:" + _device_scope_of(request)), "service": service, "error": error,
             "handlingPreference": handling_state(store, _device_scope_of(request), service),
-            "defaultAuthorization": policy_state(store, _device_scope_of(request), service),
+            "defaultAuthorization": policy_state(store, _device_scope_of(request), service, configuration_revision),
             "pending": active_pending(router_for("default", request))}
 
 

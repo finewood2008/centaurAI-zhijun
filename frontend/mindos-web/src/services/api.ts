@@ -54,6 +54,17 @@ export interface MindosAccessContext {
 /** API 根路径；SSE 流式客户端（services/sse.ts）与 request 共用。 */
 export const API_BASE = BASE
 
+const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  REDACTION_NOT_READY: '部分资料仍在完成隐私处理，请稍后重试。',
+  MATERIAL_PRIVACY_NOT_READY: '这份资料仍在完成隐私处理，请稍后重试。',
+  outbound_governance_disabled: '盒子的在线理解授权服务尚未启用，请更新盒子配置后重试。',
+  remote_model_target_not_allowlisted: '在线模型地址未通过盒子的网络安全校验，请检查供应商服务地址。',
+  MODEL_STREAM_INCOMPLETE: '在线模型响应提前中断，请稍后重试。',
+  MODEL_STREAM_MEDIA_TYPE_INVALID: '在线模型服务地址返回了网页而不是模型数据，请检查地址是否包含正确的 API 路径。',
+  UNSUPPORTED_MEDIA_TYPE: '请求的媒体类型不受支持，请检查文件或请求格式。',
+  WORKSPACE_MEDIA_TYPE_INVALID: '盒子返回的媒体类型不符合接口要求，请更新盒端服务后重试。',
+}
+
 /**
  * 统一请求头：system-models 的读取与写入接口均要求 X-Requested-By——它让跨站请求
  * 触发 CORS 预检，而后端只接受 loopback 请求。统一在 API 边界注入，避免 GET 漏带；
@@ -96,12 +107,12 @@ export async function throwApiError(res: Response): Promise<never> {
       details = parsedDetails.length ? parsedDetails : undefined
       message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
     }
-    if (!code && body && typeof body.code === 'string') code = body.code
-    if (message === fallbackMessage && code === 'REDACTION_NOT_READY') {
-      message = '部分资料仍在完成隐私处理，请稍后重试。'
-    } else if (message === fallbackMessage && code === 'MATERIAL_PRIVACY_NOT_READY') {
-      message = '这份资料仍在完成隐私处理，请稍后重试。'
+    else if (body && body.error && typeof body.error === 'object') {
+      if (typeof body.error.message === 'string') message = body.error.message
+      code = typeof body.error.code === 'string' ? body.error.code : undefined
     }
+    if (!code && body && typeof body.code === 'string') code = body.code
+    if (message === fallbackMessage && code && API_ERROR_MESSAGES[code]) message = API_ERROR_MESSAGES[code]
   } catch {
     // 忽略非 JSON 响应体
   }
@@ -355,6 +366,9 @@ export interface MaterialSummary {
   text: string
   status: SummaryStatus
   generatedAt: string | null
+  errorCode?: string | null
+  processingStage?: string | null
+  reasonCode?: string | null
 }
 
 // P14-04：派生分析（标签候选 / 实体抽取）共用派生状态词
@@ -458,9 +472,18 @@ export interface MaterialTagSuggestions {
 }
 
 export interface MaterialDetail extends UploadResult {
+  privacyRequired?: boolean
+  privacyStatus?: {
+    state: 'not_required' | 'processing' | 'review_required' | 'ready' | 'failed'
+    reasonCode: string | null
+  }
   previewUrl: string
   folderPath: string
   metadata: { fileSize: number | null; modifiedAt: string | null }
+  parsing: {
+    status: 'pending' | 'ok' | 'empty' | 'failed' | 'unavailable'
+    contentFormat: 'text' | 'ocr' | 'transcript' | 'mixed' | 'empty' | 'unavailable'
+  }
   summary: MaterialSummary
   // 纯文本预览（截断），仅作预览展示，不代表 AI 摘要
   excerpt: string
@@ -1188,7 +1211,44 @@ export interface ModelActionResponse {
   deduplicated: boolean
 }
 
+export interface RedactionStatus {
+  state: string
+  versionId: string | null
+  policy?: string
+  canReadOriginal: boolean
+  canReview: boolean
+  attempts: { attempt_id: string; kind: 'body' | 'summary'; state: string; error_code: string | null }[]
+}
+
 export const api = {
+  getRedactionStatus: (id: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction`),
+  getRedactionReview: (id: string, kind: string) => request<{
+    text: string
+    originalText: string
+    reasons: string[]
+    inputHash: string
+    replacements: Array<{ start: number; end: number; type: string; required: boolean }>
+    versionId: string
+    attemptId: string
+    kind: string
+    canCorrect: boolean
+  }>(`/mindos/materials/${encodeURIComponent(id)}/redaction/review?kind=${encodeURIComponent(kind)}`),
+  reviewRedaction: (id: string, payload: { versionId: string; attemptId: string; decision: 'approve' | 'reject'; reason: string }) =>
+    postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/review`, payload),
+  correctRedaction: (id: string, payload: {
+    versionId: string
+    attemptId: string
+    kind: string
+    expectedInputHash: string
+    spans: Array<{ start: number; end: number; type: string }>
+    reason: string
+  }, idempotencyKey: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/correct`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS, 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  retryRedaction: (id: string, payload: { versionId: string; kind: string }) =>
+    postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/retry`, payload),
   health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),
   // 后端同一套导入校验规则（与 mindos.validation.validate_import 一致）。
@@ -1237,7 +1297,7 @@ export const api = {
     return request<MaterialVersionUploadResult>(`/mindos/materials/${encodeURIComponent(materialId)}/versions`, { method: 'POST', headers: CSRF_HEADERS, body: form })
   },
   getMaterialVersionImpact: (materialId: string) => request<MaterialImpact>(`/mindos/materials/${encodeURIComponent(materialId)}/version-impact`),
-  getMaterialSummary: (materialId: string) => request<{ materialId: string; text: string; status: SummaryStatus; generatedAt: string | null }>(`/mindos/materials/${encodeURIComponent(materialId)}/summary`),
+  getMaterialSummary: (materialId: string) => request<MaterialSummary & { materialId: string }>(`/mindos/materials/${encodeURIComponent(materialId)}/summary`),
   // P14-04：聚合分析（摘要 / 标签候选 / 实体及其状态）
   getMaterialAnalysis: (materialId: string) => request<MaterialAnalysis>(`/mindos/materials/${encodeURIComponent(materialId)}/analysis`),
   reparseMaterial: (materialId: string) =>
@@ -2286,8 +2346,8 @@ export function updateConversation(conversationId: string, payload: { expectedRe
   })
 }
 
-export function getConversation(conversationId: string) {
-  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`)
+export function getConversation(conversationId: string, signal?: AbortSignal) {
+  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`, { signal })
 }
 
 export function getConversationOutcomes(conversationId: string) {

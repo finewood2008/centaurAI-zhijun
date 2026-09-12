@@ -111,7 +111,45 @@ test('catalog is finite, unique, bounded and resolves only exact method/paramete
   const { resolveProductOperation } = modules()('services/productCatalog.ts')
   assert.equal(resolveProductOperation('/api/mindos/conversations/routing/default').operation.path, '/api/mindos/conversations/routing/default')
   assert.deepEqual(resolveProductOperation('/api/mindos/materials/m_test').params, { materialId: 'm_test' })
+  const review = resolveProductOperation('/api/mindos/materials/m_test/redaction/review?kind=body')
+  assert.equal(review.operation.id, 'get_api_mindos_materials_material_id_redaction_review')
+  assert.equal(review.operation.sensitiveResponse, true)
+  assert.deepEqual(review.query, { kind: 'body' })
+  for (const route of [
+    '/api/mindos/materials/m_test/redaction',
+    '/api/mindos/materials/m_test/redaction/review',
+    '/api/mindos/materials/m_test/redaction/correct',
+    '/api/mindos/materials/m_test/redaction/retry',
+  ]) assert.ok(catalog.operations.some(operation => operation.path.replace('{materialId}', 'm_test') === route))
   for (const path of ['https://host/api/mindos/materials', '/api/mindos/materials?extra=1', '/api/mindos/materials?type=image&type=audio', '/api/mindos/materials/%2e%2e', '/api/mindos/materials/a%2fb']) assert.throws(() => resolveProductOperation(path))
+  assert.throws(() => resolveProductOperation('/api/mindos/materials/m_test/redaction/review?extra=body'))
+})
+
+test('redaction review uses the bounded gateway route and correction idempotency key', async () => {
+  const payload = { text: 'candidate', originalText: 'private', reasons: [], inputHash: 'b'.repeat(64), replacements: [], versionId: 'v'.repeat(32), attemptId: 'a'.repeat(32), kind: 'body', canCorrect: true }
+  const { product, calls } = host(JSON.stringify(payload))
+  const { load, client } = desktop(product)
+
+  assert.deepEqual(await load('services/api.ts').api.getRedactionReview('m_test', 'body'), payload)
+  product.poll = host('{"state":"processing"}').product.poll
+  await load('services/api.ts').api.correctRedaction('m_test', {
+    versionId: 'v'.repeat(32), attemptId: 'a'.repeat(32), kind: 'body', expectedInputHash: 'b'.repeat(64),
+    spans: [{ start: 0, end: 1, type: 'person' }], reason: 'checked',
+  }, 'redaction-correction-safe-1')
+
+  const starts = calls.filter(call => call[0] === 'start').map(call => call[1])
+  assert.equal(starts[0].operationId, 'get_api_mindos_materials_material_id_redaction_review')
+  assert.equal(starts[1].operationId, 'post_api_mindos_materials_material_id_redaction_correct')
+  assert.equal(starts[1].requestId, 'redaction-correction-safe-1')
+  client.dispose()
+})
+
+test('nested redaction errors retain their safe message and code', async () => {
+  const failed = host('{"error":{"code":"REDACTION_PERMISSION_DENIED","message":"此操作需要单独授权"}}', 403)
+  const { load, client } = desktop(failed.product)
+  await assert.rejects(load('services/api.ts').api.getRedactionReview('m_test', 'body'), error =>
+    error.status === 403 && error.code === 'REDACTION_PERMISSION_DENIED' && error.message === '此操作需要单独授权')
+  client.dispose()
 })
 
 test('all three original product network entries use installed transport, preserving HTTP errors and SSE', async () => {
@@ -250,19 +288,38 @@ test('save cancellation is not reported as an export and preview cannot escape t
   client.dispose()
 })
 
-test('desktop online consent is explicit for every prompt, including zero sources and already-approved sources', async () => {
+test('desktop preview preserves the authorized range-capable host URL and closes its handle', async () => {
+  const closed = []
+  const { product } = host('{}')
+  product.openMedia = async () => ok({ handle: 'c'.repeat(32), url: `zhijun-media://session/${'d'.repeat(32)}`, contentType: 'application/pdf', size: 14 })
+  product.closeMedia = async (_context, input) => { closed.push(input.handle); return ok({ closed: true }) }
+  const { client } = desktop(product)
+  const url = await client.preview('/api/mindos/materials/m_test/file')
+  assert.equal(url, `zhijun-media://session/${'d'.repeat(32)}`)
+  client.releasePreview(url)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(closed, ['c'.repeat(32)])
+  client.dispose()
+})
+
+test('desktop default egress mints an exact receipt without a dialog and falls back to explicit review outside scope', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('de-consent-test')
   const routing = load('services/taskRouting.ts')
   const calls = [], receipts = new Set()
-  let sourceKeys = [], lastPrompt = ''
+  let sourceKeys = [], missing = [], autoApplies = false, rejectDefault = false, lastPrompt = ''
   const preview = prompt => ({ revision: receipts.has(prompt) ? 'approved-' + prompt : 'pending-' + prompt,
     conversationId: 'c_test', purpose: 'chat', purposeLabel: '对话', service: { id: 'online-test', name: '合成在线服务', model: 'synthetic', external: true },
-    missing: [], blocked: [], reason: '', sources: sourceKeys.map(key => ({ key, title: key, text: '合成依据', version: 'v1', blocked: '', kind: 'material' })), excluded: [],
+    missing, blocked: [], reason: '', sources: sourceKeys.map(key => ({ key, title: key, text: '合成依据', version: 'v1', blocked: '', kind: 'material' })), excluded: [],
+    defaultAuthorization: { enabled: true, revision: 7, includeFiles: true, includeCharter: true, autoEgress: autoApplies, applies: autoApplies },
     request: { system: '合成系统提示', messages: [{ role: 'user', content: prompt }] }, deConsentRequired: !receipts.has(prompt) })
   load('services/transport.ts').installProductTransport(async (path, init) => {
     const body = JSON.parse(init.body); calls.push([path, body])
-    if (path.endsWith('/grant')) { assert.deepEqual(body.keys, sourceKeys); receipts.add(lastPrompt); return Response.json({ ok: true }) }
+    if (path.endsWith('/grant')) {
+      assert.deepEqual(body.keys, sourceKeys)
+      if (body.defaultPolicyRevision && rejectDefault) return Response.json({ detail: { code: 'WORKSPACE_DEFAULT_CONSENT_CHANGED' } }, { status: 409 })
+      receipts.add(lastPrompt); return Response.json({ ok: true })
+    }
     lastPrompt = body.content
     if (path.endsWith('/preview')) return Response.json(preview(body.content))
     if (body.previewOnly) return Response.json({ routePreview: preview(body.content) })
@@ -273,23 +330,28 @@ test('desktop online consent is explicit for every prompt, including zero source
   let pending = routing.prepareChatRoute('c_test', { content: 'prompt-one' })
   await tick()
   assert.equal(routing.routeQuestion.value.preview.sources.length, 0)
-  assert.equal(calls.some(([path]) => path.endsWith('/grant')), false, 'empty-source prompt must not auto-grant')
+  assert.equal(calls.some(([path]) => path.endsWith('/grant')), false, 'legacy source policy must not auto-grant')
   routing.routeQuestion.value.done({ action: 'allow', keys: [] })
   assert.equal((await pending).routeRevision, 'approved-prompt-one')
+  autoApplies = true
   sourceKeys = ['already-granted-a', 'already-granted-b']
   pending = routing.prepareChatRoute('c_test', { content: 'prompt-two' })
-  await tick()
-  assert.equal(routing.routeQuestion.value.preview.missing.length, 0)
-  routing.routeQuestion.value.done({ action: 'allow', keys: ['already-granted-a'] })
   assert.equal((await pending).routeRevision, 'approved-prompt-two')
-  assert.deepEqual(calls.filter(([path]) => path.endsWith('/grant')).at(-1)[1].keys, sourceKeys)
-  pending = routing.prepareChatRoute('c_test', { content: 'edited-prompt' })
-  await tick(); routing.routeQuestion.value.done({ action: 'cancel' })
-  assert.equal(await pending, null); assert.equal(receipts.has('edited-prompt'), false)
+  assert.equal(routing.routeQuestion.value, null)
+  assert.deepEqual(calls.filter(([path]) => path.endsWith('/grant')).at(-1)[1], { revision: 'pending-prompt-two', keys: sourceKeys, defaultPolicyRevision: 7 })
   pending = routing.routedTask('c_test', '/mindos/synthetic-task', { content: 'task-prompt' })
-  await tick(); assert.ok(routing.routeQuestion.value)
-  routing.routeQuestion.value.done({ action: 'allow', keys: [] })
   assert.deepEqual(await pending, { complete: true })
+  assert.equal(routing.routeQuestion.value, null)
+  missing = ['outside-standing-range']; sourceKeys = [...missing]; autoApplies = false
+  pending = routing.prepareChatRoute('c_test', { content: 'range-review' })
+  await tick(); assert.ok(routing.routeQuestion.value)
+  routing.routeQuestion.value.done({ action: 'cancel' })
+  assert.equal(await pending, null); assert.equal(receipts.has('range-review'), false)
+  missing = []; autoApplies = true; rejectDefault = true
+  pending = routing.prepareChatRoute('c_test', { content: 'gateway-policy-mismatch' })
+  await tick(); assert.ok(routing.routeQuestion.value, 'a DE policy mismatch must fall back to exact visible review')
+  routing.routeQuestion.value.done({ action: 'cancel' })
+  assert.equal(await pending, null)
   scope.setProductScope(null)
 })
 

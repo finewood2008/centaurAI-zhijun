@@ -63,7 +63,7 @@ flowchart LR
 
 Gateway `requestId` 标识一次固定 operation 的传输任务；domain `body.requestId` 标识一次跨预览、授权和正式提交的业务动作。两者不能共用命名空间。桌面适配层现在为每个 start 生成独立 Gateway ID，只让 catalog 明确声明的 `Idempotency-Key` 决定稳定传输 ID，正文业务 ID 原样交给盒端。回归测试覆盖“预览和正式消息保留同一业务 ID，但创建两个不同 Gateway job”的场景。
 
-Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录态使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复。显式退出、账号层 `SESSION_EXPIRED`，以及原生已确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除本地登录记录并显示登录页。普通 `DIRECT_CONNECTION_UNAVAILABLE` 只表示本次盒子直连失败，保留账号供重新选择。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
+Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本地登录会话使用系统加密存储，并设置固定 7 天截止时间；应用重启可以恢复。显式退出、账号层 `SESSION_EXPIRED`，以及原生已确认关闭的 `CONNECTIVITY_SESSION_EXPIRED` 都会清除会话令牌并显示登录页。上次成功登录的手机号另行加密保存；用户勾选“使用系统安全存储记住密码”后，密码也存入独立加密记录。renderer 只得到手机号和“是否已保存密码”，解密后的密码不离开主进程，过期后也不会自动登录。普通 `DIRECT_CONNECTION_UNAVAILABLE` 只表示本次盒子直连失败，保留账号供重新选择。Admin Access Token 仍为 15 分钟，通过 Refresh Token 轮换；盒子连接票据、P2P 会话、签名证明和 workspace lease 都保持短期，不随 7 天登录态延长。
 
 业务页面没有直接 HTTP 旁路。现场模型回答证明消息经 Electron main、Connectivity SDK、盒端 Agent、v2 Gateway 和 workspace worker 完整返回；空闲对话页不再周期创建 routing job。附件、画像和其他后台状态只在过渡态继续轮询，终态或空列表停止，用户操作可重新唤醒。
 
@@ -72,3 +72,5 @@ Consumer 登录、刷新、登出和设备列表仍只访问 Admin。桌面本�
 办公室连接家里的 `AMD AI盒子` 时，Admin 登录、设备在线列表、Connectivity ticket、Gateway WSS 信令和远端 SDP answer 均已完成，随后在 ICE/DTLS/DataChannel 阶段返回 `DIRECT_CONNECTION_UNAVAILABLE · DIRECT_TIMEOUT`。因此“在线”只证明盒子的信令通道在线，不代表办公室与家庭网络可以建立端到端 UDP 直连。桌面错误卡片会显示 SDK 允许公开的“直连超时”或“ICE 建链失败”，但不会展示私有地址、候选地址或凭据。同一应用随即重选公司盒 `AMD-A2A-248`，约 6 秒内恢复完整工作区，证明本次修改没有破坏正常 Direct 链路。
 
 当前产品合同固定为 `SOVEREIGN_DIRECT_ONLY` / `DIRECT_ONLY`，SDK 只接受 STUN，不会在 Direct 失败时自动转发业务流量。异地网络若受家庭路由器、运营商 CGNAT 或 UDP 防火墙限制，需要更换可穿透的网络，或另立跨 SDK、Admin、Gateway 与盒端 Agent 的 TURN 中继能力变更；不能只在前端改成普通 HTTP 直连盒子 IP。
+
+2026-09-08 在 Mac `192.168.100.118/24` 上再次复验：Admin 会话恢复及两台在线设备列表均成功，公网 HTTPS/WSS 入口与 UDP STUN 正常；公司、家庭设备分别连接仍都返回 `SDK_DIRECT_UNAVAILABLE / DIRECT_TIMEOUT`。使用真实 Direct 失败 session 申请 `TURN_ONLY`，线上 Admin 返回 `APPLICATION_AUTHORIZATION_DENIED`。这确认当前远程失败位于产品明确禁止回退的 Direct 路径，而不是 renderer/API 路由遗漏。

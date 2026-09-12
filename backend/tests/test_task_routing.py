@@ -621,6 +621,33 @@ class RoutingTests(unittest.TestCase):
         self.assertTrue(any(s["authorization"] == {"kind": "default", "revision": 1} for s in audit["sources"]))
         self.assertFalse(self.store.granted("global", source, service_info(self.online)["id"], "chat"), "default must not mint permanent per-source grants")
 
+    def test_auto_egress_requires_new_opt_in_and_never_mints_source_grants(self):
+        c = self.claim()
+        self.enable()
+        self.assertEqual(self.default_consent().status_code, 200)
+        _, legacy = self.preview("星桥项目工作安排")
+        self.assertFalse(legacy["defaultAuthorization"]["autoEgress"])
+        self.assertFalse(legacy["defaultAuthorization"]["applies"])
+        self.assertEqual(self.default_consent(autoEgress=True).status_code, 200)
+        _, preview = self.preview("星桥项目工作安排")
+        policy = preview["defaultAuthorization"]
+        self.assertTrue(policy["autoEgress"])
+        self.assertTrue(policy["applies"])
+        response = self.client.post(self.url + "/routing/grant", json={
+            "revision": preview["revision"], "keys": [s["key"] for s in preview["sources"]],
+            "defaultPolicyRevision": policy["revision"],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        source = Router(self.onto, self.convs, self.cid).resolve(Router(self.onto, self.convs, self.cid).ref("claim", c["id"]))[0]
+        self.assertFalse(self.store.granted("global", source, service_info(self.online)["id"], "chat"))
+        self.assertEqual(self.default_consent(False).status_code, 200)
+        stale = self.client.post(self.url + "/routing/grant", json={
+            "revision": preview["revision"], "keys": [s["key"] for s in preview["sources"]],
+            "defaultPolicyRevision": policy["revision"],
+        })
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.json()["detail"]["code"], "DEFAULT_CONSENT_CHANGED")
+
     def test_default_consent_disable_revokes_derived_and_background_access(self):
         c = self.claim()
         self.enable()

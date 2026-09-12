@@ -5,6 +5,7 @@ const invoke = (operation, ...args) => ipcRenderer.invoke('zhijun:invoke', opera
 contextBridge.exposeInMainWorld('zhijunDesktop', Object.freeze({
   protocolVersion: 1,
   getSnapshot: () => invoke('getSnapshot'),
+  getRememberedLogin: context => invoke('getRememberedLogin', context),
   subscribe(listener) {
     if (typeof listener !== 'function') throw new TypeError('Expected a snapshot listener')
     const receive = (_event, snapshot) => listener(snapshot)
@@ -14,7 +15,11 @@ contextBridge.exposeInMainWorld('zhijunDesktop', Object.freeze({
   },
   beginSignIn: context => invoke('beginSignIn', context),
   signInWithPassword: (context, credentials) => invoke('signInWithPassword', context, credentials),
+  signInWithSavedPassword: (context, rememberPassword) => invoke('signInWithSavedPassword', context, rememberPassword),
+  sendRegistrationCode: (context, phone) => invoke('sendRegistrationCode', context, phone),
+  registerWithPassword: (context, credentials) => invoke('registerWithPassword', context, credentials),
   listDevices: context => invoke('listDevices', context),
+  claimDevice: (context, claimToken) => invoke('claimDevice', context, claimToken),
   connect: (context, deviceId) => invoke('connect', context, deviceId),
   disconnect: context => invoke('disconnect', context),
   signOut: context => invoke('signOut', context),

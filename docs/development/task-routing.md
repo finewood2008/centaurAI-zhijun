@@ -15,6 +15,7 @@
 - 对话正文不再与固定右栏争空间。判断草稿、本体与建档进度、观察与复盘放入全高抽屉的独立页签；桌面抽屉宽 600px，窄屏使用全宽。只有抽屉主体滚动，不再把草稿压缩在图谱下。关闭/切换页签保留未提交编辑，但刷新依然需要先保存。
 - 模型与授权在页头只占一个紧凑入口，后台待授权任务只显示数量。设置说明、旧历史边界、错误和任务恢复都在「模型与授权」抽屉中，后台不自动弹窗。
 - 新增**默认关闭**的「默认授权相关文字」。用户明确确认后，限定当前设备作用域与当前服务，覆盖对话、个人理解、草稿、判断、复盘及对应后台任务的实际所需文字，包括之后新增或修改的内容。启用时冻结已列明的用途集合，未来新增任务不自动继承。切换服务必须重新确认。
+- 桌面接入 Data Engine 后还有独立的逐请求外发确认：凭据精确绑定本轮输入、系统提示、来源版本、服务和配置。上面的默认授权只负责资料来源，不能关闭桌面逐次确认。偏好页以“在线模型与资料授权”设置卡明确展示入口和这项边界。
 - 文件提取文字使用单独的 `includeFiles` 同意选项，默认不勾选。画像默认授权不能单独放行其文件来源；原文件不上传。整段仅本地、删除/撤回、跨设备、旧版本来源无法恢复及不明来源仍按原规则拦截。
 - 这是一份持续有效的用户同意，不是批量生成永久资料授权。每次预览及实际 HTTP 前重新读取，关闭立即停止其后续效力；此前逐次批准的版本授权仍保留。「撤销本设备资料用途授权」同时关闭默认开关并清除逐次授权；单项撤销加入排除清单，重新开启默认开关也不自动解除。
 - 增量表：`routing_auto_consent`、`routing_auto_exclusions`、`routing_auto_history`。修改使用修订号和事务，旧窗口不能覆盖撤销；来源审计与回复依据保存本轮实际使用的授权类型、设置修订。`PUT /api/mindos/conversations/{id}/routing/default-consent`（id 可为 default）不会自行启用在线模式或恢复旧后台任务。
@@ -66,5 +67,13 @@
 5. 前端 `prepareChatRoute` 与 `routedTask` 在 HTTP 409 且 code 为 `ROUTE_CHANGED` 或 `PREVIEW_EXPIRED` 时最多额外重建一次预览；总循环仍有上限。重建会重新走缺失授权/章程冲突流程，不表示自动批准，也不将其他来源错误都视为可重试。聊天预览、grant、章程例外和等待窗口贯穿 AbortSignal。
 
 聊天发送端的 `streamChat` 另只允许在收到首个流事件之前，针对上述两类 HTTP 409 重新预览并重发一次，沿用请求标识及来源且要求仍在当前会话。流开始后、网络失败、取消或来源变化不自动重播；不能把两层各自的受限恢复写成对所有错误的统一重试。
+
+## 2026-09-08：桌面常驻授权协议
+
+桌面端默认授权增加 `autoEgress`，并与资料来源范围分开显示。旧记录通过增量迁移补为 `false`。只有用户在当前设备上明确勾选免逐次确认后，路由预览才可能返回 `defaultAuthorization.applies=true`；该值由领域 worker 根据当前策略、配置修订、完整来源和章程冲突计算，renderer 不自行推断。
+
+符合条件时，renderer 用预览修订和 `defaultPolicyRevision` 调用原 `/routing/grant`。领域 worker 使用 CAS 重读策略和来源，随后以 `authorization={kind: default, policyRevision}` 请求 Data Engine；这条分支只签发当前请求的短期回执，不写永久来源授权。Data Engine 持久保存绑定 workspace/账号授权版本、service、配置修订、规范化目标地址、用途、文件/章程范围、排除项和策略修订的策略。盒端 Gateway 还会把策略登记操作绑定到对应的前台 `default-consent` 或 `revoke` HTTP 请求，后台任务和伪造的 renderer 请求不能单独登记策略。
+
+Data Engine 在回执签发和实际 `model.stream`/`model.complete_json` 前分别复核策略；默认回执最长 1800 秒并精确绑定 request digest 与来源 stamp。策略或模型配置变化、账号授权版本变化、单项排除、禁用和来源变化都会拒绝旧默认回执。显式逐次授权使用 `authorization={kind: explicit}`，不受无关默认策略修改影响。worker 本地回执及盒端 binding 都会清理过期记录，盒端每 workspace 最多保留 512 条 binding；排除项限制为 1024 条且编码后不超过 256 KiB。
 
 完整事项 API 见 [接口契约第 19 节](zhijun-api-contract.md#19-事项与成果合同--版本-work-2026-09-05)。实现核对：[routing.py](../../backend/mindos/zhijun/routing.py)、[routing_routes.py](../../backend/mindos/routing_routes.py)、[routing_store.py](../../backend/mindos/stores/routing_store.py)、[taskRouting.ts](../../frontend/mindos-web/src/services/taskRouting.ts)。新增回归入口 `test_routing_source_snapshots`、`test_routing_backlog` 与 `chat-stream.test.mjs`，本段不声明它们已由本次同步执行。

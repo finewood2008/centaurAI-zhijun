@@ -29,6 +29,8 @@
 
 ## 3. 身份与网络合同
 
+2026-09-08 换网复验补充：Mac 位于 `192.168.100.118/24` 时，Admin 登录、两台设备在线列表、公网 Gateway 443 和 UDP STUN 3478 均正常，但公司与家庭盒都在 Direct 阶段返回 `DIRECT_TIMEOUT`。携带该失败会话申请 `TURN_ONLY` 时，线上 Admin 对 `zhijun-desktop` 返回 `APPLICATION_AUTHORIZATION_DENIED`。现网合同仍是 `SOVEREIGN_DIRECT_ONLY / DIRECT_ONLY`；跨 NAT 成功不是当前版本保证。若产品决定支持 TURN，必须显式显示中继路径并同步升级 Admin 授权、SDK/sidecar 和桌面状态合同。
+
 ### 3.1 v2 的 10 条固定 RPC
 
 以下均相对 `/api/mindos/zhijun`；`{id}` 必须是 32 位小写 hex。
@@ -148,3 +150,11 @@ OS 源码 `353f1d9` 使用全局最多 8 项 request 并发、按 request_id 输
 `prepare-real.cjs` 固定新版六目标哈希，默认 SDK 输入目录为 `release/electron-sidecars-1.2.1`。既有配置不会自动覆盖：本机先调用导出的 `prepare`，将新版写入独立 `data/desktop/native-1.2.1`，保存原配置后仅切换 sidecarPath/sidecarSha256。旧二进制与配置留作回退；不要把现有定制配置删掉再生成。详细真机结果见[性能跟进](PERFORMANCE-FOLLOWUP-0907.md)。
 
 公司 DE 已升级 `62ae9b1`，含持久事件通知与目标任务过期检查；后端 395 项回归通过，已核对运行摘要与内部业务 200。最终 UI 刷新复验仍待窗口可读；见上述跟进记录。
+
+### 0908 在线默认授权部署
+
+默认授权协议需要知君 worker 与 Data Engine 同时升级，不能只发桌面。worker 新增策略修订与供应商配置指纹绑定；Data Engine 新增持久 `outbound_consent_policy`、短期收据授权类型，以及收据签发/模型调用双重校验。旧资料授权迁移为 `autoEgress=false`。
+
+公司盒当前使用补丁镜像 `mindos:standing-consent-20260908`（镜像 ID `394e5c790ae1`）和 worker 发布目录 `/srv/zhijun-integration-0907/release-standing-consent-20260908`。容器沿用既有 state、trust 和模型缓存挂载，保持只读根文件系统、`no-new-privileges`、capability 全部移除及原 8620 健康检查。旧容器保留为 `zhijun-integration-0907-before-standing-consent`。
+
+发布检查必须包含：三端策略修订和配置指纹一致；关闭免确认开关后下一次在线发送恢复弹窗；重新明确启用后连续两次范围内请求不弹窗且成功；默认路径不新增 `routing_grants`；容器 `healthy`、零重启、无 OOM。完整结果见[在线模型验收](ONLINE-MODEL-ACCEPTANCE-0908.md)与[桌面打包记录](DESKTOP-PACKAGING-0908.md)。
