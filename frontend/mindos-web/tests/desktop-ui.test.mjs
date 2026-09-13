@@ -98,6 +98,7 @@ async function connectionComponentFixture(savedLoginError, resetError) {
       return { isValidClaimToken: value => /^\d{6}$/.test(value), normalizeClaimToken: value => value.trim() }
     }
     if (id.endsWith('/workspace') || id === './workspace') return { useDesktopWorkspace: () => ({ controller, state: viewState }) }
+    if (id === './SecureConnectionProgress.vue') return { default: {} }
     throw new Error(`unexpected DesktopConnection import: ${id}`)
   }, exports)
   const scope = Vue.effectScope()
@@ -119,6 +120,67 @@ test('without a desktop bridge no network fallback or simulated session is start
   await controller.start()
   assert.equal(controller.state.hostAvailable, false)
   assert.equal(controller.state.snapshot, null)
+})
+
+for (const phase of ['connecting', 'authorizing']) {
+  test(`cancel interrupts pending connect during ${phase} and ignores its late success`, async () => {
+    const f = fixture(snapshot('selecting_device', 1, 1))
+    await f.controller.start()
+    const connecting = f.controller.control('connect', 'synthetic-box')
+    f.emit(snapshot(phase, 2, 2))
+    assert.equal(f.controller.state.controlPending, true)
+    const cancelling = f.controller.control('disconnect')
+    assert.equal(f.controls.length, 2)
+    assert.equal(f.controls[1].operation, 'disconnect')
+    assert.equal(f.controls[1].context.expectedGeneration, 2)
+    await f.controller.control('disconnect')
+    assert.equal(f.controls.length, 2, 'duplicate cancellation is suppressed')
+    f.emit(snapshot('selecting_device', 3, 3))
+    f.controls[1].resolve(ok(3, snapshot('selecting_device', 3, 3)))
+    await cancelling
+    f.emit(snapshot('ready', 2, 9))
+    assert.equal(f.controller.state.snapshot.phase, 'selecting_device', 'late subscription cannot restore an old generation')
+    f.controls[0].resolve(ok(2, snapshot('ready', 2, 4)))
+    await connecting
+    assert.equal(f.controller.state.snapshot.phase, 'selecting_device')
+    assert.equal(f.controller.state.snapshot.generation, 3)
+    assert.equal(f.controller.state.controlPending, false)
+    assert.equal(f.reads.length, 0, 'late connection cannot load business data')
+    f.controller.dispose()
+  })
+}
+
+test('cancelled connection failures cannot replace the new selection state', async () => {
+  for (const rejected of [false, true]) {
+    const f = fixture(snapshot('selecting_device', 1, 1))
+    await f.controller.start()
+    const connecting = f.controller.control('connect', 'synthetic-box')
+    f.emit(snapshot('connecting', 2, 2))
+    const cancelling = f.controller.control('disconnect')
+    f.emit(snapshot('selecting_device', 3, 3))
+    f.controls[1].resolve(ok(3, snapshot('selecting_device', 3, 3)))
+    await cancelling
+    if (rejected) f.controls[0].reject(new Error('synthetic late transport failure'))
+    else f.controls[0].resolve({ ok: false, generation: 2, error: { code: 'REMOTE_ERROR', message: 'synthetic error', recovery: 'user_reconnect' } })
+    await connecting
+    assert.equal(f.controller.state.error, null)
+    assert.equal(f.controller.state.snapshot.phase, 'selecting_device')
+    assert.equal(f.controller.state.controlPending, false)
+    f.controller.dispose()
+  }
+})
+
+test('disconnect does not interrupt sign-out or password sign-in', async () => {
+  for (const operation of ['signOut', 'signInWithPassword']) {
+    const f = fixture(snapshot('signed_out', 0, 0))
+    await f.controller.start()
+    const pending = f.controller.control(operation, { phone: '13800000000', password: 'synthetic', rememberPassword: false })
+    await f.controller.control('disconnect')
+    assert.equal(f.controls.length, 1)
+    f.controls[0].resolve(ok(1, snapshot('signed_out', 1, 1)))
+    await pending
+    f.controller.dispose()
+  }
 })
 
 test('subscription wins over a late initial snapshot', async () => {

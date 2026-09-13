@@ -216,55 +216,58 @@ def _material_item(router, record, snapshot, body, snippet, score, *, offset=Non
             "locator": {"kind": "text", "offset": offset, "length": len(snippet)}, "partial": len(snippet) < len(body)}}
 
 
-def material_candidates(router, queries, *, interaction_id=None):
+def rag_evidence_revision(items):
+    """Bind a reviewed source to exact delivered text and its security context."""
+    return digest(sorted(items, key=lambda item: item["evidenceRef"]))
+
+
+def material_candidates(router, queries, *, interaction_id=None, retrieval_plan=None):
     if os.environ.get("ZHIJUN_MATERIAL_EVIDENCE", "1").lower() in ("0", "false", "no"):
         return []
     from ..chat_imports import read_ref, require_material
     results = []
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from .. import data_agent_rag
-        from ..stores.chat_import_store import ChatImportStore
+        from .retrieval_tools import execute_search, plan_search
 
-        material_ids = sorted(ChatImportStore(router.convs).protected_ids(router.scope))
-        if not material_ids:
-            return []
+        # A fixed application tool owns the Data Agent boundary. Local import
+        # records neither define the App ACL nor prove a returned source valid.
+        plan = retrieval_plan or plan_search(next(iter(queries), ""))
         interaction_id = interaction_id or (
-            router.cid + ":context:" + digest(list(queries))[:32]
+            router.cid + ":context:" + digest(plan)[:32]
         )
-        for index, query in enumerate(queries[:3]):
-            hits = data_agent_rag.search_materials(
-                query[:1000], material_ids, f"{interaction_id}:{index}", top_k=12
-            )
-            for hit in hits:
-                try:
-                    record = require_material(hit["materialId"], router.scope)
-                except (HTTPException, KeyError):
-                    continue
-                if record["versionNumber"] != hit["materialVersion"]:
-                    continue
-                ident, version = record["materialId"], record["versionNumber"]
-                results.append({
-                    "ref": router.ref("material", ident, materialVersion=version),
-                    "score": hit["score"],
-                    "category": "material",
+        hits = execute_search(plan, interaction_id)
+        by_material = {}
+        for hit in hits:
+            by_material.setdefault((hit["materialId"], hit["materialVersion"]), []).append(hit)
+        for rank, hit in enumerate(hits):
+            ident, version = hit["materialId"], hit["materialVersion"]
+            results.append({
+                "ref": router.ref("material", ident, materialVersion=version,
+                                  ragInteractionId=interaction_id,
+                                  ragRevision=rag_evidence_revision(by_material[(ident, version)])),
+                "score": hit["score"],
+                "retrievalRank": rank,
+                "category": "material",
+                "title": hit["title"],
+                "text": hit["text"],
+                "material": {
+                    "materialId": ident,
+                    "version": version,
                     "title": hit["title"],
-                    "text": hit["text"],
-                    "material": {
-                        "materialId": ident,
-                        "version": version,
-                        "title": hit["title"],
-                        "snapshotId": f"rag-v2:{ident}:{version}",
-                        "chunkKey": hit["evidenceRef"],
-                        "evidenceRef": hit["evidenceRef"],
-                        "locator": hit["locator"],
-                        "partial": True,
-                        "containsSensitive": hit["containsSensitive"],
-                        "verificationStatus": hit["verificationStatus"],
-                        "policyVersion": hit["policyVersion"],
-                        "detectorRevision": hit["detectorRevision"],
-                    },
-                })
-        return sorted(results, key=lambda item: (-item["score"], item["ref"]["id"]))[:80]
+                    "snapshotId": f"rag-v2:{ident}:{version}",
+                    "chunkKey": hit["evidenceRef"],
+                    "evidenceRef": hit["evidenceRef"],
+                    "locator": hit["locator"],
+                    "partial": True,
+                    "containsSensitive": hit["containsSensitive"],
+                    "verificationStatus": hit["verificationStatus"],
+                    "policyVersion": hit["policyVersion"],
+                    "detectorRevision": hit["detectorRevision"],
+                },
+            })
+        # Preserve the service's ranking. Its public score is not necessarily
+        # the reranker score and must not be used to undo that ranking.
+        return results
     qa = sys.modules.get("mindos.qa")
     encoder = getattr(sys.modules.get("embedder"), "_text_model", None)
     if qa is not None and encoder is not None:

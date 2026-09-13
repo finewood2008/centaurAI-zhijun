@@ -11,6 +11,7 @@ import re
 import time
 from dataclasses import asdict, dataclass
 from contextvars import ContextVar
+from functools import wraps
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException
@@ -22,6 +23,7 @@ from ..stores.routing_store import RoutingStore
 from . import alignment, persona, charter_policy
 from .context import Assembled, _brief, _claim_line
 from .provider import ChatRequest, Done, ProviderError, Usage
+from .request_budget import normalize_request_budget
 
 
 def build_provider():
@@ -34,6 +36,23 @@ def local_provider(**kwargs):
     return factory(**kwargs)
 
 EGRESS_PERMIT = ContextVar("zhijun_egress_permit", default=False)
+_RAG_VALIDATIONS = ContextVar("zhijun_rag_boundary_validations", default=None)
+
+
+def _rag_boundary(*, fresh=False):
+    """Coalesce evidence checks within one synchronous boundary, never across it."""
+    def decorate(fn):
+        @wraps(fn)
+        def call(*args, **kwargs):
+            if not fresh and _RAG_VALIDATIONS.get() is not None:
+                return fn(*args, **kwargs)
+            token = _RAG_VALIDATIONS.set({})
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                _RAG_VALIDATIONS.reset(token)
+        return call
+    return decorate
 
 PURPOSES = {"chat": "日常对话", "draft_turn": "判断草稿", "decision_suggestions": "判断候选",
             "charter_draft": "人生章程整理",
@@ -93,6 +112,34 @@ class Router:
     def ref(self, kind, ident, **extra):
         return {"kind": kind, "id": ident, **extra}
 
+    def _reviewed_rag_source(self, ref):
+        """Native Search evidence has no legacy local-import registration.
+
+        An opaque interaction is only a lookup handle, never an authorization.
+        Re-resolve the exact user-selected evidence before every model boundary.
+        """
+        from ..data_agent_rag import reviewed_evidence
+        from .context_sources import rag_evidence_revision
+        interaction = ref.get("ragInteractionId")
+        revision = ref.get("ragRevision")
+        if (not os.environ.get("ZHIJUN_WORKSPACE_ID") or not isinstance(interaction, str)
+                or not interaction.startswith(self.cid + ":") or not isinstance(revision, str) or not revision):
+            raise ValueError("资料确认记录不可用，请重新检索并确认")
+        cache = _RAG_VALIDATIONS.get()
+        key = (self.scope, self.cid, interaction)
+        if cache is not None and key in cache:
+            evidence = cache[key]
+        else:
+            evidence = reviewed_evidence(self.cid, interaction_id=interaction)
+            if cache is not None:
+                cache[key] = evidence
+        values = [item for item in evidence or []
+                  if item["materialId"] == ref["id"] and item["materialVersion"] == ref["materialVersion"]]
+        if not values or rag_evidence_revision(values) != revision:
+            raise ValueError("已确认资料的内容或权限已变化，请重新检索并确认")
+        return {"title": values[0]["title"], "items": values}
+
+    @_rag_boundary()
     def resolve(self, ref, seen=None, *, _cache=None, _budget=None):
         """Return a source plus its closure. Versions never silently advance."""
         seen = set(seen or ())
@@ -117,7 +164,14 @@ class Router:
         try:
             if kind == "material":
                 mref = {"materialId": ident, "version": ref["materialVersion"]}
-                if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+                if "ragInteractionId" in ref or "ragRevision" in ref:
+                    reviewed = self._reviewed_rag_source(ref)
+                    fence = f"rag-v2:{ident}:{mref['version']}"
+                    unverified = any(item["verificationStatus"] == "unverified" for item in reviewed["items"])
+                    title = ("未经验证原文，可能含敏感信息 · " if unverified else "") + reviewed["title"]
+                    base.update(title=title, unverifiedEvidence=unverified, version=digest([mref, ref["ragRevision"]]),
+                                ragReviewed=True, materialRef={**mref, "snapshotId": fence})
+                elif os.environ.get("ZHIJUN_WORKSPACE_ID"):
                     record = require_material(ident, self.scope)
                     if record["versionNumber"] != mref["version"]:
                         raise ValueError("资料版本已变化")
@@ -148,7 +202,6 @@ class Router:
                     if e.get("messageId"):
                         parents.append(self.ref("message", e["messageId"]))
                     elif e.get("materialId"):
-                        from ..chat_imports import require_material
                         material = require_material(e["materialId"], self.scope)
                         mr = self.ref("material", e["materialId"], materialVersion=material["versionNumber"])
                         _, _, body = read_ref({"materialId": e["materialId"], "version": material["versionNumber"]}, self.scope)
@@ -191,6 +244,12 @@ class Router:
                         raise ValueError("旧历史的完整来源无法恢复；可开启不携带旧历史的在线上下文")
                 parents.extend(meta.get("routingSources") or [])
                 for r in meta.get("materialRefs") or []:
+                    if any(p.get("kind") == "material" and p.get("id") == r["materialId"]
+                           and p.get("materialVersion") == r["version"] and p.get("ragInteractionId")
+                           for p in parents if isinstance(p, dict)):
+                        # The selected native parent is validated below; do not
+                        # add an unrelated legacy registration for the same file.
+                        continue
                     parents.append(self.ref("material", r["materialId"], materialVersion=r["version"]))
                 for r in meta.get("alignmentSources") or []:
                     parents.append(self.ref("claim", r["claimId"]))
@@ -356,6 +415,7 @@ class Router:
         self._scope(cid)
         return [self.ref("message", m["id"]) for m in self.convs.list_messages(cid)]
 
+    @_rag_boundary()
     def check_lifecycle(self, sources):
         """Device scope and deletion apply locally too, independently of consent."""
         source_cache, source_budget = {}, {"nodes": 0}
@@ -369,7 +429,9 @@ class Router:
             kind, ident = s["kind"], s["id"]
             try:
                 if kind == "material":
-                    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+                    if "ragInteractionId" in s["ref"] or "ragRevision" in s["ref"]:
+                        self._reviewed_rag_source(s["ref"])
+                    elif os.environ.get("ZHIJUN_WORKSPACE_ID"):
                         record = require_material(ident, self.scope)
                         if record["versionNumber"] != s["ref"]["materialVersion"]:
                             raise ValueError("资料版本已变化")
@@ -428,8 +490,13 @@ class Router:
             return {"kind": "online_mode"}
         if self.store.granted(self.scope, source, service, purpose):
             r = source.get("materialRef")
-            if source["kind"] != "material" or (r and ChatImportStore(self.convs).allowed(r, service, r["snapshotId"])):
+            if (source["kind"] != "material" or source.get("ragReviewed")
+                    or (r and ChatImportStore(self.convs).allowed(r, service, r["snapshotId"]))):
                 return {"kind": "explicit"}
+        if source.get("unverifiedEvidence"):
+            # Releasing risk text to Zhijun is not permission for an external
+            # model. Standing defaults cannot silently authorize this case.
+            return None
         policy = self.store.policy(self.scope) if policy is None else policy
         if (policy["enabled"] and policy["service"] == service and purpose in policy["purposes"]
                 and source["key"] not in policy["exclusions"]
@@ -445,10 +512,12 @@ class Router:
     def allowed(self, source, service, purpose):
         return self.permission(source, service, purpose) is not None
 
+    @_rag_boundary()
     def prepare(self, purpose, request, refs, provider, *, excluded=None, background=False):
         if purpose not in PURPOSES:
             fail("UNKNOWN_TASK", "未知任务类型")
         check_service(provider)
+        request = normalize_request_budget(request, provider)
         from .context_bridge import attach_task_context
         request, refs = attach_task_context(self, purpose, request, refs, provider)
         request, refs, charter = charter_policy.bind_request(self, purpose, request, refs)
@@ -504,6 +573,7 @@ class Router:
             require().call("domain.preview.register", {"preview": result, "configurationRevision": provider.configuration_revision})
         return result
 
+    @_rag_boundary(fresh=True)
     def authorize(self, preview, keys):
         if self.mode != preview["mode"]:
             fail("ROUTE_CHANGED", "处理模式已变化，请重新预览")
@@ -523,11 +593,12 @@ class Router:
         if os.environ.get("ZHIJUN_WORKSPACE_ID"):
             from zhijun_worker.consent import issue
             issue(preview, keys, provider)
-        files = [s["materialRef"] for s in selected if s["kind"] == "material"]
+        files = [s["materialRef"] for s in selected if s["kind"] == "material" and not s.get("ragReviewed")]
         if files:
             ChatImportStore(self.convs).grant(files, service)
         self.store.grant(self.scope, selected, service, preview["purpose"])
 
+    @_rag_boundary(fresh=True)
     def authorize_default(self, preview, policy_revision):
         """Issue one exact DE receipt from an explicitly enabled standing policy.
 
@@ -571,6 +642,7 @@ class ChatPlan:
     refs: list
 
 
+@_rag_boundary()
 def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=None, local=False, omit=False, retry_user_id=None, reply_assistance=None, _handling_notice="", request_id=None, charter_exception_id=None, supplemental_queries=None):
     from ..stores.ontology_store import tokenize
     from .memory_context import conversation_intent
@@ -786,7 +858,7 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
     elif material_refs:
         excluded.extend({"id": r["materialId"], "reason": "本轮明确不使用这些文件"} for r in material_refs)
     attached_materials = []
-    if material_refs and not omit:
+    if material_refs and not omit and not os.environ.get("ZHIJUN_WORKSPACE_ID"):
         text, attached_materials = attachment_context(material_refs, router.scope, content,
                                                       external=p.external,
                                                       interaction_id=rag_interaction + ":attachments")
@@ -919,7 +991,9 @@ class GuardedProvider:
 
     check_current = assert_current
 
+    @_rag_boundary(fresh=True)
     def check(self, req):
+        req = normalize_request_budget(req, self.inner)
         if self.request_context:
             from dataclasses import replace
             req = replace(req, debug={**(req.debug or {}), **self.request_context})

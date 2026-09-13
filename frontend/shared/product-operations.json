@@ -1876,6 +1876,19 @@
       "mutating": false
     },
     {
+      "id": "get_api_mindos_settings_sensitive_rules_status",
+      "method": "GET",
+      "path": "/api/mindos/settings/sensitive-rules/status",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
       "id": "get_api_mindos_settings_sensitive_rules_rule_id",
       "method": "GET",
       "path": "/api/mindos/settings/sensitive-rules/{ruleId}",

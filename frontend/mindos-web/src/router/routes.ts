@@ -1,4 +1,9 @@
 import type { RouteRecordRaw } from 'vue-router'
+import { isDesktopProduct } from '@/shared/productScope'
+
+// Evaluate at navigation time: the desktop bootstrap enables its scope after imports.
+const materialPage = (legacy: () => Promise<unknown>) => () => isDesktopProduct()
+  ? import('@/pages/RetrievalMaterialsPage.vue') : legacy()
 
 export const productRoutes: RouteRecordRaw[] = [
   { path: '/onboarding', name: 'onboarding', component: () => import('@/pages/OnboardingPage.vue'), meta: { title: '首次引导' } },
@@ -14,14 +19,14 @@ export const productRoutes: RouteRecordRaw[] = [
   { path: '/growth', redirect: '/judgments' },
   { path: '/data', name: 'data', component: () => import('@/pages/DataHubPage.vue'), meta: { title: '资料与边界' } },
   // 隐藏路由（不进侧栏）
-  { path: '/materials', name: 'materials', component: () => import('@/pages/RawMaterialsPage.vue'), meta: { title: '原材料' } },
-  { path: '/materials/:materialId', name: 'material-detail', component: () => import('@/pages/MaterialDetailPage.vue'), meta: { title: '原材料详情' } },
-  { path: '/knowledge', name: 'knowledge', component: () => import('@/pages/KnowledgePage.vue'), meta: { title: '知识档案' } },
-  { path: '/knowledge/new', name: 'knowledge-new', component: () => import('@/pages/KnowledgeEditPage.vue'), meta: { title: '新建知识卡片' } },
-  { path: '/knowledge/:knowledgeId', name: 'knowledge-edit', component: () => import('@/pages/KnowledgeEditPage.vue'), meta: { title: '编辑知识卡片' } },
-  { path: '/recycle-bin', name: 'recycle-bin', component: () => import('@/pages/RecycleBinPage.vue'), meta: { title: '回收站' } },
-  { path: '/search', name: 'search', component: () => import('@/pages/SearchPage.vue'), meta: { title: '搜索记忆' } },
-  { path: '/graph', name: 'graph', component: () => import('@/pages/GraphPage.vue'), meta: { title: '关系图谱' } },
+  { path: '/materials', name: 'materials', component: materialPage(() => import('@/pages/RawMaterialsPage.vue')), meta: { title: '资料检索' } },
+  { path: '/materials/:materialId', name: 'material-detail', component: materialPage(() => import('@/pages/MaterialDetailPage.vue')), meta: { title: '资料详情' } },
+  { path: '/knowledge', name: 'knowledge', component: materialPage(() => import('@/pages/KnowledgePage.vue')), meta: { title: '知识档案' } },
+  { path: '/knowledge/new', name: 'knowledge-new', component: materialPage(() => import('@/pages/KnowledgeEditPage.vue')), meta: { title: '新建知识卡片' } },
+  { path: '/knowledge/:knowledgeId', name: 'knowledge-edit', component: materialPage(() => import('@/pages/KnowledgeEditPage.vue')), meta: { title: '编辑知识卡片' } },
+  { path: '/recycle-bin', name: 'recycle-bin', component: materialPage(() => import('@/pages/RecycleBinPage.vue')), meta: { title: '回收站' } },
+  { path: '/search', name: 'search', component: materialPage(() => import('@/pages/SearchPage.vue')), meta: { title: '搜索记忆' } },
+  { path: '/graph', name: 'graph', component: materialPage(() => import('@/pages/GraphPage.vue')), meta: { title: '关系图谱' } },
   { path: '/settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue'), meta: { title: '偏好' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

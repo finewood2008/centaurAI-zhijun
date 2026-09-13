@@ -3,7 +3,8 @@ import { api, chatImports, type ChatImportBatch, type ChatImportFile, type ChatM
 import { validateImport } from '@/features/import/validation'
 import type { ReplyAssistanceInput } from '@/shared/replyAssistance'
 import { createChatImportPoller, hasTransitionalImports } from './chatImportPolling'
-import { askRag, requiresFreshRagSearch } from '@/services/taskRouting'
+import { askRag, requiresFreshRagSearch, submitRagDecision } from '@/services/taskRouting'
+import { isDesktopProduct } from '@/shared/productScope'
 
 export interface StagedChatFile { id: string; name: string; size: number; file?: File; materialId?: string; version?: number }
 
@@ -14,6 +15,12 @@ export function useChatImports(options: {
   notify: (message: string) => void
 }) {
   const staged = ref<StagedChatFile[]>([])
+  const retrievalOnly = ref(isDesktopProduct())
+  function importBlocked() {
+    if (!retrievalOnly.value) return false
+    options.notify('资料由 Data Engine 管理；请在对话中检索已授权资料。')
+    return true
+  }
   const batches = ref<ChatImportBatch[]>([])
   const references = ref<ChatMaterialRef[]>([])
   const localOnly = ref(false)
@@ -44,12 +51,13 @@ export function useChatImports(options: {
     read: id => chatImports.list(id),
     apply: data => {
       batches.value = data.items
-      references.value = data.selection.refs
+      retrievalOnly.value = isDesktopProduct() || data.retrievalOnly === true || data.uploadEnabled === false
+      references.value = retrievalOnly.value ? [] : data.selection.refs
       localOnly.value = data.selection.localOnly
       service.value = data.service
     },
     signature: data => JSON.stringify(data.items.map(b => [b.id, b.state, b.files.map(f => [f.id, f.state])])),
-    isTransitional: data => hasTransitionalImports(data.items),
+    isTransitional: data => !retrievalOnly.value && hasTransitionalImports(data.items),
     refreshMessages: options.refreshMessages,
     isTargetCurrent: id => options.conversationId.value === id,
     onSuccess: () => {
@@ -73,6 +81,7 @@ export function useChatImports(options: {
   }, { immediate: true })
 
   function stageFiles(input: FileList | File[]) {
+    if (importBlocked()) return
     for (const file of Array.from(input)) {
       if (staged.value.length >= 5) { options.notify('每次最多发送 5 个文件'); break }
       const validation = validateImport(file.name, file.size)
@@ -83,11 +92,13 @@ export function useChatImports(options: {
   }
 
   function stageMaterial(item: UploadResult) {
+    if (importBlocked()) return
     if (staged.value.length >= 5) { options.notify('每次最多发送 5 个文件'); return }
     if (!staged.value.some(f => f.materialId === item.materialId)) staged.value.push({ id: crypto.randomUUID(), name: item.fileName, size: 0, materialId: item.materialId, version: item.versionNumber })
   }
 
   async function openPicker() {
+    if (importBlocked()) return
     pickerOpen.value = true; libraryLoading.value = true; libraryError.value = ''
     try { library.value = (await api.listMaterials()).items }
     catch (e) { libraryError.value = e instanceof Error ? e.message : '资料列表读取失败' }
@@ -95,6 +106,7 @@ export function useChatImports(options: {
   }
 
   async function send(content: string, replyAssistance?: ReplyAssistanceInput, forceLocalOnly = false): Promise<boolean> {
+    if (importBlocked()) return false
     if (uploading.value || !staged.value.length) return false
     uploading.value = true
     const pending = [...staged.value]
@@ -130,6 +142,7 @@ export function useChatImports(options: {
   }
 
   async function chooseReferences(refs: ChatMaterialRef[]) {
+    if (importBlocked()) return
     const id = options.conversationId.value
     if (!id) return
     try { await chatImports.select(id, refs, localOnly.value); references.value = refs }
@@ -137,6 +150,7 @@ export function useChatImports(options: {
   }
 
   async function retry(batch: ChatImportBatch, fileId?: string) {
+    if (importBlocked()) return
     busyBatch.value = batch.id
     try {
       if (fileId) await chatImports.retryFile(batch.conversationId, batch.id, fileId)
@@ -148,6 +162,7 @@ export function useChatImports(options: {
   }
 
   async function reupload(batch: ChatImportBatch, item: ChatImportFile, file: File) {
+    if (importBlocked()) return
     busyBatch.value = batch.id
     try { await chatImports.upload(batch.conversationId, batch.id, item.id, file); await chatImports.seal(batch.conversationId, batch.id); await refresh() }
     catch (e) { options.notify(e instanceof Error ? e.message : '重传失败') }
@@ -155,11 +170,13 @@ export function useChatImports(options: {
   }
 
   async function showConsent(refs?: ChatMaterialRef[]) {
+    if (importBlocked()) return
     await refresh()
     consentRefs.value = refs || references.value
   }
 
   async function consent(onlyLocal: boolean) {
+    if (importBlocked()) return
     const id = options.conversationId.value
     if (!id || !consentRefs.value?.length) return
     consentBusy.value = true
@@ -172,11 +189,12 @@ export function useChatImports(options: {
   }
 
   async function confirmSensitive(batch: ChatImportBatch) {
+    if (importBlocked()) return
     if (!batch.ragV2 || ragBusyBatch.value) return
     ragBusyBatch.value = batch.id
     try {
       const action = await askRag(batch.ragV2)
-      try { await chatImports.ragDecision(batch.conversationId, batch.ragV2.interactionId, action) }
+      try { await submitRagDecision(batch.conversationId, batch.ragV2, action) }
       catch (error) {
         if (!requiresFreshRagSearch(error)) throw error
       }
@@ -190,6 +208,7 @@ export function useChatImports(options: {
   }
 
   async function showPreview(ref: ChatMaterialRef, append = false) {
+    if (importBlocked()) return
     const id = options.conversationId.value
     if (!id) return
     previewOpen.value = true; previewRef.value = ref; previewError.value = ''
@@ -205,13 +224,14 @@ export function useChatImports(options: {
         const prompt = e && typeof e === 'object' ? (e as { ragV2?: import('@/services/taskRouting').RagV2Prompt }).ragV2 : undefined
         if (!prompt) { previewError.value = e instanceof Error ? e.message : '暂时无法预览'; return }
         const action = await askRag(prompt)
-        try { await chatImports.ragDecision(id, prompt.interactionId, action) }
+        try { await submitRagDecision(id, prompt, action) }
         catch (decisionError) {
           if (requiresFreshRagSearch(decisionError)) continue
           previewError.value = decisionError instanceof Error ? decisionError.message : '敏感资料确认失败，请重试'
           return
         }
         if (action === 'cancel') { previewError.value = '已取消领取资料片段'; return }
+        if (action === 'without-materials') { previewOpen.value = false; return }
       }
     }
     previewError.value = '资料状态持续变化，请稍后重新预览'
@@ -226,7 +246,7 @@ export function useChatImports(options: {
     if (images.length) { e.preventDefault(); stageFiles(images) }
   }
   onBeforeUnmount(() => poller.dispose())
-  return { staged, batches, references, localOnly, service, uploading, pickerOpen, libraryLoading, libraryError, query, filteredLibrary,
+  return { retrievalOnly, staged, batches, references, localOnly, service, uploading, pickerOpen, libraryLoading, libraryError, query, filteredLibrary,
     preview, previewRef, previewError, previewOpen, consentRefs, consentBusy, pendingConsent, busyBatch, ragBusyBatch, loadError, selectedFiles, files,
     stageFiles, stageMaterial, openPicker, send, refresh, chooseReferences, retry, reupload, showConsent, consent, confirmSensitive, showPreview, drop, paste }
 }

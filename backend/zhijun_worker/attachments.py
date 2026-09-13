@@ -8,6 +8,7 @@ from .capabilities import require, CapabilityError
 
 def upload_import(conversation_id, batch_id, file_id, request):
     from mindos import chat_imports as svc
+    svc.require_import_enabled()
     from mindos.chat_import_routes import batch_for
     from mindos.domain_scope import _device_scope_of
     scope = _device_scope_of(request)
@@ -82,10 +83,7 @@ def resume_or_retry(material_id, action, request):
     if action not in {"resume", "retry"}:
         raise ValueError("Unknown material action")
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from mindos.domain_scope import _device_scope_of
-        _device_scope_of(request)
-        # RAG V2 exposes a durable status handle, but no implicit retry/resume
-        # mutation. Failed/cancelled jobs must be re-uploaded explicitly.
-        raise CapabilityError("RAG_V2_REUPLOAD_REQUIRED", 409)
+        from mindos.chat_imports import require_import_enabled
+        require_import_enabled()
     from mindos.uploads import mindos_upload_resume, mindos_upload_retry
     return (mindos_upload_resume if action == "resume" else mindos_upload_retry)(material_id, request=request)

@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import type { Phase } from '../../../shared/desktop-contract'
 import { isValidClaimToken, normalizeClaimToken } from './claimToken'
 import { useDesktopWorkspace } from './workspace'
+import SecureConnectionProgress from './SecureConnectionProgress.vue'
 
 const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 const { controller, state } = useDesktopWorkspace()
@@ -37,6 +38,10 @@ const canSignOut = computed(() => !!phase.value && phase.value !== 'signed_out'
   && state.value.pendingOperation !== 'signOut')
 const canDisconnect = computed(() => !!phase.value && ['ready', 'failed'].includes(phase.value)
   && !!state.value.snapshot?.subject && !state.value.controlPending)
+const showConnectionProgress = computed(() => !!state.value.snapshot?.subject && !!phase.value
+  && ['connecting', 'authorizing', 'ready', 'disconnecting', 'failed'].includes(phase.value))
+const canCancelConnection = computed(() => !!phase.value && ['connecting', 'authorizing'].includes(phase.value)
+  && (!state.value.controlPending || state.value.pendingOperation === 'connect'))
 const canProvision = computed(() => !!state.value.snapshot?.subject?.accountId
   && !!state.value.snapshot.capabilities.provisioning
   && !!phase.value && ['selecting_device', 'failed'].includes(phase.value))
@@ -194,7 +199,9 @@ onBeforeUnmount(() => {
         <p>当前页面没有桌面连接服务。请启动知君桌面应用后，再登录并选择盒子。</p>
       </section>
       <template v-else>
-        <section class="connection-card" aria-labelledby="connection-title">
+        <SecureConnectionProgress v-if="showConnectionProgress" :snapshot="state.snapshot"
+          :can-cancel="canCancelConnection" @cancel="controller.control('disconnect')" />
+        <section v-if="!showConnectionProgress" class="connection-card" aria-labelledby="connection-title">
           <div class="connection-copy"><p class="eyebrow">你的盒子，你的资料</p><h1 id="connection-title">{{ phase === 'ready' ? '正在打开工作区' : phase === 'failed' ? '连接暂未就绪' : '连接到你的盒子' }}</h1>
             <p v-if="phase === 'signed_out' || !phase">登录后，选择已绑定的盒子，打开知君工作区。</p>
             <p v-else-if="phase === 'authenticating'">正在完成登录，你可以随时退出。</p>
@@ -213,6 +220,12 @@ onBeforeUnmount(() => {
             <button v-if="canSignOut && !props.embedded" class="text-button" data-testid="sign-out" @click="signOut">退出登录</button>
           </div>
         </section>
+
+        <div v-if="showConnectionProgress && (canDisconnect || canProvision || (canSignOut && !props.embedded))" class="connection-recovery-actions">
+          <button v-if="canProvision" :disabled="state.controlPending" data-testid="open-provisioning" @click="controller.openProvisioning()">{{ state.pendingOperation === 'openProvisioning' ? '正在打开…' : '扫描附近盒子' }}</button>
+          <button v-if="canDisconnect" data-testid="disconnect" @click="controller.control('disconnect')">重新选择盒子</button>
+          <button v-if="canSignOut && !props.embedded" class="text-button" data-testid="sign-out" @click="signOut">退出登录</button>
+        </div>
 
         <section v-if="showAuth && environment === 'production'" class="auth-panel" aria-labelledby="auth-title">
           <div class="auth-mode" role="tablist" aria-label="账号入口">
@@ -285,4 +298,5 @@ onBeforeUnmount(() => {
 .workspace-notice { margin:0 0 18px; font-size:14px; color:var(--ws-text-secondary-color); }
 .embedded .connection-card { padding:24px; }
 .embedded .connection-copy h1 { font-size:24px; }
+.connection-recovery-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
 </style>

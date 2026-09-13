@@ -7,7 +7,7 @@
 | 需要了解 | 文档 | 权威来源 |
 |---|---|---|
 | 产品定位、入口和边界 | [产品定义](product/PRODUCT.md) | 产品行为与当前界面 |
-| 系统组成、数据流和部署边界 | [架构](development/architecture.md) | 当前代码与运行配置 |
+| 桌面、worker、两类 Gateway、Remote Agent、Data Engine、模型与升级边界 | [产品架构](development/architecture.md) | 当前代码、外部合同与已核验部署边界 |
 | 本机开发、测试隔离 | [本机开发](development/local-runtime.md) | `zhijun.sh`、测试脚本 |
 | 在线/本地模型选择与授权 | [模型路由](development/task-routing.md) | 路由 API、消息回执 |
 | 桌面运行与打包 | [桌面说明](../frontend/shell/README.md) | `frontend/shell/package.json` 脚本 |
@@ -17,7 +17,7 @@
 
 ## 功能实现说明
 
-- [对话、附件与回复恢复](development/conversations.md)
+- [对话、材料检索与回复恢复](development/conversations.md)
 - [记忆、章程与判断](development/memory-and-decisions.md)
 - [本地与在线模型路由](development/task-routing.md)
 

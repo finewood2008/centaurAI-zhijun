@@ -3,11 +3,11 @@ import test from 'node:test'
 
 import { ApiError, throwApiError } from '../src/services/api.ts'
 
-async function capture(body, status = 403) {
+async function capture(body, status = 403, headers = {}) {
   try {
     await throwApiError(new Response(JSON.stringify(body), {
       status,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...headers },
     }))
   } catch (error) {
     assert.ok(error instanceof ApiError)
@@ -22,6 +22,21 @@ test('403 detail code keeps status and maps a safe actionable message', async ()
   assert.equal(error.code, 'remote_model_target_not_allowlisted')
   assert.equal(error.message, '在线模型地址未通过盒子的网络安全校验，请检查供应商服务地址。')
   assert.notEqual(error.message, '请求失败（403）')
+})
+
+test('retrieval service errors preserve trace and the longest Retry-After without retrying', async () => {
+  const error = await capture({ detail: { code: 'SERVICE_UNAVAILABLE', message: '检索服务繁忙', retryAfter: 12, traceId: 'rag:trace-1' } }, 503, { 'Retry-After': '20' })
+  assert.equal(error.retryAfter, 20)
+  assert.equal(error.traceId, 'rag:trace-1')
+  assert.match(error.message, /20 秒后重试/)
+  const invalid = await capture({ detail: { retryAfter: -1, traceId: 'unsafe\nheader' } }, 503, { 'Retry-After': 'invalid' })
+  assert.equal(invalid.retryAfter, undefined)
+  assert.equal(invalid.traceId, undefined)
+})
+
+test('query clarification and retired import entry are actionable, not model errors', async () => {
+  assert.match((await capture({ code: 'RAG_QUERY_CLARIFICATION_REQUIRED' }, 422)).message, /资料名称或主题/)
+  assert.match((await capture({ code: 'RAG_RETRIEVAL_ONLY' }, 409)).message, /Data Engine/)
 })
 
 test('stable top-level and nested error codes map without masking explicit server detail', async () => {

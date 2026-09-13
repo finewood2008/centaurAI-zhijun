@@ -35,22 +35,46 @@ function consentKeys(preview: RoutePreview, choice: RouteChoice): string[] | und
 export type RouteChoice = { action: 'allow' | 'local' | 'omit' | 'cancel' | 'exception'; keys?: string[] }
 export const routeQuestion = shallowRef<{ preview: RoutePreview; allowOmit: boolean; done: (choice: RouteChoice) => void } | null>(null)
 
-export type RagV2Decision = 'masked' | 'original' | 'continue-passed' | 'retry' | 'risk-release' | 'cancel'
+export type RagV2Decision = 'masked' | 'original' | 'continue-passed' | 'retry' | 'risk-release' | 'without-materials' | 'cancel'
+export type RagV2Choice = RagV2Decision | { action: 'use-selected'; selectedPreviewIds: string[] }
+export interface RagV2MaterialItem {
+  previewId: string
+  materialId: string
+  materialVersion: number
+  title: string
+  preview: string
+  previewTruncated?: boolean
+  textLength?: number
+  locator?: string | { page?: number; paragraph?: number; section?: string; table?: string | number; cell?: string; startMs?: number; endMs?: number }
+  containsSensitive: boolean
+  verificationStatus: 'verified' | 'unverified'
+}
 export interface RagV2Prompt {
   interactionId: string
-  status: 'sensitive_confirmation_required' | 'sensitive_check_unavailable'
+  status: 'sensitive_confirmation_required' | 'sensitive_check_unavailable' | 'materials_confirmation_required'
+  items?: RagV2MaterialItem[]
+  query?: string
+  scopeLabel?: string
+  outcome?: 'ok' | 'no_results' | 'sensitive_content_blocked'
+  deliveryMode?: string
   hits: Array<{ category: string; redactedPreview: string; location?: string | { page?: number; paragraph?: number; section?: string }; title?: string }>
   detectionNotice?: { code?: string; message?: string; retrievedCount?: number; checkedCount?: number; withheldCount?: number; retryable?: boolean; riskEligibleCount?: number; riskMessage?: string }
   passedCount: number
   canReadOriginal: boolean
   riskAvailable: boolean
 }
-export const ragQuestion = shallowRef<{ prompt: RagV2Prompt; done: (choice: RagV2Decision) => void } | null>(null)
+export const ragQuestion = shallowRef<{ prompt: RagV2Prompt; done: (choice: RagV2Choice) => void } | null>(null)
+export const chatPreparation = shallowRef<{
+  conversationId: string; stage: 'searching' | 'reviewing' | 'authorizing'; message: string
+} | null>(null)
+let preparationOwner: symbol | null = null
+const MAX_CONFIRMATIONS = 8
+const MAX_AUTOMATIC_REFRESHES = 3
 
 export function ragPromptOf(error: unknown): RagV2Prompt | null {
   if (!error || typeof error !== 'object') return null
   const value = error as { code?: unknown; ragV2?: unknown }
-  if (!['RAG_SENSITIVE_CONFIRMATION_REQUIRED', 'RAG_SENSITIVE_CHECK_INCOMPLETE'].includes(String(value.code || ''))
+  if (!['RAG_SENSITIVE_CONFIRMATION_REQUIRED', 'RAG_SENSITIVE_CHECK_INCOMPLETE', 'RAG_MATERIAL_REVIEW_REQUIRED'].includes(String(value.code || ''))
       || !value.ragV2 || typeof value.ragV2 !== 'object') return null
   return value.ragV2 as RagV2Prompt
 }
@@ -58,6 +82,7 @@ export function ragPromptOf(error: unknown): RagV2Prompt | null {
 onProductScopeReset(() => {
   routeQuestion.value?.done({ action: 'cancel' }); routeQuestion.value = null
   ragQuestion.value?.done('cancel'); ragQuestion.value = null
+  preparationOwner = null; chatPreparation.value = null
 })
 
 export function askRoute(preview: RoutePreview, allowOmit = false, signal?: AbortSignal): Promise<RouteChoice> {
@@ -75,10 +100,10 @@ export function askRoute(preview: RoutePreview, allowOmit = false, signal?: Abor
   })
 }
 
-export function askRag(prompt: RagV2Prompt, signal?: AbortSignal): Promise<RagV2Decision> {
+export function askRag(prompt: RagV2Prompt, signal?: AbortSignal): Promise<RagV2Choice> {
   ragQuestion.value?.done('cancel')
   return new Promise(resolve => {
-    const question = { prompt, done: (choice: RagV2Decision) => {
+    const question = { prompt, done: (choice: RagV2Choice) => {
       signal?.removeEventListener('abort', cancel)
       if (ragQuestion.value === question) ragQuestion.value = null
       resolve(choice)
@@ -104,8 +129,13 @@ export function requiresFreshRagSearch(error: unknown): boolean {
     'RAG_CONFIRMATION_EXPIRED',
   ].includes(String((error as { code?: unknown }).code || ''))
 }
-export const submitRagDecision = (id: string, prompt: RagV2Prompt, action: RagV2Decision, signal?: AbortSignal) =>
-  routingRequest(ragDecisionPath(id), 'POST', { interactionId: prompt.interactionId, action }, signal)
+export const submitRagDecision = (id: string, prompt: RagV2Prompt, choice: RagV2Choice, signal?: AbortSignal) =>
+  routingRequest(ragDecisionPath(id), 'POST', {
+    interactionId: prompt.interactionId,
+    ...(typeof choice === 'string' ? { action: choice } : {
+      action: choice.action, selectedPreviewIds: [...choice.selectedPreviewIds],
+    }),
+  }, signal)
 
 export async function grantDefaultDeConsent(id: string, preview: RoutePreview, signal?: AbortSignal): Promise<boolean> {
   if (!canUseDefaultDeConsent(preview)) return false
@@ -133,60 +163,87 @@ export function canRefreshRoute(error: unknown): boolean {
 }
 
 export async function prepareChatRoute(id: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<(Record<string, unknown> & { routeRevision: string }) | null> {
+  const owner = Symbol('chat-preparation')
+  preparationOwner = owner
+  const progress = (stage: NonNullable<typeof chatPreparation.value>['stage'], message: string) => {
+    if (preparationOwner === owner) chatPreparation.value = { conversationId: id, stage, message }
+  }
   let data: Record<string, unknown> = { ...body, requestId: body.requestId || crypto.randomUUID() }
   let refreshed = false
-  // Refresh the preview after granting: grants can change the exact revision.
-  for (let i = 0; i < 6; i++) {
-    try {
-      signal?.throwIfAborted()
-      const preview = await routingRequest<RoutePreview>(routePath(id) + '/preview', 'POST', data, signal)
-      signal?.throwIfAborted()
-      if (preview.charterConflict) {
-        const choice = await askRoute(preview, false, signal)
-        if (choice.action === 'cancel') return null
-        if (choice.action === 'local') { data = { ...data, localOnly: true }; continue }
-        if (choice.action === 'exception' && preview.charterConflict.canOverride) {
-          const result = await routingRequest<{ exceptionId: string }>(routePath(id) + '/charter-exception', 'POST', { revision: preview.revision, exceptionKey: preview.charterConflict.exceptionKey, acknowledge: true }, signal)
-          data = { ...data, charterExceptionId: result.exceptionId }; continue
-        }
-        return null
-      }
-      if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) return { ...data, routeRevision: preview.revision }
-      if (await grantDefaultDeConsent(id, preview, signal)) continue
-      const choice = await askRoute(preview, true, signal)
-      if (choice.action === 'cancel') return null
-      if (choice.action === 'local') data = { ...data, localOnly: true }
-      else if (choice.action === 'omit') data = { ...data, omitSources: true }
-      else if (choice.action === 'allow') await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: consentKeys(preview, choice) }, signal)
-    } catch (error) {
-      const ragPrompt = ragPromptOf(error)
-      if (!signal?.aborted && ragPrompt) {
-        const choice = await askRag(ragPrompt, signal)
-        try { await submitRagDecision(id, ragPrompt, choice, signal) }
-        catch (decisionError) {
-          if (!signal?.aborted && requiresFreshRagSearch(decisionError)) continue
-          throw decisionError
-        }
-        if (choice === 'cancel') return null
-        continue
-      }
-      if (!signal?.aborted && !refreshed && canRefreshRoute(error)) { refreshed = true; continue }
-      reportReplyFailure(id, data.replyAssistance, error)
-      throw error
-    }
+  let confirmations = 0
+  let automaticRefreshes = 0
+  const confirm = () => {
+    if (++confirmations > MAX_CONFIRMATIONS) throw new Error('内容或授权仍在变化，请重新核对后发送。')
   }
-  throw new Error('内容或授权仍在变化，请重新核对后发送。')
+  // Refresh the preview after granting: grants can change the exact revision.
+  try {
+    while (automaticRefreshes <= MAX_AUTOMATIC_REFRESHES) {
+      try {
+        signal?.throwIfAborted()
+        progress('searching', '正在检索与核对本次资料…')
+        const preview = await routingRequest<RoutePreview>(routePath(id) + '/preview', 'POST', data, signal)
+        signal?.throwIfAborted()
+        if (preview.charterConflict) {
+          progress('authorizing', '等待确认本次处理方式…')
+          confirm()
+          const choice = await askRoute(preview, false, signal)
+          if (choice.action === 'cancel') return null
+          if (choice.action === 'local') { data = { ...data, localOnly: true }; continue }
+          if (choice.action === 'exception' && preview.charterConflict.canOverride) {
+            const result = await routingRequest<{ exceptionId: string }>(routePath(id) + '/charter-exception', 'POST', { revision: preview.revision, exceptionKey: preview.charterConflict.exceptionKey, acknowledge: true }, signal)
+            data = { ...data, charterExceptionId: result.exceptionId }; continue
+          }
+          return null
+        }
+        if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) return { ...data, routeRevision: preview.revision }
+        progress('authorizing', '正在核对资料外发授权…')
+        if (await grantDefaultDeConsent(id, preview, signal)) { automaticRefreshes++; continue }
+        confirm()
+        const choice = await askRoute(preview, true, signal)
+        if (choice.action === 'cancel') return null
+        if (choice.action === 'local') data = { ...data, localOnly: true }
+        else if (choice.action === 'omit') data = { ...data, omitSources: true }
+        else if (choice.action === 'allow') await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: consentKeys(preview, choice) }, signal)
+      } catch (error) {
+        const ragPrompt = ragPromptOf(error)
+        if (!signal?.aborted && ragPrompt) {
+          progress('reviewing', ragPrompt.status === 'materials_confirmation_required' ? '等待确认本次使用的资料片段…' : '等待资料安全确认…')
+          confirm()
+          const choice = await askRag(ragPrompt, signal)
+          try { await submitRagDecision(id, ragPrompt, choice, signal) }
+          catch (decisionError) {
+            if (!signal?.aborted && requiresFreshRagSearch(decisionError)) { automaticRefreshes++; continue }
+            throw decisionError
+          }
+          if (choice === 'cancel') return null
+          continue
+        }
+        if (!signal?.aborted && !refreshed && canRefreshRoute(error)) { refreshed = true; automaticRefreshes++; continue }
+        reportReplyFailure(id, data.replyAssistance, error)
+        throw error
+      }
+    }
+    throw new Error('内容或授权仍在变化，请重新核对后发送。')
+  } finally {
+    if (preparationOwner === owner) { preparationOwner = null; chatPreparation.value = null }
+  }
 }
 
 export async function routedTask<T>(id: string, path: string, body: object, signal?: AbortSignal): Promise<T> {
   let data: Record<string, unknown> = { requestId: crypto.randomUUID(), ...body }
   let refreshed = false
-  for (let i = 0; i < 6; i++) {
+  let confirmations = 0
+  let automaticRefreshes = 0
+  const confirm = () => {
+    if (++confirmations > MAX_CONFIRMATIONS) throw new Error('来源已变化，请重新核对。')
+  }
+  while (automaticRefreshes <= MAX_AUTOMATIC_REFRESHES) {
     try {
       signal?.throwIfAborted()
       const { routePreview: preview } = await routingRequest<{ routePreview: RoutePreview }>(path, 'POST', { ...data, previewOnly: true }, signal)
       signal?.throwIfAborted()
       if (preview.charterConflict) {
+        confirm()
         const choice = await askRoute(preview, false, signal)
         if (choice.action === 'local') { data = { ...data, localOnly: true }; continue }
         if (choice.action === 'exception' && preview.charterConflict.canOverride) {
@@ -198,7 +255,8 @@ export async function routedTask<T>(id: string, path: string, body: object, sign
       if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) {
         return await routingRequest<T>(path, 'POST', { ...data, routeRevision: preview.revision }, signal)
       }
-      if (await grantDefaultDeConsent(id, preview, signal)) continue
+      if (await grantDefaultDeConsent(id, preview, signal)) { automaticRefreshes++; continue }
+      confirm()
       const choice = await askRoute(preview, false, signal)
       if (choice.action === 'cancel') throw new Error('已取消生成，已填写的内容没有变化。')
       if (choice.action === 'local') data = { ...data, localOnly: true }
@@ -206,16 +264,17 @@ export async function routedTask<T>(id: string, path: string, body: object, sign
     } catch (error) {
       const ragPrompt = ragPromptOf(error)
       if (!signal?.aborted && ragPrompt) {
+        confirm()
         const choice = await askRag(ragPrompt, signal)
         try { await submitRagDecision(id, ragPrompt, choice, signal) }
         catch (decisionError) {
-          if (!signal?.aborted && requiresFreshRagSearch(decisionError)) continue
+          if (!signal?.aborted && requiresFreshRagSearch(decisionError)) { automaticRefreshes++; continue }
           throw decisionError
         }
         if (choice === 'cancel') throw new Error('已取消生成，已填写的内容没有变化。')
         continue
       }
-      if (!signal?.aborted && !refreshed && canRefreshRoute(error)) { refreshed = true; continue }
+      if (!signal?.aborted && !refreshed && canRefreshRoute(error)) { refreshed = true; automaticRefreshes++; continue }
       throw error
     }
   }

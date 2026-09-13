@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import type { RagV2MaterialItem, RagV2Prompt } from '@/services/taskRouting'
 
 import BaseButton from '../ui/BaseButton.vue'
 
-type RagSensitiveStatus = 'sensitive_confirmation_required' | 'sensitive_check_unavailable'
+type RagSensitiveStatus = RagV2Prompt['status']
 
 interface RagSensitiveLocation {
   page?: number
@@ -32,6 +33,12 @@ interface RagDetectionNotice {
 const props = withDefaults(
   defineProps<{
     status: RagSensitiveStatus
+    interactionId?: string
+    items?: RagV2MaterialItem[]
+    query?: string
+    scopeLabel?: string
+    outcome?: RagV2Prompt['outcome']
+    deliveryMode?: string
     hits?: RagSensitiveHit[]
     detectionNotice?: RagDetectionNotice
     canReadOriginal?: boolean
@@ -41,6 +48,7 @@ const props = withDefaults(
   }>(),
   {
     hits: () => [],
+    items: () => [],
     canReadOriginal: false,
     passedCount: 0,
     riskAvailable: false,
@@ -54,11 +62,77 @@ const emit = defineEmits<{
   'continue-passed': []
   retry: []
   'risk-release': []
+  'use-selected': [selectedPreviewIds: string[]]
+  'without-materials': []
   cancel: []
 }>()
 
 const riskExpanded = ref(false)
 const riskAcknowledged = ref(false)
+const selectedPreviewIds = ref<string[]>([])
+const materialItems = computed(() => {
+  const seen = new Set<string>()
+  return (props.items || []).filter(item => {
+    if (!item || typeof item.previewId !== 'string' || !item.previewId.trim()
+        || typeof item.preview !== 'string' || seen.has(item.previewId)) return false
+    seen.add(item.previewId)
+    return true
+  })
+})
+const selectedItems = computed(() => materialItems.value.filter(item => selectedPreviewIds.value.includes(item.previewId)))
+const deliveryLabel = computed(() => {
+  const labels: Record<string, string> = {
+    masked: '使用脱敏后片段',
+    original: '原文片段',
+    'risk-release': '未经验证原文',
+    'continue-passed': '仅使用已通过检测的片段',
+  }
+  return labels[props.deliveryMode || ''] || ''
+})
+const emptyMessage = computed(() => props.outcome === 'sensitive_content_blocked'
+  ? '本次检索的资料受交付策略限制，没有可使用的片段。'
+  : props.outcome === 'no_results'
+    ? '本次检索没有找到匹配的资料片段。'
+    : '本次没有可供确认的资料片段。')
+
+watch([() => props.interactionId, () => props.status, () => props.items, () => props.deliveryMode], () => {
+  selectedPreviewIds.value = []
+  riskExpanded.value = false
+  riskAcknowledged.value = false
+}, { flush: 'sync' })
+
+function useSelected() {
+  if (!props.busy && props.status === 'materials_confirmation_required' && selectedItems.value.length) {
+    emit('use-selected', selectedItems.value.map(item => item.previewId))
+  }
+}
+
+function withoutMaterials() {
+  if (!props.busy) emit('without-materials')
+}
+
+function materialStatus(item: RagV2MaterialItem): string {
+  const verification = item.verificationStatus === 'verified' ? '已完成检测' : '未完成检测'
+  const sensitivity = item.containsSensitive === false ? '无敏感标记' : '含敏感标记'
+  return `${verification} · ${sensitivity}`
+}
+
+function previewNotice(item: RagV2MaterialItem): string {
+  if (item.previewTruncated !== true) return ''
+  const shownLength = Array.from(item.preview).length
+  const total = typeof item.textLength === 'number' && Number.isInteger(item.textLength) && item.textLength > shownLength
+    ? `，完整检索片段共 ${item.textLength} 字` : ''
+  return `仅展示前 ${shownLength} 字${total}。选中后允许使用整个检索片段，包括未展示部分。`
+}
+
+function materialLocation(locator: RagV2MaterialItem['locator']): string {
+  if (!locator || typeof locator === 'string') return locationLabel(locator)
+  const time = typeof locator.startMs === 'number' && Number.isFinite(locator.startMs) && locator.startMs >= 0
+    ? `${(locator.startMs / 1000).toFixed(1)} 秒${typeof locator.endMs === 'number' && Number.isFinite(locator.endMs) && locator.endMs >= locator.startMs ? `–${(locator.endMs / 1000).toFixed(1)} 秒` : ''}` : ''
+  return [locationLabel(normaliseLocation(locator)),
+    typeof locator.table === 'string' || typeof locator.table === 'number' ? `表格 ${locator.table}` : '',
+    typeof locator.cell === 'string' ? locator.cell : '', time].filter(Boolean).join(' · ')
+}
 
 const categoryLabels: Record<string, string> = {
   mobile_phone: '手机号码',
@@ -214,11 +288,48 @@ function cancel() {
   <section
     class="rag-sensitive"
     role="alertdialog"
-    aria-modal="false"
-    aria-label="敏感资料确认"
+    aria-modal="true"
+    :aria-label="status === 'materials_confirmation_required' ? '资料片段确认' : '敏感资料确认'"
     :aria-busy="busy"
   >
-    <template v-if="status === 'sensitive_confirmation_required'">
+    <dl v-if="query || scopeLabel" class="rag-sensitive__search" aria-label="本次资料检索">
+      <div v-if="query"><dt>检索问题</dt><dd>{{ query }}</dd></div>
+      <div v-if="scopeLabel"><dt>检索范围</dt><dd>{{ scopeLabel }}</dd></div>
+    </dl>
+
+    <template v-if="status === 'materials_confirmation_required'">
+      <div class="rag-sensitive__eyebrow">资料片段确认</div>
+      <h3>{{ materialItems.length ? '选择本次回答可使用的片段' : '本次没有可用的资料片段' }}</h3>
+      <p v-if="materialItems.length" class="rag-sensitive__lead">
+        核对以下预览并勾选需要使用的片段。默认不选；确认后允许将选中的完整检索片段用于本次回答。较长片段这里只展示前 500 字。
+      </p>
+      <p v-if="materialItems.length && deliveryLabel" class="rag-sensitive__delivery" aria-label="资料交付方式">{{ deliveryLabel }}</p>
+      <ul v-if="materialItems.length" class="rag-sensitive__hits" aria-label="可选择的资料片段">
+        <li v-for="item in materialItems" :key="item.previewId">
+          <label class="rag-sensitive__selection">
+            <input v-model="selectedPreviewIds" type="checkbox" :value="item.previewId" :disabled="busy" />
+            <span>
+              <strong>{{ item.title || '未命名资料' }}</strong>
+              <span v-if="item.materialVersion" class="rag-sensitive__location"> · 版本 {{ item.materialVersion }}</span>
+              <span class="rag-sensitive__material-status">{{ materialStatus(item) }}</span>
+              <span v-if="materialLocation(item.locator)" class="rag-sensitive__location">{{ materialLocation(item.locator) }}</span>
+              <span class="rag-sensitive__preview">{{ item.preview }}</span>
+              <span v-if="previewNotice(item)" class="rag-sensitive__preview-notice">{{ previewNotice(item) }}</span>
+            </span>
+          </label>
+        </li>
+      </ul>
+      <p v-else class="rag-sensitive__empty">{{ emptyMessage }}</p>
+      <div class="rag-sensitive__actions">
+        <BaseButton v-if="materialItems.length" variant="primary" :disabled="busy || !selectedItems.length" @click="useSelected">
+          使用选中的 {{ selectedItems.length }} 个片段继续
+        </BaseButton>
+        <BaseButton variant="secondary" :disabled="busy" @click="withoutMaterials">不用材料继续</BaseButton>
+        <BaseButton variant="text" :disabled="busy" @click="cancel">取消</BaseButton>
+      </div>
+    </template>
+
+    <template v-else-if="status === 'sensitive_confirmation_required'">
       <div class="rag-sensitive__eyebrow">资料安全确认</div>
       <h3>发现可能包含敏感信息的资料</h3>
       <p class="rag-sensitive__lead">
@@ -249,6 +360,7 @@ function cancel() {
         <BaseButton v-if="canReadOriginal" variant="secondary" :disabled="busy" @click="chooseOriginal">
           领取原文
         </BaseButton>
+        <BaseButton variant="secondary" :disabled="busy" @click="withoutMaterials">不用材料继续</BaseButton>
         <BaseButton variant="text" :disabled="busy" @click="cancel">取消</BaseButton>
       </div>
     </template>
@@ -299,6 +411,7 @@ function cancel() {
         >
           了解风险后放行
         </BaseButton>
+        <BaseButton variant="secondary" :disabled="busy" @click="withoutMaterials">不用材料继续</BaseButton>
         <BaseButton variant="text" :disabled="busy" @click="cancel">取消</BaseButton>
       </div>
 
@@ -320,6 +433,7 @@ function cancel() {
             确认风险并放行
           </BaseButton>
           <BaseButton variant="text" :disabled="busy" @click="closeRiskRelease">返回</BaseButton>
+          <BaseButton variant="secondary" :disabled="busy" @click="withoutMaterials">不用材料继续</BaseButton>
           <BaseButton variant="text" :disabled="busy" @click="cancel">取消</BaseButton>
         </div>
       </div>
@@ -414,6 +528,56 @@ function cancel() {
   font-size: 14px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.rag-sensitive__search {
+  margin: 0 0 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ws-border-subtle, #e8e0d6);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.rag-sensitive__search dt {
+  color: var(--ws-text-tertiary, #8a847c);
+}
+
+.rag-sensitive__search dd {
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+
+.rag-sensitive__selection {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.rag-sensitive__selection input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--ws-accent, #b64b32);
+}
+
+.rag-sensitive__material-status,
+.rag-sensitive__preview {
+  display: block;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ws-text-secondary, #5f5a54);
+  line-height: 1.6;
+}
+
+.rag-sensitive__delivery,
+.rag-sensitive__preview-notice {
+  display: block;
+  margin: 8px 0 0;
+  color: var(--ws-warning, #9b5d20);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .rag-sensitive__counts {

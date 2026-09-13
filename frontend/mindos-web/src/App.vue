@@ -4,10 +4,10 @@ import MainLayout from '@/layouts/MainLayout.vue'
 import ToastHost from '@/components/ui/ToastHost.vue'
 import RoutingConsent from '@/components/conversation/RoutingConsent.vue'
 import RagSensitiveDialog from '@/components/conversation/RagSensitiveDialog.vue'
-import { ragQuestion, type RagV2Decision } from '@/services/taskRouting'
+import { ragQuestion, type RagV2Choice } from '@/services/taskRouting'
 
 const ragPrompt = computed(() => ragQuestion.value?.prompt)
-const chooseRag = (choice: RagV2Decision) => ragQuestion.value?.done(choice)
+const chooseRag = (choice: RagV2Choice) => ragQuestion.value?.done(choice)
 </script>
 
 <template>
@@ -20,7 +20,14 @@ const chooseRag = (choice: RagV2Decision) => ragQuestion.value?.done(choice)
     <Teleport to="body">
       <div v-if="ragPrompt" class="rag-sensitive-host" @click.self="chooseRag('cancel')">
         <RagSensitiveDialog
+          :key="ragPrompt.interactionId"
+          :interaction-id="ragPrompt.interactionId"
           :status="ragPrompt.status"
+          :items="ragPrompt.items"
+          :query="ragPrompt.query"
+          :scope-label="ragPrompt.scopeLabel"
+          :outcome="ragPrompt.outcome"
+          :delivery-mode="ragPrompt.deliveryMode"
           :hits="ragPrompt.hits"
           :detection-notice="ragPrompt.detectionNotice"
           :can-read-original="ragPrompt.canReadOriginal"
@@ -31,6 +38,8 @@ const chooseRag = (choice: RagV2Decision) => ragQuestion.value?.done(choice)
           @continue-passed="chooseRag('continue-passed')"
           @retry="chooseRag('retry')"
           @risk-release="chooseRag('risk-release')"
+          @use-selected="ids => chooseRag({ action: 'use-selected', selectedPreviewIds: ids })"
+          @without-materials="chooseRag('without-materials')"
           @cancel="chooseRag('cancel')"
         />
       </div>

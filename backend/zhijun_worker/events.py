@@ -1,6 +1,7 @@
 """Authenticated system events, transactionally deduplicated inside this private owner database."""
 import hashlib
 import json
+import os
 import re
 import threading
 import time
@@ -95,7 +96,8 @@ def handle(event):
                     head = db.execute("SELECT version FROM worker_material_heads WHERE material_id=?", (value["materialId"],)).fetchone()
                     stale = bool(head and head[0] > value["version"])
             jobs = []
-            if kind == "material.ready" and not stale:
+            retrieval_only = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
+            if kind == "material.ready" and not stale and not retrieval_only:
                 try:
                     material = require().call("materials.get", {"materialId": value["materialId"]})
                 except CapabilityError as exc:
@@ -118,6 +120,9 @@ def handle(event):
                 register(job_id, job_kind)
                 registered.append((job_id, job_kind, owner, payload))
             result = {"eventId": event["eventId"], "accepted": True, "jobIds": [], "stale": stale}
+            if kind == "material.ready" and retrieval_only:
+                result.update(state="skipped", code="RAG_RETRIEVAL_ONLY",
+                              message="知君不自动读取材料正文；请在对话中检索并确认使用。")
             with store._lock, store._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 if kind.startswith("material.") and not stale:

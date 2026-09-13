@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import os
 from copy import deepcopy
 
 from fastapi import HTTPException
@@ -16,7 +17,7 @@ _INSTRUCTION = ("## 本轮实际提供的个人上下文与证据\n以下是参�
     "历史依赖只用于权限检查，不表示已经读取祖先原文。片段不等于完整审阅；依据不足时直接说明。")
 
 _MATERIAL_LOOKUP_RE = re.compile(
-    r"资料|材料|文件|文档|附件|报告|合同|笔记|档案|原文|上传|导入|"
+    r"检索|查找|搜索|资料|材料|文件|文档|附件|报告|合同|笔记|档案|原文|上传|导入|"
     r"(?:记录|资料|文档|文件)(?:中|里|内|显示|写|提到)"
 )
 
@@ -85,7 +86,9 @@ def render_context_plan(plan):
     for index, item in enumerate([*plan["background"], *plan["evidence"]], 1):
         item["citationId"] = f"p{index}"
         refs.append(item["ref"])
-        blocks.append(f"[{item['citationId']}] {item['title']} · {item['category']}\n{item['text']}")
+        risk = ("【未经验证原文：敏感检测未完成，可能包含敏感信息；用户放行不表示检测通过。】\n"
+                if (item.get("material") or {}).get("verificationStatus") == "unverified" else "")
+        blocks.append(f"[{item['citationId']}] {item['title']} · {item['category']}\n{risk}{item['text']}")
     plan["refs"] = list({digest(ref): ref for ref in refs}.values())
     plan["providedRefs"] = [i["citationId"] for i in [*plan["background"], *plan["evidence"]]]
     plan["system"] = _INSTRUCTION + "\n\n" + "\n\n".join(blocks) if blocks else ""
@@ -236,22 +239,63 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
                    "text": context_sources.claim_text(c), "score": c.get("score", 0)} for c in claims]
     adapters = [context_sources.history_candidates, context_sources.summary_candidates,
                 context_sources.decision_candidates]
-    if _needs_implicit_material_search(content, allowed_history, focus, queries=queries, complex=complex):
+    workspace_rag = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
+    # A deep answer alone is not evidence of a document question. Preserve
+    # ordinary chat while letting explicit files and document follow-ups search.
+    needs_materials = bool(material_refs) or _needs_implicit_material_search(
+        content, allowed_history, focus,
+        queries=None if workspace_rag else queries, complex=False if workspace_rag else complex,
+    )
+    retrieval_plan = None
+    if workspace_rag and needs_materials:
+        from .retrieval_tools import plan_search
+        retrieval_plan = plan_search(
+            content, allowed_history,
+            material_ids=list(dict.fromkeys(r["materialId"] for r in material_refs)) if material_refs else None,
+        )
+        # Query ancestry is an authorization dependency even if it does not
+        # survive the normal visible-context budget.
+        history_by_id = {m.get("id"): m for m in allowed_history}
+        for message_id in retrieval_plan["historyUsed"]:
+            message = history_by_id.get(message_id)
+            if message is None:
+                raise HTTPException(409, {"code": "CONTEXT_FOCUS_CHANGED", "detail": "检索问题所依据的对话已变化"})
+            closure = router.resolve(context_sources.message_ref(router, message))
+            router.check_lifecycle(closure)
+            if any(s["blocked"] or (provider.external and not router.allowed(s, service, purpose)) for s in closure):
+                raise HTTPException(409, {"code": "CONTEXT_FOCUS_CHANGED", "detail": "检索问题所依据的对话权限已变化"})
+            result["focusRefs"].append(closure[0]["ref"])
+        result["retrieval"] = {"tool": "search_materials", "execution": "server",
+            "query": retrieval_plan["query"], "scopeLabel": retrieval_plan["scopeLabel"],
+            "topK": retrieval_plan["topK"], "userReviewRequired": True}
+    if needs_materials:
         adapters.append(context_sources.material_candidates)
     for adapter in adapters:
         if adapter is context_sources.history_candidates:
             candidates.extend(adapter(router, search_queries, cutoff=router.mode.get("cutoff", 0) if provider.external else 0))
         elif adapter is context_sources.material_candidates:
-            candidates.extend(adapter(router, search_queries, interaction_id=rag_interaction_id))
+            if workspace_rag:
+                material_items = adapter(router, search_queries, interaction_id=rag_interaction_id,
+                                         retrieval_plan=retrieval_plan)
+                expected = {(r["materialId"], r["version"]) for r in material_refs or []}
+                if expected and any((c["material"]["materialId"], c["material"]["version"]) not in expected for c in material_items):
+                    raise HTTPException(409, {"code": "ATTACHMENT_VERSION_CHANGED", "detail": "所选资料版本已变化，请重新选择"})
+                candidates.extend(material_items)
+                result["retrieval"]["selectedCount"] = len(material_items)
+            else:
+                candidates.extend(adapter(router, search_queries, interaction_id=rag_interaction_id))
         else:
             candidates.extend(adapter(router, search_queries))
     if matter_ready:
         candidates.append(matter_candidate)
         if not matter_ready["missing"]:
             candidates.extend(context_sources.artifact_candidates(router, matter_candidate["ref"]["id"], search_queries))
-    explicit_materials = {r["materialId"] for r in material_refs or []}
+    explicit_materials = set() if workspace_rag else {r["materialId"] for r in material_refs or []}
     candidates = [c for c in candidates if not (c["ref"]["kind"] == "material" and c["ref"]["id"] in explicit_materials)]
-    candidates.sort(key=lambda c: (-c.get("score", 0), c["ref"]["kind"], c["ref"]["id"]))
+    # User-selected Search results retain the service's order, not a second
+    # ordering by its public score (which need not be the reranker score).
+    candidates.sort(key=lambda c: (0, c["retrievalRank"], "") if "retrievalRank" in c
+                    else (1, -c.get("score", 0), c["ref"]["kind"] + c["ref"]["id"]))
     permitted, pending = [], []
     for candidate in candidates:
         ready = resolve(candidate)
@@ -267,7 +311,7 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
             continue
         seen.add(key)
         if ready["missing"]:
-            if action == "omit":
+            if action == "omit" and "ragInteractionId" not in candidate["ref"]:
                 excluded(candidate, "按默认方式跳过未授权资料，原记录保留", restricted=True)
             else:
                 pending.append(ready)
@@ -313,6 +357,12 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
     pending.sort(key=lambda ready: ready["item"]["id"] not in direct_needed)
     ask = None
     for ready in pending:
+        if "ragInteractionId" in ready["candidate"]["ref"]:
+            # Selecting a passage is not permission to send it to the cloud.
+            # Include every selected source in the separate authorization
+            # preview, even when the public search score is low.
+            result["evidence"].append(ready["item"])
+            continue
         high = ready["score"] >= .45
         lookup_text = (ready["item"].get("claim") or {}).get("content", ready["item"]["text"])
         lookup_match = bool(queries) and context_sources.relevance(queries, lookup_text) >= .45

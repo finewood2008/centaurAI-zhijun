@@ -80,7 +80,7 @@ import AlignmentCard from '@/components/ontology/AlignmentCard.vue'
 import AlignmentPrivacy from '@/components/conversation/AlignmentPrivacy.vue'
 import RoutingPanel from '@/components/conversation/RoutingPanel.vue'
 import MemoryPending from '@/components/conversation/MemoryPending.vue'
-import { prepareChatRoute, routingRequest, routePath } from '@/services/taskRouting'
+import { chatPreparation, prepareChatRoute, routingRequest, routePath } from '@/services/taskRouting'
 import { contextNeedsReview, contextRetryBody, isContextReviewError } from '@/shared/contextRecovery'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -445,6 +445,7 @@ const currentId = computed(() => {
   return typeof id === 'string' && id ? id : null
 })
 const loadedConversationId = computed(() => !messagesLoading.value && current.value?.id === currentId.value ? currentId.value : null)
+const preparation = computed(() => chatPreparation.value?.conversationId === currentId.value ? chatPreparation.value : null)
 const conversationAuxPhase = ref(0)
 const importsConversationId = computed(() => conversationAuxPhase.value >= 1 ? loadedConversationId.value : null)
 let conversationAuxTimers: number[] = []
@@ -840,6 +841,9 @@ function resetToLanding() {
 watch(
   currentId,
   (id, previousId) => {
+    // Leave an active response running, but never leave another conversation's
+    // pending material/egress confirmation alive after navigating away.
+    if (previousId && id !== previousId && chatPreparation.value?.conversationId === previousId) abortController?.abort()
     // 进了任何一个会话（含刚从强制建档态新建的），?onboarding=1 的强制就结束
     if (id) forceOnboarding.value = false
     const creatingPrefilledConversation = (streaming.value || importingTurn) && id && skipLoadFor === id
@@ -1447,6 +1451,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (preparation.value) abortController?.abort()
   // 不 abort 正在进行的流：服务端会把这轮生成完并落库，回来时从服务端重载
   alive = false
   conversationListGate.invalidate()
@@ -1638,6 +1643,9 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="zj-page__composer">
+        <p v-if="preparation" class="zj-turn__note" role="status" aria-live="polite" data-testid="chat-preparation">
+          {{ preparation.message }}
+        </p>
         <Composer
           ref="composerRef"
           :conversation-id="currentId"
@@ -1645,6 +1653,7 @@ onBeforeUnmount(() => {
           :disabled="messagesLoading"
           :has-attachments="imports.staged.length > 0"
           :uploading="imports.uploading"
+          :retrieval-only="imports.retrievalOnly"
           :allow-deliberate="!isReview && !guidedOnboarding && !showIntro"
           :notice="modelBlocked && !imports.staged.length && !imports.localOnly && !alignmentLocalOnly && !prefillLocalOnly ? MODEL_UNAVAILABLE_TEXT : undefined"
           notice-to="/settings"

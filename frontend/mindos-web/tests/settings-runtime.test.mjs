@@ -6,7 +6,7 @@ const settings = await readFile(new URL('../src/pages/SettingsPage.vue', import.
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 
 assert.match(api, /export class ApiError/)
-assert.match(api, /throw new ApiError\(message, res\.status, code, details, preview, ragV2, similarRuleId\)/)
+assert.match(api, /throw new ApiError\(message, res\.status, code, details, preview, ragV2, similarRuleId, retryAfter, traceId\)/)
 assert.match(api, /new Headers\(init\?\.headers\)/)
 assert.match(api, /headers\.set\('X-Requested-By', 'centaur-vdb'\)/)
 assert.match(settings, /ExternalProvidersPanel/)

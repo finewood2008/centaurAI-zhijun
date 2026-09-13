@@ -24,6 +24,7 @@ const props = defineProps<{
   noticeTo?: string
   hasAttachments?: boolean
   uploading?: boolean
+  retrievalOnly?: boolean
   conversationId?: string | null
 }>()
 
@@ -125,7 +126,7 @@ const audioInput = ref<HTMLInputElement | null>(null)
 const acceptFiles = [...DOC_EXTENSIONS, ...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS].join(',')
 function onFiles(e: Event) {
   const input = e.target as HTMLInputElement
-  if (input.files?.length) emit('files', input.files)
+  if (!props.retrievalOnly && input.files?.length) emit('files', input.files)
   input.value = ''
   addOpen.value = false
 }
@@ -328,16 +329,21 @@ defineExpose({
     </p>
     <div class="zj-composer__bar">
       <div class="zj-composer__add" @keydown.esc="addOpen = false">
-        <button type="button" class="zj-composer__chip" aria-label="添加文件" :aria-expanded="addOpen" :disabled="disabled || uploading" @click="addOpen = !addOpen"><Plus :size="17" /></button>
+        <button type="button" class="zj-composer__chip" :aria-label="retrievalOnly ? '使用资料' : '添加文件'" :aria-expanded="addOpen" :disabled="disabled || uploading" @click="addOpen = !addOpen"><Plus :size="17" /></button>
         <div v-if="addOpen" class="zj-composer__add-menu">
+          <template v-if="retrievalOnly">
+            <span>资料由 Data Engine 管理。在对话中说明要检索的主题，再确认使用哪些片段。</span>
+          </template>
+          <template v-else>
           <button type="button" @click="filesInput?.click()">上传文件</button>
           <button v-if="desktopAudioUpload" type="button" @click="audioInput?.click()">上传音频到盒子处理</button>
           <span v-if="desktopAudioUpload">可点麦克风录音交给盒子转写，也可上传已有录音。</span>
           <button type="button" @click="emit('pick-materials'); addOpen = false">选择已有资料</button>
           <span>也可以拖入文件或粘贴截图</span>
+          </template>
         </div>
-        <input v-if="desktopAudioUpload" ref="audioInput" type="file" multiple hidden :accept="AUDIO_EXTENSIONS.join(',')" aria-label="上传音频到盒子处理" @change="onFiles" />
-        <input ref="filesInput" type="file" multiple hidden :accept="acceptFiles" aria-label="上传聊天文件" @change="onFiles" />
+        <input v-if="!retrievalOnly && desktopAudioUpload" ref="audioInput" type="file" multiple hidden :accept="AUDIO_EXTENSIONS.join(',')" aria-label="上传音频到盒子处理" @change="onFiles" />
+        <input v-if="!retrievalOnly" ref="filesInput" type="file" multiple hidden :accept="acceptFiles" aria-label="上传聊天文件" @change="onFiles" />
       </div>
       <button
         v-if="allowDeliberate !== false"

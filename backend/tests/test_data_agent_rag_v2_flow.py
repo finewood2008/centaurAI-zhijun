@@ -2,6 +2,8 @@ import pytest
 from fastapi import HTTPException
 from types import SimpleNamespace
 import sys
+import copy
+import re
 
 from mindos import data_agent_rag as rag
 
@@ -33,7 +35,11 @@ class FakeClient:
 
     def search(self, query, **kwargs):
         self.calls.append(("search", query, kwargs))
-        return self.result
+        result = copy.deepcopy(self.result)
+        if result.get("status") == "sensitive_confirmation_required":
+            # The service echoes the exact ID of this real REST invocation.
+            result["confirmation"]["interactionId"] = kwargs["interaction_id"]
+        return result
 
     def confirm(self, token, **kwargs):
         self.calls.append(("confirm", token, kwargs))
@@ -86,7 +92,9 @@ def test_search_uses_material_only_filter_and_resolves_cached_evidence():
     client = FakeClient(search_result([item()]))
     rag.reset_for_tests(client)
     assert rag.search("问题", ["material-a"], "interaction-1") == [item()]
-    assert client.calls[0] == ("search", "问题", {"top_k": 5, "material_ids": ["material-a"], "interaction_id": "interaction-1"})
+    actual_id = rag._entries["interaction-1"].actual_search_id
+    assert re.fullmatch(r"interaction-1:search:[a-f0-9]{32}", actual_id)
+    assert client.calls[0] == ("search", "问题", {"top_k": 5, "material_ids": ["material-a"], "interaction_id": actual_id})
     assert client.calls[1][0] == "resolve", "first use resolves the Search evidence fence"
     assert rag.search("问题", ["material-a"], "interaction-1") == [item()]
     assert client.calls[-1][0] == "resolve"
@@ -177,7 +185,8 @@ def test_more_than_one_hundred_materials_are_searched_in_bounded_batches():
     searches = [call for call in client.calls if call[0] == "search"]
     assert [len(call[2]["material_ids"]) for call in searches] == [100, 1]
     assert len(values) == 2 and values[0]["score"] == .9
-    assert all(call[2]["interaction_id"].startswith("conversation-a:") for call in searches)
+    assert all(re.fullmatch(r"conversation-a:search:[a-f0-9]{32}", call[2]["interaction_id"]) for call in searches)
+    assert len({call[2]["interaction_id"] for call in searches}) == len(searches)
 
 
 def test_confirmation_exposes_only_redacted_state_then_reuses_confirmed_items():
@@ -337,7 +346,9 @@ def test_confirm_and_risk_release_must_match_original_search_fence():
         rag.search("问题", ["material-a"], "interaction-risk-fence")
     with pytest.raises(HTTPException) as risk_changed:
         rag.decide("interaction-risk-fence", "risk-release")
-    assert risk_changed.value.detail["code"] == "RAG_V2_CONTRACT_INVALID"
+    assert risk_changed.value.detail["code"] == "RAG_RISK_RESULT_UNKNOWN"
+    assert risk_changed.value.detail["requiresFreshSearch"] is True
+    assert risk_changed.value.detail["retryable"] is False
 
 
 def test_confirm_and_risk_release_cannot_escape_search_material_filter():
@@ -377,7 +388,9 @@ def test_confirm_and_risk_release_cannot_escape_search_material_filter():
         rag.search("问题", ["material-a"], "interaction-risk-scope")
     with pytest.raises(HTTPException) as risk_scope:
         rag.decide("interaction-risk-scope", "risk-release")
-    assert risk_scope.value.detail["code"] == "RAG_V2_CONTRACT_INVALID"
+    assert risk_scope.value.detail["code"] == "RAG_RISK_RESULT_UNKNOWN"
+    assert risk_scope.value.detail["requiresFreshSearch"] is True
+    assert risk_scope.value.detail["retryable"] is False
 
 
 def test_risk_release_count_must_match_frozen_eligible_count():
@@ -390,25 +403,27 @@ def test_risk_release_count_must_match_frozen_eligible_count():
         rag.search("问题", ["material-a"], "interaction-risk-count")
     with pytest.raises(HTTPException) as mismatch:
         rag.decide("interaction-risk-count", "risk-release")
-    assert mismatch.value.detail["code"] == "RAG_V2_CONTRACT_INVALID"
+    assert mismatch.value.detail["code"] == "RAG_RISK_RESULT_UNKNOWN"
+    assert mismatch.value.detail["requiresFreshSearch"] is True
+    assert mismatch.value.detail["retryable"] is False
 
 
-def test_workspace_attachment_context_uses_only_v2_deliverable_items(monkeypatch):
+def test_workspace_legacy_attachment_context_is_disabled_for_retrieval_only(monkeypatch):
     from mindos import chat_imports
 
     client = FakeClient(search_result([item()]))
     rag.reset_for_tests(client)
     monkeypatch.setenv("ZHIJUN_WORKSPACE_ID", "workspace-test")
-    text, sources = chat_imports.attachment_context(
-        [{"materialId": "material-a", "version": 1}], "global", "问题",
-        external=True, interaction_id="interaction-attachment",
-    )
-    assert "可交付片段" in text and "Data Agent RAG V2" in text
-    assert sources[0]["evidenceRef"].startswith("erv2_")
-    assert sources[0]["verificationStatus"] == "verified"
+    with pytest.raises(HTTPException) as disabled:
+        chat_imports.attachment_context(
+            [{"materialId": "material-a", "version": 1}], "global", "问题",
+            external=True, interaction_id="interaction-attachment",
+        )
+    assert disabled.value.detail["code"] == "RAG_RETRIEVAL_ONLY"
+    assert client.calls == []
 
 
-def test_workspace_implicit_material_context_uses_scoped_v2_search(monkeypatch):
+def test_workspace_implicit_material_context_reviews_app_scoped_v2_search(monkeypatch):
     from mindos import chat_imports
     from mindos.stores import chat_import_store
     from mindos.zhijun import context_sources
@@ -419,8 +434,7 @@ def test_workspace_implicit_material_context_uses_scoped_v2_search(monkeypatch):
 
     class Store:
         def protected_ids(self, scope):
-            assert scope == "scope-a"
-            return {"material-a"}
+            raise AssertionError("Local imports are not the App Search ACL")
 
     monkeypatch.setattr(chat_import_store, "ChatImportStore", lambda _convs: Store())
     monkeypatch.setattr(chat_imports, "require_material", lambda ident, scope: {
@@ -430,6 +444,13 @@ def test_workspace_implicit_material_context_uses_scoped_v2_search(monkeypatch):
         convs=object(), scope="scope-a", cid="conversation-a",
         ref=lambda kind, ident, **extra: {"kind": kind, "id": ident, **extra},
     )
+    with pytest.raises(HTTPException) as pending:
+        context_sources.material_candidates(
+            router, ["问题"], interaction_id="conversation-a:r:request:context"
+        )
+    assert pending.value.detail["code"] == "RAG_MATERIAL_REVIEW_REQUIRED"
+    prompt = pending.value.detail["ragV2"]
+    rag.decide(prompt["interactionId"], "use-selected", selected_preview_ids=[prompt["items"][0]["previewId"]])
     candidates = context_sources.material_candidates(
         router, ["问题"], interaction_id="conversation-a:r:request:context"
     )
@@ -437,9 +458,9 @@ def test_workspace_implicit_material_context_uses_scoped_v2_search(monkeypatch):
     assert candidates[0]["material"]["evidenceRef"].startswith("erv2_")
     assert client.calls[0] == (
         "search", "问题", {
-            "top_k": 12,
-            "material_ids": ["material-a"],
-            "interaction_id": "conversation-a:r:request:context:0",
+            "top_k": 5,
+            "material_ids": [],  # Client omits filters for the full App ACL.
+            "interaction_id": rag._entries["conversation-a:r:request:context"].actual_search_id,
         },
     )
 

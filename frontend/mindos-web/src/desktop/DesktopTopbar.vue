@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import type { Phase } from '../../../shared/desktop-contract'
-import { Menu } from 'lucide-vue-next'
+import { LockKeyhole, Menu } from 'lucide-vue-next'
 import { useDesktopWorkspace } from './workspace'
 import { connectedDeviceLabel } from './deviceDisplay'
 const props = defineProps<{ workspaceReady: boolean }>()
@@ -15,6 +15,11 @@ const connectionLabel = computed(() => props.workspaceReady ? '已连接盒子' 
 const deviceLabel = computed(() => connectedDeviceLabel(state.value.snapshot?.subject ?? null))
 const connectionPathLabel = computed(() => state.value.snapshot?.subject?.selectedPath === 'DIRECT' ? '直连'
   : state.value.snapshot?.subject?.selectedPath === 'RELAY' ? '安全中继' : '')
+const secureConnection = computed(() => props.workspaceReady
+  && state.value.snapshot?.environment === 'production' && !!connectionPathLabel.value)
+const securityExplanation = computed(() => state.value.snapshot?.subject?.selectedPath === 'RELAY'
+  ? '电脑与盒子之间的通道已加密。中继转发加密数据；在线模型的资料外发仍需单独授权。'
+  : '电脑与盒子之间的通道已加密，业务数据通过直连传输。在线模型的资料外发仍需单独授权。')
 const canChoose = computed(() => !!phase.value && ['ready', 'failed'].includes(phase.value) && !state.value.controlPending)
 const title = computed(() => typeof route.meta.title === 'string' ? route.meta.title : '知君')
 </script>
@@ -22,9 +27,10 @@ const title = computed(() => typeof route.meta.title === 'string' ? route.meta.t
   <header class="product-topbar">
     <button class="product-menu ws-topbar__menu" aria-label="打开导航菜单" @click="emit('toggle-menu')"><Menu :size="20" /></button>
     <h1>{{ title }}</h1>
-    <div class="product-connection" role="status"><span class="product-dot" :class="{ connected: workspaceReady }" />{{ connectionLabel }}
+    <div class="product-connection" role="status"><span class="product-dot" :class="{ connected: workspaceReady }" />
+      <LockKeyhole v-if="secureConnection" :size="14" role="img" aria-label="已建立加密连接" :title="securityExplanation" />{{ connectionLabel }}
       <span v-if="deviceLabel" class="product-device" :title="deviceLabel">{{ deviceLabel }}</span>
-      <span v-if="connectionPathLabel" class="product-path" data-testid="connection-path">{{ connectionPathLabel }}</span>
+      <span v-if="connectionPathLabel" class="product-path" data-testid="connection-path" :title="secureConnection ? securityExplanation : undefined">{{ connectionPathLabel }}</span>
     </div>
     <button v-if="phase !== 'selecting_device'" :disabled="!canChoose" @click="controller.control('disconnect')">{{ phase === 'failed' ? '重新选择盒子' : '切换盒子' }}</button>
     <button v-else :disabled="state.controlPending || state.devicesLoading" @click="controller.loadDevices()">刷新盒子</button>
