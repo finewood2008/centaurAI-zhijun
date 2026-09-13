@@ -285,14 +285,15 @@ class ContextPlanTests(unittest.TestCase):
 
     def test_material_grounded_followup_keeps_workspace_rag_enabled(self):
         router = Router(self.onto, self.convs, self.cid)
-        history = [self.convs.append_message(self.cid, "user", "请看看我上传的项目资料。", meta={
+        history = [self.convs.append_message(self.cid, "user", "星桥项目是什么？", meta={
             "routingSources": [],
         }), self.convs.append_message(self.cid, "assistant", "资料里的预算是五万元。", meta={
             "materialRefs": [{"materialId": "synthetic-file", "version": 1}],
             "routingSources": [],
         })]
-        with patch("mindos.zhijun.context_sources.material_candidates", return_value=[]) as materials:
-            build_context_plan(router, "那这个截止时间呢？", history, provider=self.local)
+        with patch.dict("os.environ", {"ZHIJUN_WORKSPACE_ID": "synthetic-workspace"}), \
+                patch("mindos.zhijun.context_sources.material_candidates", return_value=[]) as materials:
+            build_context_plan(router, "它有哪些核心功能？", history, provider=self.local)
         materials.assert_called_once()
 
     def test_current_conversation_cutoff_blocks_history_and_summary_but_not_independent_memory(self):

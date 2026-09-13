@@ -122,7 +122,10 @@ test('v1 simulation keeps full product gated while real preload policy, device s
   await page.getByTestId('disconnect').click()
   await expect(page.getByTestId('materials-table')).toHaveCount(0)
   await page.getByTestId('connect-synthetic-box-b').click()
-  await expect(page.getByTestId('account')).toContainText('synthetic-box-b')
+  await expect(page.getByTestId('secure-connection-device')).toContainText('模拟盒子 B')
+  await expect(page.getByTestId('connection-simulation-note')).toBeVisible()
+  await expect(page.getByTestId('secure-connection-progress')).toContainText('工作区暂不可用')
+  assert.equal(await page.evaluate(async () => (await window.zhijunDesktop.getSnapshot()).data.subject.deviceId), 'synthetic-box-b')
   await expect(page.getByTestId('disconnect')).toBeVisible()
   const second = await page.evaluate(async () => {
     const api = window.zhijunDesktop; const s = await api.getSnapshot()

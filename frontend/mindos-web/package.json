@@ -30,7 +30,8 @@
     "test:zhijun-map": "node --experimental-strip-types tests/selfmap.test.mjs",
     "test:zhijun-viz": "node --experimental-strip-types tests/timeline.test.mjs && node --experimental-strip-types tests/provenance-graph.test.mjs",
     "build:desktop": "vue-tsc -b && vite build --config vite.desktop.config.ts",
-    "test:desktop": "node --experimental-strip-types --test tests/desktop-ui.test.mjs tests/claim-token.test.mjs tests/write-uncertainty.test.mjs",
+    "test:desktop": "node --experimental-strip-types --test tests/desktop-ui.test.mjs tests/claim-token.test.mjs tests/write-uncertainty.test.mjs tests/connection-presentation.test.mjs",
+    "test:secure-connection": "npm run build:desktop && node tests/secure-connection.e2e.mjs",
     "test:all": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:product": "node --experimental-strip-types --test tests/product-transport.test.mjs tests/navigation-progress.test.mjs",
     "test:product-navigation": "node tests/product-navigation.e2e.mjs"

@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "description": "离线规则用例：只验证确定性 Query 规划结果，不代表检索召回率或语义准确率。",
+  "cases": [
+    {
+      "id": "referential-follow-up",
+      "content": "这个方案的风险呢？",
+      "allowedHistory": [
+        {"id": "u1", "role": "user", "content": "家庭盒 Remote Agent 的升级方案"},
+        {"id": "a1", "role": "assistant", "content": "我猜还涉及一个未确认的云服务"}
+      ],
+      "expected": {
+        "query": "家庭盒 Remote Agent 的升级方案的风险呢？",
+        "historyUsed": ["u1"]
+      }
+    },
+    {
+      "id": "requirements-slot",
+      "content": "验收 requirements 呢？",
+      "allowedHistory": [
+        {"id": "u2", "role": "user", "content": "AMD-A2A-248 外网连接发布"}
+      ],
+      "expected": {
+        "query": "AMD-A2A-248的验收 requirements是什么？",
+        "historyUsed": ["u2"]
+      }
+    },
+    {
+      "id": "topic-switch",
+      "content": "换个话题，说明数据库事务隔离级别",
+      "allowedHistory": [
+        {"id": "u3", "role": "user", "content": "家庭盒推理性能"}
+      ],
+      "expected": {
+        "query": "换个话题，说明数据库事务隔离级别",
+        "historyUsed": []
+      }
+    },
+    {
+      "id": "assistant-is-not-a-source",
+      "content": "它的负责人是谁？",
+      "allowedHistory": [
+        {"id": "a4", "role": "assistant", "content": "项目代号是我虚构的北斗七号"}
+      ],
+      "expected": {
+        "errorCode": "RAG_QUERY_CLARIFICATION_REQUIRED"
+      }
+    },
+    {
+      "id": "explicit-material-scope",
+      "content": "比较这两份验收记录",
+      "materialIds": ["material-01", "material-02"],
+      "expected": {
+        "query": "比较所选验收记录",
+        "historyUsed": [],
+        "scopeLabel": "所选资料"
+      }
+    },
+    {
+      "id": "contract-independent-query",
+      "content": "它有哪些核心功能？",
+      "allowedHistory": [
+        {"id": "u5", "role": "user", "content": "MindOS 是什么？"}
+      ],
+      "expected": {
+        "query": "MindOS有哪些核心功能？",
+        "historyUsed": ["u5"]
+      }
+    },
+    {
+      "id": "prefixed-referential-follow-up",
+      "content": "请检索它有哪些核心功能？",
+      "allowedHistory": [
+        {"id": "u7", "role": "user", "content": "MindOS 是什么？"}
+      ],
+      "expected": {
+        "query": "MindOS有哪些核心功能？",
+        "historyUsed": ["u7"]
+      }
+    },
+    {
+      "id": "prefixed-reference-needs-clarification",
+      "content": "请检索这份文件的验收要求",
+      "expected": {
+        "errorCode": "RAG_QUERY_CLARIFICATION_REQUIRED"
+      }
+    },
+    {
+      "id": "ambiguous-two-topics",
+      "content": "它的风险呢？",
+      "allowedHistory": [
+        {"id": "u6", "role": "user", "content": "比较星桥项目和银河项目"}
+      ],
+      "expected": {
+        "errorCode": "RAG_QUERY_CLARIFICATION_REQUIRED"
+      }
+    }
+  ]
+}

@@ -5,9 +5,12 @@ import re
 from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
-from zhijun_worker.data_agent_rag_v2 import DataAgentRagV2Error, configured_client
+from zhijun_worker.data_agent_rag_v2 import (
+    MAX_RETRY_AFTER_SECONDS, DataAgentRagV2Error, configured_client, sensitive_rule_status,
+)
 
 
 _PREFIX = "/api/mindos/settings/sensitive-rules"
@@ -104,7 +107,12 @@ def _client_error(exc: DataAgentRagV2Error) -> HTTPException:
         detail["detail"] = "发现相似规则，确认后可继续保存"
     if isinstance(exc.trace_id, str) and _SAFE_TRACE.fullmatch(exc.trace_id):
         detail["traceId"] = exc.trace_id
-    return HTTPException(status, detail)
+    headers = {}
+    if type(exc.retry_after) is int and exc.retry_after >= 0:
+        retry_after = min(exc.retry_after, MAX_RETRY_AFTER_SECONDS)
+        detail["retryAfter"] = retry_after
+        headers["Retry-After"] = str(retry_after)
+    return HTTPException(status, detail, headers=headers)
 
 
 def _call(operation):
@@ -116,6 +124,15 @@ def _call(operation):
 
 def list_rules():
     return _call(lambda: _client().list_sensitive_rules())
+
+
+def get_status():
+    try:
+        result = _call(lambda: sensitive_rule_status(_client().get_sensitive_rule_status()))
+    except HTTPException as exc:
+        exc.headers = {**(exc.headers or {}), "Cache-Control": "no-store"}
+        raise
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 def get_rule(rule_id: str = Path(
@@ -150,6 +167,7 @@ def build_router(write_guard=None) -> APIRouter:
     built = APIRouter(prefix=_PREFIX, tags=["sensitive-rules"])
     writes = [Depends(write_guard)] if write_guard is not None else []
     built.add_api_route("", list_rules, methods=["GET"])
+    built.add_api_route("/status", get_status, methods=["GET"])
     built.add_api_route("/{rule_id}", get_rule, methods=["GET"])
     built.add_api_route("/custom", create_rule, methods=["POST"], dependencies=writes)
     built.add_api_route("/custom/{rule_id}", update_rule, methods=["PUT"], dependencies=writes)

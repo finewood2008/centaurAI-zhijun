@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { onProductScopeReset } from '@/shared/productScope'
+import { createSensitiveRuleStatusPoller, type SensitiveRuleStatus } from '@/services/sensitiveRuleStatus'
 import {
   api,
   ApiError,
@@ -8,6 +10,8 @@ import {
   type SensitiveRuleDraft,
   type SensitiveRulesResponse,
 } from '@/services/api'
+
+const props = withDefaults(defineProps<{ enabled?: boolean }>(), { enabled: true })
 
 type EditorMode = 'new' | 'existing' | null
 type PendingMutation = {
@@ -26,6 +30,8 @@ const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
 const notice = ref('')
+const applicationStatus = ref<SensitiveRuleStatus | null>(null)
+const statusError = ref('')
 const deleteConfirmId = ref('')
 const similarRule = ref<SensitiveRule | null>(null)
 const pendingSimilar = ref<PendingMutation | null>(null)
@@ -44,6 +50,20 @@ const baseline = ref('')
 let alive = true
 let readRevision = 0
 let readController: AbortController | undefined
+let statusPoller: ReturnType<typeof createSensitiveRuleStatusPoller> | undefined
+let unsubscribeScope: (() => void) | undefined
+
+function updateStatusVisibility() {
+  statusPoller?.setEnabled(alive && props.enabled !== false
+    && typeof document !== 'undefined' && document.visibilityState !== 'hidden')
+}
+
+function refreshStatus() {
+  applicationStatus.value = null
+  statusPoller?.refresh()
+}
+
+watch(() => props.enabled, updateStatusVisibility)
 
 const selected = computed(() => rules.value.find(rule => rule.ruleId === selectedId.value) || null)
 const customRemaining = computed(() => Math.max(0, (summary.value?.maxCustomRules || 0) - (summary.value?.customCount || 0)))
@@ -120,6 +140,7 @@ function cancelEdit() {
 }
 
 async function refresh(preserveNotice = false) {
+  if (!preserveNotice) refreshStatus()
   const ticket = ++readRevision
   readController?.abort()
   readController = new AbortController()
@@ -230,9 +251,8 @@ async function commit(pending: PendingMutation, acknowledgeSimilarRuleId?: strin
     pendingSimilar.value = null
     similarConfirmationRequestId.value = ''
     resetDraft()
-    notice.value = saved.enabled
-      ? `“${saved.name}”已保存并立即生效，之后的新检测将使用这条规则。`
-      : `“${saved.name}”已保存为停用状态，规则变更已立即生效。`
+    notice.value = `“${saved.name}”已保存${saved.enabled ? '' : '为停用状态'}。交付方式变更立即生效；识别语义变更会在后台应用，期间继续使用当前活动规则。`
+    refreshStatus()
     await refresh(true)
   } catch (cause) {
     if (!alive) return
@@ -309,7 +329,8 @@ async function remove(rule: SensitiveRule) {
     rules.value = rules.value.filter(item => item.ruleId !== rule.ruleId)
     selectedId.value = rules.value[0]?.ruleId || ''
     deleteConfirmId.value = ''
-    notice.value = `“${rule.name}”已删除，规则变更已立即生效。`
+    notice.value = `“${rule.name}”已删除。交付方式变更立即生效；识别语义变更会在后台应用，期间继续使用当前活动规则。`
+    refreshStatus()
     await refresh(true)
   } catch (cause) {
     if (alive) error.value = cause instanceof ApiError && cause.status === 409
@@ -320,11 +341,35 @@ async function remove(rule: SensitiveRule) {
   }
 }
 
-onMounted(refresh)
+onMounted(() => {
+  statusPoller = createSensitiveRuleStatusPoller({
+    apply: value => { applicationStatus.value = value },
+    onError: cause => {
+      statusError.value = cause
+        ? cause instanceof ApiError && (cause.status === 401 || cause.status === 403)
+          ? '当前账号无法查看规则应用状态。此状态查询不影响问答；规则管理需要相应权限。'
+          : '规则应用状态暂时无法读取，当前活动规则仍继续服务；可继续管理规则和问答。'
+        : ''
+    },
+  })
+  document.addEventListener('visibilitychange', updateStatusVisibility)
+  unsubscribeScope = onProductScopeReset(() => {
+    statusPoller?.dispose()
+    applicationStatus.value = null
+    statusError.value = ''
+  })
+  // The ordinary rule refresh requests status independently; neither read
+  // depends on the other's success.
+  void refresh()
+  updateStatusVisibility()
+})
 onUnmounted(() => {
   alive = false
   readRevision += 1
   readController?.abort()
+  statusPoller?.dispose()
+  unsubscribeScope?.()
+  if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', updateStatusVisibility)
 })
 
 defineExpose({ refresh })
@@ -335,10 +380,15 @@ defineExpose({ refresh })
     <header class="sensitive-rules__header">
       <div>
         <strong>知君敏感规则</strong>
-        <p>规则只在盒子上参与检测；保存、启停和删除会立即影响之后的新检测。</p>
+        <p>交付方式变更立即生效；识别语义变更会在后台应用，期间当前活动规则继续服务。</p>
       </div>
       <button type="button" :disabled="loading || busy" @click="refresh()">{{ loading ? '正在读取…' : '重新读取' }}</button>
     </header>
+
+    <p v-if="applicationStatus" class="sensitive-rules__muted" role="status" data-testid="sensitive-rule-application-status">
+      {{ applicationStatus.applying ? '应用中：识别规则正在后台更新，当前活动规则仍继续服务。' : '已应用：当前保存的规则已用于交付。' }}
+    </p>
+    <p v-if="statusError" class="sensitive-rules__warning" role="status" data-testid="sensitive-rule-status-error">{{ statusError }}</p>
 
     <div v-if="summary" class="sensitive-rules__capacity" aria-label="规则容量">
       <span>自定义 {{ summary.customCount }} / {{ summary.maxCustomRules }}</span>
@@ -416,7 +466,7 @@ defineExpose({ refresh })
           <button type="button" :disabled="busy" @click="deleteConfirmId = selected.ruleId">删除</button>
         </div>
         <div v-if="deleteConfirmId === selected.ruleId" class="sensitive-rules__confirm" role="alertdialog" aria-label="确认删除规则">
-          <p>确定删除“{{ selected.name }}”？删除后会立即影响新的敏感检测。</p>
+          <p>确定删除“{{ selected.name }}”？识别规则更新会在后台完成，期间当前活动规则继续服务。</p>
           <button type="button" :disabled="busy" @click="remove(selected)">确认删除</button>
           <button type="button" :disabled="busy" @click="deleteConfirmId = ''">取消</button>
         </div>

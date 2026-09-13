@@ -34,9 +34,11 @@ export class ApiError extends Error {
   readonly preview?: import('./taskRouting').RoutePreview
   readonly ragV2?: import('./taskRouting').RagV2Prompt
   readonly similarRuleId?: string
+  readonly retryAfter?: number
+  readonly traceId?: string
 
   constructor(message: string, status: number, code?: string, details?: string[], preview?: import('./taskRouting').RoutePreview,
-              ragV2?: import('./taskRouting').RagV2Prompt, similarRuleId?: string) {
+              ragV2?: import('./taskRouting').RagV2Prompt, similarRuleId?: string, retryAfter?: number, traceId?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
@@ -45,6 +47,8 @@ export class ApiError extends Error {
     this.preview = preview
     this.ragV2 = ragV2
     this.similarRuleId = similarRuleId
+    this.retryAfter = retryAfter
+    this.traceId = traceId
   }
 }
 
@@ -61,6 +65,9 @@ export interface MindosAccessContext {
 export const API_BASE = BASE
 
 const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  RAG_QUERY_CLARIFICATION_REQUIRED: '请补充要检索的资料名称或主题。',
+  RAG_RETRIEVAL_ONLY: '资料由 Data Engine 管理；请在对话中检索已授权资料。',
+  RAG_RISK_RESULT_UNKNOWN: '风险放行结果未能确认，不能重复领取；请重新发送问题，重新检索并确认。',
   REDACTION_NOT_READY: '部分资料仍在完成隐私处理，请稍后重试。',
   MATERIAL_PRIVACY_NOT_READY: '这份资料仍在完成隐私处理，请稍后重试。',
   outbound_governance_disabled: '盒子的在线理解授权服务尚未启用，请更新盒子配置后重试。',
@@ -93,8 +100,18 @@ export async function throwApiError(res: Response): Promise<never> {
   let preview: import('./taskRouting').RoutePreview | undefined
   let ragV2: import('./taskRouting').RagV2Prompt | undefined
   let similarRuleId: string | undefined
+  let retryAfter: number | undefined
+  let traceId: string | undefined
+  const retryHeader = res.headers.get('Retry-After')
+  if (retryHeader && /^\d+$/.test(retryHeader.trim())) retryAfter = Number(retryHeader)
+  else if (retryHeader && Number.isFinite(Date.parse(retryHeader))) retryAfter = Math.max(0, Math.ceil((Date.parse(retryHeader) - Date.now()) / 1000))
   try {
     const body = await res.json()
+    const metadata = body?.detail && typeof body.detail === 'object' ? body.detail : body?.error && typeof body.error === 'object' ? body.error : body
+    if (typeof metadata?.retryAfter === 'number' && Number.isFinite(metadata.retryAfter) && metadata.retryAfter >= 0) {
+      retryAfter = Math.max(retryAfter ?? 0, Math.ceil(metadata.retryAfter))
+    }
+    if (typeof metadata?.traceId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(metadata.traceId)) traceId = metadata.traceId
     if (body && typeof body.detail === 'string') message = body.detail
     else if (body && body.detail && typeof body.detail === 'object') {
       if (typeof body.detail.detail === 'string') message = body.detail.detail
@@ -134,7 +151,9 @@ export async function throwApiError(res: Response): Promise<never> {
   } catch {
     // 忽略非 JSON 响应体
   }
-  throw new ApiError(message, res.status, code, details, preview, ragV2, similarRuleId)
+  if (!Number.isFinite(retryAfter)) retryAfter = undefined
+  if ((res.status === 503 || res.status === 429) && retryAfter) message += ` 请在 ${retryAfter} 秒后重试。`
+  throw new ApiError(message, res.status, code, details, preview, ragV2, similarRuleId, retryAfter, traceId)
 }
 
 async function request<T>(path: string, init?: ProductRequestInit): Promise<T> {
@@ -1055,7 +1074,7 @@ export interface ChatProviderConfig {
   timeoutSeconds: number
   totalBudgetSeconds: number
   fallbackOllama: boolean
-  source: 'defaults' | 'runtime_settings'
+  source: 'defaults' | 'runtime_settings' | 'admin-managed'
   effectiveProvider: 'ollama' | 'openai'
 }
 
@@ -1728,6 +1747,7 @@ export interface ChatImportBatch {
 export interface ChatFileService { id: string; name: string; model: string; external: boolean }
 export interface ChatImportListing {
   items: ChatImportBatch[]; selection: { refs: ChatMaterialRef[]; localOnly: boolean }; service: ChatFileService | null
+  retrievalOnly?: boolean; uploadEnabled?: boolean; code?: string; message?: string
 }
 export interface ChatFilePreview { name: string; text: string; offset: number; totalChars: number; hasMore: boolean }
 const chatPath = (id: string) => `/mindos/conversations/${encodeURIComponent(id)}`

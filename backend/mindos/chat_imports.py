@@ -24,6 +24,13 @@ logger = logging.getLogger(__name__)
 _upload_lock = threading.Lock()
 _stop = threading.Event()
 _thread: threading.Thread | None = None
+RETRIEVAL_ONLY_MESSAGE = "知君仅检索已就绪资料，不再上传或处理文件；请在 Data Agent 管理页面导入资料，完成后回到对话检索。"
+
+
+def require_import_enabled():
+    """The workspace App contract is retrieval-only, not material management."""
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        raise error("RAG_RETRIEVAL_ONLY", RETRIEVAL_ONLY_MESSAGE)
 
 
 def error(code: str, detail: str, status: int = 409):
@@ -41,39 +48,11 @@ def require_material(material_id: str, scope: str) -> dict:
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
         record = ChatImportStore().material(material_id, scope)
         if record is None:
-            # Workspace material metadata is a control-plane lookup only. It
-            # may link an existing library item into this conversation, but it
-            # is never used to retrieve text or bypass RAG V2 Search.
-            try:
-                from zhijun_worker.capabilities import require
-                metadata = require().call("materials.get", {"materialId": material_id})
-            except Exception:
-                metadata = None
-            if (not isinstance(metadata, dict) or metadata.get("materialId") != material_id
-                    or type(metadata.get("versionNumber")) is not int
-                    or metadata.get("status") != "available"):
-                raise error("ATTACHMENT_UNAVAILABLE", "文件不可用或不属于当前工作区", 404)
-            return {"materialId": material_id, "versionNumber": metadata["versionNumber"],
-                    "fileName": metadata.get("fileName") or metadata.get("title") or material_id,
-                    "status": "ready", "jobId": None, "statusUrl": None}
+            raise error("RAG_RETRIEVAL_ONLY", "请在当前对话重新检索并确认资料；知君不再读取材料管理接口。")
         if record.get("status") in {"failed", "unavailable"}:
             raise error("ATTACHMENT_UNAVAILABLE", "文件不可用或不属于当前工作区", 404)
         if record.get("jobId"):
-            try:
-                from zhijun_worker.data_agent_rag_v2 import configured_client
-                status = configured_client().job_status(record["jobId"])
-            except Exception as exc:
-                if getattr(exc, "status", None) in {404, 409, 410}:
-                    raise error("ATTACHMENT_UNAVAILABLE", "文件已删除或版本不可用", 404) from None
-                raise error("RAG_V2_STATUS_UNAVAILABLE", "暂时无法核对文件索引状态，请稍后重试", 503) from None
-            if (status.get("materialId") != material_id
-                    or status.get("materialVersion") != record["versionNumber"]):
-                raise error("ATTACHMENT_VERSION_CHANGED", "文件版本已变化，请重新选择")
-            if not (status.get("state") == "ready" and status.get("stage") == "completed"
-                    and status.get("indexState") == "indexed"):
-                if status.get("state") in {"failed", "canceled"} or status.get("indexState") == "failed":
-                    raise error("ATTACHMENT_UNAVAILABLE", "文件索引失败或已取消，请重新上传")
-                raise error("ATTACHMENT_NOT_READY", "文件尚未完成索引，请稍后重试")
+            raise error("RAG_RETRIEVAL_ONLY", RETRIEVAL_ONLY_MESSAGE)
         return record
     from .services import ingestion
 
@@ -113,22 +92,7 @@ def local_provider(*, num_ctx: int = 4096, timeout: float | None = None):
 
 
 def read_ref(ref: dict, scope: str, *, interaction_id: str | None = None) -> tuple[dict, dict, str]:
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        record = require_material(ref["materialId"], scope)
-        if record["versionNumber"] != ref["version"]:
-            raise error("ATTACHMENT_VERSION_CHANGED", "文件版本已变化")
-        from . import data_agent_rag
-        interaction = interaction_id or "read-" + hashlib.sha256(
-            (ref["materialId"] + ":" + str(ref["version"])).encode()
-        ).hexdigest()[:48]
-        items = data_agent_rag.search("概览这份资料的主要内容", [ref["materialId"]], interaction, top_k=10)
-        items = [item for item in items if item["materialVersion"] == ref["version"]]
-        if not items:
-            raise error("ATTACHMENT_UNREADABLE", "Data Agent 未返回可交付的资料片段", 409)
-        evidence_refs = [item["evidenceRef"] for item in items]
-        snapshot_id = "rag-v2:" + hashlib.sha256("\0".join(evidence_refs).encode()).hexdigest()
-        return record, {"snapshot_id": snapshot_id, "privacyEpoch": 1,
-                        "redactionVersion": items[0]["detectorRevision"]}, "\n".join(item["text"] for item in items)
+    require_import_enabled()
     from .material_snapshot_saga import MaterialSnapshotSaga
     from .stores.material_pipeline_store import MaterialPipelineStore
 
@@ -160,9 +124,7 @@ def unique_refs(refs: list[dict]) -> list[dict]:
 
 
 def find_duplicate(store: ChatImportStore, scope: str, digest: str, size: int) -> dict | None:
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from zhijun_worker.capabilities import require
-        return require().call("materials.find_duplicate", {"sha256": digest, "size": size})
+    require_import_enabled()
     from .services import ingestion
 
     known = store.duplicate(scope, digest)
@@ -228,6 +190,7 @@ def attachment_context(refs: list[dict], scope: str, query: str, *, external: bo
                        interaction_id: str | None = None) -> tuple[str, list[dict]]:
     if not refs:
         return "", []
+    require_import_enabled()
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
         # The trusted worker calls the actual Data Agent application API.  The
         # historical workspace material capabilities are transport/control
@@ -311,34 +274,13 @@ def attachment_context(refs: list[dict], scope: str, query: str, *, external: bo
 def file_view(item: dict, scope: str) -> dict:
     view = {"id": item["id"], "name": item["name"], "size": item["size"], "materialId": item["material_id"],
             "version": item["version"], "state": item["state"], "error": item["error"]}
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        # Preserve the old record for display; never poll its obsolete upload
+        # handle or misrepresent a saved material as newly indexed/ready.
+        return {**view, "state": "unavailable", "error": RETRIEVAL_ONLY_MESSAGE,
+                "code": "RAG_RETRIEVAL_ONLY", "retrievalOnly": True}
     if not item["material_id"]:
         return view
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        job_id = item.get("job_id")
-        if not job_id:
-            # Existing library items have no app upload job handle. Their text
-            # can only be obtained later through a filtered RAG V2 Search.
-            return {**view, "state": "ready", "error": None}
-        try:
-            from zhijun_worker.data_agent_rag_v2 import configured_client
-            value = configured_client().job_status(job_id)
-        except Exception as exc:
-            status = getattr(exc, "status", None)
-            code = str(getattr(exc, "code", "RAG_V2_STATUS_UNAVAILABLE"))
-            if status in {404, 409, 410}:
-                return {**view, "state": "unavailable", "error": "文件已删除或版本不可用"}
-            if getattr(exc, "retryable", False) or status in {408, 429, 500, 503, 504}:
-                return {**view, "state": "reading", "error": "Data Agent 状态暂时无法读取，正在重试"}
-            return {**view, "state": "failed", "error": "Data Agent 状态校验失败（%s）" % code}
-        if value.get("materialId") != item["material_id"] or value.get("materialVersion") != item["version"]:
-            return {**view, "state": "unavailable", "error": "文件版本已变化"}
-        if value.get("state") == "ready" and value.get("stage") == "completed" and value.get("indexState") == "indexed":
-            return {**view, "state": "ready", "error": None}
-        if value.get("state") == "failed" or value.get("indexState") == "failed":
-            return {**view, "state": "failed", "error": "文件索引失败（%s）" % (value.get("errorCode") or "UNKNOWN")}
-        if value.get("state") == "canceled":
-            return {**view, "state": "unavailable", "error": "文件处理已取消，请重新上传"}
-        return {**view, "state": "reading", "error": None}
     try:
         from .services import ingestion
         record = require_material(item["material_id"], scope)
@@ -371,13 +313,21 @@ def batch_view(batch: dict, store: ChatImportStore | None = None) -> dict:
         rag_prompt = json.loads(batch["rag_prompt_json"]) if batch.get("rag_prompt_json") else None
     except (TypeError, json.JSONDecodeError):
         rag_prompt = None
+    disabled = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
+    pending = disabled and batch["state"] not in {"complete", "failed"}
     return {"id": batch["id"], "conversationId": batch["conversation_id"], "messageId": batch["message_id"],
-            "state": batch["state"], "error": batch["error"], "localOnly": bool(batch["local_only"]),
+            "state": "failed" if pending else batch["state"],
+            "error": RETRIEVAL_ONLY_MESSAGE if pending else batch["error"], "localOnly": bool(batch["local_only"]),
+            **({"retrievalOnly": True, "code": "RAG_RETRIEVAL_ONLY"} if disabled else {}),
             "ragV2": rag_prompt,
             "files": [file_view(f, scope) for f in batch["files"]]}
 
 
 def process_batch(batch: dict, store: ChatImportStore):
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        if batch["state"] not in {"complete", "failed"}:
+            store.update(batch["id"], "failed", RETRIEVAL_ONLY_MESSAGE)
+        return
     from .zhijun.turn import TurnError, run_turn
 
     if batch["state"] == "uploading":
@@ -447,6 +397,13 @@ def process_batch(batch: dict, store: ChatImportStore):
 
 def recover(store: ChatImportStore):
     for batch in store.batches():
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            reply = store.conversations.get_message("msg_reply_" + batch["id"])
+            if batch["state"] != "complete" and reply and reply["status"] == "complete":
+                store.update(batch["id"], "complete")
+            elif batch["state"] not in {"complete", "failed"}:
+                store.update(batch["id"], "failed", RETRIEVAL_ONLY_MESSAGE)
+            continue
         if batch["state"] == "rag_consent":
             # Tokens live only in process memory. After restart force a fresh
             # Search; never leave a durable UI pointing at a dead token.
@@ -475,6 +432,10 @@ def start_worker():
         return
     store = ChatImportStore()
     recover(store)
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        # All historical imports were moved to an explicit preserved terminal
+        # state. This integration has no material queue to poll.
+        return
     _stop.clear()
 
     def run():

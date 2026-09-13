@@ -16,6 +16,7 @@ from . import context as context_module
 from . import deliberate, extract, jobs, memory
 from .gate import conversation_locks, provider_gate
 from .provider import ONBOARDING_QUESTIONS, ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
+from .request_budget import normalize_request_budget
 
 logger = logging.getLogger(__name__)
 
@@ -192,12 +193,24 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
         raise TurnError(429, "PROVIDER_BUSY", "模型正忙，请稍后重试；没有切换服务")
     try:
         current_refs = [] if omit else refs
+        user_sources = list(expression_refs)
+        reviewed_turn = bool(plan.assembled.provenance.get("contextPlan", {}).get("retrieval", {}).get("userReviewRequired"))
+        if reviewed_turn:
+            selected_refs = [item["ref"] for item in plan.assembled.provenance["contextPlan"]["evidence"]
+                             if item["kind"] == "material" and item["ref"].get("ragInteractionId")]
+            selected_refs = list({digest(ref): ref for ref in selected_refs}.values())
+            current_refs = list({(ref["id"], ref["materialVersion"]):
+                                 {"materialId": ref["id"], "version": ref["materialVersion"]}
+                                 for ref in selected_refs}.values())
+            user_sources.extend(selected_refs)
+        # Requested files are UI state, not proof that their content was used.
+        requested_files = {"requestedMaterialRefs": refs} if reviewed_turn else {}
         origin = {"service": plan.preview["service"]["id"] if guarded.external else "", "modeRevision": router.mode["revision"]}
         if old_user and import_id:
             old_user = conv_store.update_message(old_user["id"], meta={**(old_user.get("meta") or {}),
-                "materialRefs": current_refs, "routingOrigin": origin, "routingSources": expression_refs})
+                "materialRefs": current_refs, "routingOrigin": origin, "routingSources": user_sources, **requested_files})
         user = old_user or conv_store.append_message(cid, "user", content, message_id=user_id,
-                    meta={"materialRefs": current_refs, "routingOrigin": origin, "routingSources": expression_refs,
+                    meta={"materialRefs": current_refs, "routingOrigin": origin, "routingSources": user_sources, **requested_files,
                           **({"replyAssistance": expression} if expression else {})})
         user_id = user["id"]
         def receipt_meta():
@@ -423,6 +436,7 @@ def _run_locked(
         effort="medium" if (depth == "deep" or mode == "deliberate" or conversation.get("mode") == "review") else "low",
         debug=assembled.debug,
     )
+    request = normalize_request_budget(request, provider)
     buffer: list[str] = []
     usage: dict | None = None
     stop_reason: str | None = None

@@ -23,6 +23,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_RETRY_AFTER_SECONDS = 9_007_199_254_740_991  # Largest exact JSON integer in the renderer.
 
 _APP_ID = re.compile(r"agc_[a-f0-9]{12,32}")
 _APP_SECRET = re.compile(r"[A-Za-z0-9_-]{43,128}")
@@ -381,10 +382,25 @@ def _retry_after(headers: Any) -> Optional[int]:
         raw = headers.get("Retry-After")
     except (AttributeError, TypeError):
         return None
-    if not isinstance(raw, str) or not raw.isdigit():
+    if not isinstance(raw, str) or not raw.isascii() or not raw.isdigit():
         return None
-    seconds = int(raw)
-    return seconds if 0 <= seconds <= 86400 else None
+    digits = raw.lstrip("0") or "0"
+    # Preserve long waits; an unrepresentable delay still must not become an
+    # absent hint followed by an early retry. The renderer pauses huge timers.
+    if len(digits) > 16:
+        return MAX_RETRY_AFTER_SECONDS
+    return min(int(digits), MAX_RETRY_AFTER_SECONDS)
+
+
+def sensitive_rule_status(value: Any) -> Dict[str, Any]:
+    """Accept only the public application state, never internal scan diagnostics."""
+    if (not isinstance(value, dict) or set(value) != {"state", "applying"}
+            or not isinstance(value.get("state"), str)
+            or value["state"] not in {"active", "applying"}
+            or type(value.get("applying")) is not bool
+            or value["applying"] != (value["state"] == "applying")):
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_STATUS_RESPONSE", status=502)
+    return {"state": value["state"], "applying": value["applying"]}
 
 
 def _header(headers: Any, name: str) -> Optional[str]:
@@ -898,6 +914,11 @@ class DataAgentRagV2Client:
     def list_sensitive_rules(self) -> Dict[str, Any]:
         return _sensitive_catalogue(self._request(
             "GET", "/v1/agent/apps/sensitive-delivery/rules"
+        ))
+
+    def get_sensitive_rule_status(self) -> Dict[str, Any]:
+        return sensitive_rule_status(self._request(
+            "GET", "/v1/agent/apps/sensitive-delivery/status"
         ))
 
     def get_sensitive_rule(self, rule_id: str) -> Dict[str, Any]:

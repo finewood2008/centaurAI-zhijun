@@ -21,6 +21,8 @@ SYSTEM = """从资料片段中提取最多20条明确陈述的人物、组织、
 
 
 def _read(material_id, version):
+    from mindos.chat_imports import require_import_enabled
+    require_import_enabled()
     value = require().call("materials.read_ref", {"materialId": material_id, "version": version})
     record, snapshot, text = value["record"], value["snapshot"], value["text"]
     if (record.get("versionNumber") != version or not isinstance(text, str)

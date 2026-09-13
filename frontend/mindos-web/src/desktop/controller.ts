@@ -110,7 +110,12 @@ export class DesktopController {
 
   async control(operation: 'beginSignIn' | 'signInWithPassword' | 'signInWithSavedPassword' | 'registerWithPassword' | 'disconnect' | 'signOut' | 'connect', input?: string | boolean | PasswordCredentials | RegistrationCredentials): Promise<void> {
     if (!this.bridge || this.disposed || !this.state.snapshot) return
-    if (this.state.controlPending && (operation !== 'signOut' || this.state.pendingOperation === 'signOut')) return
+    // Cancelling a pending connection uses the existing host generation fence.
+    // Do not let disconnect supersede login, sign-out or another disconnect.
+    const cancelsConnection = operation === 'disconnect' && this.state.pendingOperation === 'connect'
+      && ['connecting', 'authorizing'].includes(this.state.snapshot.phase)
+    if (this.state.controlPending && !cancelsConnection
+      && (operation !== 'signOut' || this.state.pendingOperation === 'signOut')) return
     const revision = ++this.controlRevision
     const generation = this.state.snapshot.generation
     this.patch({ controlPending: true, pendingOperation: operation, error: null, notice: '' })

@@ -1,4 +1,4 @@
-# 对话、附件与回复恢复
+# 对话、材料检索与回复恢复
 
 ## 会话
 
@@ -6,30 +6,34 @@
 
 输入草稿按会话保存。发送前会创建或确认目标会话、准备模型路由和来源授权；失败或取消时只恢复原提交所属会话的输入。用户在等待期间继续输入的文字优先保留，只有内容和来源都能安全合并时才自动合并。
 
-## 附件
+## 当前桌面的材料检索
 
-输入框可以上传新文件或选择已有资料。文件先进入暂存区，用户发送后才创建导入批次；批次创建和用户消息使用稳定请求标识，避免重试重复写入。
+正式桌面和盒端 workspace 使用 Data Agent RAG V2 的检索专用子集。材料由 Data Engine Web 或内部受控流程接收、解析、索引和预识别；知君不上传文件，不创建或轮询材料任务，也不管理材料版本、知识卡或扫描重试。桌面旧资料维护路由显示检索说明，入口调整不删除历史资料。源码中的本机开发及历史附件逻辑不是正式 worker 的可用能力。
 
-- 每轮文件数量、类型和大小由前后端共同校验。
-- 原文件、解析和索引留在设备内；在线模型只使用用户明确允许的必要文字片段。
-- 授权绑定资料、版本、解析快照、用途和服务；服务或版本变化后重新核对。
-- 删除会话不会自动删除已经进入资料库的原文件。
-- 文件反馈、预览、失败、暂停和重试都有独立状态，读取附件不占用聊天生成锁。
+- 需要资料时，知君组织独立 Query；仅使用获准的相关用户历史消解指代，不把完整 messages、身份或工具声明传给 Search。
+- 普通闲聊不强制检索整个资料库；不限制材料时搜索当前 App 的授权就绪资料，指定范围只能缩小权限。
+- 已允许交付的普通结果也须用户审阅，默认不选；可以选子集、不使用材料继续或取消。
+- 在线模型只使用来源、用途、服务和实际请求均通过授权检查的必要内容。材料交付、材料选择和在线外发是三层不同决定。
 
-盒端工作区中的附件接入 Data Agent RAG V2，边界如下：
+检索和确认边界如下：
 
-- 知君的 RAG 数据面只调用 `/v1/agent/apps/*`；`/api/mindos/rag-v2/*` 是浏览器适配层。历史 `/api/mindos/zhijun/*` 工作区能力仅可用于不读取正文的资料元数据链接，不能作为上传、检索、确认或证据回退。
-- 上传通过 `POST /material-jobs` 登记，保存 `jobId`，只有 `state=ready`、`stage=completed`、`indexState=indexed` 同时成立时才进入对话检索。
-- 每轮按当前问题调用 `/search`，只把 Data Agent 已允许交付的 `items[].text` 放进模型上下文；最终使用前通过 `/evidence:resolve` 重新核对证据引用。
-- `sensitive_confirmation_required` 必须由用户选择脱敏交付、在具备能力时领取原文或取消；存在 `detectionNotice` 时，未完成检测的片段保持暂扣，风险放行还需要单独的明确确认。
-- App ID/Secret、普通确认 Token 和风险 Token 仅保存在盒端可信进程。默认凭据文件为 `$CENTAUR_SECRET_STORE_DIR/data-agent-rag-v2.json`，也可由 `ZHIJUN_DATA_AGENT_CREDENTIAL_FILE` 指向绝对路径；Renderer、日志和对话记录都不得接触这些值。生产环境的 `CENTAUR_SECRET_STORE_DIR` 位于 Gateway 独立 secrets root 的 `rag-v2/<workspaceId>` 下，必须与工作区业务数据根互不包含。
+- 知君 RAG 数据面只使用 `/v1/agent/apps/*`；不以 `/api/mindos/rag-v2/*` 浏览器接口或 `/api/mindos/zhijun/*` 工作区控制协议回退读取原文。
+- 检索工具是知君内部固定 REST 薄适配，不要求模型 Function Calling、MCP 或 `role=tool`。
+- 只把允许交付且用户选中的 `items[].text` 作为材料上下文；最终使用前通过 `/evidence:resolve` 重新核对证据，过期或版本变化后重新检索，不自动读取原件。
+- `sensitive_confirmation_required` 由用户选择脱敏交付、在具备能力时领取原文、不使用材料继续或取消；存在 `detectionNotice` 时，未完成检测的片段保持暂扣，风险放行还需要单独的明确确认。
+- HTTP 200、空 items 和检测暂扣分别处理，不能把 `sensitive_check_unavailable` 当作 `no_results`。本地回答模型也不能绕过敏感交付确认。
+- 每次实际 Search 使用新 interactionId；稳定轮次句柄不是 Search ID。普通 Confirm 的同一请求重试复用幂等键，重新 Search 或更改脱敏选择使用新键；旧界面确认不得作用于新结果。
+- 风险领取一次性消费，响应丢失返回 `RAG_RISK_RESULT_UNKNOWN`，要求重新检索而非重放风险 Token。风险原文仍标记 unverified，外发须另行授权。
+- 材料审阅状态仅在当前 worker 内短期保存，重启或过期后重新检索和选择；历史引用不自动获得永久可读权限。
+- App ID/Secret 由盒端可信后端管理，普通确认 Token 和风险 Token 仅留在 worker 的短期状态中。默认长期凭据文件为 `$CENTAUR_SECRET_STORE_DIR/data-agent-rag-v2.json`，也可由 `ZHIJUN_DATA_AGENT_CREDENTIAL_FILE` 指向绝对路径；Renderer、日志和对话记录不得取得 Secret 或确认 Token。生产环境的 `CENTAUR_SECRET_STORE_DIR` 位于 Gateway 独立 secrets root 的 `rag-v2/<workspaceId>` 下，必须与工作区业务数据根互不包含。
 - 凭据文件必须由 worker 运行账户持有且权限为 `0600`。Data Engine Gateway 在工作区 worker 激活边界按需创建一次长期 App；只有 active、未过期、owner/device/workspace 绑定和 Secret 全部精确匹配，且能力完整时才复用。已停用、已撤销或缺少能力的 App 一律失败关闭，不会自动恢复权限。
-- 长期 App 至少授予 `mindos.import`、`mindos.upload.status`、`mindos.read`、`mindos.search`、`mindos.sensitive.confirm` 和 `mindos.sensitive.policy.write`；只有允许领取原文时才追加 `mindos.sensitive.original.read`。ownership epoch 变化时只按旧工作区私有凭据精确停用对应 App，不能扫描或批量停用其他应用。
+- 检索最小能力为 `mindos.read`、`mindos.search`、`mindos.sensitive.confirm`；规则管理按需加 `mindos.sensitive.policy.write`，原文按部署策略加 `mindos.sensitive.original.read`。知君不需要 import/upload.status；但当前 DE provisioning 仍含历史能力集合，不能据此宣称既有 App 已自动缩权。实际授权由 DE 团队受控配置；ownership epoch 变化不能扫描或批量停用其他应用。
 - Data Agent 地址优先使用 `ZHIJUN_DATA_AGENT_BASE_URL`；未设置时取 `ZHIJUN_CAPABILITY_URL` 的同源地址，最后才使用回环默认地址。非回环 HTTP 会被拒绝。
 - “偏好 → 敏感规则”通过知君可信后端管理 Data Agent 规则：可查看内置和自定义规则，创建、编辑、启停及删除自定义规则。内置规则只读；容量和检测提示词预算始终读取服务端返回值，不在前端写死。
-- 更新和删除使用服务端 revision 对应的 `ETag`/`If-Match` 做乐观并发控制，但 Renderer 只接触 revision，不接触原始 ETag。`CUSTOM_RULE_SIMILAR` 必须先展示相似规则，用户明确确认用途不同后，以新的幂等键和 `acknowledgeSimilarRuleId` 重提。规则变更立即生效，并使旧确认 Token 和证据引用失效；随后请求必须重新检索。
+- 更新/删除使用服务端 revision 对应的 `ETag`/`If-Match` 做并发控制，Renderer 只接触 revision。`CUSTOM_RULE_SIMILAR` 先展示相似规则，用户确认用途不同后以新幂等键和 `acknowledgeSimilarRuleId` 重提。
+- 交付方式变更立即参与决策；识别语义变化可能进入 applying，后台重扫期间旧 active 规则继续服务。知君低频展示状态，不将规则状态查询作为 Search 前置条件；失效的旧确认 Token 或证据需要重新检索。
 
-系统话头的一次性本地限制也必须传入附件路径。批次已经由服务端接受后，客户端不能把它恢复成新的未发送批次，否则可能产生重复消息或改变原路由语义。
+系统话头的一次性本地限制必须在检索、预览和实际提交中保持一致；用户显式改选在线后遵循权威路由。确认取消不重复创建消息，结果未知的提交不得自动补发。
 
 ## 回复辅助
 
@@ -39,15 +43,16 @@
 
 ## 上下文与回执
 
-每轮上下文可以包含经检查的近期消息、个人理解、章程、事项、成果和用户选择的资料。显示层清理引用标记不改变原消息快照或来源归属。
+每轮上下文可以包含经检查的近期消息、个人理解、章程、事项、成果和用户选中的检索片段。显示层清理引用标记不改变原消息快照或来源归属；上下文预算仍可能减少最终采用的片段，勾选数量不等于实际输入数量。
 
-助手消息保存实际 provider、model、external、引用来源、附件出处和回复目标。判断某轮走本地还是在线必须看这些回执，不能只看会话顶部的选择状态。
+助手消息保存实际 provider、model、external、引用来源、历史附件出处和回复目标。判断某轮走本地还是在线必须看这些回执，不能只看会话顶部的选择状态。RAG 使用 JSON REST，最终回答继续使用既有流式协议；检索/人工确认等待与模型生成耗时应分开定位。
 
 ## 代码与测试入口
 
 - 页面：`frontend/mindos-web/src/pages/ConversationPage.vue`
 - 会话流：`frontend/mindos-web/src/services/chatStream.ts`
-- 附件：`frontend/mindos-web/src/composables/useChatImports.ts`
+- 材料确认：`frontend/mindos-web/src/components/conversation/RagSensitiveDialog.vue`、`src/services/taskRouting.ts`（后者相对 mindos-web）
+- 检索专用兼容边界：`frontend/mindos-web/src/composables/useChatImports.ts`、`backend/mindos/chat_imports.py`
 - 回复恢复：`frontend/mindos-web/src/composables/useReplyRecovery.ts`
 - 敏感规则设置：`frontend/mindos-web/src/components/settings/SensitiveRulesPanel.vue`
 - 后端：`backend/mindos/conversations.py`、`backend/mindos/zhijun/turn.py`

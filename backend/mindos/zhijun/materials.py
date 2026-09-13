@@ -31,6 +31,9 @@ def _records(material_id: str) -> tuple[dict | None, dict | None]:
 
 
 def run(material_id: str, *, store: OntologyStore | None = None, entity_record: dict | None = None, relation_record: dict | None = None, expected_version: int | None = None) -> dict:
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from ..chat_imports import require_import_enabled
+        require_import_enabled()
     store = store or OntologyStore.instance()
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
         from zhijun_worker.capabilities import require
