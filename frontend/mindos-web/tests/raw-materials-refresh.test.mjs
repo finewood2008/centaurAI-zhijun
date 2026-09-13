@@ -173,3 +173,34 @@ test('knowledge-card transition states keep refreshing after material processing
 
 assert.match(source, /v-else-if="error && !displayItems\.length"/)
 assert.match(source, /:key="item\.materialId"/)
+
+test('missing or new card states are never silently presented as pending', () => {
+  const f = fixture({})
+  const row = material('state-row')
+  assert.equal(f.ui.knowledgeCardMeta(row).label, '状态未提供')
+  for (const [state, label] of Object.entries({ draft: '草稿待确认', draft_failed: '草稿生成失败', index_failed: '已确认，索引失败', purged: '卡片已删除', state_conflict: '卡片状态待修复', future_state: '状态待核对' })) {
+    assert.equal(f.ui.knowledgeCardMeta({ ...row, knowledgeCard: { state } }).label, label)
+  }
+  assert.equal(f.ui.knowledgeCardMeta({ ...row, knowledgeCard: { state: 'draft_failed', errorCode: 'draft_missing' } }).label, '尚未创建卡片')
+  f.close()
+})
+
+test('upload progress updates the reactive row and 100 percent still waits for server acceptance', async () => {
+  const pending = deferred()
+  let report
+  const f = fixture({
+    uploadFile: async (_file, _folder, progress) => { report = progress; return pending.promise },
+    listMaterials: async () => ({ items: [material('accepted')] }),
+  })
+  const importing = f.ui.importFiles([{ name: 'file.txt', type: 'text/plain', size: 100 }])
+  assert.equal(f.ui.transientUploads.value[0].uploadProgress.loaded, 0)
+  report({ loaded: 50, total: 100, phase: 'uploading' })
+  assert.equal(f.ui.displayItems.value[0].uploadProgress.loaded, 50)
+  report({ loaded: 100, total: 100, phase: 'finalizing' })
+  assert.equal(f.ui.importing.value, true)
+  assert.equal(f.toasts.length, 0, 'byte transfer is not business success')
+  pending.resolve(material('accepted'))
+  await importing
+  assert.equal(f.ui.transientUploads.value.length, 0)
+  f.close()
+})

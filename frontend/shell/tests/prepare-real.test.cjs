@@ -44,7 +44,7 @@ test('v2 preparation preserves the old v1 config, reuses exact output, and refus
   t.mock.method(crypto, 'createHash', (...args) => {
     const hash = createHash(...args); let fixture = false;
     return { update(bytes) { fixture = Buffer.isBuffer(bytes) && bytes.equals(sidecar); hash.update(bytes); return this; },
-      digest(encoding) { return fixture ? '9613fd07bdd6db4146bf8ddd54d062d513e8171b22b811b29b0f5e9ded80ea59' : hash.digest(encoding); } };
+      digest(encoding) { return fixture ? 'ffe277893e2b02eb2442dd35d5a9ce68fa582f8880ffe06fc417a2c39d42fcb5' : hash.digest(encoding); } };
   });
   await fs.writeFile(path.join(target, 'nexusaos-connectivity-sidecar'), sidecar, { mode: 0o700 });
   const legacy = { ...require('../config/zhijun-product.example.json'), connectivity: {

@@ -6,6 +6,7 @@ const emit = defineEmits<{
   (e: 'preview', ref: ChatMaterialRef): void
   (e: 'retry', fileId?: string): void
   (e: 'consent', refs: ChatMaterialRef[]): void
+  (e: 'rag', batch: ChatImportBatch): void
   (e: 'reupload', item: ChatImportFile, file: File): void
   (e: 'reference', refs: ChatMaterialRef[]): void
 }>()
@@ -36,9 +37,11 @@ function reupload(item: ChatImportFile, event: Event) {
     </div>
     <p v-if="batch.state === 'waiting' || batch.state === 'queued'" class="batch-note">读取在后台进行，你可以继续聊其他内容。</p>
     <p v-if="batch.state === 'replying'" class="batch-note" role="status">知君正在整理这批文件的反馈…</p>
+    <p v-if="batch.state === 'rag_consent'" class="batch-note" role="status">Data Agent 已暂停交付敏感片段，需要你选择处理方式。</p>
     <p v-if="batch.error && !['queued', 'waiting'].includes(batch.state)" class="batch-note">{{ batch.error }}</p>
     <div class="batch-actions">
       <button v-if="batch.state === 'consent'" @click="emit('consent', readyRefs(batch))">确认文件处理方式</button>
+      <button v-if="batch.state === 'rag_consent' && batch.ragV2" :disabled="busy" @click="emit('rag', batch)">确认敏感资料</button>
       <button v-if="['failed', 'paused', 'uploading'].includes(batch.state)" :disabled="busy" @click="emit('retry')"><RotateCw :size="12" /> {{ batch.state === 'paused' ? '继续读取' : '重试 / 继续' }}</button>
       <button v-if="readyRefs(batch).length" @click="emit('reference', readyRefs(batch))">继续参考这批文件</button>
     </div>

@@ -1,5 +1,5 @@
 # P0-5 lock: exact known-good versions; install: pip install -r requirements-lock.txt
-# Chroma: chromadb==1.5.9 (upstream issue #7090 tracked; see docs/development/MindOS索引可靠性问题分析与改进方案.md)
+# Chroma: chromadb==1.5.9; keep the exact pin until upstream issue #7090 is re-evaluated.
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
 aiosignal==1.4.0

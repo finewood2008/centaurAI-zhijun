@@ -72,6 +72,9 @@ class RoutingTests(unittest.TestCase):
             patch("mindos.zhijun.routing.local_provider", return_value=self.local)
         )
         self.stack.enter_context(
+            patch("mindos.routing_routes.local_provider", return_value=self.local)
+        )
+        self.stack.enter_context(
             patch.dict(
                 os.environ,
                 {
@@ -241,6 +244,28 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.send(body, preview).status_code, 200)
         self.assertFalse(self.online.requests)
         self.assertEqual(len(self.local.requests), 1)
+
+    def test_routing_states_expose_configured_local_model_while_online(self):
+        self.enable()
+        expected = service_info(self.local)
+        paths = (self.url + "/routing", "/api/mindos/conversations/routing/default")
+        for path in paths:
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, response.text)
+            state = response.json()
+            self.assertTrue(state["service"]["external"])
+            self.assertEqual(state["localService"], expected)
+        self.assertEqual(self.client.get(paths[0]).json()["mode"]["mode"], "online")
+
+    def test_routing_states_hide_local_runtime_failures(self):
+        self.enable()
+        secret = "https://user:password@local.invalid"
+        with patch("mindos.routing_routes.local_provider", side_effect=RuntimeError(secret)):
+            for path in (self.url + "/routing", "/api/mindos/conversations/routing/default"):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIsNone(response.json()["localService"])
+                self.assertNotIn(secret, response.text)
 
     def test_same_endpoint_model_account_change_blocks_queued_old_credentials(self):
         self.enable()

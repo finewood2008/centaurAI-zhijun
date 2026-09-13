@@ -75,6 +75,31 @@ class OllamaMaterialSchedulerTests(unittest.TestCase):
         self.assertTrue(wait_for(lambda: not any(worker.is_alive() for worker in self.scheduler._workers)))
         self.assertTrue(self.scheduler.start())
 
+    def test_has_task_covers_queued_and_running_work(self):
+        started = threading.Event()
+        release = threading.Event()
+        completed = []
+        self.scheduler.submit(
+            PRIORITY_MANUAL_REGENERATE,
+            lambda: (started.set(), release.wait(1.0)),
+            material_id="running",
+            kind="summary",
+        )
+        self.assertTrue(started.wait(1.0))
+        self.assertTrue(self.scheduler.has_task("running", "summary"))
+
+        self.scheduler.submit(
+            PRIORITY_VLM_IMAGE,
+            lambda: completed.append("queued"),
+            material_id="queued",
+            kind="vlm",
+        )
+        self.assertTrue(self.scheduler.has_task("queued", "vlm"))
+        release.set()
+        self.assertTrue(wait_for(lambda: completed == ["queued"]))
+        self.assertTrue(wait_for(lambda: not self.scheduler.has_task("running", "summary")))
+        self.assertFalse(self.scheduler.has_task("queued", "vlm"))
+
 
 if __name__ == "__main__":
     unittest.main()

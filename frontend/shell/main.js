@@ -4,18 +4,25 @@ const path = require('node:path')
 const { access } = require('node:fs/promises')
 const { APP_ICON, installDockIcon } = require('./app-icon.cjs')
 const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
+const { isProvisioningEnabled, createProvisioningWindow, closeProvisioningWindow } = require('./provisioning-window.cjs')
 const { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, isEntryUrl,
   shouldBlockRendererRequest, createInvokeHandler, createAssetHandler } = require('./security.cjs')
+const provisioningTestBuild = require('./package.json').zhijunProvisioningTestBuild === true
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'zhijun', privileges: { standard: true, secure: true, supportFetchAPI: true } },
   { scheme: 'zhijun-media', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true } },
 ])
-app.setName('知君桌面')
+app.setName(provisioningTestBuild ? '知君配网测试版' : '知君桌面')
+// Chromium/BlueZ still requires this opt-in on supported Linux builds. It must
+// be set before ready and does not bypass the dedicated window's permissions.
+if (process.platform === 'linux' && isProvisioningEnabled({ platform: process.platform, testBuild: provisioningTestBuild })) {
+  app.commandLine.appendSwitch('enable-experimental-web-platform-features')
+}
 // Tests use new temporary directories; development uses a separate app profile.
 app.setPath('userData', process.env.ZHIJUN_DESKTOP_USER_DATA
   ? path.resolve(process.env.ZHIJUN_DESKTOP_USER_DATA)
-  : path.join(app.getPath('appData'), 'zhijun-desktop'))
+  : path.join(app.getPath('appData'), provisioningTestBuild ? 'zhijun-provisioning-test' : 'zhijun-desktop'))
 if (process.env.ZHIJUN_SHELL_NOGPU === '1') app.disableHardwareAcceleration()
 
 const mode = !app.isPackaged && process.env.ZHIJUN_DESKTOP_MODE === 'simulation'
@@ -44,8 +51,22 @@ async function createWindow() {
     config, directory: app.getPath('userData'), safeStorage,
     bridge: require('./production/business-bridge.cjs').createBusinessBridge(),
   }) : undefined
+  const provisioningConfigured = Boolean(config?.provisioning?.electronWebBluetoothDiscoveryV1
+    && config?.provisioning?.electronBleProvisioningV2)
+  const provisioningReady = Boolean(config && isProvisioningEnabled({ platform: process.platform, testBuild: provisioningTestBuild })
+    && (provisioningTestBuild || provisioningConfigured))
   microphone = require('./runtime/microphone-permission.cjs').createMicrophonePermission({ getContents: () => window?.webContents, systemPreferences })
   runtime = createDesktopRuntime({ mode: config ? 'production' : mode, adapter,
+    provisioningHost: provisioningReady ? {
+      open: async () => {
+        const provisioningContext = provisioningTestBuild ? undefined : await adapter.provisioningContext()
+        await createProvisioningWindow({ BrowserWindow, session, dialog, ipcMain, parent: window,
+          isPackaged: app.isPackaged, testBuild: provisioningTestBuild, env: process.env,
+          provisioningConfig: config.provisioning, provisioningContext })
+        return { opened: true }
+      },
+      close: closeProvisioningWindow,
+    } : undefined,
     productHost: { save: require('./runtime/native-save.cjs').createNativeSave({ dialog, getWindow: () => window }),
       requestMicrophone: owner => microphone.request(owner), revokeMicrophone: owner => microphone.revoke(owner) },
   })
@@ -97,6 +118,7 @@ app.on('before-quit', event => {
   event.preventDefault()
   quitting = true
   microphone?.dispose()
+  closeProvisioningWindow()
   unsubscribe()
   ipcMain.removeHandler(INVOKE_CHANNEL)
   const deadline = setTimeout(() => app.exit(0), 2500)

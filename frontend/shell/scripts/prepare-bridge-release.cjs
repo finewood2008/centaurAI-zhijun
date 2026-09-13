@@ -1,18 +1,19 @@
 'use strict';
 
-// Builds local, reviewable deployment inputs. It never logs in to or changes a box.
+// Builds legacy v1 bridge inputs pinned to the historical compatibility baseline.
+// It never logs in to or changes a box and is not the current CentaurOS release path.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '../../..');
-const baseline = JSON.parse(fs.readFileSync(path.join(root, 'docs/development/integration-release-baseline.json'), 'utf8'));
+const baseline = JSON.parse(fs.readFileSync(path.join(__dirname, 'legacy-bridge-release-baseline.json'), 'utf8'));
 const args = process.argv.slice(2);
 if (args.length !== 0 && args.length !== 3) throw new Error('usage: node prepare-bridge-release.cjs [os-worktree data-engine-worktree new-output-directory]');
 const osRoot = path.resolve(args[0] || path.join(root, '../.worktrees/zhijun-bridge-os'));
 const engineRoot = path.resolve(args[1] || path.join(root, '../.worktrees/zhijun-bridge-data-engine-current'));
-const output = path.resolve(args[2] || path.join(root, 'data/desktop/bridge-release-0906-live'));
+const output = path.resolve(args[2] || path.join(root, 'data/desktop/legacy-bridge-v1-release'));
 const run = (cwd, file, argv, options = {}) => execFileSync(file, argv, { cwd, maxBuffer: 32 * 1024 * 1024, ...options });
 const git = (cwd, argv) => run(cwd, 'git', argv);
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
@@ -70,7 +71,7 @@ try {
     const bytes = fs.readFileSync(target);
     manifest.files.push({ path: relative, sha256: hash(bytes), bytes: bytes.length, platform: `linux-${arch}` });
   }
-  write('README.md', Buffer.from('# D03 local deployment inputs\n\nNot deployed and not a signed OTA release. No private keys are included.\n\nInspect the live architecture, service units, configuration, source hashes and data paths before installation. Apply the patches to compatible clean sources; do not overwrite live files or a whole application manifest blindly. Generate an independent Ed25519 PKCS8 key on the box, configure the Agent and pin only its SPKI public key in data-engine. Keep local-debug off for acceptance. Back up the existing executables, source and configuration; preserve databases and user data. See docs/development/BUSINESS-BRIDGE-0906.md in the client repository for validation and rollback.\n'));
+  write('README.md', Buffer.from('# Legacy v1 bridge inputs\n\nHistorical compatibility bundle only. It is not deployed, not signed, and not the current CentaurOS release path. No private keys are included. Do not use it to configure an NPU runtime or a current zhijun.workspace deployment.\n'));
   // Source changes while building must never produce a bundle claiming a clean pin.
   validateSource(osRoot, baseline.sources.osAgent);
   validateSource(engineRoot, baseline.sources.dataEngine);

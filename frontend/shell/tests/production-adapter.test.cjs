@@ -11,7 +11,43 @@ const config = { consumerBaseUrl: 'https://consumer.example.test', connectivity:
   applicationId: 'synthetic.zhijun', purpose: 'materials.read', requestedScopes: ['remote.p2p'], profile: 'SOVEREIGN_DIRECT_ONLY',
   gatewayHost: 'gateway.example.test', iceHost: 'ice.example.test' } };
 const consumer = { current: async () => ({ accountId: 'account-synthetic', clientId: 'client-synthetic' }),
-  signIn: async () => ({ accountId: 'account-synthetic' }), listDevices: async () => [], signOut: async () => {}, dispose: async () => {} };
+  signIn: async () => ({ accountId: 'account-synthetic' }), listDevices: async () => [], signOut: async () => {}, dispose: async () => {},
+  preparePairing: async input => ({ data: input }), getDeviceAttestation: async deviceId => ({ data: { deviceId } }),
+  provePairing: async input => ({ data: input }), cancelPairing: async pairingSessionId => ({ data: { pairingSessionId } }),
+  getPairing: async pairingSessionId => ({ data: { pairingSessionId } }), listActivePairings: async () => ({ data: { items: [] } }),
+  syncBootstrap: async () => ({ data: { account: { accountId: 'account-synthetic', features: {
+    electronWebBluetoothDiscoveryV1: true, electronBleProvisioningV2: true } },
+  clients: [{ clientId: 'client-synthetic', clientStatus: 'active' }], activePairings: [] } }) };
+
+test('provisioning context exposes only signed pairing operations and current subject', async () => {
+  const credentialStore = { loadPairingResumes: async () => [], savePairingResume: async () => {}, deletePairingResume: async () => {} };
+  const adapter = await createProductionAdapter({ config, consumer, credentialStore });
+  const context = await adapter.provisioningContext();
+  assert.deepEqual({ accountId: context.accountId, clientId: context.clientId },
+    { accountId: 'account-synthetic', clientId: 'client-synthetic' });
+  assert.deepEqual(Object.keys(context.consumerApi).sort(), ['cancelPairing', 'getDeviceAttestation', 'getPairing',
+    'listActivePairings', 'preparePairing', 'provePairing', 'syncBootstrap']);
+  assert.equal(JSON.stringify(context).includes('accessToken'), false);
+  assert.deepEqual(await context.resumeStore.load('account-synthetic'), []);
+  assert.throws(() => context.resumeStore.load('account-other'), { code: 'ACCESS_DENIED' });
+  assert.deepEqual(await context.consumerApi.getPairing('session-synthetic'), { data: { pairingSessionId: 'session-synthetic' } });
+  await adapter.dispose();
+});
+
+test('account policy and active signed client both gate formal provisioning', async () => {
+  const credentialStore = { loadPairingResumes: async () => [], savePairingResume: async () => {}, deletePairingResume: async () => {} };
+  for (const data of [
+    { account: { accountId: 'account-synthetic', features: { electronWebBluetoothDiscoveryV1: true,
+      electronBleProvisioningV2: false } }, clients: [{ clientId: 'client-synthetic', clientStatus: 'active' }] },
+    { account: { accountId: 'account-synthetic', features: { electronWebBluetoothDiscoveryV1: true,
+      electronBleProvisioningV2: true } }, clients: [{ clientId: 'client-synthetic', clientStatus: 'revoked' }] },
+  ]) {
+    const blocked = { ...consumer, syncBootstrap: async () => ({ data }) };
+    const adapter = await createProductionAdapter({ config, consumer: blocked, credentialStore });
+    await assert.rejects(adapter.provisioningContext(), { code: 'OPERATION_NOT_ALLOWED' });
+    await adapter.dispose();
+  }
+});
 
 test('missing trusted business bridge rejects before spawning SDK, even with complete connectivity config', async () => {
   let spawned = 0;
@@ -34,12 +70,27 @@ test('bridge rejects wrong subject, maps only approved requests and closes the o
   await session.close(); await session.close(); assert.equal(closed, 1); await adapter.dispose();
 });
 
+test('adapter exposes only an enumerated selected connection path', async () => {
+  const bridge = { authorize: async ({ subject }) => ({ ...subject, request: async () => ({ status: 200 }) }) };
+  const adapter = await createProductionAdapter({ config, consumer,
+    runtimeFactory: async () => ({ connect: async () => ({ selectedPath: 'RELAY' }), close: async () => {} }), bridge });
+  const session = await adapter.connect({ accountId: 'account-synthetic', deviceId: 'device-synthetic' });
+  assert.equal(session.selectedPath, 'RELAY');
+  await session.close();
+  await adapter.dispose();
+
+  const invalid = await createProductionAdapter({ config, consumer,
+    runtimeFactory: async () => ({ connect: async () => ({ selectedPath: 'PRIVATE_NETWORK_PATH' }), close: async () => {} }), bridge });
+  await assert.rejects(invalid.connect({ accountId: 'account-synthetic', deviceId: 'device-synthetic' }), { code: 'CONTRACT_MISMATCH' });
+  await invalid.dispose();
+});
+
 test('real SDK facade/admin/native protocol executes against a synthetic private-pipe sidecar', async t => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'zhijun-sdk-fixture-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
   const executable = path.join(directory, 'synthetic-sidecar');
   // Fixture is deliberately not a real transport; no network and no credentials.
-  const code = `#!${process.execPath}\nconst readline = require('node:readline');\nreadline.createInterface({input:process.stdin}).on('line',line=>{\nconst m=JSON.parse(line); const r={protocol_version:m.protocol_version,type:'response',operation:m.operation,request_id:m.request_id};\nif(m.operation==='connect')r.session_id='session-synthetic';\nif(m.operation==='request'){r.status=200;r.headers={'content-type':'application/json'};r.body_base64=Buffer.from('{"synthetic":true}').toString('base64');}\nprocess.stdout.write(JSON.stringify(r)+'\\n');\n});\n`;
+  const code = `#!${process.execPath}\nconst readline = require('node:readline');\nreadline.createInterface({input:process.stdin}).on('line',line=>{\nconst m=JSON.parse(line); const r={protocol_version:m.protocol_version,type:'response',operation:m.operation,request_id:m.request_id};\nif(m.operation==='connect'){r.session_id='session-synthetic';r.policy='DIRECT_ONLY';r.selected_path='DIRECT';}\nif(m.operation==='request'){r.status=200;r.headers={'content-type':'application/json'};r.body_base64=Buffer.from('{"synthetic":true}').toString('base64');}\nprocess.stdout.write(JSON.stringify(r)+'\\n');\n});\n`;
   await fs.writeFile(executable, code, { mode: 0o700 });
   let issued = 0;
   const runtime = await createSdkRuntime({ config: { ...config.connectivity, sidecarPath: executable,

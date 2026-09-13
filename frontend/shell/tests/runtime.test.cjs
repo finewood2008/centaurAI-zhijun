@@ -73,6 +73,31 @@ test('production startup without a valid encrypted login returns to sign-in', as
   assert.equal(runtime.snapshot().subject, null);
 });
 
+test('provisioning capability follows the isolated host and opens without accepting renderer credentials', async t => {
+  const opened = [];
+  const base = fixture();
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: base.adapter,
+    provisioningHost: { open: (...args) => { opened.push(args); return { opened: true }; } } });
+  t.after(() => runtime.dispose());
+  assert.equal(runtime.snapshot().capabilities.provisioning, true,
+    'the signed-out production snapshot advertises the packaged provisioning window');
+  assert.equal((await call(runtime, 'openProvisioning')).error.code, 'AUTHENTICATION_REQUIRED');
+  assert.equal(opened.length, 0);
+  assert.equal((await call(runtime, 'signInWithPassword', {
+    phone: '13800000000', password: 'Synthetic-password-1', rememberPassword: false,
+  })).ok, true);
+  const result = await call(runtime, 'openProvisioning');
+  assert.deepEqual(result.data, { opened: true });
+  assert.deepEqual(opened, [[]], 'the main renderer can only request opening; Wi-Fi credentials stay in the isolated window');
+  assert.equal(JSON.stringify(runtime.snapshot()).includes('password'), false);
+
+  const unavailable = createDesktopRuntime({ mode: 'simulation' });
+  t.after(() => unavailable.dispose());
+  assert.equal(unavailable.snapshot().capabilities.provisioning, false);
+  await call(unavailable, 'beginSignIn');
+  assert.equal((await call(unavailable, 'openProvisioning')).error.code, 'OPERATION_NOT_ALLOWED');
+});
+
 test('remembered-login IPC projects metadata and validates exact shape, mode, flag and generation', async t => {
   let value = { phone: '13800000000', passwordSaved: true }, metadataReads = 0, savedLogins = 0;
   const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
@@ -188,6 +213,73 @@ test('production registration enters device selection and a claim becomes select
   }
 });
 
+test('password reset is a narrow signed-out operation with an account-opaque receipt', async t => {
+  const calls = [];
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    resetPassword: async (credentials, guard) => {
+      calls.push([credentials, guard()]);
+      return { processed: true };
+    },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  const reset = { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' };
+  const result = await call(runtime, 'resetPassword', reset);
+  assert.deepEqual(result.data, { processed: true });
+  assert.equal(runtime.snapshot().phase, 'signed_out');
+  assert.equal(runtime.snapshot().subject, null);
+  assert.deepEqual(calls, [[reset, true]]);
+  assert.equal(JSON.stringify(result).includes(reset.phone), false);
+  assert.equal(JSON.stringify(result).includes(reset.password), false);
+
+  for (const malformed of [{ ...reset, extra: true }, { ...reset, code: '12345' },
+    { ...reset, password: '1234567' }, { ...reset, password: '汉'.repeat(25) },
+    { ...reset, password: 'valid\npassword' }]) {
+    assert.equal((await call(runtime, 'resetPassword', malformed)).error.code, 'INVALID_REQUEST');
+  }
+  assert.equal(calls.length, 1);
+
+  assert.equal((await call(runtime, 'signInWithPassword', {
+    phone: '13800000000', password: 'Synthetic-password-1', rememberPassword: false,
+  })).ok, true);
+  assert.equal((await call(runtime, 'resetPassword', reset)).error.code, 'OPERATION_NOT_ALLOWED');
+  assert.equal(calls.length, 1);
+});
+
+test('password reset rejects malformed adapter receipts without changing login state', async t => {
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    resetPassword: async () => ({ processed: true, accountId: 'must-not-cross-ipc' }),
+  }).adapter });
+  t.after(() => runtime.dispose());
+  const result = await call(runtime, 'resetPassword', {
+    phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1',
+  });
+  assert.equal(result.error.code, 'CONTRACT_MISMATCH');
+  assert.equal(JSON.stringify(result).includes('must-not-cross-ipc'), false);
+  assert.equal(runtime.snapshot().phase, 'signed_out');
+  assert.equal(runtime.snapshot().subject, null);
+});
+
+test('password reset exposes only the stable verification error and remains retryable while signed out', async t => {
+  const privateMarker = 'private-provider-message';
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    resetPassword: async () => {
+      const error = new DesktopError('VERIFICATION_CODE_INVALID', { remoteCode: 'SMS_CODE_INVALID' });
+      error.message = privateMarker;
+      throw error;
+    },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  const result = await call(runtime, 'resetPassword', {
+    phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1',
+  });
+  assert.equal(result.error.code, 'VERIFICATION_CODE_INVALID');
+  assert.equal(result.error.message, '验证码错误或已过期，请重新获取后重试。');
+  assert.equal(result.error.remoteCode, 'SMS_CODE_INVALID');
+  assert.equal(JSON.stringify(result).includes(privateMarker), false);
+  assert.equal(runtime.snapshot().phase, 'signed_out');
+  assert.equal(runtime.snapshot().subject, null);
+});
+
 test('unconfigured mode remains closed even with an injected adapter', async (t) => {
   const runtime = createDesktopRuntime({ adapter: fixture().adapter });
   t.after(() => runtime.dispose());
@@ -271,6 +363,20 @@ test('SDK success alone stays authorizing and wrong bridge binding fails closed'
   assert.equal(runtime.snapshot().capabilities.materialsRead, false);
 });
 
+test('ready snapshots expose only the selected connection path and clear it on disconnect', async t => {
+  const base = fixture();
+  const original = base.adapter.connect;
+  base.adapter.connect = async binding => ({ ...await original(binding), selectedPath: 'RELAY' });
+  const runtime = createDesktopRuntime({ mode: 'simulation', adapter: base.adapter });
+  t.after(() => runtime.dispose());
+  await ready(runtime);
+  assert.equal(runtime.snapshot().subject.selectedPath, 'RELAY');
+  assert.deepEqual(Object.keys(runtime.snapshot().subject).sort(),
+    ['accountId', 'deviceId', 'deviceName', 'selectedPath']);
+  await call(runtime, 'disconnect');
+  assert.equal(runtime.snapshot().subject.selectedPath, undefined);
+});
+
 test('late connection is closed after another device wins', async (t) => {
   const firstConnect = deferred();
   const base = fixture();
@@ -339,7 +445,7 @@ test('disconnect preserves login, sign-out removes it, and stale contexts cannot
   t.after(() => runtime.dispose());
   await ready(runtime);
   assert.deepEqual(runtime.snapshot().subject, {
-    accountId: 'synthetic-account', deviceId: 'synthetic-box-a', deviceName: '模拟盒子 A',
+    accountId: 'synthetic-account', deviceId: 'synthetic-box-a', deviceName: '模拟盒子 A', selectedPath: 'DIRECT',
   });
   const generation = runtime.snapshot().generation;
   assert.equal((await call(runtime, 'disconnect')).ok, true);

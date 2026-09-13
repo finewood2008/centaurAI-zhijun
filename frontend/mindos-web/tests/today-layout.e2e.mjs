@@ -27,7 +27,8 @@ const synthetic = {
 }
 const modules = {
   'today-component': component,
-  '@/services/api': `export const getZhijunHome=async()=>(${JSON.stringify(synthetic)}); export const createConversation=async()=>({id:'synthetic'}); export const updateOnboarding=async()=>{};`,
+  '@/services/api': `export const getZhijunHome=async()=>{if(window.__holdHome) await new Promise(resolve=>window.__finishHome=resolve); return (${JSON.stringify(synthetic)});}; export const createConversation=async()=>({id:'synthetic'}); export const updateOnboarding=async()=>{};`,
+  '@/components/matters/MattersHome.vue': "import {h} from 'vue'; export default {setup(){window.__mattersMounts=(window.__mattersMounts||0)+1;return()=>h('section',{'data-testid':'independent-matters'},'合成事情列表')}};",
   '@/composables/useToast': 'export const useToast=()=>()=>{};',
   '@/shared/labels': "export const greetingLine=()=> '合成日期';",
   'vue-router': 'export const useRouter=()=>({push:async()=>{}});',
@@ -52,6 +53,15 @@ const errors = [], outgoing = []
 page.on('pageerror', error => errors.push(error.message))
 await page.route('**/*', route => { outgoing.push(route.request().url()); return route.abort() })
 try {
+  await page.setContent('<div id="app"></div>')
+  await page.evaluate(() => { window.__holdHome = true })
+  await page.addScriptTag({ content: bundle.outputFiles[0].text })
+  await page.getByTestId('independent-matters').waitFor()
+  assert.equal(await page.locator('.zj-today__skeleton').count(), 1, 'matters mount while home is still pending')
+  await page.evaluate(() => window.__finishHome())
+  await page.locator('.zj-letter').waitFor()
+  assert.equal(await page.evaluate(() => window.__mattersMounts), 1, 'home completion must not remount/refetch matters')
+  await page.evaluate(() => { window.__holdHome = false })
   for (const width of [1440, 1060, 820, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 })
     await page.setContent(`<style>${baseCss}\n${css}\nbody{margin:0}.layout{margin-left:76px;padding:24px}.fixture-child{min-width:0}@media(max-width:767px){.layout{margin-left:0;padding:16px}}</style><div class="layout"><div id="app"></div></div>`)

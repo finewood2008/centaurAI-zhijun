@@ -65,6 +65,15 @@ try {
     await assert.rejects(routing.prepareChatRoute('synthetic-chat', { content: 'still unchanged' }), { code: 'ROUTE_CHANGED' })
     assert.equal(calls.length, 2, 'a constantly changing route is retried only once')
   }
+  {
+    let reads = 0
+    const calls = transport(() => ++reads === 1
+      ? { code: 'RAG_V2_CONTEXT_CHANGED' }
+      : preview('rag-fence-refreshed'))
+    const result = await routing.prepareChatRoute('synthetic-chat', { content: 'keep the request' })
+    assert.equal(result.routeRevision, 'rag-fence-refreshed')
+    assert.equal(calls.length, 2, 'a changed RAG fence rebuilds the preview only once')
+  }
   for (const code of ['SOURCE_CHANGED', 'SOURCE_UNAVAILABLE', 'SOURCE_LIMIT']) {
     const calls = transport(() => ({ code }))
     await assert.rejects(routing.prepareChatRoute('synthetic-chat', { content: 'edited choice', replyAssistance: origin }), { code })

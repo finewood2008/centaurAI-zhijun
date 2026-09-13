@@ -216,22 +216,54 @@ def _material_item(router, record, snapshot, body, snippet, score, *, offset=Non
             "locator": {"kind": "text", "offset": offset, "length": len(snippet)}, "partial": len(snippet) < len(body)}}
 
 
-def material_candidates(router, queries):
+def material_candidates(router, queries, *, interaction_id=None):
     if os.environ.get("ZHIJUN_MATERIAL_EVIDENCE", "1").lower() in ("0", "false", "no"):
         return []
     from ..chat_imports import read_ref, require_material
     results = []
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from zhijun_worker.capabilities import require
-        for query in queries[:3]:
-            for hit in require().call("materials.evidence", {"query": query[:1000], "limit": 12}):
-                if hit.get("source_type") != "material" or not hit.get("material_id"):
+        from .. import data_agent_rag
+        from ..stores.chat_import_store import ChatImportStore
+
+        material_ids = sorted(ChatImportStore(router.convs).protected_ids(router.scope))
+        if not material_ids:
+            return []
+        interaction_id = interaction_id or (
+            router.cid + ":context:" + digest(list(queries))[:32]
+        )
+        for index, query in enumerate(queries[:3]):
+            hits = data_agent_rag.search_materials(
+                query[:1000], material_ids, f"{interaction_id}:{index}", top_k=12
+            )
+            for hit in hits:
+                try:
+                    record = require_material(hit["materialId"], router.scope)
+                except (HTTPException, KeyError):
                     continue
-                record = require_material(hit["material_id"], router.scope)
-                record, snapshot, body = read_ref({"materialId": record["materialId"], "version": record["versionNumber"]}, router.scope)
-                item = _material_item(router, record, snapshot, body, hit.get("snippet", ""), float(hit.get("score", 0)))
-                if item:
-                    results.append(item)
+                if record["versionNumber"] != hit["materialVersion"]:
+                    continue
+                ident, version = record["materialId"], record["versionNumber"]
+                results.append({
+                    "ref": router.ref("material", ident, materialVersion=version),
+                    "score": hit["score"],
+                    "category": "material",
+                    "title": hit["title"],
+                    "text": hit["text"],
+                    "material": {
+                        "materialId": ident,
+                        "version": version,
+                        "title": hit["title"],
+                        "snapshotId": f"rag-v2:{ident}:{version}",
+                        "chunkKey": hit["evidenceRef"],
+                        "evidenceRef": hit["evidenceRef"],
+                        "locator": hit["locator"],
+                        "partial": True,
+                        "containsSensitive": hit["containsSensitive"],
+                        "verificationStatus": hit["verificationStatus"],
+                        "policyVersion": hit["policyVersion"],
+                        "detectorRevision": hit["detectorRevision"],
+                    },
+                })
         return sorted(results, key=lambda item: (-item["score"], item["ref"]["id"]))[:80]
     qa = sys.modules.get("mindos.qa")
     encoder = getattr(sys.modules.get("embedder"), "_text_model", None)

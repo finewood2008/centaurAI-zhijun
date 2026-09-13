@@ -126,7 +126,9 @@ class TurnSseTests(unittest.TestCase):
         receipt = self.client.get(f"/api/mindos/conversations/{conv['id']}/messages/{events[0][1]['messageId']}/receipt").json()
         self.assertIn(told_id, receipt["confirmedClaimIds"])
         # 刷新后历史回复也带出处（由回执还原）
-        history = self.client.get(f"/api/mindos/conversations/{conv['id']}").json()["messages"]
+        with patch.object(self.convs, "get_receipt", side_effect=AssertionError("detail must batch receipts")), \
+             patch.object(self.onto, "get_claim", side_effect=AssertionError("detail must batch claims")):
+            history = self.client.get(f"/api/mindos/conversations/{conv['id']}").json()["messages"]
         last_reply = [m for m in history if m["role"] == "assistant"][-1]
         self.assertTrue(last_reply["provenance"]["fromReceipt"])
         self.assertIn(told_id, [c["id"] for c in last_reply["provenance"]["confirmedClaims"]])

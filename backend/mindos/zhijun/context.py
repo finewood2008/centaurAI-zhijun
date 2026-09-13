@@ -6,6 +6,7 @@ sensitive/restricted 永不外发。每轮组装结果同时产出 ``provenance`
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from dataclasses import dataclass, field
@@ -67,15 +68,37 @@ def _fit(lines: list[str], budget: int) -> list[str]:
     return kept
 
 
-def _material_evidence(user_text: str, limit: int = 4, device_scope: str = "global") -> list:
+def _material_evidence(user_text: str, limit: int = 4, device_scope: str = "global",
+                       interaction_id: str | None = None, conversation_store=None) -> list:
     if os.environ.get("ZHIJUN_MATERIAL_EVIDENCE", "1").strip().lower() in ("0", "false", "no"):
         return []
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
         if not user_text.strip():
             return []
         from types import SimpleNamespace
-        from zhijun_worker.capabilities import require
-        return [SimpleNamespace(**item) for item in require().call("materials.evidence", {"query": user_text[:1000], "limit": min(limit, 12)})]
+        from .. import data_agent_rag
+        from ..stores.chat_import_store import ChatImportStore
+        from ..stores.conversation_store import ConversationStore
+
+        material_ids = sorted(ChatImportStore(
+            conversation_store or ConversationStore.instance()
+        ).protected_ids(device_scope))
+        if not material_ids:
+            return []
+        interaction_id = interaction_id or (
+            "legacy:" + hashlib.sha256((device_scope + "\0" + user_text).encode("utf-8")).hexdigest()[:48]
+        )
+        return [SimpleNamespace(
+            source_type="material",
+            material_id=item["materialId"],
+            knowledge_id=None,
+            title=item["title"],
+            snippet=item["text"],
+            chunk_key=item["evidenceRef"],
+            locator=item["locator"],
+        ) for item in data_agent_rag.search_materials(
+            user_text[:1000], material_ids, interaction_id, top_k=min(limit, 10)
+        )]
     try:
         from .. import qa as _qa  # 延迟导入：拉起 embedder / vector_store，缺模型时直接跳过
 
@@ -137,7 +160,13 @@ def assemble(
     attachment_text, attachment_sources = "", []
     if material_refs:
         from ..chat_imports import attachment_context
-        attachment_text, attachment_sources = attachment_context(material_refs, device_scope, user_text, external=provider.external)
+        attachment_interaction = conversation["id"] + ":legacy-files:" + hashlib.sha256(
+            (user_text + "\0" + repr(material_refs)).encode("utf-8")
+        ).hexdigest()[:24]
+        attachment_text, attachment_sources = attachment_context(
+            material_refs, device_scope, user_text, external=provider.external,
+            interaction_id=attachment_interaction,
+        )
         budget["total"] -= len(attachment_text)
     mode = conversation.get("mode") or "chat"
     outcome_recorded = bool(decision and decision.get("status") in ("outcome_recorded", "reviewed"))
@@ -203,7 +232,13 @@ def assemble(
     materials: list = []
     material_items: list[dict] = []
     if budget["materials"] > 0:
-        materials = _material_evidence(user_text, device_scope=device_scope)
+        legacy_interaction = conversation["id"] + ":legacy:" + hashlib.sha256(
+            user_text.encode("utf-8")
+        ).hexdigest()[:24]
+        materials = _material_evidence(
+            user_text, device_scope=device_scope, interaction_id=legacy_interaction,
+            conversation_store=convs,
+        )
         lines: list[str] = []
         for i, ev in enumerate(materials, start=len(attachment_sources) + 1):
             title = getattr(ev, "title", "") or ""

@@ -1,6 +1,6 @@
 import { hasProductScope, isDesktopProduct, onProductScopeReset } from '../shared/productScope.ts'
 import { createNavigationProgressReader } from './navigationProgress.ts'
-import { transportRequest } from './transport.ts'
+import { transportRequest, type ProductRequestInit } from './transport.ts'
 // 类型化 API Service：MindOS 浏览器页面统一通过此模块访问 /api/...，
 // 不依赖 window.api / Electron preload / ipcRenderer。
 import type { HealthInfo } from '@/types'
@@ -14,6 +14,7 @@ const CSRF_HEADERS = { 'X-Requested-By': 'centaur-vdb' }
 // localStorage 等可持久化存储——避免静态/持久化 Bearer 会话凭证泄露后可直接访问
 // MindOS，也符合「MindOS 不承担账号/Owner/认领控制面」。
 const SESSION_HEADER = 'X-MindOS-Session'
+const SAFE_SENSITIVE_RULE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/
 
 // 会话凭证仅本次页面生命周期存活，刷新即失效，须由宿主重新注入。
 let sessionToken: string | null = null
@@ -31,14 +32,19 @@ export class ApiError extends Error {
   readonly code?: string
   readonly details?: string[]
   readonly preview?: import('./taskRouting').RoutePreview
+  readonly ragV2?: import('./taskRouting').RagV2Prompt
+  readonly similarRuleId?: string
 
-  constructor(message: string, status: number, code?: string, details?: string[], preview?: import('./taskRouting').RoutePreview) {
+  constructor(message: string, status: number, code?: string, details?: string[], preview?: import('./taskRouting').RoutePreview,
+              ragV2?: import('./taskRouting').RagV2Prompt, similarRuleId?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.details = details
     this.preview = preview
+    this.ragV2 = ragV2
+    this.similarRuleId = similarRuleId
   }
 }
 
@@ -85,6 +91,8 @@ export async function throwApiError(res: Response): Promise<never> {
   let code: string | undefined
   let details: string[] | undefined
   let preview: import('./taskRouting').RoutePreview | undefined
+  let ragV2: import('./taskRouting').RagV2Prompt | undefined
+  let similarRuleId: string | undefined
   try {
     const body = await res.json()
     if (body && typeof body.detail === 'string') message = body.detail
@@ -93,6 +101,10 @@ export async function throwApiError(res: Response): Promise<never> {
       else if (typeof body.detail.message === 'string') message = body.detail.message
       code = typeof body.detail.code === 'string' ? body.detail.code : undefined
       if (body.detail.preview && typeof body.detail.preview === 'object') preview = body.detail.preview
+      if (body.detail.ragV2 && typeof body.detail.ragV2 === 'object') ragV2 = body.detail.ragV2
+      if (typeof body.detail.similarRuleId === 'string' && SAFE_SENSITIVE_RULE_ID.test(body.detail.similarRuleId)) {
+        similarRuleId = body.detail.similarRuleId
+      }
       const parsedDetails = Array.isArray(body.detail.details)
         ? body.detail.details.filter((item: unknown): item is string => typeof item === 'string')
         : []
@@ -110,16 +122,22 @@ export async function throwApiError(res: Response): Promise<never> {
     else if (body && body.error && typeof body.error === 'object') {
       if (typeof body.error.message === 'string') message = body.error.message
       code = typeof body.error.code === 'string' ? body.error.code : undefined
+      if (typeof body.error.similarRuleId === 'string' && SAFE_SENSITIVE_RULE_ID.test(body.error.similarRuleId)) {
+        similarRuleId = body.error.similarRuleId
+      }
     }
     if (!code && body && typeof body.code === 'string') code = body.code
+    if (!similarRuleId && body && typeof body.similarRuleId === 'string' && SAFE_SENSITIVE_RULE_ID.test(body.similarRuleId)) {
+      similarRuleId = body.similarRuleId
+    }
     if (message === fallbackMessage && code && API_ERROR_MESSAGES[code]) message = API_ERROR_MESSAGES[code]
   } catch {
     // 忽略非 JSON 响应体
   }
-  throw new ApiError(message, res.status, code, details, preview)
+  throw new ApiError(message, res.status, code, details, preview, ragV2, similarRuleId)
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: ProductRequestInit): Promise<T> {
   const headers = buildHeaders(init)
   const res = await transportRequest(`${BASE}${path}`, { ...init, headers })
   if (!res.ok) await throwApiError(res)
@@ -135,7 +153,7 @@ export interface ImportValidationResult {
 // MindOS 上传/处理状态（uploaded 上传中 / queued 等待处理 / processing 处理中 / available 已完成）
 // 文案与语义色统一映射见 src/shared/status.ts
 export type MaterialStatus = 'uploaded' | 'queued' | 'processing' | 'available' | 'failed' | 'deleted'
-export type MaterialKnowledgeCardState = 'waiting' | 'generating' | 'draft' | 'confirming' | 'indexing' | 'available' | 'failed' | 'recycled' | 'unknown'
+export type MaterialKnowledgeCardState = 'waiting' | 'generating' | 'draft' | 'confirming' | 'indexing' | 'available' | 'failed' | 'recycled' | 'unknown' | 'draft_failed' | 'index_failed' | 'state_conflict' | 'recycling' | 'restoring' | 'purging' | 'purged' | 'merged'
 
 export interface UploadResult {
   materialId: string
@@ -1220,6 +1238,59 @@ export interface RedactionStatus {
   attempts: { attempt_id: string; kind: 'body' | 'summary'; state: string; error_code: string | null }[]
 }
 
+export type SensitiveRuleSource = 'built_in' | 'custom'
+export type SensitiveRuleDeliveryMode = 'confirm' | 'always_mask' | 'block'
+export type SensitiveRuleMasking = Readonly<Record<string, unknown>>
+
+export interface SensitiveRule {
+  ruleId: string
+  source: SensitiveRuleSource
+  immutable: boolean
+  revision: number
+  name: string
+  description: string
+  examples: string[]
+  counterExamples: string[]
+  enabled: boolean
+  deliveryMode: SensitiveRuleDeliveryMode
+  allowOriginalAfterConfirm: boolean
+  masking: SensitiveRuleMasking
+}
+
+export interface SensitiveRulesResponse {
+  items: SensitiveRule[]
+  total: number
+  builtinCount: number
+  customCount: number
+  maxCustomRules: number
+  enabledRuleCount: number
+  detectorPromptTokens: number
+  detectorPromptTokenLimit: number
+  detectorPromptWithinLimit: boolean
+  detectorPromptTokensRemaining: number
+  epoch: number
+  detectorRevision: string
+}
+
+export interface SensitiveRuleDraft {
+  name: string
+  description: string
+  examples: string[]
+  counterExamples: string[]
+  enabled: boolean
+  deliveryMode: SensitiveRuleDeliveryMode
+  allowOriginalAfterConfirm: boolean
+}
+
+export interface SensitiveRuleCreatePayload extends SensitiveRuleDraft {
+  requestId: string
+  acknowledgeSimilarRuleId?: string
+}
+
+export interface SensitiveRuleUpdatePayload extends SensitiveRuleCreatePayload {
+  expectedRevision: number
+}
+
 export const api = {
   getRedactionStatus: (id: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction`),
   getRedactionReview: (id: string, kind: string) => request<{
@@ -1249,6 +1320,26 @@ export const api = {
   }),
   retryRedaction: (id: string, payload: { versionId: string; kind: string }) =>
     postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/retry`, payload),
+  getSensitiveRules: (signal?: AbortSignal) =>
+    request<SensitiveRulesResponse>('/mindos/settings/sensitive-rules', { signal }),
+  getSensitiveRule: (ruleId: string, signal?: AbortSignal) =>
+    request<SensitiveRule>(`/mindos/settings/sensitive-rules/${encodeURIComponent(ruleId)}`, { signal }),
+  createSensitiveRule: (payload: SensitiveRuleCreatePayload) => {
+    const { requestId, ...rule } = payload
+    return postJson<SensitiveRule>('/mindos/settings/sensitive-rules/custom', { requestId, rule })
+  },
+  updateSensitiveRule: (ruleId: string, payload: SensitiveRuleUpdatePayload) => {
+    const { requestId, expectedRevision, ...rule } = payload
+    return putJson<SensitiveRule>(`/mindos/settings/sensitive-rules/custom/${encodeURIComponent(ruleId)}`, {
+      requestId, expectedRevision, rule,
+    })
+  },
+  deleteSensitiveRule: (ruleId: string, expectedRevision: number) =>
+    request<{ deleted: boolean; ruleId: string }>(`/mindos/settings/sensitive-rules/custom/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS },
+      body: JSON.stringify({ expectedRevision }),
+    }),
   health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),
   // 后端同一套导入校验规则（与 mindos.validation.validate_import 一致）。
@@ -1257,11 +1348,11 @@ export const api = {
     postJson<ImportValidationResult>('/mindos/validate', { filename, size }),
   // P2：真实上传 + 进入处理链路；校验失败由后端拒绝（不落盘、不建任务）
   // P14-06：folderId 为目录树节点 ID（null/省略 = 未分类）
-  uploadFile: (file: File, folderId?: number | null) => {
+  uploadFile: (file: File, folderId?: number | null, onUploadProgress?: ProductRequestInit['onUploadProgress']) => {
     const form = new FormData()
     form.append('file', file)
     if (folderId != null && folderId > 0) form.append('folderId', String(folderId))
-    return request<UploadResult>('/mindos/uploads', { method: 'POST', headers: CSRF_HEADERS, body: form })
+    return request<UploadResult>('/mindos/uploads', { method: 'POST', headers: CSRF_HEADERS, body: form, onUploadProgress })
   },
   // P2：轮询处理状态
   getUploadStatus: (materialId: string) => request<UploadResult>(`/mindos/uploads/${materialId}`),
@@ -1302,6 +1393,8 @@ export const api = {
   getMaterialAnalysis: (materialId: string) => request<MaterialAnalysis>(`/mindos/materials/${encodeURIComponent(materialId)}/analysis`),
   reparseMaterial: (materialId: string) =>
     postJson<MaterialAnalysis>(`/mindos/materials/${encodeURIComponent(materialId)}/regenerate`, { item: 'parse' }),
+  regenerateMaterialDraft: (materialId: string) =>
+    postJson<MaterialDraftCard & { materialId: string; item: 'draft' }>(`/mindos/materials/${encodeURIComponent(materialId)}/regenerate`, { item: 'draft' }),
   // P14-04：读取异步缓存的标签候选；缺失时触发后台重算并返回 pending
   getMaterialTagSuggestions: (materialId: string) => request<MaterialTagSuggestions>(`/mindos/materials/${encodeURIComponent(materialId)}/tag-suggestions`),
   // P14-04：确认候选 → 写入正式标签（后端校验 suggestionId 归属并审计；幂等）
@@ -1630,7 +1723,7 @@ export interface ChatImportFile {
 }
 export interface ChatImportBatch {
   id: string; conversationId: string; messageId: string; state: string; error: string | null
-  localOnly: boolean; files: ChatImportFile[]
+  localOnly: boolean; ragV2: import('./taskRouting').RagV2Prompt | null; files: ChatImportFile[]
 }
 export interface ChatFileService { id: string; name: string; model: string; external: boolean }
 export interface ChatImportListing {
@@ -1653,6 +1746,8 @@ export const chatImports = {
   retry: (id: string, batch: string) => postJson<ChatImportBatch>(`${chatPath(id)}/imports/${batch}/retry`, {}),
   select: (id: string, refs: ChatMaterialRef[], localOnly: boolean) => putJson(`${chatPath(id)}/references`, { refs, localOnly }),
   consent: (id: string, refs: ChatMaterialRef[], localOnly: boolean, serviceId?: string) => postJson(`${chatPath(id)}/file-consent`, { refs, localOnly, serviceId }),
+  ragDecision: (id: string, interactionId: string, action: import('./taskRouting').RagV2Decision) =>
+    postJson(`${chatPath(id)}/rag-v2/decision`, { interactionId, action }),
   preview: (id: string, ref: ChatMaterialRef, offset = 0) => request<ChatFilePreview>(`${chatPath(id)}/files/${encodeURIComponent(ref.materialId)}/preview?version=${ref.version}&offset=${offset}`),
 }
 
@@ -2234,6 +2329,7 @@ export interface StreamErrorEvent {
   userMessageId?: string
   messageId?: string
   stage?: 'initial' | 'supplemented'
+  ragV2?: import('./taskRouting').RagV2Prompt
 }
 
 export function createConversation(payload: { mode?: ConversationMode; title?: string; decisionId?: string; taskContext?: 'charter' } = {}) {

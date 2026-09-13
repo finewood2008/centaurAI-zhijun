@@ -47,15 +47,31 @@ def _check_environment(workspace):
     workspace.validate()
     if os.environ.get("ZHIJUN_WORKSPACE_ID") != workspace.workspace_id or os.environ.get("MINDOS_RUNTIME_ENV") != "production" or os.environ.get("MINDOS_LOCAL_WEB_DEBUG_ACCESS") != "0":
         raise ValueError("WORKER_ENVIRONMENT_INVALID")
-    for name in ("CENTAURAI_DATABASE_DATA_ROOT", "CENTAUR_SECRET_STORE_DIR", "CENTAUR_METADATA_DB", "CENTAUR_GBRAIN_HOME", "CENTAUR_MCP_DATA_DIR", "CENTAUR_MCP_CONFIG_DIR"):
+    for name in ("CENTAURAI_DATABASE_DATA_ROOT", "CENTAUR_METADATA_DB", "CENTAUR_GBRAIN_HOME", "CENTAUR_MCP_DATA_DIR", "CENTAUR_MCP_CONFIG_DIR"):
         value = os.environ.get(name)
         if not value:
             raise ValueError("WORKER_PATH_NOT_ISOLATED")
         path = Path(value)
         if not path.is_absolute() or not path.is_relative_to(workspace.data_root) or any(p.is_symlink() for p in (path, *path.parents)) or ".." in path.parts:
             raise ValueError("WORKER_PATH_NOT_ISOLATED")
+    secret_value = os.environ.get("CENTAUR_SECRET_STORE_DIR", "")
+    secret_root = Path(secret_value)
+    if (not secret_value or not secret_root.is_absolute()
+            or any(path.is_symlink() for path in (secret_root, *secret_root.parents))
+            or secret_root == workspace.data_root
+            or secret_root.is_relative_to(workspace.data_root)
+            or workspace.data_root.is_relative_to(secret_root)):
+        raise ValueError("WORKER_SECRET_PATH_NOT_ISOLATED")
+    try:
+        secret_info = secret_root.stat()
+    except OSError:
+        raise ValueError("WORKER_SECRET_PATH_NOT_ISOLATED") from None
+    if (not stat.S_ISDIR(secret_info.st_mode) or secret_info.st_uid != os.geteuid()
+            or secret_info.st_mode & 0o077):
+        raise ValueError("WORKER_SECRET_PATH_NOT_ISOLATED")
     import runtime_paths
-    if runtime_paths.DATA_ROOT != workspace.data_root:
+    if (runtime_paths.DATA_ROOT != workspace.data_root
+            or runtime_paths.SECRET_STORE_DIR != secret_root):
         raise ValueError("WORKER_PATH_ALREADY_IMPORTED")
 
 
@@ -113,9 +129,9 @@ def create_app(workspace, capabilities=None):
     for module in (conversations, ontology, growth, nudges, zhijun_onboarding, zhijun_status, zhijun_home):
         registered.extend(module.router.routes)
         domain.include_router(module.router, dependencies=[Depends(require_workspace)])
-    from mindos import memory_routes, matters_routes, chat_import_routes
+    from mindos import memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes
     from mindos.zhijun import charter
-    for module in (memory_routes, matters_routes, chat_import_routes, charter):
+    for module in (memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes, charter):
         router = module.build_router(require_workspace)
         registered.extend(router.routes)
         domain.include_router(router, dependencies=[Depends(require_workspace)])

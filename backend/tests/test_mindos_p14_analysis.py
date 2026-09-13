@@ -629,6 +629,29 @@ class SubmitRefreshAnalysisTests(unittest.TestCase):
             self.assertEqual(self.store.get_derived_record("material", "m", kind)["status"], "pending")
 
     @patch.object(derived, "_ollama_scheduler")
+    def test_rejected_skipped_recovery_finishes_exact_persisted_lease(self, scheduler):
+        scheduler.submit.return_value = False
+        for kind in (
+            derived.KIND_SUMMARY, derived.KIND_TAG_SUGGESTIONS,
+            derived.KIND_ENTITY_EXTRACTION, derived.KIND_RELATION_EXTRACTION,
+        ):
+            self.store.set_derived_record(
+                "material", "m", kind, "skipped", {"items": []}, "", "g"
+            )
+        with patch.object(derived, "_input_text", return_value="已补齐的资料正文"):
+            result = derived.refresh_analysis("m", "/tmp/a.pdf")
+        self.assertFalse(any(result.values()))
+        for kind in (
+            derived.KIND_SUMMARY, derived.KIND_TAG_SUGGESTIONS,
+            derived.KIND_ENTITY_EXTRACTION, derived.KIND_RELATION_EXTRACTION,
+        ):
+            failed = self.store.get_derived_record("material", "m", kind)
+            self.assertEqual(failed["status"], "unavailable")
+            self.assertEqual(
+                failed["content"]["errorCode"], "generation_queue_unavailable"
+            )
+
+    @patch.object(derived, "_ollama_scheduler")
     def test_refresh_analysis_resubmits_failed(self, scheduler):
         for kind in (derived.KIND_SUMMARY, derived.KIND_TAG_SUGGESTIONS, derived.KIND_ENTITY_EXTRACTION,
                       derived.KIND_RELATION_EXTRACTION):
@@ -637,6 +660,73 @@ class SubmitRefreshAnalysisTests(unittest.TestCase):
             )
         derived.refresh_analysis("m", "/tmp/a.pdf")
         self.assertEqual(scheduler.submit.call_count, 4)
+
+    @patch.object(derived, "_ollama_scheduler")
+    def test_refresh_analysis_requeues_stale_pending_records_once(self, scheduler):
+        records = []
+        for kind, content in (
+            (derived.KIND_SUMMARY, {"text": ""}),
+            (derived.KIND_TAG_SUGGESTIONS, {"items": []}),
+            (derived.KIND_ENTITY_EXTRACTION, {"items": []}),
+            (derived.KIND_RELATION_EXTRACTION, {"items": []}),
+        ):
+            self.store.set_derived_record(
+                "material", "m", kind, "pending", content, f"hash-{kind}", "g"
+            )
+            records.append(self.store.get_derived_record("material", "m", kind))
+        stale_now = (
+            max(record["updated_at"] for record in records)
+            + derived._PENDING_GENERATION_LEASE_SECONDS
+            + 1
+        )
+        with patch.object(derived.time, "time", return_value=stale_now):
+            first = derived.refresh_analysis("m", "/tmp/a.pdf")
+            second = derived.refresh_analysis("m", "/tmp/a.pdf")
+        self.assertEqual(scheduler.submit.call_count, 4)
+        self.assertTrue(all(first[key] for key in (
+            "summaryScheduled", "tagScheduled", "entityScheduled", "relationScheduled"
+        )))
+        self.assertFalse(any(second[key] for key in (
+            "summaryScheduled", "tagScheduled", "entityScheduled", "relationScheduled"
+        )))
+        for kind in (
+            derived.KIND_SUMMARY, derived.KIND_TAG_SUGGESTIONS,
+            derived.KIND_ENTITY_EXTRACTION, derived.KIND_RELATION_EXTRACTION,
+        ):
+            recovered = self.store.get_derived_record("material", "m", kind)
+            self.assertEqual(recovered["status"], "pending")
+            self.assertEqual(recovered["input_hash"], f"hash-{kind}")
+
+    @patch.object(derived, "_ollama_scheduler")
+    def test_refresh_analysis_queue_rejection_finishes_recovery_lease(self, scheduler):
+        scheduler.submit.return_value = False
+        records = []
+        for kind in (
+            derived.KIND_SUMMARY, derived.KIND_TAG_SUGGESTIONS,
+            derived.KIND_ENTITY_EXTRACTION, derived.KIND_RELATION_EXTRACTION,
+        ):
+            self.store.set_derived_record(
+                "material", "m", kind, "pending", {"items": []}, "hash", "g"
+            )
+            records.append(self.store.get_derived_record("material", "m", kind))
+        stale_now = (
+            max(record["updated_at"] for record in records)
+            + derived._PENDING_GENERATION_LEASE_SECONDS
+            + 1
+        )
+        with patch.object(derived.time, "time", return_value=stale_now):
+            first = derived.refresh_analysis("m", "/tmp/a.pdf")
+            second = derived.refresh_analysis("m", "/tmp/a.pdf")
+        self.assertEqual(scheduler.submit.call_count, 4)
+        self.assertFalse(any(first.values()))
+        self.assertFalse(any(second.values()))
+        for kind in (
+            derived.KIND_SUMMARY, derived.KIND_TAG_SUGGESTIONS,
+            derived.KIND_ENTITY_EXTRACTION, derived.KIND_RELATION_EXTRACTION,
+        ):
+            failed = self.store.get_derived_record("material", "m", kind)
+            self.assertEqual(failed["status"], "unavailable")
+            self.assertEqual(failed["content"]["errorCode"], "generation_queue_unavailable")
 
     @patch.object(derived, "_ollama_scheduler")
     def test_refresh_analysis_respects_failure_cooldown(self, scheduler):

@@ -4,7 +4,7 @@ from typing import Literal
 from fastapi import Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from .chat_imports import require_conversation, service_info
+from .chat_imports import local_provider, require_conversation, service_info
 from .stores.conversation_store import ConversationStore
 from .stores.ontology_store import OntologyStore
 from .stores.routing_store import RoutingStore
@@ -147,6 +147,27 @@ def handling_state(store, scope, service):
             "serviceChanged": value["enabled"] and value["service"] != (service or {}).get("id")}
 
 
+def local_service_info():
+    """Return the configured local model's safe public identity, or fail closed."""
+    try:
+        provider = local_provider()
+        info = service_info(provider)
+        if getattr(provider, "external", True) is not False or info.get("external") is not False:
+            return None
+        limits = {"id": 256, "name": 128, "model": 128}
+        public = {}
+        for key, limit in limits.items():
+            value = info.get(key)
+            if (not isinstance(value, str) or not value or len(value) > limit
+                    or value != value.strip() or any(ord(char) < 32 for char in value)):
+                return None
+            public[key] = value
+        return {**public, "external": False}
+    except Exception:
+        # Local runtime/capability errors can contain endpoints or credentials.
+        return None
+
+
 def set_handling(conversation_id: str, req: Handling, request: Request):
     r = router_for(conversation_id, request)
     service = r.store.handling(r.scope)["service"]
@@ -172,7 +193,7 @@ def state(conversation_id: str, request: Request):
         service, configuration_revision, error = service_info(p), getattr(p, "configuration_revision", ""), ""
     except Exception as exc:
         service, configuration_revision, error = None, "", str(exc)
-    return {"mode": r.mode, "service": service, "error": error,
+    return {"mode": r.mode, "service": service, "localService": local_service_info(), "error": error,
             "handlingPreference": handling_state(r.store, r.scope, service),
             "defaultAuthorization": policy_state(r.store, r.scope, service, configuration_revision),
             "pending": active_pending(r),
@@ -337,7 +358,8 @@ def default_state(request: Request):
         service, configuration_revision, error = service_info(provider), getattr(provider, "configuration_revision", ""), ""
     except Exception as exc:
         service, configuration_revision, error = None, "", str(exc)
-    return {"mode": store.mode("default:" + _device_scope_of(request)), "service": service, "error": error,
+    return {"mode": store.mode("default:" + _device_scope_of(request)), "service": service,
+            "localService": local_service_info(), "error": error,
             "handlingPreference": handling_state(store, _device_scope_of(request), service),
             "defaultAuthorization": policy_state(store, _device_scope_of(request), service, configuration_revision),
             "pending": active_pending(router_for("default", request))}

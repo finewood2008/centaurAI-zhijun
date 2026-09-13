@@ -8,7 +8,10 @@ const { execFileSync, spawn } = require('node:child_process')
 
 const shell = path.resolve(__dirname, '..')
 const metadata = require('../package.json')
-const source = path.join(shell, 'release/mac-arm64/知君.app')
+const testFlavor = process.env.ZHIJUN_PACKAGE_FLAVOR === 'test'
+const appName = testFlavor ? '知君配网测试版.app' : '知君.app'
+const executableName = testFlavor ? '知君配网测试版' : '知君'
+const source = path.join(shell, testFlavor ? 'release-test/mac-arm64' : 'release/mac-arm64', appName)
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds))
 
 async function freePort() {
@@ -58,17 +61,18 @@ async function stop(child) {
 async function main() {
   if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('PACKAGE_PLATFORM_UNSUPPORTED')
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'zhijun-package-smoke-'))
-  const app = path.join(temporary, '知君.app')
+  const app = path.join(temporary, appName)
   let child
   try {
     execFileSync('/usr/bin/ditto', [source, app], { stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 })
     const port = await freePort()
-    const executable = path.join(app, 'Contents/MacOS/知君')
+    const executable = path.join(app, 'Contents/MacOS', executableName)
     const env = { ...process.env, ZHIJUN_DESKTOP_USER_DATA: path.join(temporary, 'profile'), ZHIJUN_SHELL_NOGPU: '1' }
     delete env.ELECTRON_RUN_AS_NODE
     child = spawn(executable, [`--remote-debugging-port=${port}`], { env, stdio: ['ignore', 'pipe', 'pipe'] })
     const page = await waitForDesktop(port, child)
-    console.log(JSON.stringify({ ok: true, version: metadata.version, title: page.title, url: page.url, relocated: true }))
+    console.log(JSON.stringify({ ok: true, flavor: testFlavor ? 'test' : 'production', version: metadata.version,
+      title: page.title, url: page.url, relocated: true }))
   } finally {
     if (child) await stop(child)
     fs.rmSync(temporary, { recursive: true, force: true })

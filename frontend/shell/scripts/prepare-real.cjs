@@ -8,12 +8,12 @@ const { validateConfig } = require('../production/config.cjs');
 const product = require('../config/zhijun-product.example.json');
 const binding = require('../config/zhijun-connectivity.json');
 const binaries = Object.freeze({
-  'darwin-arm64': '9613fd07bdd6db4146bf8ddd54d062d513e8171b22b811b29b0f5e9ded80ea59',
-  'darwin-x64': 'f4cbc846a369a3e0c7340dcafa7e17660887e6b644fe28d666cc737b3a36aa60',
-  'linux-arm64': '3939cd8d0a68a171893921d0bfb6aa480d5afb779bbfbd55d4914acc59669f95',
-  'linux-x64': 'f94c754bc6c5a10e2083935884605f58bb787af0d6ecf0c571f114275dc892bd',
-  'win32-arm64': 'd346257eae35a6fd2e2e4743f8182c1003fcd665a36f613ead1d3d5c3acdecc0',
-  'win32-x64': '4f9000c21a867a516c3961b08931cddb68e5bf3d21c5fd71b0012f85cf57c14a',
+  'darwin-arm64': 'ffe277893e2b02eb2442dd35d5a9ce68fa582f8880ffe06fc417a2c39d42fcb5',
+  'darwin-x64': '03c9f666d2d10c2d6523f996e85d631bcb19a3543455418f30538027ba231942',
+  'linux-arm64': 'd7147f2186dd4592a95cb6b4ceb3e6668e80d2ce6e3e2ffabcf01d273eb46feb',
+  'linux-x64': 'cc457ffe77d008e603ba33879142430ab8f0952f4cf5aaabf36949106ac59ba8',
+  'win32-arm64': '19537a16492c305e702b466325325d50e19d2c3d19b0607fbf303521ad851cb4',
+  'win32-x64': 'a0937ea8d679368f82048e7fc5e4a709c517596ae3722d78f87c3ccf9349c588',
 });
 const sha256 = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 async function readRegular(filename) {
@@ -95,7 +95,7 @@ if (require.main === module) {
     console.error('用法：node frontend/shell/scripts/prepare-real.cjs [--sdk-release <SDK release目录>]');
     process.exitCode = 2;
   } else {
-    prepare({ releaseDirectory: args[1] ? path.resolve(args[1]) : path.resolve(root, '../nexusaos-centuarai-conn-sdks/release/electron-sidecars-1.2.1'),
+    prepare({ releaseDirectory: args[1] ? path.resolve(args[1]) : path.resolve(root, '../nexusaos-centuarai-conn-sdks/release/electron-sidecars-1.3.0-final'),
       outputDirectory: path.join(root, 'data/desktop') }).then(result => console.log(JSON.stringify(result, null, 2)), error => {
       console.error(JSON.stringify({ result: 'failed', code: /^[A-Z_]+$/.test(error.message) ? error.message : 'PREPARE_FAILED' }));
       process.exitCode = 1;

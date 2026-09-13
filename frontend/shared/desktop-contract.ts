@@ -11,6 +11,8 @@ export type PublicErrorCode =
   | 'CONFIGURATION_REQUIRED'
   | 'AUTHENTICATION_REQUIRED'
   | 'AUTHENTICATION_FAILED'
+  | 'SAVED_CREDENTIAL_REJECTED'
+  | 'VERIFICATION_CODE_INVALID'
   | 'APPLICATION_AUTHORIZATION_DENIED'
   | 'ACCOUNT_SERVICE_UNAVAILABLE'
   | 'SECURE_STORAGE_UNAVAILABLE'
@@ -58,6 +60,7 @@ export type Result<T> =
 
 export type Phase = 'signed_out' | 'authenticating' | 'selecting_device'
   | 'connecting' | 'authorizing' | 'ready' | 'disconnecting' | 'failed';
+export type ConnectionPath = 'DIRECT' | 'RELAY';
 
 export interface M0Capabilities {
   readonly materialsRead: boolean;
@@ -65,7 +68,7 @@ export interface M0Capabilities {
   readonly product: boolean;
   readonly uploads: boolean;
   readonly matters: boolean;
-  readonly provisioning: false;
+  readonly provisioning: boolean;
 }
 
 interface SnapshotBase {
@@ -80,12 +83,12 @@ interface SnapshotBase {
 export type DesktopSnapshot =
   | (SnapshotBase & Readonly<{
       phase: 'ready';
-      subject: Readonly<{ accountId: string; deviceId: string; deviceName?: string; workspaceId?: string }>;
+      subject: Readonly<{ accountId: string; deviceId: string; deviceName?: string; workspaceId?: string; selectedPath?: ConnectionPath }>;
       capabilities: M0Capabilities & Readonly<{ materialsRead: true }>;
     }>)
   | (SnapshotBase & Readonly<{
       phase: Exclude<Phase, 'ready'>;
-      subject: Readonly<{ accountId: string; deviceId?: string; deviceName?: string; workspaceId?: string }> | null;
+      subject: Readonly<{ accountId: string; deviceId?: string; deviceName?: string; workspaceId?: string; selectedPath?: ConnectionPath }> | null;
       capabilities: M0Capabilities & Readonly<{ materialsRead: false }>;
       error?: PublicError;
     }>);
@@ -140,9 +143,24 @@ export interface RegistrationCodeReceipt {
   readonly expiresIn: number;
 }
 
+export interface PasswordResetCredentials {
+  readonly phone: string;
+  readonly code: string;
+  readonly password: string;
+}
+
+export interface PasswordResetReceipt {
+  /** Account-opaque acknowledgement; this does not prove that the phone is registered. */
+  readonly processed: true;
+}
+
 export interface RememberedLogin {
   readonly phone: string;
   readonly passwordSaved: boolean;
+}
+
+export interface ProvisioningWindowReceipt {
+  readonly opened: true;
 }
 
 export interface ZhijunDesktopV1 {
@@ -157,13 +175,17 @@ export interface ZhijunDesktopV1 {
   signInWithPassword(context: CallContext, credentials: PasswordCredentials): Promise<Result<DesktopSnapshot>>;
   /** The decrypted password stays in the main process. This never signs in automatically. */
   signInWithSavedPassword(context: CallContext, rememberPassword: boolean): Promise<Result<DesktopSnapshot>>;
-  /** Sends an SMS registration proof. Debug codes and provider details never cross IPC. */
+  /** Sends an SMS registration/reset proof. Debug codes and provider details never cross IPC. */
   sendRegistrationCode(context: CallContext, phone: string): Promise<Result<RegistrationCodeReceipt>>;
+  /** Processes an SMS-proved reset without authenticating or disclosing whether the account exists. */
+  resetPassword(context: CallContext, credentials: PasswordResetCredentials): Promise<Result<PasswordResetReceipt>>;
   /** Registers the Consumer account and enters the authenticated device-selection state. */
   registerWithPassword(context: CallContext, credentials: RegistrationCredentials): Promise<Result<DesktopSnapshot>>;
   listDevices(context: CallContext): Promise<Result<readonly DeviceSummary[]>>;
   /** Redeems a user-entered Admin claim code for the authenticated account. */
   claimDevice(context: CallContext, claimToken: string): Promise<Result<DeviceSummary>>;
+  /** Opens the isolated device-provisioning window. Wi-Fi credentials never cross this renderer bridge. */
+  openProvisioning(context: CallContext): Promise<Result<ProvisioningWindowReceipt>>;
   connect(context: CallContext, deviceId: string): Promise<Result<DesktopSnapshot>>;
   disconnect(context: CallContext): Promise<Result<DesktopSnapshot>>;
   signOut(context: CallContext): Promise<Result<DesktopSnapshot>>;

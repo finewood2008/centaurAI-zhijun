@@ -8,7 +8,7 @@ const os = require('node:os');
 const { createCredentialStore } = require('../production/credential-store.cjs');
 const { validateConfig, loadConfig } = require('../production/config.cjs');
 const { createProductionAdapter } = require('../production/adapter.cjs');
-const { DesktopError } = require('../runtime/public-error.cjs');
+const { DesktopError, toPublicError } = require('../runtime/public-error.cjs');
 const { createDesktopRuntime } = require('../runtime/desktop-runtime.cjs');
 const base = 'https://consumer.example.test/prod-api';
 function syntheticStorage() {
@@ -96,6 +96,21 @@ test('remembered login is independently encrypted, origin scoped, and an uncheck
   assert.equal(await fs.readFile(file, 'utf8'), 'synthetic-corrupt-ciphertext');
 });
 
+test('pairing recovery persists only bounded non-secret authority state', async t => {
+  const directory = await temporary(t); const safeStorage = syntheticStorage();
+  const store = createCredentialStore({ directory, safeStorage, consumerBaseUrl: base });
+  const record = { accountId: 'account-synthetic', deviceId: 'device-synthetic',
+    pairingSessionId: '11111111-2222-4333-8444-555555555555', claimState: 'waitingDeviceProof',
+    expiresAt: '2026-09-10T12:05:00Z', updatedAt: '2026-09-10T12:00:00Z' };
+  await store.savePairingResume(record);
+  assert.deepEqual(await store.loadPairingResumes(record.accountId), [record]);
+  assert.deepEqual(await store.loadPairingResumes('account-other'), []);
+  await assert.rejects(store.savePairingResume({ ...record, pairingToken: 'must-not-persist' }),
+    { code: 'SECURE_STORAGE_UNAVAILABLE' });
+  await store.deletePairingResume(record.accountId, record.pairingSessionId);
+  assert.deepEqual(await store.loadPairingResumes(record.accountId), []);
+});
+
 test('production adapter remembers only successful login and preserves remembered login across sign-out without automatic sign-in', async t => {
   const directory = await temporary(t), safeStorage = syntheticStorage();
   const store = createCredentialStore({ directory, safeStorage, consumerBaseUrl: base });
@@ -143,7 +158,7 @@ test('a remembered record with extra keys or a numeric phone fails closed withou
   }
 });
 
-test('both session expiry paths clear runtime login while retaining remembered credentials without auto login', async t => {
+test('only account expiry clears runtime login; connection expiry retains login and remembered credentials', async t => {
   for (const code of ['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED']) {
     const directory = await temporary(t), safeStorage = syntheticStorage();
     const store = createCredentialStore({ directory, safeStorage, consumerBaseUrl: base });
@@ -154,7 +169,7 @@ test('both session expiry paths clear runtime login while retaining remembered c
         signIn: async () => { passwordLogins++; return { accountId: 'synthetic-account' }; },
         signOut: async () => { signOuts++; await store.remove(); },
         listDevices: async () => [{ deviceId: 'synthetic-device', displayName: 'synthetic', availability: 'online' }] } });
-    const runtime = createDesktopRuntime({ mode: 'production', adapter: { ...adapter,
+    const runtime = createDesktopRuntime({ mode: 'production', reconnectDelaysMs: [1], adapter: { ...adapter,
       connect: async binding => ({ authorize: async () => binding,
         request: async () => { throw new DesktopError(code); }, close: async () => {} }) } });
     t.after(() => runtime.dispose());
@@ -166,10 +181,20 @@ test('both session expiry paths clear runtime login while retaining remembered c
     assert.equal((await invoke('listDevices')).ok, true);
     assert.equal((await invoke('connect', 'synthetic-device')).ok, true);
     assert.equal((await invoke('materials.list', { limit: 20, offset: 0 })).error.code, code);
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(runtime.snapshot().subject, null);
-    assert.equal(runtime.snapshot().phase, 'failed');
-    assert.equal(signOuts, 1);
+    if (code === 'SESSION_EXPIRED') {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(runtime.snapshot().subject, null);
+      assert.equal(runtime.snapshot().phase, 'failed');
+      assert.equal(signOuts, 1);
+    } else {
+      const deadline = Date.now() + 1000;
+      while (runtime.snapshot().phase !== 'ready' && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      assert.equal(runtime.snapshot().subject.accountId, 'synthetic-account');
+      assert.equal(runtime.snapshot().phase, 'ready');
+      assert.equal(signOuts, 0);
+    }
     assert.deepEqual(await store.loadRememberedLogin(), credentials);
     assert.deepEqual((await invoke('getRememberedLogin')).data, { phone: credentials.phone, passwordSaved: true });
     assert.equal(passwordLogins, 1, 'expiration and reading login metadata must not perform another login');
@@ -194,6 +219,78 @@ test('invalidation during remembered-password encryption cannot commit stale cre
   assert.deepEqual(await store.loadRememberedLogin(), previous, 'an invalidated login cannot replace another saved account');
 });
 
+test('rejected saved password is removed atomically while identity and non-credential failures are preserved', async t => {
+  const directory = await temporary(t), safeStorage = syntheticStorage();
+  const store = createCredentialStore({ directory, safeStorage, consumerBaseUrl: base });
+  const credentials = { phone: '13800000000', password: 'Synthetic-remembered-1' };
+  const identity = await store.identity(credentials.phone);
+  let rejection = new DesktopError('AUTHENTICATION_FAILED', {
+    httpStatus: 200, remoteCode: 'PASSWORD_INVALID',
+  });
+  const adapter = await createProductionAdapter({ config: { consumerBaseUrl: base }, directory, safeStorage,
+    credentialStore: store, consumer: { restore: async () => null, dispose: async () => {},
+      signIn: async () => { throw rejection; } } });
+  t.after(() => adapter.dispose());
+
+  await store.saveRememberedLogin(credentials);
+  await assert.rejects(adapter.signInSaved(() => true, true), error => {
+    const exposed = toPublicError(error);
+    assert.equal(exposed.code, 'SAVED_CREDENTIAL_REJECTED');
+    assert.equal(exposed.message, '已保存的密码不可用，请重新输入当前密码。');
+    assert.equal(exposed.remoteCode, 'PASSWORD_INVALID');
+    assert.equal(exposed.httpStatus, 200);
+    assert.equal(JSON.stringify(exposed).includes(credentials.password), false);
+    return true;
+  });
+  assert.deepEqual(await store.loadRememberedLogin(), { phone: credentials.phone });
+  assert.equal((await store.identity(credentials.phone)).clientId, identity.clientId,
+    'rejecting a saved password must not replace the client identity');
+
+  for (rejection of [
+    new DesktopError('RATE_LIMITED', { remoteCode: 'AUTH_RATE_LIMITED' }),
+    new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'account_service' }),
+  ]) {
+    await store.saveRememberedLogin(credentials);
+    await assert.rejects(adapter.signInSaved(() => true, true), { code: rejection.code });
+    assert.deepEqual(await store.loadRememberedLogin(), credentials,
+      `${rejection.code} must not discard a password that the server did not reject`);
+    assert.equal((await store.identity(credentials.phone)).clientId, identity.clientId);
+  }
+});
+
+test('successful password reset atomically removes only the matching remembered password and preserves identity', async t => {
+  const directory = await temporary(t), safeStorage = syntheticStorage();
+  const store = createCredentialStore({ directory, safeStorage, consumerBaseUrl: base });
+  const remembered = { phone: '13800000000', password: 'Synthetic-remembered-1' };
+  const identity = await store.identity(remembered.phone);
+  const calls = [];
+  const adapter = await createProductionAdapter({ config: { consumerBaseUrl: base }, directory, safeStorage,
+    credentialStore: store, consumer: { restore: async () => null, dispose: async () => {},
+      resetPassword: async (input, guard) => { calls.push([input, guard()]); return { processed: true }; } } });
+  t.after(() => adapter.dispose());
+
+  await store.saveRememberedLogin(remembered);
+  const reset = { phone: remembered.phone, code: '123456', password: 'Synthetic-new-password-1' };
+  assert.deepEqual(await adapter.resetPassword(reset, () => true), { processed: true });
+  assert.deepEqual(await store.loadRememberedLogin(), { phone: remembered.phone });
+  assert.equal((await store.identity(remembered.phone)).clientId, identity.clientId);
+  assert.deepEqual(calls, [[reset, true]]);
+
+  await store.saveRememberedLogin(remembered);
+  const other = { ...reset, phone: '13900000000' };
+  assert.deepEqual(await adapter.resetPassword(other, () => true), { processed: true });
+  assert.deepEqual(await store.loadRememberedLogin(), remembered,
+    'resetting another phone must not discard the remembered account');
+
+  const rejection = new DesktopError('VERIFICATION_CODE_INVALID', { remoteCode: 'SMS_CODE_INVALID' });
+  const failed = await createProductionAdapter({ config: { consumerBaseUrl: base }, directory, safeStorage,
+    credentialStore: store, consumer: { dispose: async () => {}, resetPassword: async () => { throw rejection; } } });
+  t.after(() => failed.dispose());
+  await assert.rejects(failed.resetPassword(reset, () => true), { code: 'VERIFICATION_CODE_INVALID' });
+  assert.deepEqual(await store.loadRememberedLogin(), remembered,
+    'a rejected reset must not remove a password that the server did not change');
+});
+
 test('config is explicit HTTPS only, bounded and does not accept credentials or a fake bridge flag', async t => {
   assert.equal(await loadConfig(undefined), null);
   assert.equal(validateConfig({ version: 1, consumerBaseUrl: base + '/' }).consumerBaseUrl, base);
@@ -203,6 +300,28 @@ test('config is explicit HTTPS only, bounded and does not accept credentials or 
   const directory = await temporary(t); const file = path.join(directory, 'config.json');
   await fs.writeFile(file, JSON.stringify({ version: 1, consumerBaseUrl: base })); assert.equal((await loadConfig(file)).consumerBaseUrl, base);
   await fs.writeFile(file, ' '.repeat(16385)); await assert.rejects(loadConfig(file), { code: 'CONFIGURATION_REQUIRED' });
+});
+
+test('provisioning v2 configuration fails closed without canonical pinned root material', () => {
+  const disabled = validateConfig({ version: 1, consumerBaseUrl: base, provisioning: {
+    contractVersion: '2.0.0', electronWebBluetoothDiscoveryV1: false, electronBleProvisioningV2: false,
+    trustedRootSpkiPins: [], trustedRootCertificatesPem: [],
+  } });
+  assert.equal(disabled.provisioning.electronBleProvisioningV2, false);
+  assert.throws(() => validateConfig({ version: 1, consumerBaseUrl: base, provisioning: {
+    ...disabled.provisioning, electronWebBluetoothDiscoveryV1: true, electronBleProvisioningV2: true,
+  } }), { code: 'CONFIGURATION_REQUIRED' });
+  for (const pin of ['sha256/not-base64', `sha256/${'a'.repeat(44)}`, `sha256/${Buffer.alloc(31).toString('base64')}`]) {
+    assert.throws(() => validateConfig({ version: 1, consumerBaseUrl: base, provisioning: {
+      contractVersion: '2.0.0', electronWebBluetoothDiscoveryV1: true, electronBleProvisioningV2: true,
+      trustedRootSpkiPins: [pin], trustedRootCertificatesPem: ['-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----'],
+    } }), { code: 'CONFIGURATION_REQUIRED' });
+  }
+  assert.throws(() => validateConfig({ version: 1, consumerBaseUrl: base, provisioning: {
+    contractVersion: '2.0.0', electronWebBluetoothDiscoveryV1: true, electronBleProvisioningV2: true,
+    trustedRootSpkiPins: ['sha256/wV85x0lyNLyUqfPgCBYYdtvPzOrJ+yI5dCmYwhSP2Y4='],
+    trustedRootCertificatesPem: ['-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----'],
+  } }), { code: 'CONFIGURATION_REQUIRED' });
 });
 
 test('packaged config resolves only a relative sidecar inside the resources root', async t => {

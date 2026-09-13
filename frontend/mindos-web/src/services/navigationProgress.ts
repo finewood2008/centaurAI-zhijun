@@ -1,11 +1,10 @@
-/** Short-lived navigation hint only; this never caches business data or authorization. */
+/** Connection-scoped navigation hint only; this never caches business data or authorization. */
 export function createNavigationProgressReader<T extends { state: string }>(
   load: () => Promise<T>,
   enabled: () => boolean,
-  now: () => number = () => performance.now(),
 ) {
   let generation = 0
-  let ready: { value: T; expiresAt: number } | null = null
+  let ready: T | null = null
   let pending: Promise<T> | null = null
 
   function invalidate(): void {
@@ -17,8 +16,8 @@ export function createNavigationProgressReader<T extends { state: string }>(
   function read(): Promise<T> {
     // Preserve the browser application's fresh-read behavior.
     if (!enabled()) return load()
-    if (ready && now() < ready.expiresAt) {
-      const ticket = generation, value = ready.value
+    if (ready) {
+      const ticket = generation, value = ready
       return Promise.resolve().then(() => {
         if (ticket !== generation) throw new DOMException('连接或引导状态已变化', 'AbortError')
         return value
@@ -29,7 +28,9 @@ export function createNavigationProgressReader<T extends { state: string }>(
     const request = load().then(value => {
       if (ticket !== generation) throw new DOMException('连接或引导状态已变化', 'AbortError')
       // Incomplete onboarding must keep observing server-side progress.
-      if (value.state === 'ready') ready = { value, expiresAt: now() + 30_000 }
+      // Ready is terminal for the current product scope. A box/session change
+      // and every onboarding write already invalidate this reader explicitly.
+      if (value.state === 'ready') ready = value
       else ready = null
       return value
     }).finally(() => {

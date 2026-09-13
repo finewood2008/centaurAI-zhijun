@@ -674,6 +674,25 @@ class ConversationStore:
                 "createdAt": row["created_at"]}
 
     # ------------------------------------------------------------------ 回执
+    @staticmethod
+    def _receipt(row: sqlite3.Row | None) -> dict | None:
+        if row is None:
+            return None
+        return {
+            "messageId": row["message_id"],
+            "conversationId": row["conversation_id"],
+            "provider": row["provider"],
+            "model": row["model"],
+            "external": bool(row["external"]),
+            "confirmedClaimIds": _load(row["confirmed_claim_ids_json"], []),
+            "workingClaimIds": _load(row["working_claim_ids_json"], []),
+            "materialChunkKeys": _load(row["material_chunk_keys_json"], []),
+            "retractedNoticeCount": int(row["retracted_notice_count"]),
+            "promptChars": int(row["prompt_chars"]),
+            "extractionProvider": row["extraction_provider"],
+            "createdAt": row["created_at"],
+        }
+
     def save_receipt(
         self,
         *,
@@ -726,22 +745,19 @@ class ConversationStore:
     def get_receipt(self, message_id: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM turn_receipts WHERE message_id = ?", (message_id,)).fetchone()
-        if row is None:
-            return None
-        return {
-            "messageId": row["message_id"],
-            "conversationId": row["conversation_id"],
-            "provider": row["provider"],
-            "model": row["model"],
-            "external": bool(row["external"]),
-            "confirmedClaimIds": _load(row["confirmed_claim_ids_json"], []),
-            "workingClaimIds": _load(row["working_claim_ids_json"], []),
-            "materialChunkKeys": _load(row["material_chunk_keys_json"], []),
-            "retractedNoticeCount": int(row["retracted_notice_count"]),
-            "promptChars": int(row["prompt_chars"]),
-            "extractionProvider": row["extraction_provider"],
-            "createdAt": row["created_at"],
-        }
+        return self._receipt(row)
+
+    def list_receipts(self, conversation_id: str) -> dict[str, dict]:
+        """Load every receipt for one conversation without per-message connections."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT tr.* FROM messages AS m "
+                "JOIN turn_receipts AS tr ON tr.message_id = m.id "
+                "WHERE m.conversation_id = ?",
+                (conversation_id,),
+            ).fetchall()
+        receipts = (self._receipt(row) for row in rows)
+        return {receipt["messageId"]: receipt for receipt in receipts if receipt is not None}
 
 
     # ------------------------------------------------------------------ 判断草稿（P2）

@@ -2,7 +2,7 @@
 
 用法（仓库根目录）：
     export ZHIJUN_OPENAI_BASE_URL=https://api.deepseek.com/v1 ZHIJUN_OPENAI_MODEL=deepseek-chat ZHIJUN_OPENAI_API_KEY=...
-    backend/.venv/bin/python scripts/real_model_session.py --out docs/development/real-model-eval.md
+    backend/.venv/bin/python scripts/real_model_session.py --out data/diagnostics/real-model-eval.md
 
 - 密钥只从环境变量读取，不写入任何文件；评测文件里不含密钥。
 - 数据根是一次性临时目录；结束后关闭后端。
@@ -95,7 +95,7 @@ def _wait_jobs(client: httpx.Client, base: str, seconds: float = 300) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out", default="docs/development/real-model-eval.md")
+    parser.add_argument("--out", default="data/diagnostics/real-model-eval.md")
     parser.add_argument("--port", type=int, default=8618)
     args = parser.parse_args()
     for var in ("ZHIJUN_OPENAI_BASE_URL", "ZHIJUN_OPENAI_MODEL", "ZHIJUN_OPENAI_API_KEY"):

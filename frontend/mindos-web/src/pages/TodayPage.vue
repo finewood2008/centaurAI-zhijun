@@ -151,6 +151,8 @@ onBeforeUnmount(() => {
       <time>{{ dateLine }}</time>
     </header>
 
+    <MattersHome class="zj-today__matters" />
+
     <div v-if="loading" class="zj-today__skeleton" aria-label="正在打开共同地图">
       <span />
       <span />
@@ -159,7 +161,6 @@ onBeforeUnmount(() => {
     <ErrorState v-else-if="!overview" :message="error || '共同地图暂时没有打开'" recover-on-reconnect @retry="loadHome()" />
 
     <template v-else>
-      <MattersHome class="zj-today__matters" />
       <div class="zj-today__grid">
         <article class="zj-letter" aria-label="知君写给你的今日来信">
           <header class="zj-letter__identity">

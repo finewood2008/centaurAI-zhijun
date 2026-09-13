@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFile } from 'node:fs/promises'
+import { compileScript, parse } from '@vue/compiler-sfc'
+import ts from 'typescript'
+import * as Vue from 'vue'
 import { DesktopController } from '../src/desktop/controller.ts'
 import { connectedDeviceLabel } from '../src/desktop/deviceDisplay.ts'
 
@@ -10,10 +14,10 @@ const deferred = () => {
   return { promise, resolve, reject }
 }
 const tick = () => new Promise(resolve => setImmediate(resolve))
-const snapshot = (phase, generation, sequence, accountId = 'synthetic-account', deviceId = 'synthetic-box') => ({
+const snapshot = (phase, generation, sequence, accountId = 'synthetic-account', deviceId = 'synthetic-box', provisioning = false) => ({
   protocolVersion: 1, environment: 'simulation', phase, generation, sequence,
   subject: phase === 'signed_out' ? null : phase === 'ready' ? { accountId, deviceId } : { accountId },
-  capabilities: { materialsRead: phase === 'ready', streamChat: false, uploads: false, matters: false, provisioning: false },
+  capabilities: { materialsRead: phase === 'ready', streamChat: false, uploads: false, matters: false, provisioning },
 })
 const ok = (generation, data) => ({ ok: true, generation, data })
 const page = (query, fileName = 'synthetic-document.txt') => ({
@@ -32,7 +36,9 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
     getSnapshot: async () => ok(initial.generation, initial),
     subscribe: callback => { listener = callback; return () => { unsubscribed = true; listener = undefined } },
     beginSignIn: invoke('beginSignIn'), signInWithPassword: invoke('signInWithPassword'), signInWithSavedPassword: invoke('signInWithSavedPassword'),
-    sendRegistrationCode: invoke('sendRegistrationCode'), registerWithPassword: invoke('registerWithPassword'), claimDevice: invoke('claimDevice'),
+    sendRegistrationCode: invoke('sendRegistrationCode'), resetPassword: invoke('resetPassword'),
+    registerWithPassword: invoke('registerWithPassword'), claimDevice: invoke('claimDevice'),
+    openProvisioning: invoke('openProvisioning'),
     getRememberedLogin: async context => ok(context.expectedGeneration, null),
     connect: invoke('connect'), disconnect: invoke('disconnect'), signOut: invoke('signOut'),
     listDevices: context => { const result = deferred(); devices.push({ context, ...result }); return result.promise },
@@ -41,6 +47,64 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
   }
   const controller = new DesktopController(bridge)
   return { controller, bridge, reads, devices, controls, cancellations, emit: next => listener?.(next), get unsubscribed() { return unsubscribed } }
+}
+
+async function connectionComponentFixture(savedLoginError, resetError) {
+  const source = await readFile(new URL('../src/desktop/DesktopConnection.vue', import.meta.url), 'utf8')
+  const code = ts.transpileModule(compileScript(parse(source).descriptor, { id: 'desktop-connection-login-test' }).content,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  const signedOut = { ...snapshot('signed_out', 0, 0), environment: 'production', subject: null }
+  const viewState = Vue.shallowRef({ snapshot: signedOut, hostAvailable: true, devices: [], devicesLoading: false,
+    page: null, query: { limit: 20, offset: 0 }, loading: false, controlPending: false,
+    pendingOperation: null, error: null, notice: '' })
+  const controls = []
+  const controller = {
+    async control(operation, input) {
+      controls.push({ operation, input: input && typeof input === 'object' ? { ...input } : input })
+      if (operation === 'signInWithSavedPassword') {
+        viewState.value = { ...viewState.value, snapshot: { ...signedOut, phase: 'authenticating', generation: 1, sequence: 1 }, error: null }
+        await Vue.nextTick()
+        const error = { code: savedLoginError, message: '合成公开错误', recovery: 'user_sign_in' }
+        viewState.value = { ...viewState.value,
+          snapshot: { ...signedOut, phase: 'failed', generation: 1, sequence: 2, error }, error }
+        await Vue.nextTick()
+      } else if (operation === 'signInWithPassword') {
+        viewState.value = { ...viewState.value,
+          snapshot: { ...snapshot('selecting_device', 2, 3), environment: 'production' }, error: null }
+        await Vue.nextTick()
+      }
+    },
+    getRememberedLogin: async () => ({ phone: '13800000000', passwordSaved: true }),
+    sendRegistrationCode: async phone => { controls.push({ operation: 'sendRegistrationCode', input: phone }); return 300 },
+    resetPassword: async credentials => {
+      controls.push({ operation: 'resetPassword', input: { ...credentials } })
+      if (resetError) {
+        viewState.value = { ...viewState.value, error: resetError }
+        return false
+      }
+      viewState.value = { ...viewState.value, notice: '密码重置请求已处理，请使用新密码登录' }
+      return true
+    },
+    claimDevice: async () => false,
+    openProvisioning: async () => false,
+    loadDevices: async () => {},
+  }
+  const cleanups = []
+  const exports = {}
+  new Function('require', 'exports', code)(id => {
+    if (id === 'vue') return { ...Vue, onBeforeUnmount: callback => cleanups.push(callback) }
+    if (id === 'vue-router') return { useRoute: () => ({ meta: {} }) }
+    if (id.endsWith('/claimToken') || id === './claimToken') {
+      return { isValidClaimToken: value => /^\d{6}$/.test(value), normalizeClaimToken: value => value.trim() }
+    }
+    if (id.endsWith('/workspace') || id === './workspace') return { useDesktopWorkspace: () => ({ controller, state: viewState }) }
+    throw new Error(`unexpected DesktopConnection import: ${id}`)
+  }, exports)
+  const scope = Vue.effectScope()
+  const ui = scope.run(() => exports.default.setup({ embedded: false }, { expose() {} }))
+  await tick()
+  await Vue.nextTick()
+  return { source, ui, controls, viewState, close() { cleanups.forEach(callback => callback()); scope.stop() } }
 }
 
 test('connected device label prefers a non-empty name and otherwise uses the device id', () => {
@@ -236,6 +300,126 @@ test('registration and device claim use narrow IPC calls and refresh claimed dev
   f.controller.dispose()
 })
 
+test('password reset uses an account-opaque narrow call and never authenticates automatically', async () => {
+  const f = fixture({ ...snapshot('signed_out', 0, 0), environment: 'production' })
+  await f.controller.start()
+  const credentials = { phone: '13800000000', code: '123456', password: 'Synthetic-reset-password-1' }
+  const resetting = f.controller.resetPassword(credentials)
+  assert.equal(f.controls.length, 1)
+  assert.equal(f.controls[0].operation, 'resetPassword')
+  assert.deepEqual(f.controls[0].deviceId, credentials)
+  assert.equal(f.controller.state.pendingOperation, 'resetPassword')
+  assert.equal(JSON.stringify(f.controller.state).includes(credentials.password), false)
+  f.controls[0].resolve(ok(0, { processed: true }))
+  assert.equal(await resetting, true)
+  assert.equal(f.controller.state.snapshot.phase, 'signed_out')
+  assert.equal(f.controller.state.controlPending, false)
+  assert.equal(f.controller.state.notice, '密码重置请求已处理，请使用新密码登录')
+  assert.equal(f.controls.some(call => call.operation.startsWith('signIn')), false)
+  f.controller.dispose()
+})
+
+test('password reset UI reuses SMS countdown, clears secrets and returns to manual login', async () => {
+  const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+  f.ui.setAuthMode('reset')
+  f.ui.phone.value = '13800000000'
+  await f.ui.sendRegistrationCode()
+  assert.deepEqual(f.controls[0], { operation: 'sendRegistrationCode', input: '13800000000' })
+  assert.equal(f.ui.codeSeconds.value, 60)
+  f.ui.registrationCode.value = '123456'
+  f.ui.password.value = 'Synthetic-reset-password-2'
+  f.ui.confirmPassword.value = 'Synthetic-reset-password-2'
+  await f.ui.resetPassword()
+  assert.deepEqual(f.controls[1], { operation: 'resetPassword', input: {
+    phone: '13800000000', code: '123456', password: 'Synthetic-reset-password-2',
+  } })
+  assert.equal(f.ui.authMode.value, 'login')
+  assert.equal(f.ui.registrationCode.value, '')
+  assert.equal(f.ui.password.value, '')
+  assert.equal(f.ui.confirmPassword.value, '')
+  assert.equal(f.ui.savedPasswordUsable.value, false)
+  assert.equal(f.controls.some(call => call.operation.startsWith('signIn')), false)
+  assert.equal(f.viewState.value.notice, '密码重置请求已处理，请使用新密码登录')
+  f.close()
+})
+
+test('password reset UI preserves a usable code on service failure and clears an invalid code', async () => {
+  for (const [errorCode, expectedCode] of [
+    ['ACCOUNT_SERVICE_UNAVAILABLE', '123456'],
+    ['VERIFICATION_CODE_INVALID', ''],
+  ]) {
+    const error = { code: errorCode, message: '合成公开错误', recovery: 'user_read' }
+    const f = await connectionComponentFixture('AUTHENTICATION_FAILED', error)
+    f.ui.setAuthMode('reset')
+    f.ui.phone.value = '13800000000'
+    f.ui.registrationCode.value = '123456'
+    f.ui.password.value = 'Synthetic-reset-password-2'
+    f.ui.confirmPassword.value = 'Synthetic-reset-password-2'
+
+    await f.ui.resetPassword()
+
+    assert.equal(f.ui.authMode.value, 'reset')
+    assert.equal(f.ui.registrationCode.value, expectedCode)
+    assert.equal(f.ui.password.value, '')
+    assert.equal(f.ui.confirmPassword.value, '')
+    assert.equal(f.viewState.value.error.code, errorCode)
+    f.close()
+  }
+})
+
+test('password reset UI has explicit fields and an account-opaque success contract', async () => {
+  const source = await readFile(new URL('../src/desktop/DesktopConnection.vue', import.meta.url), 'utf8')
+  for (const testId of ['show-reset-password', 'password-reset', 'reset-phone', 'reset-code',
+    'send-reset-code', 'reset-password', 'reset-confirm-password', 'reset-password-submit']) {
+    assert.match(source, new RegExp(`data-testid="${testId}"`))
+  }
+  assert.match(source, /提交后的提示不会透露该手机号是否已注册/)
+})
+
+test('provisioning entry is capability gated and opens only the isolated window with a context', async () => {
+  const disabled = fixture(snapshot('selecting_device', 1, 1))
+  await disabled.controller.start()
+  assert.equal(await disabled.controller.openProvisioning(), false)
+  assert.equal(disabled.controls.length, 0)
+  disabled.controller.dispose()
+
+  const enabled = fixture(snapshot('selecting_device', 2, 1, 'synthetic-account', 'synthetic-box', true))
+  await enabled.controller.start()
+  const opening = enabled.controller.openProvisioning()
+  assert.equal(enabled.controls.length, 1)
+  assert.equal(enabled.controls[0].operation, 'openProvisioning')
+  assert.deepEqual(Object.keys(enabled.controls[0].context).sort(), ['callId', 'expectedGeneration'])
+  assert.equal(enabled.controls[0].deviceId, undefined)
+  assert.equal(enabled.controller.state.pendingOperation, 'openProvisioning')
+  assert.equal(JSON.stringify(enabled.controller.state).includes('password'), false)
+  enabled.controls[0].resolve(ok(2, { opened: true }))
+  assert.equal(await opening, true)
+  assert.equal(enabled.controller.state.controlPending, false)
+  assert.match(enabled.controller.state.notice, /已打开盒子配网窗口/)
+  enabled.controller.dispose()
+})
+
+test('main connection UI exposes a capability-gated provisioning action and no Wi-Fi password field', async () => {
+  const source = await readFile(new URL('../src/desktop/DesktopConnection.vue', import.meta.url), 'utf8')
+  assert.match(source, /snapshot\.capabilities\.provisioning/)
+  assert.match(source, /data-testid="open-provisioning"/)
+  assert.match(source, /controller\.openProvisioning\(\)/)
+  assert.doesNotMatch(source, /type="password"[^>]*(?:wifi|ssid)|(?:wifi|ssid)[^>]*type="password"/i)
+})
+
+test('connection status renders only the safe Direct or relay path labels', async () => {
+  const topbar = await readFile(new URL('../src/desktop/DesktopTopbar.vue', import.meta.url), 'utf8')
+  const connection = await readFile(new URL('../src/desktop/DesktopConnection.vue', import.meta.url), 'utf8')
+  assert.match(topbar, /selectedPath === 'DIRECT' \? '直连'/)
+  assert.match(topbar, /selectedPath === 'RELAY' \? '安全中继'/)
+  assert.match(topbar, /data-testid="connection-path"/)
+  assert.match(connection, /selectedPath === 'DIRECT' \? '直连'/)
+  assert.match(connection, /selectedPath === 'RELAY' \? '安全中继'/)
+  for (const source of [topbar, connection]) {
+    assert.doesNotMatch(source, /iceServers|candidate|failedSessionId|fallback_from_session_id/)
+  }
+})
+
 test('remembered login returns only metadata and never silently signs in or stores credentials in controller state', async () => {
   const f = fixture({ ...snapshot('signed_out', 0, 0), environment: 'production' })
   const remembered = { phone: '13800000000', passwordSaved: true }
@@ -247,10 +431,23 @@ test('remembered login returns only metadata and never silently signs in or stor
   assert.equal(JSON.stringify(f.controller.state).includes(remembered.phone), false)
   assert.equal(f.controls.length, 0)
   f.emit({ ...snapshot('failed', 1, 1), environment: 'production', subject: null,
-    error: { code: 'CONNECTIVITY_SESSION_EXPIRED', message: '请重新登录', recovery: 'user_sign_in' } })
+    error: { code: 'SESSION_EXPIRED', message: '登录会话已过期，请重新登录。', recovery: 'user_sign_in' } })
   await tick()
   assert.equal(f.controls.length, 0, 'expiry must not use the saved password without a login action')
   assert.equal(f.controller.state.snapshot.subject, null)
+  f.controller.dispose()
+})
+
+test('connection failure keeps account context and never starts password login or logout in the renderer', async () => {
+  const f = fixture({ ...snapshot('ready', 1, 1), environment: 'production' })
+  await f.controller.start()
+  f.emit({ ...snapshot('failed', 2, 2), environment: 'production',
+    error: { code: 'CONNECTIVITY_SESSION_EXPIRED', message: '盒子连接已失效，请重新连接盒子。', recovery: 'user_reconnect' } })
+  await tick()
+  assert.equal(f.controller.state.snapshot.subject.accountId, 'synthetic-account')
+  assert.equal(f.controller.state.error.recovery, 'user_reconnect')
+  assert.equal(f.controls.length, 0, 'only the trusted runtime manages connection recovery; no renderer login or logout')
+  assert.equal(f.controller.state.page, null, 'stale business data must be removed while disconnected')
   f.controller.dispose()
 })
 
@@ -287,4 +484,41 @@ test('saved-password login forwards only the remember flag and sign-out wins ove
   assert.equal(f.controller.state.controlPending, false)
   assert.equal(f.devices.length, 0)
   f.controller.dispose()
+})
+
+test('rejected saved credentials disable blank login and require a manually entered password', async () => {
+  for (const code of ['SAVED_CREDENTIAL_REJECTED', 'AUTHENTICATION_FAILED', 'AUTHENTICATION_REQUIRED']) {
+    const f = await connectionComponentFixture(code)
+    assert.equal(f.ui.phone.value, '13800000000')
+    assert.equal(f.ui.savedPasswordUsable.value, true)
+    assert.equal(f.ui.passwordRequired.value, false)
+    assert.match(f.ui.passwordPlaceholder.value, /留空即可登录/)
+
+    await f.ui.signIn()
+    assert.deepEqual(f.controls[0], { operation: 'signInWithSavedPassword', input: true })
+    assert.equal(f.ui.savedPasswordUsable.value, false)
+    assert.equal(f.ui.passwordRequired.value, true)
+    assert.equal(f.ui.passwordPlaceholder.value, '')
+    assert.match(f.ui.savedCredentialMessage.value, /重新输入当前密码/)
+
+    const replacement = `manual-password-${code}`
+    f.ui.password.value = replacement
+    await f.ui.signIn()
+    assert.deepEqual(f.controls[1], { operation: 'signInWithPassword', input: {
+      phone: '13800000000', password: replacement, rememberPassword: true,
+    } })
+    assert.equal(f.ui.password.value, '')
+    assert.equal(JSON.stringify({ password: f.ui.password.value, notice: f.ui.savedCredentialMessage.value }).includes(replacement), false)
+    f.close()
+  }
+})
+
+test('a transient saved-login failure does not incorrectly discard a still-valid saved password', async () => {
+  const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+  await f.ui.signIn()
+  assert.equal(f.ui.savedPasswordUsable.value, true)
+  assert.equal(f.ui.passwordRequired.value, false)
+  assert.match(f.ui.passwordPlaceholder.value, /留空即可登录/)
+  assert.equal(f.ui.savedCredentialMessage.value, '')
+  f.close()
 })

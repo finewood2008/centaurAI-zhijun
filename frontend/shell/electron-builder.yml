@@ -1,12 +1,9 @@
 appId: com.qeeshu.zhijun
 productName: 知君
-asar: true
-npmRebuild: false
-electronDist: node_modules/electron/dist
+extends: ./electron-builder.base.yml
 
 directories:
   output: release
-  buildResources: assets
 
 files:
   - package.json
@@ -14,38 +11,16 @@ files:
   - preload.cjs
   - app-icon.cjs
   - security.cjs
+  - provisioning-window.cjs
+  - provisioning-broker.cjs
+  - provisioning/**/*
+  - '!provisioning/preload.mjs'
+  - '!provisioning/preload-formal.mjs'
+  - '!node_modules/@nexusaos/device-provisioning-electron/**/*'
+  - '!node_modules/@nexusaos/device-provisioning-uni/**/*'
   - production/**/*.cjs
   - runtime/**/*.cjs
   - assets/centaur.png
   - '!**/*.map'
 
-extraResources:
-  - from: ../mindos-web/dist-desktop
-    to: mindos-web-dist
-  - from: ../shared/product-operations.json
-    to: shared/product-operations.json
-  - from: package-resources/zhijun-product.json
-    to: zhijun-product.json
-  - from: package-resources/connectivity-sidecar/darwin-arm64
-    to: connectivity-sidecar/darwin-arm64
-    filter:
-      - nexusaos-connectivity-sidecar
-
-mac:
-  category: public.app-category.productivity
-  icon: assets/centaur.icns
-  hardenedRuntime: true
-  gatekeeperAssess: false
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.inherit.plist
-  notarize: false
-  signIgnore:
-    - 'Contents/Resources/connectivity-sidecar/darwin-arm64/nexusaos-connectivity-sidecar'
-  extendInfo:
-    NSMicrophoneUsageDescription: 在你点击录音时使用麦克风，停止后将录音发送到已连接的盒子转为文字。转写结果仅填入输入框，不会自动发送消息。
-
-dmg:
-  sign: false
-
 artifactName: 'Zhijun-${version}-${os}-${arch}.${ext}'
-afterPack: scripts/after-pack.cjs

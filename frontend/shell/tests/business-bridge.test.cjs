@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { createBusinessBridge } = require('../production/business-bridge.cjs');
 const { createProductionAdapter } = require('../production/adapter.cjs');
 const { createDesktopRuntime } = require('../runtime/desktop-runtime.cjs');
+const { DesktopError } = require('../runtime/public-error.cjs');
 const subject = { accountId: 'account-vector', clientId: 'client-vector', deviceId: 'device-vector' };
 const applicationId = 'mindos-person-data-pc';
 const clock = () => 1893456002000;
@@ -146,7 +147,30 @@ test('actual production adapter passes connect -> bridge context -> material req
   assert.equal(closes, 1);
 });
 
-test('confirmed native close signs out while a permission denial preserves the signed-in identity', async () => {
+test('the established bridge checks the independent login deadline before dispatching more business traffic', async () => {
+  let expired = false, nativeRequests = 0;
+  const adapter = await createProductionAdapter({ config: { connectivity: { applicationId } },
+    consumer: { current: async () => {
+      if (expired) throw new DesktopError('SESSION_EXPIRED');
+      return subject;
+    }, dispose: async () => {} },
+    bridge: createBusinessBridge({ clock }),
+    runtimeFactory: async () => ({ connect: async () => ({ request: async () => {
+      nativeRequests++; return response(context());
+    } }), close: async () => {} }),
+  });
+  try {
+    const connected = await adapter.connect(subject);
+    await connected.authorize();
+    assert.equal(nativeRequests, 1);
+    expired = true;
+    await assert.rejects(connected.request({ method: 'GET', path: read().relative_path, headers: { Accept: 'application/json' } }),
+      { code: 'SESSION_EXPIRED' });
+    assert.equal(nativeRequests, 1, 'no business request is sent after the account login expires');
+  } finally { await adapter.dispose(); }
+});
+
+test('confirmed native close and permission denial both preserve the independent login identity', async () => {
   for (const closedNative of [true, false]) {
     let nativeCloses = 0; let signOuts = 0;
     const adapter = await createProductionAdapter({ config: { connectivity: { applicationId } },
@@ -161,7 +185,7 @@ test('confirmed native close signs out while a permission denial preserves the s
         },
       }), close: async () => { nativeCloses++; } }),
     });
-    const runtime = createDesktopRuntime({ mode: 'production', adapter });
+    const runtime = createDesktopRuntime({ mode: 'production', adapter, reconnectDelaysMs: [] });
     let calls = 0;
     const invoke = (operation, ...input) => runtime.invoke(operation,
       [{ callId: `bridge-review-${++calls}`, expectedGeneration: runtime.snapshot().generation }, ...input], 1);
@@ -173,14 +197,14 @@ test('confirmed native close signs out while a permission denial preserves the s
       const result = await invoke('materials.list', { limit: 20, offset: 0 });
       assert.equal(result.error.code, closedNative ? 'CONNECTIVITY_SESSION_EXPIRED' : 'ACCESS_DENIED');
       const snapshot = runtime.snapshot();
-      assert.equal(snapshot.subject?.accountId ?? null, closedNative ? null : subject.accountId,
-        'a confirmed connection-session expiry must return to sign-in');
+      assert.equal(snapshot.subject?.accountId, subject.accountId,
+        'connection termination must not revoke a valid Consumer account session');
       assert.equal(snapshot.capabilities.materialsRead, !closedNative);
       assert.equal(snapshot.phase, closedNative ? 'failed' : 'ready');
       assert.equal(snapshot.generation, generation + (closedNative ? 1 : 0));
       await new Promise(resolve => setImmediate(resolve));
       assert.equal(nativeCloses, closedNative ? 1 : 0);
-      assert.equal(signOuts, closedNative ? 1 : 0);
+      assert.equal(signOuts, 0);
     } finally { await runtime.dispose(); }
   }
 });

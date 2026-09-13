@@ -3,14 +3,18 @@ import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ChevronDown, ShieldCheck } from 'lucide-vue-next'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
 import { askRoute, grantDefaultDeConsent, needsDeConsent, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
-const props = defineProps<{ conversationId?: string; disabled?: boolean }>()
-const emit = defineEmits<{ (e: 'mode', value: string): void }>()
+const props = defineProps<{ conversationId?: string; disabled?: boolean; activateOnlineChannel?: () => Promise<boolean> }>()
+const emit = defineEmits<{
+  (e: 'mode', value: string): void
+  (e: 'mode-selected', value: string): void
+}>()
 const state = ref<any>(null)
 const error = ref('')
 const notice = ref('')
 const acknowledge = ref(false)
 const open = ref(false)
 const busy = ref(false)
+const activatingOnline = ref(false)
 const configureDefault = ref(false)
 const consentAcknowledge = ref(false)
 const includeFiles = ref(false)
@@ -22,6 +26,11 @@ const path = computed(() => props.conversationId ? routePath(props.conversationI
 const actionPath = computed(() => routePath(props.conversationId || 'default'))
 const policy = computed(() => state.value?.defaultAuthorization)
 const handling = computed(() => state.value?.handlingPreference)
+const currentMode = computed<'online' | 'local' | null>(() => state.value?.mode?.mode === 'online' ? 'online'
+  : ['local', 'legacy'].includes(state.value?.mode?.mode) ? 'local' : null)
+const onlineAvailable = computed(() => state.value?.service?.external === true)
+const localModelLabel = computed(() => state.value?.localService?.model || '本机模型')
+const onlineModelLabel = computed(() => onlineAvailable.value ? (state.value?.service?.model || state.value?.service?.name || '在线模型') : '未启用')
 const taskLabels: Record<string, string> = { alignment: '自我校准', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
 const taskLabel = (key: string) => taskLabels[key] || (key.startsWith('file_reply:') ? '文件反馈' : '后台整理')
 const taskCount = (task: any) => Number.isInteger(task.count) && task.count > 0 ? task.count : null
@@ -29,6 +38,7 @@ const pausedMemory = computed(() => state.value?.pending?.find((task: any) => ta
 const failedCount = computed(() => (state.value?.pending ?? []).reduce((total: number, task: any) => total + (task.failedCount || 0), 0))
 const attentionLabel = computed(() => {
   if (error.value || state.value?.error || policy.value?.serviceChanged || handling.value?.serviceChanged) return '检查设置'
+  if (currentMode.value === 'online' && !onlineAvailable.value) return '在线模型不可用'
   if (failedCount.value) return `整理未完成 · ${failedCount.value}`
   if (pausedMemory.value) return `个人理解暂停${taskCount(pausedMemory.value) ? ` · ${taskCount(pausedMemory.value)} 轮` : ''}`
   return `待处理 ${state.value?.pending?.length ?? 0}`
@@ -44,17 +54,18 @@ function begin() {
   busy.value = true; sequence++; error.value = ''; notice.value = ''
   return () => alive && ticket === mutation && target === path.value
 }
-async function refresh() {
-  if (busy.value) return
+async function refresh(): Promise<boolean> {
+  if (busy.value) return false
   readController?.abort()
   const controller = new AbortController()
   readController = controller
   const target = path.value, ticket = ++sequence
   try {
     const next = await routingRequest(target, 'GET', undefined, controller.signal)
-    if (target !== path.value || ticket !== sequence) return
+    if (target !== path.value || ticket !== sequence) return false
     state.value = next; error.value = ''; emit('mode', next.mode.mode)
-  } catch (e) { if (ticket === sequence && !controller.signal.aborted) error.value = e instanceof Error ? e.message : '设置读取失败' }
+    return true
+  } catch (e) { if (ticket === sequence && !controller.signal.aborted) error.value = e instanceof Error ? e.message : '设置读取失败'; return false }
   finally { if (readController === controller) readController = null }
 }
 watch(path, () => {
@@ -69,18 +80,62 @@ watch(path, () => {
 }, { immediate: true })
 onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort(); readController?.abort() })
 function show() { open.value = true; void refresh() }
-async function change(mode: string) {
+async function change(mode: string): Promise<boolean> {
   const valid = begin(), target = path.value
   try {
     const result = await routingRequest(target, 'PUT', { mode, acknowledge: acknowledge.value,
       serviceId: state.value.service?.id || '', expectedRevision: state.value.mode.revision,
       freshContext: mode === 'online' && state.value.mode.mode !== 'online' })
-    if (!valid()) return
+    if (!valid()) return false
     state.value = result
-    emit('mode', state.value.mode.mode); acknowledge.value = false
+    emit('mode', state.value.mode.mode)
+    emit('mode-selected', state.value.mode.mode)
+    acknowledge.value = false
     notice.value = mode === 'online' ? '在线理解已启用；资料授权按下方设置执行。' : '已切换为本地处理。'
-  } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '切换未完成' }
+    return true
+  } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '切换未完成'; return false }
   finally { if (valid()) busy.value = false }
+}
+async function useLocal(): Promise<boolean> {
+  if (props.disabled || busy.value || !state.value) return false
+  if (currentMode.value === 'local') return true
+  return change('local')
+}
+async function ensureLocal(): Promise<boolean> {
+  if (props.disabled) return false
+  // Re-read the authoritative revision before the CAS. A second bounded pass
+  // recovers a normal cross-window 409 without weakening the mode boundary.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!await refresh() || !state.value) return false
+    if (currentMode.value === 'local') return true
+    if (await change('local')) {
+      if (await refresh() && ['local', 'legacy'].includes(state.value?.mode?.mode)) return true
+    }
+  }
+  return false
+}
+function chooseOnline() {
+  if (props.disabled || busy.value || !state.value) return
+  if (currentMode.value === 'online' && onlineAvailable.value && state.value.mode.service === state.value.service?.id) {
+    emit('mode-selected', 'online')
+  }
+  acknowledge.value = false
+  show()
+}
+async function enableOnlineChannel() {
+  if (!props.activateOnlineChannel || props.disabled || busy.value || activatingOnline.value) return
+  activatingOnline.value = true; error.value = ''; notice.value = ''
+  try {
+    const activated = await props.activateOnlineChannel()
+    if (!activated || !onlineAvailable.value) {
+      error.value = '在线通道尚未启用，请核对下方供应商设置后重试。'
+      return
+    }
+    acknowledge.value = false
+    notice.value = '在线通道已启用。请确认发送说明后，再切换到在线模型。'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '在线通道未启用，请重试。'
+  } finally { activatingOnline.value = false }
 }
 async function saveDefault(enabled: boolean) {
   const valid = begin(), target = actionPath.value
@@ -160,28 +215,43 @@ async function pending(task: any, reprepare = false) {
   finally { if (valid()) { busy.value = false; pendingController = null } }
   if (valid()) await refresh()
 }
-defineExpose({ refresh })
+defineExpose({ refresh, useLocal, ensureLocal })
 </script>
 <template>
   <section class="routing-panel" aria-label="对话处理方式">
-    <button class="routing-trigger" :disabled="disabled || busy" :aria-expanded="open" aria-haspopup="dialog" @click="show">
-      <span class="routing-dot" :class="{ online: state?.mode.mode === 'online' }" aria-hidden="true" />
-      <span>{{ state?.mode.mode === 'online' ? '在线理解' : '本地处理' }}</span>
-      <span v-if="policy?.active" class="routing-default">默认授权</span><ChevronDown :size="13" aria-hidden="true" />
+    <div class="routing-mode" role="group" :aria-label="conversationId ? '本段对话使用的模型' : '新对话默认使用的模型'">
+      <span class="routing-mode__label">{{ conversationId ? '本段对话' : '新对话默认' }}</span>
+      <button type="button" class="routing-mode__choice" data-testid="routing-local-mode" :aria-pressed="currentMode === 'local'" :disabled="disabled || busy || !state" @click="useLocal">
+        本地模型 <small v-if="currentMode === 'local'">{{ localModelLabel }}</small>
+      </button>
+      <button type="button" class="routing-mode__choice" :class="{ 'is-unavailable': !onlineAvailable }" data-testid="routing-online-mode" :aria-pressed="currentMode === 'online'" :disabled="disabled || busy || !state" @click="chooseOnline">
+        在线模型 <small v-if="currentMode === 'online' || !onlineAvailable">{{ onlineModelLabel }}</small>
+      </button>
+    </div>
+    <button type="button" class="routing-manage" :disabled="disabled || busy" :aria-expanded="open" aria-haspopup="dialog" @click="show">
+      模型与授权 <span v-if="policy?.active" class="routing-default">已授权</span><ChevronDown :size="13" aria-hidden="true" />
     </button>
-    <button v-if="state?.pending?.length || error || state?.error || policy?.serviceChanged || handling?.serviceChanged" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ attentionLabel }}</button>
+    <button v-if="state?.pending?.length || error || state?.error || policy?.serviceChanged || handling?.serviceChanged || (currentMode === 'online' && !onlineAvailable)" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ attentionLabel }}</button>
     <SideDrawer :open="open" title="模型与授权" @close="open = false">
       <div class="routing-settings">
         <section v-if="state" class="routing-group">
-          <h3>{{ conversationId ? '本段对话的处理方式' : '新对话默认方式' }}</h3>
-          <p class="routing-service">{{ state.service?.name || '服务待配置' }} <span>· {{ state.service?.model }}</span></p>
-          <p>在线负责对话与理解，本地负责资料解析、检索和权限。在线失败时由你选择重试或改用本地，不自动降级。</p>
+          <h3>{{ conversationId ? '本段对话使用哪个模型' : '新对话默认使用哪个模型' }}</h3>
+          <p v-if="currentMode === 'local'" class="routing-service">当前使用：本地模型 <span>· {{ localModelLabel }}</span></p>
+          <p v-else class="routing-service">当前使用：在线模型 <span>· {{ onlineModelLabel }}</span></p>
+          <p>本地模型在盒子上处理，不向在线模型发送本轮内容；使用在线模型前会继续核对资料授权。</p>
+          <p v-if="!onlineAvailable" id="routing-online-blocked" class="routing-warning" role="status">在线通道尚未启用或已暂停。先在偏好设置中启用已配置的供应商，才可将{{ conversationId ? '本段对话' : '新对话默认方式' }}切换为在线模型。</p>
           <p v-if="state.mode.cutoff && state.mode.mode === 'online'">不携带受保护旧历史的在线上下文；原记录仍保留。</p>
-          <template v-if="state.mode.mode !== 'online' || state.service?.id !== state.mode.service">
+          <div v-if="!onlineAvailable" class="routing-actions" aria-describedby="routing-online-blocked">
+            <button v-if="activateOnlineChannel" type="button" class="routing-primary" :disabled="activatingOnline || busy || disabled" @click="enableOnlineChannel">{{ activatingOnline ? '正在启用在线通道…' : '启用已配置的在线通道' }}</button>
+            <RouterLink v-else class="routing-settings-link" to="/settings">前往偏好设置启用在线通道</RouterLink>
+            <button v-if="currentMode === 'online'" :disabled="busy || disabled" @click="change('local')">改用本地模型</button>
+          </div>
+          <p v-if="!onlineAvailable && error" class="routing-warning routing-action-error" role="alert" data-testid="routing-online-activation-error">{{ error }}</p>
+          <template v-else-if="state.mode.mode !== 'online' || state.service?.id !== state.mode.service">
             <label><input v-model="acknowledge" type="checkbox" /> 我理解日常消息会发送给上述服务，离开本机后无法收回。开启在线不携带受保护旧历史。</label>
-            <button class="routing-primary" :disabled="!acknowledge || !state.service?.external || busy || disabled" @click="change('online')">启用在线理解</button>
+            <div class="routing-actions"><button class="routing-primary" :disabled="!acknowledge || !state.service?.external || busy || disabled" @click="change('online')">启用在线模型</button><button v-if="currentMode === 'online'" :disabled="busy || disabled" @click="change('local')">改用本地模型</button></div>
           </template>
-          <button v-else :disabled="busy || disabled" @click="change('local')">{{ conversationId ? '整段仅本地' : '新对话默认本地' }}</button>
+          <button v-else :disabled="busy || disabled" @click="change('local')">{{ conversationId ? '切换为本地模型' : '新对话默认使用本地模型' }}</button>
         </section>
         <section v-if="state" class="routing-group">
           <div class="routing-setting-title"><h3><ShieldCheck :size="17" aria-hidden="true" /> 资料来源默认授权</h3><button class="routing-switch" role="switch" aria-label="资料来源默认授权" :aria-checked="!!policy?.active" :disabled="busy || !state.service?.external" @click="toggleDefault"><span /></button></div>
@@ -221,18 +291,23 @@ defineExpose({ refresh })
           <div v-for="task in state.pending" :key="task.task_key" class="routing-task"><div><strong>{{ taskLabel(task.task_key) }}</strong><span v-if="taskCount(task)"> · {{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span><p v-if="task.detail" class="routing-fine">{{ task.detail }}</p><p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p></div><button :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button></div>
         </section>
         <details v-if="state" class="routing-group"><summary>撤销已批准的授权</summary><p>停止本设备后续使用资料，关闭默认授权。日常在线消息仍按对话处理方式发送；已经发送的内容无法收回。</p><button :disabled="busy" @click="revoke">撤销本设备资料用途授权</button></details>
-        <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="error || state?.error" class="routing-warning" role="alert">{{ error || state.error }}</p>
+        <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="state?.error || (error && onlineAvailable)" class="routing-warning" role="alert">{{ state?.error || error }}</p>
       </div>
     </SideDrawer>
   </section>
 </template>
 <style scoped>
 .routing-panel { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; font-size:12px; color:var(--ws-text-secondary-color,#686b66); }
-.routing-trigger,.routing-attention { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font:inherit; background:transparent; color:inherit; border:1px solid var(--ws-border-color-3,#ebe7de); padding:6px 9px; border-radius:20px; cursor:pointer; }
-.routing-attention { color:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-dot { width:6px; height:6px; border-radius:50%; background:#9b978e; }.routing-dot.online { background:#4a7c59; }.routing-default { border-left:1px solid #8883; padding-left:6px; }
+.routing-mode { display:inline-flex; align-items:stretch; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; overflow:hidden; background:var(--ws-card-bg,#fff); }
+.routing-mode__label { display:flex; align-items:center; padding:6px 9px; color:var(--ws-text-secondary-color,#686b66); background:var(--ws-surface-2,#fbf8f1); border-right:1px solid var(--ws-border-color,#d8d3c8); white-space:nowrap; }
+.routing-mode__choice { display:inline-flex; align-items:center; gap:5px; border:0; border-right:1px solid var(--ws-border-color,#d8d3c8); padding:6px 10px; background:transparent; color:var(--ws-text-primary-color,#1d211f); font:inherit; cursor:pointer; white-space:nowrap; }
+.routing-mode__choice:last-child { border-right:0; }.routing-mode__choice[aria-pressed=true] { color:#fff; background:var(--ws-primary-color,#a6452e); }.routing-mode__choice small { max-width:110px; overflow:hidden; text-overflow:ellipsis; font-size:10px; opacity:.82; }.routing-mode__choice.is-unavailable:not([aria-pressed=true]) { color:var(--ws-text-tertiary-color,#8a867e); }
+.routing-manage,.routing-attention { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font:inherit; background:transparent; color:inherit; border:1px solid var(--ws-border-color-3,#ebe7de); padding:6px 9px; border-radius:20px; cursor:pointer; }
+.routing-attention { color:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-default { border-left:1px solid #8883; padding-left:6px; }
 .routing-settings { font-size:14px; line-height:1.75; }.routing-group { padding-bottom:24px; margin-bottom:24px; border-bottom:1px solid var(--ws-border-color-3,#ebe7de); }.routing-group h3 { display:flex; align-items:center; gap:8px; font-size:16px; color:var(--ws-text-primary-color,#1d211f); margin:0 0 10px; }.routing-group p { margin:10px 0; }.routing-service { color:var(--ws-text-primary-color,#1d211f); overflow-wrap:anywhere; }.routing-service span { color:var(--ws-text-secondary-color,#686b66); }.routing-group label { display:flex; align-items:flex-start; gap:9px; margin:14px 0; }.routing-group input { margin-top:6px; flex-shrink:0; accent-color:var(--ws-primary-color,#a6452e); }
 .routing-settings button { font:inherit; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:8px; background:transparent; color:inherit; padding:7px 12px; cursor:pointer; }.routing-settings button.routing-primary { color:#fff; background:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-settings button.routing-link { border:0; text-decoration:underline; padding:0 5px; color:var(--ws-primary-color,#a6452e); }button:disabled { opacity:.45; cursor:not-allowed; }
+.routing-settings-link { display:inline-flex; align-items:center; min-height:34px; box-sizing:border-box; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:8px; padding:7px 12px; color:var(--ws-primary-color,#a6452e); text-decoration:none; }
 .routing-setting-title { display:flex; align-items:center; justify-content:space-between; gap:12px; }.routing-setting-title h3 { margin:0; }.routing-settings .routing-switch { width:40px; height:24px; padding:2px; border:0; border-radius:14px; background:#c8c3b9; flex-shrink:0; }.routing-switch span { display:block; width:20px; height:20px; background:#fff; border-radius:50%; }.routing-switch[aria-checked=true] { background:var(--ws-primary-color,#a6452e); }.routing-switch[aria-checked=true] span { transform:translateX(16px); }
-.routing-consent-form { padding:14px; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }.routing-fine { font-size:12px; color:var(--ws-text-secondary-color,#686b66); }.routing-actions { display:flex; flex-wrap:wrap; gap:8px; }.routing-task { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:10px 0; }.routing-warning { color:var(--ws-primary-color,#a6452e); }.routing-notice { padding:12px; background:#4a7c5910; border-radius:8px; }.routing-group summary { cursor:pointer; }
-@media(max-width:600px) { .routing-default { display:none; }.routing-task { flex-wrap:wrap; }.routing-task>div { min-width:0; overflow-wrap:anywhere; } }
+.routing-consent-form { padding:14px; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }.routing-fine { font-size:12px; color:var(--ws-text-secondary-color,#686b66); }.routing-actions { display:flex; flex-wrap:wrap; gap:8px; }.routing-task { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:10px 0; }.routing-warning { color:var(--ws-primary-color,#a6452e); }.routing-action-error { padding:10px 12px; border-radius:8px; background:var(--ws-primary-soft,#fbf1eb); }.routing-notice { padding:12px; background:#4a7c5910; border-radius:8px; }.routing-group summary { cursor:pointer; }
+@media(max-width:600px) { .routing-panel,.routing-mode { width:100%; }.routing-mode__label { display:none; }.routing-mode__choice { flex:1; justify-content:center; }.routing-mode__choice small,.routing-default { display:none; }.routing-task { flex-wrap:wrap; }.routing-task>div { min-width:0; overflow-wrap:anywhere; } }
 </style>

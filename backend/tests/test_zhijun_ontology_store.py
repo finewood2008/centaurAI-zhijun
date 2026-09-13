@@ -53,6 +53,13 @@ class OntologyStoreTests(unittest.TestCase):
         self.assertEqual(claim["evidence"][0]["quote"], "我在做远川项目")
         self.assertEqual(self.store.stats()["claims"]["working"], 1)
 
+    def test_get_claims_preserves_order_deduplicates_and_can_skip_evidence(self) -> None:
+        first = self.store.create_claim(_claim("第一条理解"), _evidence("第一条理解"))
+        second = self.store.create_claim(_claim("第二条理解"), _evidence("第二条理解"))
+        claims = self.store.get_claims([second["id"], "clm_missing", first["id"], second["id"]], with_evidence=False)
+        self.assertEqual([claim["id"] for claim in claims], [second["id"], first["id"]])
+        self.assertEqual([claim["evidence"] for claim in claims], [[], []])
+
     def test_active_hash_is_unique_but_tombstones_do_not_block(self) -> None:
         first = self.store.create_claim(_claim(), _evidence(), trust_state="working", trust_origin="model")
         with self.assertRaises(OntologyConflictError):

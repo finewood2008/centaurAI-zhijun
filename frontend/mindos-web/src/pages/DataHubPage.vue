@@ -131,7 +131,7 @@ async function toggleProjection() {
 
     <section class="zj-hub__boundary">
       <h2><ShieldCheck :size="18" aria-hidden="true" />边界</h2>
-      <p>原件不出设备。用外部模型时，只发送完成这一轮所必需的问题和片段，每一轮的出处条里都看得到送出了什么。标为敏感或受限的理解永远不外发。</p>
+      <p>默认不发送原件。只有你先确认 Data Agent 的敏感交付方式、再明确允许本轮外部模型用途后，才会发送完成这一轮所必需的问题和片段；每一轮的出处条里都看得到送出了什么。标为敏感或受限的个人理解仍不会外发。</p>
       <p v-if="packError" class="zj-hub__pack-meta">{{ packError }}</p>
       <p v-else-if="pack" class="zj-hub__pack-meta">
         其他 Agent 能拿到的只有你确认过并打开「可带走」的理解，目前 <strong>{{ pack.exportable }}</strong> 条。

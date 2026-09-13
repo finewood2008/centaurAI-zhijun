@@ -138,6 +138,7 @@ const alignmentLocalOnly = ref(false)
 const routingMode = ref('legacy')
 const routingPanel = ref<InstanceType<typeof RoutingPanel> | null>(null)
 const prefillLocalOnly = ref(false)
+let prefillLocalOnlyRevision = 0
 const alignmentPrivacy = ref<InstanceType<typeof AlignmentPrivacy> | null>(null)
 function onAlignmentUpdated(claim: Claim, saved = true) {
   toast({ type: saved ? 'success' : 'error', message: saved ? '自我校准已更新，事实记录保留' : '校准未保存，已读取最新记录；请重新核对' })
@@ -437,6 +438,7 @@ let memoryTimer: ReturnType<typeof setTimeout> | undefined
 let abortController: AbortController | null = null
 // 新建会话后先本地替换路由，再由本页继续流式；此时跳过 watcher 的重新加载。
 let skipLoadFor: string | null = null
+let importingTurn = false
 
 const currentId = computed(() => {
   const id = route.params.conversationId
@@ -511,12 +513,30 @@ function useStarter(s: Starter) {
   composerRef.value?.appendText(s.text)
 }
 
+function setPrefillLocalOnly(value: boolean) {
+  prefillLocalOnly.value = value
+  prefillLocalOnlyRevision += 1
+}
+
+function consumePrefillLocalOnly(revision: number) {
+  if (prefillLocalOnly.value && prefillLocalOnlyRevision === revision) setPrefillLocalOnly(false)
+}
+
+function onRoutingMode(mode: string) {
+  routingMode.value = mode
+}
+
+function onRoutingModeSelected(mode: string) {
+  onRoutingMode(mode)
+  if (mode === 'online') setPrefillLocalOnly(false)
+}
+
 // 从今日页 / 其它页带着话头过来：?say=… → 放进输入框（?deliberate=1 时同时打开「商量」开关），然后把 query 清掉
 watch(
   () => route.query.say,
   (v) => {
     if (typeof v !== 'string' || !v) return
-    prefillLocalOnly.value = route.query.localOnly === '1'
+    setPrefillLocalOnly(route.query.localOnly === '1')
     const d = route.query.deliberate
     const deliberate = d === '1' || d === 'true'
     void nextTick(() => {
@@ -819,10 +839,13 @@ function resetToLanding() {
 
 watch(
   currentId,
-  (id) => {
+  (id, previousId) => {
     // 进了任何一个会话（含刚从强制建档态新建的），?onboarding=1 的强制就结束
     if (id) forceOnboarding.value = false
-    if (streaming.value && id && skipLoadFor === id) {
+    const creatingPrefilledConversation = (streaming.value || importingTurn) && id && skipLoadFor === id
+    const receivingPrefilledPrompt = typeof route.query.say === 'string' && !!route.query.say
+    if (previousId !== undefined && id !== previousId && !creatingPrefilledConversation && !receivingPrefilledPrompt) setPrefillLocalOnly(false)
+    if (creatingPrefilledConversation) {
       skipLoadFor = null
       return
     }
@@ -936,7 +959,16 @@ async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = '
     highlightedMessage.value = null
   }
   if (imports.staged.length) {
-    await imports.send(content, origin)
+    const systemPromptLocalOnly = prefillLocalOnly.value
+    const systemPromptRevision = prefillLocalOnlyRevision
+    importingTurn = true
+    let sent = false
+    try {
+      sent = await imports.send(content, origin, systemPromptLocalOnly)
+    } finally {
+      importingTurn = false
+    }
+    if (sent && systemPromptLocalOnly) consumePrefillLocalOnly(systemPromptRevision)
     if (imports.staged.length) composerRef.value?.restoreSubmission(content, origin, submittedConversationId)
     if (current.value) void refreshCurrentMetadata(current.value.id)
     void loadConversations()
@@ -1010,11 +1042,13 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
   abortController = new AbortController()
   const signal = abortController.signal
   let sendBody: Record<string, unknown> | null
+  const systemPromptLocalOnly = prefillLocalOnly.value
+  const systemPromptRevision = prefillLocalOnlyRevision
   try {
     const routeState = await routingRequest(routePath(conv.id), 'GET', undefined, signal)
     routingMode.value = routeState.mode.mode
     sendBody = await prepareChatRoute(conv.id, { content, depth, mode, materialRefs: imports.references, replyAssistance: origin,
-      localOnly: prefillLocalOnly.value || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal)
+      localOnly: systemPromptLocalOnly || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal)
     if (!sendBody || !alive || currentId.value !== conv.id) {
       composerRef.value?.restoreSubmission(content, origin, conv.id)
       streaming.value = false; abortController = null; return
@@ -1093,6 +1127,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
         },
         meta: (d) => {
           const m = d as TurnMetaEvent
+          if (systemPromptLocalOnly) consumePrefillLocalOnly(systemPromptRevision)
           assistant.id = m.messageId
           userMsg.id = m.userMessageId
           assistant.meta = { ...assistant.meta, replyTo: m.userMessageId, turnMode: m.turnMode || mode, depth: m.depth }
@@ -1497,7 +1532,7 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="zj-page__tools">
-          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="routingMode = $event" />
+          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" />
           <MatterWorkspace v-if="loadedConversationId && conversationAuxPhase >= 2 && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
@@ -1561,9 +1596,10 @@ onBeforeUnmount(() => {
             />
             <ImportBatchCard
               v-for="batch in imports.batches.filter(b => b.messageId === m.id)" :key="batch.id"
-              :batch="batch" :busy="imports.busyBatch === batch.id || imports.uploading"
+              :batch="batch" :busy="imports.busyBatch === batch.id || imports.ragBusyBatch === batch.id || imports.uploading"
               @preview="imports.showPreview($event)" @retry="imports.retry(batch, $event)"
               @consent="imports.showConsent($event)" @reference="imports.chooseReferences($event)"
+              @rag="imports.confirmSensitive($event)"
               @reupload="(item, file) => imports.reupload(batch, item, file)"
             />
             <div v-if="m.meta?.importId && m.role === 'assistant'" class="zj-file-followups">

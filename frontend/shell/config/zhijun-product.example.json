@@ -1,4 +1,11 @@
 {
   "version": 1,
-  "consumerBaseUrl": "https://boss.nexusaos.qitus.cn/prod-api"
+  "consumerBaseUrl": "https://boss.nexusaos.qitus.cn/prod-api",
+  "provisioning": {
+    "contractVersion": "2.0.0",
+    "electronWebBluetoothDiscoveryV1": false,
+    "electronBleProvisioningV2": false,
+    "trustedRootSpkiPins": [],
+    "trustedRootCertificatesPem": []
+  }
 }

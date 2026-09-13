@@ -2,28 +2,29 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createNavigationProgressReader } from '../src/services/navigationProgress.ts'
 
-test('ready navigation expires at 30 seconds and concurrent reads share one request', async () => {
-  let now = 0, calls = 0, resolve
+test('ready navigation is cached for the current product scope and concurrent reads share one request', async () => {
+  let calls = 0, resolve
   const reader = createNavigationProgressReader(() => {
     calls++
     return new Promise(done => { resolve = done })
-  }, () => true, () => now)
+  }, () => true)
   const first = reader.read(), second = reader.read()
   assert.equal(calls, 1)
   resolve({ state: 'ready' })
   await Promise.all([first, second])
-  now = 29_999
   await reader.read()
   assert.equal(calls, 1)
-  now = 30_000
-  const expired = reader.read()
+  await reader.read()
+  assert.equal(calls, 1)
+  reader.invalidate()
+  const incomplete = reader.read()
   assert.equal(calls, 2)
   resolve({ state: 'not_started' })
-  await expired
-  const incomplete = reader.read()
+  await incomplete
+  const nextIncomplete = reader.read()
   assert.equal(calls, 3)
   resolve({ state: 'not_started' })
-  await incomplete
+  await nextIncomplete
 })
 
 test('invalidated late response cannot be delivered or replace a newer in-flight request', async () => {

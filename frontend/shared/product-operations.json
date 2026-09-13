@@ -648,6 +648,21 @@
       "mutating": false
     },
     {
+      "id": "post_api_mindos_conversations_conversation_id_rag_v2_decision",
+      "method": "POST",
+      "path": "/api/mindos/conversations/{conversationId}/rag-v2/decision",
+      "pathParams": [
+        "conversationId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 4096,
+      "maxResponseBytes": 16384,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
       "id": "put_api_mindos_conversations_conversation_id_references",
       "method": "PUT",
       "path": "/api/mindos/conversations/{conversationId}/references",
@@ -1839,6 +1854,77 @@
       "method": "PUT",
       "path": "/api/mindos/memory-policy",
       "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_settings_sensitive_rules",
+      "method": "GET",
+      "path": "/api/mindos/settings/sensitive-rules",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_settings_sensitive_rules_rule_id",
+      "method": "GET",
+      "path": "/api/mindos/settings/sensitive-rules/{ruleId}",
+      "pathParams": [
+        "ruleId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_settings_sensitive_rules_custom",
+      "method": "POST",
+      "path": "/api/mindos/settings/sensitive-rules/custom",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "put_api_mindos_settings_sensitive_rules_custom_rule_id",
+      "method": "PUT",
+      "path": "/api/mindos/settings/sensitive-rules/custom/{ruleId}",
+      "pathParams": [
+        "ruleId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "delete_api_mindos_settings_sensitive_rules_custom_rule_id",
+      "method": "DELETE",
+      "path": "/api/mindos/settings/sensitive-rules/custom/{ruleId}",
+      "pathParams": [
+        "ruleId"
+      ],
       "query": [],
       "body": "json",
       "response": "json",

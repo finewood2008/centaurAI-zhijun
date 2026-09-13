@@ -4,9 +4,17 @@ from dataclasses import asdict
 from .capabilities import require, CapabilityError
 
 
-def _stream_error_message(code):
+def _stream_error_message(code, *, local_only=False):
     if code == "MODEL_RESPONSE_EMPTY":
         return "模型没有返回可显示的正文，请重试当前模式；原消息和章程草稿仍保留"
+    if code in {"MODEL_PROVIDER_FAILED", "CAPABILITY_UNAVAILABLE"}:
+        return ("盒子的本地模型服务没有运行或尚未就绪，请检查本地模型运行状态后重试"
+                if local_only else "当前模型服务暂时不可用，请检查模型运行状态后重试")
+    if code in {"MODEL_TIMEOUT", "MODEL_TOTAL_TIMEOUT", "MODEL_QUEUE_TIMEOUT"}:
+        return ("盒子的本地模型等待超时，请稍后重试；原消息仍保留"
+                if local_only else "当前模型等待超时，请稍后重试；原消息仍保留")
+    if code == "MODEL_CONFIGURATION_CHANGED":
+        return "模型设置刚刚发生变化，请重新读取设置后重试；原消息仍保留"
     return "模型能力调用失败"
 
 
@@ -64,7 +72,7 @@ class CapabilityProvider:
             if not terminal:
                 raise CapabilityError("CAPABILITY_STREAM_INTERRUPTED", 502)
         except CapabilityError as exc:
-            raise ProviderError(_stream_error_message(exc.code), status_code=exc.status, code=exc.code,
+            raise ProviderError(_stream_error_message(exc.code, local_only=self.local_only), status_code=exc.status, code=exc.code,
                                 retryable=exc.status in {429, 502, 503, 504}) from None
 
     def complete_json(self, request):

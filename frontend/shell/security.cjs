@@ -5,8 +5,8 @@ const ENTRY_URL = 'zhijun://desktop/desktop.html'
 const INVOKE_CHANNEL = 'zhijun:invoke'
 const SNAPSHOT_CHANNEL = 'zhijun:snapshot'
 const OPERATIONS = new Set(['getSnapshot', 'getRememberedLogin', 'beginSignIn', 'signInWithPassword', 'signInWithSavedPassword',
-  'sendRegistrationCode', 'registerWithPassword', 'listDevices', 'claimDevice', 'connect',
-  'disconnect', 'signOut', 'materials.list', 'cancelRead',
+  'sendRegistrationCode', 'resetPassword', 'registerWithPassword', 'listDevices', 'claimDevice', 'connect',
+  'openProvisioning', 'disconnect', 'signOut', 'materials.list', 'cancelRead',
   ...require('./runtime/product-session.cjs').productMethods.map(method => `product.${method}`)])
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: zhijun-media:; media-src blob: zhijun-media:; font-src 'self'; connect-src zhijun-media: blob:; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
 
@@ -40,7 +40,7 @@ function createInvokeHandler(runtime, getContents) {
     if (typeof operation !== 'string' || !OPERATIONS.has(operation) || !Array.isArray(args) || args.length > 2) {
       return denied(runtime, 'INVALID_REQUEST')
     }
-    if (operation === 'product.requestMicrophone' && !contents.isFocused()) return denied(runtime)
+    if (['product.requestMicrophone', 'openProvisioning'].includes(operation) && !contents.isFocused()) return denied(runtime)
     return runtime.invoke(operation, args, contents.id)
   }
 }

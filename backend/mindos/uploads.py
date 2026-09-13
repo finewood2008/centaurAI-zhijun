@@ -382,11 +382,20 @@ def _available_material_record(material_id: str, device_scope: str = "global") -
     return record
 
 
-def _repair_missing_confirmed_card(material_id: str) -> dict:
-    """Self-heal historical drafts whose confirmed card was permanently deleted."""
-    from .material_drafts import ensure_minimal_draft, reopen_after_card_purged
+def _repair_missing_confirmed_card(material_id: str, *, source_path: str = "") -> dict:
+    """Self-heal historical card links and abandoned draft-generation tasks."""
+    from .material_drafts import ensure_minimal_draft, recover_stale_generation, reopen_after_card_purged
 
-    draft = ensure_minimal_draft(material_id)
+    # Recover before title self-repair: placeholder maintenance updates the row's
+    # timestamp and must not accidentally renew an abandoned generation lease.
+    if source_path:
+        draft = recover_stale_generation(material_id, source_path)
+        # Do not race a just-submitted generator with placeholder-title repair;
+        # the next terminal read can safely perform that maintenance.
+        if draft.get("status") != "pending":
+            draft = ensure_minimal_draft(material_id)
+    else:
+        draft = ensure_minimal_draft(material_id)
     knowledge_id = str(draft.get("knowledgeId") or "")
     if not draft.get("confirmed") or not knowledge_id:
         return draft
@@ -408,7 +417,10 @@ def mindos_material_detail(material_id: str, request: Request):
         raise HTTPException(404, "资料不存在")
     detail["recycled"] = ingestion.is_recycled(material_id, device_scope=scope)
     if detail.get("status") == "available":
-        detail["draftCard"] = _repair_missing_confirmed_card(material_id)
+        detail["draftCard"] = _repair_missing_confirmed_card(
+            material_id,
+            source_path=ingestion.source_path_of(material_id, device_scope=scope) or "",
+        )
     else:
         detail["draftCard"] = None
     return detail
@@ -417,7 +429,10 @@ def mindos_material_detail(material_id: str, request: Request):
 def mindos_material_draft_card(material_id: str, request: Request = None):
     scope = _device_scope_of(request)
     _available_material_record(material_id, device_scope=scope)
-    return {"materialId": material_id, **_repair_missing_confirmed_card(material_id)}
+    return {"materialId": material_id, **_repair_missing_confirmed_card(
+        material_id,
+        source_path=ingestion.source_path_of(material_id, device_scope=scope) or "",
+    )}
 
 
 def mindos_material_draft_card_save(material_id: str, req: DraftCardSaveRequest, request: Request):
