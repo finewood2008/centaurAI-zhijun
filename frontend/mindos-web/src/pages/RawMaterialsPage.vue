@@ -14,12 +14,13 @@ import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import { createSessionGate } from '@/composables/sessionGate'
+import type { UploadProgress } from '@/services/transport'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const items = ref<UploadResult[]>([])
-type DisplayMaterial = UploadResult & { transientUpload?: boolean }
+type DisplayMaterial = UploadResult & { transientUpload?: boolean; uploadProgress?: UploadProgress }
 const transientUploads = ref<DisplayMaterial[]>([])
 const displayItems = computed<DisplayMaterial[]>(() => [...transientUploads.value, ...items.value])
 const loading = ref(true)
@@ -38,7 +39,7 @@ let disposed = false
 const materialLoadGate = createSessionGate()
 
 const activeKnowledgeCardStates = new Set<NonNullable<UploadResult['knowledgeCard']>['state']>([
-  'generating', 'confirming', 'indexing',
+  'generating', 'confirming', 'indexing', 'recycling', 'restoring', 'purging',
 ])
 
 function hasActiveMaterial(items: UploadResult[]) {
@@ -65,19 +66,30 @@ function scheduleRefresh() {
 }
 
 const knowledgeCardStateMeta: Record<NonNullable<UploadResult['knowledgeCard']>['state'], { label: string; className: string }> = {
-  waiting: { label: '待处理', className: 'is-muted' },
+  waiting: { label: '等待资料处理', className: 'is-muted' },
   generating: { label: '正在生成草稿', className: 'is-pending' },
   draft: { label: '草稿待确认', className: 'is-draft' },
   confirming: { label: '确认中', className: 'is-pending' },
   indexing: { label: '已确认，索引中', className: 'is-pending' },
   available: { label: '已确认，可检索', className: 'is-ready' },
-  failed: { label: '已确认，索引失败', className: 'is-failed' },
+  failed: { label: '处理失败', className: 'is-failed' },
   recycled: { label: '卡片在回收站', className: 'is-muted' },
   unknown: { label: '已确认，待修复', className: 'is-failed' },
+  draft_failed: { label: '草稿生成失败', className: 'is-failed' },
+  index_failed: { label: '已确认，索引失败', className: 'is-failed' },
+  state_conflict: { label: '卡片状态待修复', className: 'is-failed' },
+  recycling: { label: '正在回收', className: 'is-pending' },
+  restoring: { label: '正在恢复', className: 'is-pending' },
+  purging: { label: '正在删除', className: 'is-pending' },
+  purged: { label: '卡片已删除', className: 'is-muted' },
+  merged: { label: '已合并到其他卡片', className: 'is-ready' },
 }
 
-function knowledgeCardMeta(item: UploadResult) {
-  return knowledgeCardStateMeta[item.knowledgeCard?.state ?? 'waiting']
+function knowledgeCardMeta(item: DisplayMaterial) {
+  if (item.transientUpload) return { label: '上传后处理', className: 'is-muted' }
+  if (!item.knowledgeCard) return { label: '状态未提供', className: 'is-muted' }
+  if (item.knowledgeCard.errorCode === 'draft_missing') return { label: '尚未创建卡片', className: 'is-muted' }
+  return knowledgeCardStateMeta[item.knowledgeCard.state] ?? { label: '状态待核对', className: 'is-failed' }
 }
 
 // ---- P14-06：多级目录树（ID 驱动；null = 全部，未分类由 folderId=null 的资料表示）----
@@ -203,10 +215,15 @@ async function importFiles(files: FileList | File[]) {
         status: 'uploaded', jobId: '', errorMessage: null, folder: '', folderId: selectedFolderId.value,
         createdAt: new Date().toISOString(), materialFamilyId: '', versionNumber: 1,
         supersedesMaterialId: null, supersededByMaterialId: null, versionNote: null, transientUpload: true,
+        uploadProgress: { loaded: 0, total: file.size, phase: 'uploading' },
       }
       transientUploads.value.push(transient)
       try {
-        const uploaded = await api.uploadFile(file, selectedFolderId.value ?? undefined)
+        const uploaded = await api.uploadFile(file, selectedFolderId.value ?? undefined, progress => {
+          // Mutate the reactive row, not the original object pushed into the ref.
+          const row = transientUploads.value.find(item => item.materialId === transient.materialId)
+          if (row && !disposed) row.uploadProgress = progress
+        })
         items.value = [uploaded, ...items.value.filter((item) => item.materialId !== uploaded.materialId)]
         loadedOnce = true
         accepted += 1
@@ -530,6 +547,15 @@ onBeforeUnmount(() => {
           <div class="ws-table__head">共 {{ displayItems.length }} 项资料</div>
           <div class="ws-table__scroll">
             <table class="ws-table__grid">
+              <colgroup>
+                <col class="ws-table__file-col">
+                <col class="ws-table__type-col">
+                <col class="ws-table__folder-col">
+                <col class="ws-table__status-col">
+                <col class="ws-table__card-col">
+                <col class="ws-table__date-col">
+                <col class="ws-table__ops-col">
+              </colgroup>
               <thead>
                 <tr>
                   <th>文件名</th>
@@ -538,15 +564,21 @@ onBeforeUnmount(() => {
                   <th>状态</th>
                   <th>知识卡片</th>
                   <th>导入时间</th>
-                  <th class="ws-table__ops-col"></th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in displayItems" :key="item.materialId" @click="!item.transientUpload && openMaterial(item)">
                   <td class="ws-table__name" :title="item.fileName">{{ item.fileName }}</td>
                   <td>{{ formatFileType(item.fileType) }}</td>
-                  <td>{{ folderDisplayName(item.folderId, item.folder) }}</td>
-                  <td><StatusBadge :meta="materialStatusMeta(item.status)" /></td>
+                  <td class="ws-table__folder" :title="folderDisplayName(item.folderId, item.folder)">{{ folderDisplayName(item.folderId, item.folder) }}</td>
+                  <td>
+                    <div v-if="item.transientUpload && item.uploadProgress" class="upload-progress" aria-live="polite">
+                      <span>{{ item.uploadProgress.phase === 'finalizing' ? '上传 100% · 正在提交' : item.uploadProgress.total > 0 ? `上传中 ${Math.min(99, Math.floor(item.uploadProgress.loaded / item.uploadProgress.total * 100))}%` : '上传中…' }}</span>
+                      <progress :value="item.uploadProgress.total > 0 ? item.uploadProgress.loaded : undefined" :max="Math.max(1, item.uploadProgress.total)" :aria-label="`${item.fileName} 上传进度`" />
+                    </div>
+                    <StatusBadge v-else :meta="item.status === 'uploaded' ? { label: '已上传，等待处理', tone: 'info' } : materialStatusMeta(item.status)" />
+                  </td>
                   <td>
                     <span
                       class="knowledge-card-state"
@@ -556,26 +588,30 @@ onBeforeUnmount(() => {
                   </td>
                   <td>{{ formatDate(item.createdAt) }}</td>
                   <td class="ws-table__ops">
-                    <IconButton v-if="!item.transientUpload" label="查看详情" @click.stop="openMaterial(item)">
-                      <Eye :size="16" aria-hidden="true" />
-                    </IconButton>
-                    <IconButton v-if="!item.transientUpload" label="移动文件夹" @click.stop="openMove(item)">
-                      <FolderInput :size="16" aria-hidden="true" />
-                    </IconButton>
-                    <IconButton
-                      v-if="item.status === 'queued' && item.errorCode === 'service_interrupted'"
-                      label="继续处理"
-                      @click.stop="resumeProcessing(item)"
-                    >
-                      <Play :size="16" aria-hidden="true" />
-                    </IconButton>
-                    <IconButton
-                      v-if="item.status === 'uploaded' || item.status === 'queued' || item.status === 'failed'"
-                      label="移出队列"
-                      @click.stop="removeFromQueue(item)"
-                    >
-                      <X :size="16" aria-hidden="true" />
-                    </IconButton>
+                    <div class="ws-table__actions">
+                      <IconButton v-if="!item.transientUpload" label="查看详情" size="sm" @click.stop="openMaterial(item)">
+                        <Eye :size="16" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton v-if="!item.transientUpload" label="移动文件夹" size="sm" @click.stop="openMove(item)">
+                        <FolderInput :size="16" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton
+                        v-if="item.status === 'queued' && item.errorCode === 'service_interrupted'"
+                        label="继续处理"
+                        size="sm"
+                        @click.stop="resumeProcessing(item)"
+                      >
+                        <Play :size="16" aria-hidden="true" />
+                      </IconButton>
+                      <IconButton
+                        v-if="item.status === 'uploaded' || item.status === 'queued' || item.status === 'failed'"
+                        label="移出队列"
+                        size="sm"
+                        @click.stop="removeFromQueue(item)"
+                      >
+                        <X :size="16" aria-hidden="true" />
+                      </IconButton>
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -686,7 +722,7 @@ onBeforeUnmount(() => {
 
 /* 文件夹侧栏 */
 .ws-folders {
-  width: 220px;
+  width: 196px;
   flex-shrink: 0;
   border: 1px solid var(--ws-border-color, #d8d3c8);
   border-radius: var(--ws-radius-lg, 8px);
@@ -919,6 +955,7 @@ onBeforeUnmount(() => {
 .ws-main {
   flex: 1;
   min-width: 0;
+  width: 100%;
 }
 
 .ws-toolbar {
@@ -1033,12 +1070,14 @@ onBeforeUnmount(() => {
 
 .ws-table__grid {
   width: 100%;
+  min-width: 620px;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
 .ws-table__grid th {
   text-align: left;
-  padding: 10px 16px;
+  padding: 10px 8px;
   color: var(--ws-text-secondary-color, #686b66);
   font-weight: 600;
   background: var(--ws-surface-2, #fbf8f1);
@@ -1046,7 +1085,8 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .ws-table__grid td {
-  padding: 10px 16px;
+  padding: 10px 8px;
+  overflow-wrap: anywhere;
   border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
   color: var(--ws-text-color, #3c403d);
 }
@@ -1061,26 +1101,49 @@ onBeforeUnmount(() => {
   border-bottom: none;
 }
 
-.ws-table__name {
-  max-width: 360px;
+.ws-table__name,
+.ws-table__folder {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ws-table__name {
   font-weight: 600;
   color: var(--ws-text-primary-color, #1d211f);
 }
 
-.ws-table__ops-col {
-  width: 120px;
+.ws-table__type-col { width: 48px; }
+.ws-table__folder-col { width: 72px; }
+.ws-table__status-col { width: 94px; }
+.ws-table__card-col { width: 112px; }
+.ws-table__date-col { width: 100px; }
+.ws-table__ops-col { width: 80px; }
+
+.ws-table__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
-.ws-table__ops {
-  white-space: nowrap;
+/* 末列提示向左展开，避免透明提示框也撑出横向滚动范围。 */
+.ws-table__actions :deep(.ws-tooltip--top .ws-tooltip__tip) {
+  left: auto;
+  right: 0;
+  transform: translateY(2px);
+}
+.ws-table__actions :deep(.ws-tooltip--top:hover .ws-tooltip__tip),
+.ws-table__actions :deep(.ws-tooltip--top:focus-within .ws-tooltip__tip) {
+  transform: translateY(0);
 }
 
+.ws-table__grid :deep(.ws-badge) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.upload-progress { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: #a66a1f; }
+.upload-progress progress { width: 100%; min-width: 0; height: 6px; accent-color: #aa432c; }
 .knowledge-card-state {
   display: inline-block;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
   color: var(--ws-text-secondary-color, #686b66);
 }
 .knowledge-card-state.is-ready { color: #16803c; }
@@ -1089,8 +1152,8 @@ onBeforeUnmount(() => {
 .knowledge-card-state.is-failed { color: #c43d3d; }
 .knowledge-card-state.is-muted { color: var(--ws-text-secondary-color, #686b66); }
 
-/* <900px：侧栏移到内容区上方，保持可用 */
-@media (max-width: 900px) {
+/* 窄窗口优先给表格留宽度；手机保留局部滚动，不裁掉操作。 */
+@media (max-width: 1100px) {
   .ws-layout {
     flex-direction: column;
   }

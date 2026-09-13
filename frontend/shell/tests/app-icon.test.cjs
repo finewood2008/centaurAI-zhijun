@@ -129,7 +129,13 @@ test('the real main entry installs the Dock icon after ready, without launching 
     'node:path': path,
     'node:fs/promises': { access: async () => { throw new Error('Synthetic missing renderer: stop before creating a window') } },
     './app-icon.cjs': { APP_ICON, installDockIcon: value => installDockIcon(value, 'darwin') },
+    './provisioning-window.cjs': {
+      isProvisioningEnabled: () => false,
+      createProvisioningWindow() {},
+      closeProvisioningWindow() {},
+    },
     './runtime/desktop-runtime.cjs': {}, './security.cjs': {},
+    './package.json': {},
   }
   vm.runInNewContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), {
     require: name => { assert.ok(name in imports, name); return imports[name] },

@@ -90,6 +90,15 @@ class ConversationStoreTests(unittest.TestCase):
             prompt_chars=1300,
         )
         self.assertEqual(again["workingClaimIds"], ["clm_c"])
+        self.assertEqual(self.store.list_receipts(conv["id"]), {msg["id"]: again})
+        other = self.store.create_conversation()
+        other_msg = self.store.append_message(other["id"], "assistant", "y")
+        self.store.save_receipt(
+            message_id=other_msg["id"], conversation_id=other["id"], provider="fake", model="fake-zhijun",
+            external=False, confirmed_claim_ids=[], working_claim_ids=[], material_chunk_keys=[],
+            retracted_notice_count=0, prompt_chars=10,
+        )
+        self.assertEqual(set(self.store.list_receipts(conv["id"])), {msg["id"]})
         self.assertTrue(self.store.delete_conversation(conv["id"]))
         self.assertIsNone(self.store.get_conversation(conv["id"]))
         self.assertIsNone(self.store.get_message(msg["id"]))

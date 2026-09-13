@@ -97,13 +97,15 @@ const analysis = ref<{ tagSuggestions: DerivedTagSuggestions; entities: DerivedE
 const analysisLoading = ref(false)
 const analysisError = ref('')
 const analysisWaitExpired = ref(false)
+const summaryWaitExpired = ref(false)
+const draftWaitExpired = ref(false)
 // 首次解析和手动重新解析均由四项派生产物驱动。只要其中任一项仍在后台生成，
 // 就不能再次提交重解析，避免已发出的 LLM 任务后面再排入一轮重复任务。
 const derivedGenerationPending = computed(() => {
-  if (analysisLoading.value || detail.value?.summary.status === 'pending') return true
+  if (detail.value?.summary.status === 'pending' && !summaryWaitExpired.value) return true
   const current = analysis.value
   return Boolean(
-    current && (
+    !analysisWaitExpired.value && current && (
       current.tagSuggestions.status === 'pending'
       || current.entities.status === 'pending'
       || current.relations.status === 'pending'
@@ -114,7 +116,32 @@ const privacyReviewRequired = computed(() => detail.value?.privacyStatus?.state 
 const privacyProcessing = computed(() => detail.value?.privacyStatus?.state === 'processing')
 const privacyFailed = computed(() => detail.value?.privacyStatus?.state === 'failed')
 const privacyBlocking = computed(() => privacyReviewRequired.value || privacyProcessing.value || privacyFailed.value)
-const draftGenerationPending = computed(() => draft.value?.status === 'pending' || privacyBlocking.value)
+const draftGenerationPending = computed(() => draft.value?.status === 'pending' && !draftWaitExpired.value)
+const draftEditingBlocked = computed(() => privacyBlocking.value)
+const summaryGenerationWaitExpired = computed(() => Boolean(
+  summaryWaitExpired.value && detail.value?.summary.status === 'pending',
+))
+const analysisGenerationWaitExpired = computed(() => Boolean(
+  analysisWaitExpired.value && analysis.value && (
+    analysis.value.tagSuggestions.status === 'pending'
+    || analysis.value.entities.status === 'pending'
+    || analysis.value.relations.status === 'pending'
+  ),
+))
+const draftGenerationWaitExpired = computed(() => Boolean(
+  draftWaitExpired.value && draft.value?.status === 'pending',
+))
+const generationWaitExpired = computed(() => (
+  summaryGenerationWaitExpired.value
+  || analysisGenerationWaitExpired.value
+  || draftGenerationWaitExpired.value
+))
+const draftRetryBlockedByEdits = computed(() => Boolean(
+  draftGenerationWaitExpired.value
+  && draftDirty.value
+  && !summaryGenerationWaitExpired.value
+  && !analysisGenerationWaitExpired.value,
+))
 const draftBadge = computed(() => {
   if (draft.value?.confirmed) return '已确认'
   if (privacyReviewRequired.value) return '待隐私复核'
@@ -152,7 +179,6 @@ const parsingLabel = computed(() => {
 // P14-02：内嵌图片（受控预览 + OCR）
 const embeddedImages = computed<EmbeddedImage[]>(() => detail.value?.embeddedImages ?? [])
 // 摘要轮询（初次进入仍在生成的材料）；手动刷新统一通过“重新解析”。
-const summaryWaitExpired = ref(false)
 // 详情加载请求代次：防「资料 A 的详情请求延迟返回后覆盖已切换的资料 B」
 const detailLoadGate = createSessionGate()
 // 关联内容加载请求代次：防「A 的关联请求延迟返回后覆盖已切换的资料 B 的相关内容」
@@ -168,10 +194,12 @@ const generatedDraftPoller = createGeneratedDraftPoller<MaterialDraftCard & { ma
     draft.value = latest
     draftTitle.value = latest.title
     draftContent.value = latest.content
+    draftWaitExpired.value = false
     takeDraftSnapshot()
   },
   onTimeout: (materialId) => {
     if (detail.value?.materialId === materialId && draft.value?.status === 'pending' && !draftDirty.value) {
+      draftWaitExpired.value = true
       draftError.value = '知识卡片生成时间较长，请稍后刷新处理状态。'
     }
   },
@@ -312,33 +340,48 @@ async function loadAnalysis() {
 // 用户明确点击“重新解析”时，强制重新生成摘要、标签、实体和关系。
 // 后端会先把四项状态置为 pending，避免前端读到旧 ok 结果后过早结束轮询。
 async function reparseMaterial() {
-  if (!detail.value || derivedGenerationPending.value) return
+  if (!detail.value || draftEditingBlocked.value || draftRetryBlockedByEdits.value || analysisLoading.value || derivedGenerationPending.value || draftGenerationPending.value) return
   const materialId = detail.value.materialId
+  const retryDraft = draftGenerationWaitExpired.value && !draftDirty.value && !draft.value?.userEdited
+  const retryAnalysis = !retryDraft || summaryGenerationWaitExpired.value || analysisGenerationWaitExpired.value
   analysisLoading.value = true
   analysisError.value = ''
+  if (retryDraft) draftError.value = ''
   analysisWaitExpired.value = false
   const requestSession = analysisLoadGate.next()
+  let activeAction: 'analysis' | 'draft' = retryAnalysis ? 'analysis' : 'draft'
   try {
-    const result = await api.reparseMaterial(materialId)
-    if (!analysisLoadGate.isCurrent(requestSession) || !detail.value || detail.value.materialId !== materialId) return
-    setAnalysis(materialId, result)
-    // 提交后即使请求完成得很快，也先展示进行中；轮询以服务端 pending/终态为准。
-    detail.value.summary = { ...result.summary, status: 'pending', generatedAt: null }
-    analysis.value = {
-      tagSuggestions: { ...result.tagSuggestions, status: 'pending' },
-      entities: { ...result.entities, status: 'pending' },
-      relations: { ...result.relations, status: 'pending' },
+    if (retryAnalysis) {
+      const result = await api.reparseMaterial(materialId)
+      if (!analysisLoadGate.isCurrent(requestSession) || !detail.value || detail.value.materialId !== materialId) return
+      setAnalysis(materialId, result)
+      // 提交后即使请求完成得很快，也先展示进行中；轮询以服务端 pending/终态为准。
+      detail.value.summary = { ...result.summary, status: 'pending', generatedAt: null }
+      analysis.value = {
+        tagSuggestions: { ...result.tagSuggestions, status: 'pending' },
+        entities: { ...result.entities, status: 'pending' },
+        relations: { ...result.relations, status: 'pending' },
+      }
+      summaryWaitExpired.value = false
+      summaryPoller.start(materialId)
+      analysisPoller.start(materialId)
     }
-    summaryWaitExpired.value = false
-    summaryPoller.start(materialId)
-    analysisPoller.start(materialId)
-    if (draft.value && !draft.value.confirmed) {
-      draft.value = { ...draft.value, status: 'pending' }
+    if (retryDraft) {
+      activeAction = 'draft'
+      const latestDraft = await api.regenerateMaterialDraft(materialId)
+      if (!analysisLoadGate.isCurrent(requestSession) || detail.value?.materialId !== materialId || draftDirty.value) return
+      draft.value = latestDraft
+      draftTitle.value = latestDraft.title
+      draftContent.value = latestDraft.content
+      draftWaitExpired.value = false
+      takeDraftSnapshot()
       generatedDraftPoller.start(materialId)
     }
   } catch (e) {
     if (analysisLoadGate.isCurrent(requestSession) && detail.value?.materialId === materialId) {
-      analysisError.value = e instanceof Error ? e.message : '重新解析失败'
+      const message = e instanceof Error ? e.message : activeAction === 'draft' ? '草稿重新生成失败' : '重新解析失败'
+      if (activeAction === 'draft') draftError.value = message
+      else analysisError.value = message
     }
   } finally {
     if (analysisLoadGate.isCurrent(requestSession) && detail.value?.materialId === materialId) {
@@ -544,34 +587,23 @@ async function saveDraft(): Promise<boolean> {
     draftError.value = '草稿正文不能为空'
     return false
   }
+  if (!draftDirty.value && draft.value.status === 'ok') {
+    toast({ type: 'success', message: '草稿已保存' })
+    return true
+  }
   savingDraft.value = true
   draftError.value = ''
+  const materialId = detail.value.materialId
+  const expectedRevision = draft.value.revision ?? ''
+  const title = draftTitle.value
+  const content = draftContent.value
   try {
-    // 草稿生成在后台执行。页面打开后它可能以新模型结果更新 revision；确认前
-    // 先同步，避免把旧 revision 送到 CAS 保存接口而得到没有上下文的 409。
-    const displayedDraft = draft.value
-    const latestDraft = await api.getMaterialDraftCard(detail.value.materialId)
-    if (latestDraft.confirmed) {
-      draft.value = latestDraft
-      draftTitle.value = latestDraft.title
-      draftContent.value = latestDraft.content
-      draftError.value = '该草稿已在其他会话确认，不能继续修改。'
-      return false
-    }
-    if (latestDraft.revision !== displayedDraft.revision) {
-      const locallyEdited = draftTitle.value !== displayedDraft.title || draftContent.value !== displayedDraft.content
-      draft.value = latestDraft
-      if (locallyEdited) {
-        // 保留输入框里的用户内容；下一次明确保存/确认会基于新 revision 写入。
-        draftError.value = '草稿已在后台更新，当前编辑已保留。请确认内容后再次点击确认。'
-        return false
-      }
-      draftTitle.value = latestDraft.title
-      draftContent.value = latestDraft.content
-    }
-    const savedDraft = await api.saveMaterialDraftCard(detail.value.materialId, {
-      expectedRevision: latestDraft.revision ?? '', title: draftTitle.value, content: draftContent.value,
+    // 单次 CAS 写入即可：后端会让显式用户保存覆盖尚未编辑的 AI 增强版本，
+    // 但仍拒绝覆盖其它用户会话的修改。避免保存前额外跨盒 GET 带来的整轮延迟。
+    const savedDraft = await api.saveMaterialDraftCard(materialId, {
+      expectedRevision, title, content,
     })
+    if (detail.value?.materialId !== materialId) return false
     draft.value = savedDraft
     draftTitle.value = savedDraft.title
     draftContent.value = savedDraft.content
@@ -579,7 +611,9 @@ async function saveDraft(): Promise<boolean> {
     toast({ type: 'success', message: '草稿已保存' })
     return true
   } catch (e) {
-    draftError.value = e instanceof Error ? e.message : '保存草稿失败'
+    if (detail.value?.materialId === materialId) {
+      draftError.value = e instanceof Error ? e.message : '保存草稿失败'
+    }
     return false
   } finally {
     savingDraft.value = false
@@ -589,17 +623,23 @@ async function saveDraft(): Promise<boolean> {
 async function confirmDraft() {
   if (!detail.value || !draft.value || confirmingDraft.value || draft.value.confirmed) return
   if (!(await saveDraft())) return
+  if (!detail.value || !draft.value) return
+  const materialId = detail.value.materialId
+  const revision = draft.value.revision ?? ''
   confirmingDraft.value = true
   draftError.value = ''
   try {
     const result = await api.confirmMaterialDraftCard(
-      detail.value.materialId, draft.value.revision ?? '', crypto.randomUUID(),
+      materialId, revision, crypto.randomUUID(),
     )
+    if (detail.value?.materialId !== materialId || draft.value?.revision !== revision) return
     draft.value = { ...draft.value, status: 'confirmed', confirmed: true, knowledgeId: result.knowledgeId, indexState: 'indexing', indexErrorCode: null }
-    pollCardIndexUntilTerminal(detail.value.materialId)
+    pollCardIndexUntilTerminal(materialId)
     toast({ type: 'success', message: '卡片已确认，正在建立索引' })
   } catch (e) {
-    draftError.value = e instanceof Error ? e.message : '确认卡片失败'
+    if (detail.value?.materialId === materialId) {
+      draftError.value = e instanceof Error ? e.message : '确认卡片失败'
+    }
   } finally {
     confirmingDraft.value = false
   }
@@ -705,6 +745,13 @@ async function loadRelated(materialId: string) {
 
 async function loadDetail(materialId: string, options: { background?: boolean } = {}) {
   const background = options.background === true
+  // A delayed analysis read for the previous route must not keep the reused
+  // component's loading flag true and prevent the new material from loading.
+  analysisLoadGate.invalidate()
+  analysisLoading.value = false
+  analysisError.value = ''
+  analysisWaitExpired.value = false
+  if (detail.value?.materialId !== materialId) analysis.value = null
   if (!background) {
     loading.value = true
     error.value = ''
@@ -720,6 +767,7 @@ async function loadDetail(materialId: string, options: { background?: boolean } 
   analysisPoller.stop()
   generatedDraftPoller.stop()
   summaryWaitExpired.value = false
+  draftWaitExpired.value = false
   const requestSession = detailLoadGate.next()
   try {
     const result = await api.getMaterialDetail(materialId)
@@ -842,10 +890,10 @@ async function saveOriginal() {
     <template v-else-if="detail">
       <div class="detail-actions">
         <template v-if="detail.status === 'available' && draft && !draft.confirmed">
-          <button class="secondary-btn" type="button" :disabled="derivedGenerationPending || draftGenerationPending || savingDraft || confirmingDraft" @click="reparseMaterial">{{ privacyReviewRequired ? '等待隐私复核' : derivedGenerationPending || draftGenerationPending ? '正在生成…' : '重新解析' }}</button>
-          <button class="primary-btn" type="button" :disabled="draftGenerationPending || savingDraft || confirmingDraft" @click="confirmDraft">{{ confirmingDraft ? '确认中…' : '确认' }}</button>
-          <button class="secondary-btn" type="button" :disabled="draftGenerationPending || savingDraft || confirmingDraft" @click="rethinkDraft">再想想</button>
-          <button class="secondary-btn sm" type="button" :disabled="draftGenerationPending || savingDraft || confirmingDraft" @click="saveDraft">{{ savingDraft ? '保存中…' : '保存草稿' }}</button>
+          <button class="secondary-btn" type="button" :disabled="draftEditingBlocked || draftRetryBlockedByEdits || analysisLoading || derivedGenerationPending || draftGenerationPending || savingDraft || confirmingDraft" @click="reparseMaterial">{{ privacyReviewRequired ? '等待隐私复核' : privacyProcessing ? '正在安全处理…' : privacyFailed ? '隐私处理失败' : draftRetryBlockedByEdits ? '请先保存草稿' : analysisLoading ? '正在读取状态…' : derivedGenerationPending || draftGenerationPending ? '正在生成…' : generationWaitExpired ? '重试生成' : '重新解析' }}</button>
+          <button class="primary-btn" type="button" :disabled="draftEditingBlocked || savingDraft || confirmingDraft" @click="confirmDraft">{{ confirmingDraft ? '确认中…' : '确认' }}</button>
+          <button class="secondary-btn" type="button" :disabled="draftEditingBlocked || savingDraft || confirmingDraft" @click="rethinkDraft">再想想</button>
+          <button class="secondary-btn sm" type="button" :disabled="draftEditingBlocked || savingDraft || confirmingDraft" @click="saveDraft">{{ savingDraft ? '保存中…' : '保存草稿' }}</button>
         </template>
         <LifecycleDangerPanel
           compact
@@ -887,8 +935,9 @@ async function saveOriginal() {
             安全正文处理失败，请检查盒端隐私处理任务后重试。
           </div>
           <template v-else>
-            <label class="draft-field">标题<input v-model="draftTitle" type="text" maxlength="200" :disabled="draftGenerationPending || savingDraft || confirmingDraft"></label>
-            <label class="draft-field">正文<textarea v-model="draftContent" rows="12" :placeholder="draftGenerationPending ? '正在生成知识卡片正文…' : ''" :disabled="draftGenerationPending || savingDraft || confirmingDraft"></textarea></label>
+            <label class="draft-field">标题<input v-model="draftTitle" type="text" maxlength="200" :disabled="draftEditingBlocked || savingDraft || confirmingDraft"></label>
+            <label class="draft-field">正文<textarea v-model="draftContent" rows="12" :placeholder="draftGenerationPending ? '正在生成知识卡片正文…' : ''" :disabled="draftEditingBlocked || savingDraft || confirmingDraft"></textarea></label>
+            <p v-if="draftGenerationPending" class="detail-text" role="status">AI 正在补充草稿；当前内容已经可以编辑、保存或确认，保存后不会被后台结果覆盖。</p>
             <p class="detail-text">当前材料的标签、摘要、正文、实体和关系均保留在本详情页中，确认时以此草稿正文创建知识卡片。</p>
           </template>
         </template>

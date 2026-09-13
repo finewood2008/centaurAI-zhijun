@@ -41,6 +41,16 @@ class MaterialDraftCasTests(unittest.TestCase):
         self.assertEqual(caught.exception.current["content"]["revision"], "r2")
         self.assertEqual(self.store.get_derived_record("material", "m1", "GENERATED_DRAFT")["content"]["content"], "second")
 
+    def test_save_with_existing_revision_cannot_recreate_deleted_draft(self):
+        with self.assertRaises(derived_store.DraftRevisionConflict):
+            self.store.save_material_draft_cas(
+                "m-deleted", "r-deleted", draft("T", "stale", "r-next"),
+                "hash", "user",
+            )
+        self.assertIsNone(
+            self.store.get_derived_record("material", "m-deleted", "GENERATED_DRAFT")
+        )
+
     def test_mark_confirmed_persists_knowledge_link(self):
         self.store.save_material_draft_cas(
             "m-confirm", "", draft("标题", "可确认正文", "r-confirm"), "hash", "user", status="ok"
@@ -74,6 +84,136 @@ class MaterialDraftCasTests(unittest.TestCase):
         saved = material_drafts.save_draft("m-lock", "r-lock", "标题", "恢复后的修改")
         self.assertEqual(saved["content"], "恢复后的修改")
 
+    def test_user_save_rebases_over_unedited_generated_revision(self):
+        generated = draft("模型标题", "模型正文", "r-model")
+        generated.update({"origin": "model", "userEdited": False})
+        self.store.save_material_draft_cas(
+            "m-generated", "", generated, "hash", "model", status="ok"
+        )
+        pipeline = MagicMock()
+        pipeline.current_snapshot.return_value = None
+        with patch.object(material_drafts.MaterialPipelineStore, "instance", return_value=pipeline):
+            saved = material_drafts.save_draft(
+                "m-generated", "r-before-model", "用户标题", "用户正文"
+            )
+        self.assertEqual(saved["title"], "用户标题")
+        self.assertEqual(saved["content"], "用户正文")
+        self.assertTrue(saved["userEdited"])
+        self.assertEqual(saved["status"], "ok")
+
+    def test_user_save_does_not_overwrite_another_user_revision(self):
+        self.store.save_material_draft_cas(
+            "m-user-conflict", "", draft("另一会话", "已保存正文", "r-other"),
+            "hash", "user", status="ok",
+        )
+        pipeline = MagicMock()
+        pipeline.current_snapshot.return_value = None
+        with patch.object(material_drafts.MaterialPipelineStore, "instance", return_value=pipeline), \
+             self.assertRaises(derived_store.DraftRevisionConflict):
+            material_drafts.save_draft(
+                "m-user-conflict", "r-stale", "当前会话", "不能覆盖"
+            )
+
+    def test_exact_user_save_retry_is_idempotent_after_lost_response(self):
+        self.store.save_material_draft_cas(
+            "m-idempotent", "", draft("旧标题", "旧正文", "r-old"),
+            "hash", "user", status="ok",
+        )
+        pipeline = MagicMock()
+        pipeline.current_snapshot.return_value = None
+        with patch.object(material_drafts.MaterialPipelineStore, "instance", return_value=pipeline):
+            first = material_drafts.save_draft(
+                "m-idempotent", "r-old", "保存标题", "保存正文"
+            )
+            retried = material_drafts.save_draft(
+                "m-idempotent", "r-old", "保存标题", "保存正文"
+            )
+        self.assertEqual(retried["revision"], first["revision"])
+        self.assertEqual(retried["content"], "保存正文")
+
+    def test_stale_pending_generation_is_requeued_once_and_lease_renewed(self):
+        pending = draft("材料标题", "兜底正文", "r-pending")
+        pending.update({"origin": "minimal", "userEdited": False})
+        record = self.store.save_material_draft_cas(
+            "m-stale", "", pending, "hash", "minimal", status="pending"
+        )
+        stale_now = record["updated_at"] + material_drafts.PENDING_GENERATION_LEASE_SECONDS + 1
+        with patch.object(material_drafts, "submit_generation", return_value=True) as submit:
+            recovered = material_drafts.recover_stale_generation(
+                "m-stale", "/tmp/source.md", now=stale_now
+            )
+            fresh = material_drafts.recover_stale_generation(
+                "m-stale", "/tmp/source.md", now=stale_now
+            )
+        submit.assert_called_once_with("m-stale", "/tmp/source.md")
+        self.assertEqual(recovered["status"], "pending")
+        self.assertEqual(fresh["status"], "pending")
+
+    def test_stale_pending_generation_becomes_failed_when_queue_is_unavailable(self):
+        pending = draft("材料标题", "兜底正文", "r-pending")
+        pending.update({"origin": "minimal", "userEdited": False})
+        record = self.store.save_material_draft_cas(
+            "m-stale-failed", "", pending, "hash", "minimal", status="pending"
+        )
+        stale_now = record["updated_at"] + material_drafts.PENDING_GENERATION_LEASE_SECONDS + 1
+        with patch.object(material_drafts, "submit_generation", return_value=False):
+            recovered = material_drafts.recover_stale_generation(
+                "m-stale-failed", "/tmp/source.md", now=stale_now
+            )
+        self.assertEqual(recovered["status"], "failed")
+        self.assertEqual(recovered["errorCode"], "generation_queue_unavailable")
+
+    def test_missing_draft_is_created_and_generation_is_submitted_immediately(self):
+        snapshot = {
+            "snapshot_id": "snap-new", "version": 1, "source_hash": "source-hash"
+        }
+        pipeline = MagicMock()
+        pipeline.current_snapshot.return_value = snapshot
+        saga = MagicMock()
+        saga.read_snapshot_text.return_value = "可编辑的材料正文"
+        with patch.object(material_drafts.MaterialPipelineStore, "instance", return_value=pipeline), \
+             patch.object(material_drafts, "MaterialSnapshotSaga", return_value=saga), \
+             patch.object(material_drafts, "submit_generation", return_value=True) as submit:
+            result = material_drafts.recover_stale_generation("m-missing", "/tmp/source.md")
+        submit.assert_called_once_with("m-missing", "/tmp/source.md")
+        self.assertEqual(result["status"], "pending")
+        self.assertEqual(result["content"], "可编辑的材料正文")
+
+    def test_running_generation_cannot_overwrite_clean_pending_user_save(self):
+        title = "材料标题"
+        body = "兜底正文"
+        revision = material_drafts._revision(title, body)
+        pending = draft(title, body, revision)
+        pending.update({"origin": "minimal", "userEdited": False})
+        self.store.save_material_draft_cas(
+            "m-running", "", pending, "source-hash", "minimal", status="pending"
+        )
+        snapshot = {
+            "snapshot_id": "snap-1", "version": 1, "source_hash": "source-hash"
+        }
+        pipeline = MagicMock()
+        pipeline.current_snapshot.return_value = snapshot
+        pipeline.get_snapshot.return_value = snapshot
+        provider = MagicMock()
+        provider.get_local_snapshot.return_value = MagicMock(model="local-model")
+
+        def save_while_model_is_running(*_args, **_kwargs):
+            saved = material_drafts.save_draft("m-running", revision, title, body)
+            self.assertTrue(saved["userEdited"])
+            return "后台模型生成的新正文"
+
+        with patch.object(material_drafts.MaterialPipelineStore, "instance", return_value=pipeline), \
+             patch.object(material_drafts, "get_provider", return_value=provider), \
+             patch.object(material_drafts, "_call_llm", side_effect=save_while_model_is_running):
+            material_drafts._generate(
+                "m-running", "snap-1", "source-hash", body, False
+            )
+        final = material_drafts.draft_of("m-running")
+        self.assertTrue(final["userEdited"])
+        self.assertEqual(final["title"], title)
+        self.assertEqual(final["content"], body)
+        self.assertEqual(final["status"], "ok")
+
     def test_placeholder_title_is_repaired_to_file_name(self):
         placeholder = draft("待确认知识卡片", "原材料正文", "r-title")
         placeholder["userEdited"] = False
@@ -94,6 +234,23 @@ class MaterialDraftWorkflowTests(unittest.TestCase):
             response = uploads.mindos_material_draft_card("m1")
         ensure.assert_called_once_with("m1")
         self.assertEqual(response["revision"], "r1")
+
+    def test_pending_recovery_does_not_race_placeholder_title_repair(self):
+        pending = {
+            "status": "pending", "title": "待确认知识卡片", "revision": "r-old",
+            "content": "兜底正文", "userEdited": False,
+        }
+        with patch(
+            "mindos.material_drafts.recover_stale_generation", return_value=pending
+        ) as recover, patch(
+            "mindos.material_drafts.ensure_minimal_draft"
+        ) as ensure:
+            result = uploads._repair_missing_confirmed_card(
+                "m-placeholder", source_path="/tmp/source.md"
+            )
+        recover.assert_called_once_with("m-placeholder", "/tmp/source.md")
+        ensure.assert_not_called()
+        self.assertEqual(result, pending)
 
     def test_draft_card_rejects_material_not_yet_available(self):
         with patch.object(uploads, "_material_record", return_value={}), patch.object(

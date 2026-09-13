@@ -5,13 +5,16 @@ const { normalizeMaterialsQuery, buildMaterialsRequest, projectMaterialsResponse
 const { createReadScheduler } = require('./read-scheduler.cjs');
 const { createSimulationAdapter } = require('./adapters.cjs');
 const { createProductSession, productMethods } = require('./product-session.cjs');
-const { validatePassword, validateRegistration, validatePhone } = require('../production/consumer-client.cjs');
+const { validatePassword, validateRegistration, validatePasswordReset, validatePhone } = require('../production/consumer-client.cjs');
 
 const ARG_COUNTS = { getSnapshot: 0, getRememberedLogin: 1, signInWithPassword: 2, signInWithSavedPassword: 2,
-  sendRegistrationCode: 2, registerWithPassword: 2, beginSignIn: 1, listDevices: 1, claimDevice: 2, connect: 2,
-  disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2,
+  sendRegistrationCode: 2, resetPassword: 2, registerWithPassword: 2, beginSignIn: 1, listDevices: 1, claimDevice: 2, connect: 2,
+  openProvisioning: 1, disconnect: 1, signOut: 1, 'materials.list': 2, cancelRead: 2,
   ...Object.fromEntries(productMethods.map(method => [`product.${method}`, method === 'requestMicrophone' ? 1 : 2])) };
 const CALL_ID = /^[A-Za-z0-9_-]{8,100}$/;
+const ACCOUNT_FAILURES = new Set(['SESSION_EXPIRED', 'AUTHENTICATION_REQUIRED']);
+const CONNECTION_FAILURES = new Set(['CONNECTIVITY_SESSION_EXPIRED', 'TRANSPORT_UNAVAILABLE',
+  'REQUEST_TIMEOUT', 'SESSION_NOT_READY', 'ACCOUNT_SERVICE_UNAVAILABLE', 'DIRECT_CONNECTION_UNAVAILABLE']);
 const plain = (value) => value !== null && typeof value === 'object'
   && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 const safeText = (value, max = 256) => typeof value === 'string' && value.trim().length > 0
@@ -24,10 +27,15 @@ function assert(condition, code = 'INVALID_REQUEST') {
   if (!condition) throw new DesktopError(code);
 }
 
-function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 15000, productHost = {} } = {}) {
+function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 15000, productHost = {}, provisioningHost,
+  reconnectDelaysMs = [500, 1500, 5000], reconnectStabilityMs = 60000 } = {}) {
   assert(['unconfigured', 'simulation', 'production'].includes(mode));
   assert(mode !== 'production' || adapter, 'CONFIGURATION_REQUIRED');
   assert(Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 120000);
+  assert(Array.isArray(reconnectDelaysMs) && reconnectDelaysMs.length <= 5
+    && reconnectDelaysMs.every(value => Number.isSafeInteger(value) && value >= 0 && value <= 60000));
+  assert(Number.isSafeInteger(reconnectStabilityMs) && reconnectStabilityMs >= 0 && reconnectStabilityMs <= 600000);
+  reconnectDelaysMs = [...reconnectDelaysMs];
   const auth = mode === 'simulation' ? (adapter || createSimulationAdapter()) : mode === 'production' ? adapter : null;
   const scheduler = createReadScheduler({ timeoutMs });
   let generation = 0;
@@ -36,6 +44,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   let accountId = null;
   let deviceId = null;
   let deviceName = null;
+  let selectedPath = null;
   let session = null;
   let productSession = null;
   let workspaceId = null;
@@ -50,6 +59,8 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   const adapterCalls = new Set();
   const productBudget = { active: new Set() };
   let signingOut = null;
+  let recoveryTarget = null, recoveryAttempts = 0, recoveryTimer, stabilityTimer;
+  const provisioningEnabled = mode === 'production' && typeof provisioningHost?.open === 'function';
 
   function callAdapter(fn) {
     // Invalidating an IPC waiter cannot cancel a native authentication call.
@@ -74,9 +85,11 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
 
   function snapshot() {
     const result = { protocolVersion: 1, environment: mode, generation, sequence, phase,
-      subject: accountId ? { accountId, ...(deviceId ? { deviceId } : {}), ...(deviceName ? { deviceName } : {}), ...(workspaceId ? { workspaceId } : {}) } : null,
+      subject: accountId ? { accountId, ...(deviceId ? { deviceId } : {}), ...(deviceName ? { deviceName } : {}),
+        ...(workspaceId ? { workspaceId } : {}), ...(selectedPath ? { selectedPath } : {}) } : null,
       capabilities: { materialsRead: phase === 'ready', product: phase === 'ready' && Boolean(productSession), streamChat: phase === 'ready' && Boolean(productSession),
-        uploads: phase === 'ready' && Boolean(productSession), matters: phase === 'ready' && Boolean(productSession), provisioning: false } };
+        uploads: phase === 'ready' && Boolean(productSession), matters: phase === 'ready' && Boolean(productSession),
+        provisioning: provisioningEnabled } };
     if (publicError && phase !== 'ready') result.error = { ...publicError };
     return result;
   }
@@ -95,11 +108,19 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   }
   function isCurrent(value) { return !disposed && value === generation; }
   function ensureCurrent(value) { assert(isCurrent(value), 'STALE_GENERATION'); }
-  function invalidate() {
+  function stopRecovery() {
+    clearTimeout(recoveryTimer); clearTimeout(stabilityTimer);
+    recoveryTarget = null;
+    recoveryAttempts = 0;
+  }
+  function invalidate(reason) {
+    clearTimeout(recoveryTimer); clearTimeout(stabilityTimer);
     generation += 1;
-    productSession?.close();
+    try { provisioningHost?.close?.(); } catch { /* Identity invalidation must still complete. */ }
+    productSession?.close(reason);
     productSession = null;
     workspaceId = null;
+    selectedPath = null;
     devicesRevision += 1;
     scheduler.invalidate();
     for (const cancel of [...waits]) cancel(new DesktopError('STALE_GENERATION'));
@@ -144,20 +165,74 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     session = null;
     deviceId = null;
     deviceName = null;
+    selectedPath = null;
     return closeSession(old);
   }
   function failure(error, gen) {
     if (!isCurrent(gen)) return;
-    invalidate();
-    void detachSession();
-    if (error instanceof DesktopError && ['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED'].includes(error.code)) {
+    const target = recoveryTarget;
+    const hadIdentity = Boolean(accountId || target);
+    const retry = error instanceof DesktopError && CONNECTION_FAILURES.has(error.code)
+      && target && target.accountId === accountId && recoveryAttempts < reconnectDelaysMs.length;
+    invalidate(error instanceof DesktopError && (CONNECTION_FAILURES.has(error.code) || ACCOUNT_FAILURES.has(error.code)) ? error : undefined);
+    const cleanup = detachSession();
+    if (error instanceof DesktopError && ACCOUNT_FAILURES.has(error.code)) {
       accountId = null;
       devices = [];
       // Credential cleanup belongs to the main process. Start it before the
       // renderer sees the logged-out snapshot; remote revocation may finish later.
-      void clearIdentity().catch(() => {});
+      if (hadIdentity) void clearIdentity().catch(() => {});
     }
-    publish('failed', error);
+    if (!retry) { stopRecovery(); publish('failed', error); return; }
+    const nextGen = generation;
+    deviceId = target.deviceId;
+    deviceName = target.displayName;
+    publish('connecting');
+    recoveryTimer = setTimeout(() => {
+      void (async () => {
+        await cleanup;
+        if (!isCurrent(nextGen) || accountId !== target.accountId) return;
+        try { await establishConnection(target, nextGen); }
+        catch (nextError) { failure(nextError, nextGen); }
+      })();
+    }, reconnectDelaysMs[recoveryAttempts++]);
+    recoveryTimer.unref?.();
+  }
+  async function establishConnection(target, gen) {
+    const binding = { accountId: target.accountId, deviceId: target.deviceId };
+    const connected = await bounded(callAdapter(() => auth.connect({ ...binding })), gen, closeSession);
+    if (!isCurrent(gen)) { void closeSession(connected); throw new DesktopError('STALE_GENERATION'); }
+    if (!connected || typeof connected.authorize !== 'function'
+        || typeof connected.request !== 'function' || typeof connected.close !== 'function') {
+      void closeSession(connected);
+      throw new DesktopError('CONTRACT_MISMATCH');
+    }
+    selectedPath = connected.selectedPath === undefined ? 'DIRECT' : connected.selectedPath;
+    if (!['DIRECT', 'RELAY'].includes(selectedPath)) {
+      void closeSession(connected);
+      throw new DesktopError('CONTRACT_MISMATCH');
+    }
+    session = connected;
+    connected.onFailure?.(error => failure(error, gen));
+    ensureCurrent(gen);
+    publish('authorizing');
+    const proof = await bounded(callAdapter(() => connected.authorize()), gen);
+    ensureCurrent(gen);
+    assert(plain(proof) && proof.accountId === binding.accountId && proof.deviceId === binding.deviceId, 'ACCESS_DENIED');
+    if (target.workspaceId) assert(proof.product === true && proof.workspaceId === target.workspaceId, 'ACCESS_DENIED');
+    if (proof.product === true) {
+      assert(typeof proof.workspaceId === 'string' && /^[a-f0-9]{64}$/.test(proof.workspaceId), 'CONTRACT_MISMATCH');
+      workspaceId = proof.workspaceId;
+      productSession = createProductSession({ session: connected, isCurrent: () => isCurrent(gen) && session === connected,
+        host: productHost, budget: productBudget, timeoutMs: Math.min(timeoutMs, 12000), onTerminal: error => failure(error, gen) });
+    }
+    recoveryTarget = { ...target, ...(workspaceId ? { workspaceId } : {}) };
+    publish('ready');
+    stabilityTimer = setTimeout(() => {
+      if (isCurrent(gen) && phase === 'ready') recoveryAttempts = 0;
+    }, reconnectStabilityMs);
+    stabilityTimer.unref?.();
+    return snapshot();
   }
   function needAccount() { assert(accountId, 'AUTHENTICATION_REQUIRED'); }
   function validateDevices(values) {
@@ -202,7 +277,18 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
         && value.expiresIn >= 1 && value.expiresIn <= 3600, 'CONTRACT_MISMATCH');
       return value;
     }
+    if (operation === 'resetPassword') {
+      assert(mode === 'production' && auth && typeof auth.resetPassword === 'function', 'OPERATION_NOT_ALLOWED');
+      assert(!accountId && ['signed_out', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
+      const credentials = validatePasswordReset(input);
+      const gen = generation;
+      const value = await bounded(callAdapter(() => auth.resetPassword(credentials, () => isCurrent(gen))), gen);
+      ensureCurrent(gen);
+      assert(plain(value) && exact(value, ['processed']) && value.processed === true, 'CONTRACT_MISMATCH');
+      return Object.freeze({ processed: true });
+    }
     if (operation === 'signOut' || operation === 'disconnect') {
+      stopRecovery();
       invalidate();
       ticket.generation = generation;
       const gen = generation;
@@ -241,6 +327,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
           ? (assert(typeof input === 'boolean'), input) : false;
       assert(!signingOut, 'OPERATION_NOT_ALLOWED');
       assert(['signed_out', 'authenticating', 'selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
+      stopRecovery();
       invalidate();
       ticket.generation = generation;
       const gen = generation;
@@ -263,6 +350,14 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       } catch (error) { failure(error, gen); throw error; }
     }
     needAccount();
+    if (operation === 'openProvisioning') {
+      assert(provisioningEnabled && ['selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
+      const gen = generation;
+      const result = await bounded(Promise.resolve().then(() => provisioningHost.open()), gen);
+      ensureCurrent(gen);
+      assert(plain(result) && exact(result, ['opened']) && result.opened === true, 'CONTRACT_MISMATCH');
+      return { opened: true };
+    }
     if (operation === 'listDevices') {
       assert(['selecting_device', 'ready', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
       const gen = generation;
@@ -289,38 +384,17 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       assert(['selecting_device', 'ready', 'connecting', 'authorizing', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
       const selectedDevice = devices.find((value) => value.deviceId === input);
       assert(selectedDevice, 'ACCESS_DENIED');
+      stopRecovery();
       invalidate();
       ticket.generation = generation;
       const gen = generation;
       void detachSession();
       deviceId = input;
       deviceName = selectedDevice.displayName.trim() || input;
-      const binding = { accountId, deviceId };
+      const target = { accountId, deviceId, displayName: deviceName };
       publish('connecting');
       try {
-        const connected = await bounded(callAdapter(() => auth.connect({ ...binding })), gen, closeSession);
-        // A generation can change between promise settlement and this continuation.
-        if (!isCurrent(gen)) { void closeSession(connected); throw new DesktopError('STALE_GENERATION'); }
-        if (!connected || typeof connected.authorize !== 'function'
-            || typeof connected.request !== 'function' || typeof connected.close !== 'function') {
-          void closeSession(connected);
-          throw new DesktopError('CONTRACT_MISMATCH');
-        }
-        session = connected;
-        connected.onFailure?.(error => failure(error, gen));
-        ensureCurrent(gen);
-        publish('authorizing');
-        const proof = await bounded(callAdapter(() => connected.authorize()), gen);
-        ensureCurrent(gen);
-        assert(plain(proof) && proof.accountId === binding.accountId && proof.deviceId === binding.deviceId, 'ACCESS_DENIED');
-        if (proof.product === true) {
-          assert(typeof proof.workspaceId === 'string' && /^[a-f0-9]{64}$/.test(proof.workspaceId), 'CONTRACT_MISMATCH');
-          workspaceId = proof.workspaceId;
-          productSession = createProductSession({ session: connected, isCurrent: () => isCurrent(gen) && session === connected,
-            host: productHost, budget: productBudget, timeoutMs: Math.min(timeoutMs, 12000), onTerminal: error => failure(error, gen) });
-        }
-        publish('ready');
-        return snapshot();
+        return await establishConnection(target, gen);
       } catch (error) { failure(error, gen); throw error; }
     }
     if (operation.startsWith('product.')) {
@@ -343,7 +417,8 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
             return projectMaterialsResponse(response, query);
           } });
       } catch (error) {
-        if (error instanceof DesktopError && ['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED'].includes(error.code)) failure(error, gen);
+        if (error instanceof DesktopError && (ACCOUNT_FAILURES.has(error.code)
+            || (CONNECTION_FAILURES.has(error.code) && error.code !== 'REQUEST_TIMEOUT'))) failure(error, gen);
         throw error;
       }
     }
@@ -377,9 +452,8 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       return { ok: true, generation: ticket.generation, data };
     } catch (error) {
       if (mode === 'production' && isCurrent(ticket.generation) && error instanceof DesktopError
-          && ['AUTHENTICATION_REQUIRED', 'SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SECURE_STORAGE_UNAVAILABLE'].includes(error.code)) {
-        accountId = null;
-        devices = [];
+          && (ACCOUNT_FAILURES.has(error.code) || error.code === 'SECURE_STORAGE_UNAVAILABLE')) {
+        if (error.code === 'SECURE_STORAGE_UNAVAILABLE') { accountId = null; devices = []; }
         failure(error, ticket.generation);
       }
       return { ok: false, generation: ticket.generation, error: toPublicError(error) };
@@ -395,6 +469,7 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
   async function dispose() {
     if (disposed) return;
     disposed = true;
+    stopRecovery();
     invalidate();
     listeners.clear();
     scheduler.dispose();

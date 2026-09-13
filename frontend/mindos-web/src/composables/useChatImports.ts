@@ -3,6 +3,7 @@ import { api, chatImports, type ChatImportBatch, type ChatImportFile, type ChatM
 import { validateImport } from '@/features/import/validation'
 import type { ReplyAssistanceInput } from '@/shared/replyAssistance'
 import { createChatImportPoller, hasTransitionalImports } from './chatImportPolling'
+import { askRag, requiresFreshRagSearch } from '@/services/taskRouting'
 
 export interface StagedChatFile { id: string; name: string; size: number; file?: File; materialId?: string; version?: number }
 
@@ -30,6 +31,7 @@ export function useChatImports(options: {
   const consentRefs = ref<ChatMaterialRef[] | null>(null)
   const consentBusy = ref(false)
   const busyBatch = ref<string | null>(null)
+  const ragBusyBatch = ref<string | null>(null)
   const loadError = ref('')
   let requestId = crypto.randomUUID()
 
@@ -92,14 +94,16 @@ export function useChatImports(options: {
     finally { libraryLoading.value = false }
   }
 
-  async function send(content: string, replyAssistance?: ReplyAssistanceInput) {
-    if (uploading.value || !staged.value.length) return
+  async function send(content: string, replyAssistance?: ReplyAssistanceInput, forceLocalOnly = false): Promise<boolean> {
+    if (uploading.value || !staged.value.length) return false
     uploading.value = true
     const pending = [...staged.value]
     let id = ''
+    let accepted = false
     try {
       id = await options.ensure()
-      const batch = await chatImports.create(id, { requestId, content, replyAssistance, localOnly: localOnly.value, files: pending.map(({ file, ...metadata }) => metadata) })
+      const batch = await chatImports.create(id, { requestId, content, replyAssistance, localOnly: forceLocalOnly || localOnly.value, files: pending.map(({ file, ...metadata }) => metadata) })
+      accepted = true
       staged.value = []
       requestId = crypto.randomUUID()
       await refresh(id)
@@ -115,9 +119,13 @@ export function useChatImports(options: {
       }
       await chatImports.seal(id, batch.id)
       await refresh(id)
+      return true
     } catch (e) {
       options.notify(e instanceof Error ? e.message : '导入失败，可重试')
-      if (!id || !batches.value.some(b => b.state === 'uploading')) staged.value = pending
+      // Once create() succeeds, the server owns the batch and request id. Do not
+      // restore it as a fresh composer submission or a retry could duplicate it.
+      if (!accepted && (!id || !batches.value.some(b => b.state === 'uploading'))) staged.value = pending
+      return accepted
     } finally { uploading.value = false }
   }
 
@@ -163,17 +171,50 @@ export function useChatImports(options: {
     finally { consentBusy.value = false }
   }
 
+  async function confirmSensitive(batch: ChatImportBatch) {
+    if (!batch.ragV2 || ragBusyBatch.value) return
+    ragBusyBatch.value = batch.id
+    try {
+      const action = await askRag(batch.ragV2)
+      try { await chatImports.ragDecision(batch.conversationId, batch.ragV2.interactionId, action) }
+      catch (error) {
+        if (!requiresFreshRagSearch(error)) throw error
+      }
+      await refresh(batch.conversationId)
+    } catch (e) {
+      options.notify(e instanceof Error ? e.message : '敏感资料确认失败，请重试')
+      await refresh(batch.conversationId)
+    } finally {
+      ragBusyBatch.value = null
+    }
+  }
+
   async function showPreview(ref: ChatMaterialRef, append = false) {
     const id = options.conversationId.value
     if (!id) return
     previewOpen.value = true; previewRef.value = ref; previewError.value = ''
     const offset = append && preview.value ? preview.value.offset + preview.value.text.length : 0
     if (!append) preview.value = null
-    try {
-      const result = await chatImports.preview(id, ref, offset)
-      if (id !== options.conversationId.value || ref.materialId !== previewRef.value?.materialId || ref.version !== previewRef.value?.version) return
-      preview.value = append && preview.value ? { ...result, offset: 0, text: preview.value.text + result.text } : result
-    } catch (e) { previewError.value = e instanceof Error ? e.message : '暂时无法预览' }
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const result = await chatImports.preview(id, ref, offset)
+        if (id !== options.conversationId.value || ref.materialId !== previewRef.value?.materialId || ref.version !== previewRef.value?.version) return
+        preview.value = append && preview.value ? { ...result, offset: 0, text: preview.value.text + result.text } : result
+        return
+      } catch (e) {
+        const prompt = e && typeof e === 'object' ? (e as { ragV2?: import('@/services/taskRouting').RagV2Prompt }).ragV2 : undefined
+        if (!prompt) { previewError.value = e instanceof Error ? e.message : '暂时无法预览'; return }
+        const action = await askRag(prompt)
+        try { await chatImports.ragDecision(id, prompt.interactionId, action) }
+        catch (decisionError) {
+          if (requiresFreshRagSearch(decisionError)) continue
+          previewError.value = decisionError instanceof Error ? decisionError.message : '敏感资料确认失败，请重试'
+          return
+        }
+        if (action === 'cancel') { previewError.value = '已取消领取资料片段'; return }
+      }
+    }
+    previewError.value = '资料状态持续变化，请稍后重新预览'
   }
 
   function drop(e: DragEvent) {
@@ -186,6 +227,6 @@ export function useChatImports(options: {
   }
   onBeforeUnmount(() => poller.dispose())
   return { staged, batches, references, localOnly, service, uploading, pickerOpen, libraryLoading, libraryError, query, filteredLibrary,
-    preview, previewRef, previewError, previewOpen, consentRefs, consentBusy, pendingConsent, busyBatch, loadError, selectedFiles, files,
-    stageFiles, stageMaterial, openPicker, send, refresh, chooseReferences, retry, reupload, showConsent, consent, showPreview, drop, paste }
+    preview, previewRef, previewError, previewOpen, consentRefs, consentBusy, pendingConsent, busyBatch, ragBusyBatch, loadError, selectedFiles, files,
+    stageFiles, stageMaterial, openPicker, send, refresh, chooseReferences, retry, reupload, showConsent, consent, confirmSensitive, showPreview, drop, paste }
 }

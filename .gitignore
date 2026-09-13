@@ -54,6 +54,15 @@ frontend/mindos-web/dist/
 frontend/mindos-web/dist-desktop/
 frontend/shell/package-resources/
 frontend/shell/release/
+frontend/shell/release-test/
+frontend/shell/package-resources-windows/
+frontend/shell/release-windows/
+frontend/shell/release-windows-unsigned/
+# Signing credentials must never enter source control.
+*.pfx
+*.p12
+# Accidental root-level copy produced while testing the provisioning renderer.
+/renderer.js
 
 # Codeup/IDE build artifacts
 # Build and Release Folders

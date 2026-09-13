@@ -1,0 +1,37 @@
+asar: true
+npmRebuild: false
+electronDist: node_modules/electron/dist
+
+directories:
+  buildResources: assets
+
+extraResources:
+  - from: ../mindos-web/dist-desktop
+    to: mindos-web-dist
+  - from: ../shared/product-operations.json
+    to: shared/product-operations.json
+  - from: package-resources/zhijun-product.json
+    to: zhijun-product.json
+  - from: package-resources/connectivity-sidecar/darwin-arm64
+    to: connectivity-sidecar/darwin-arm64
+    filter:
+      - nexusaos-connectivity-sidecar
+
+mac:
+  category: public.app-category.productivity
+  icon: assets/centaur.icns
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: false
+  signIgnore:
+    - 'Contents/Resources/connectivity-sidecar/darwin-arm64/nexusaos-connectivity-sidecar'
+  extendInfo:
+    NSMicrophoneUsageDescription: 在你点击录音时使用麦克风，停止后将录音发送到已连接的盒子转为文字。转写结果仅填入输入框，不会自动发送消息。
+    NSBluetoothAlwaysUsageDescription: 在你点击扫描后发现并连接附近的 AI 盒子，用于读取设备信息和安全配网。
+
+dmg:
+  sign: false
+
+afterPack: scripts/after-pack.cjs

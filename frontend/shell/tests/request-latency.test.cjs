@@ -131,6 +131,34 @@ test('a pending poll cannot monopolize serial native transport ahead of JSON, ca
   assert.equal(clock.pending.size, 0);
 });
 
+test('under depleted quota a ready page result precedes new jobs without consuming control reserve', async t => {
+  const clock = virtualClock();
+  const peer = serialPeer(clock, async request => request.relative_path.endsWith('/context')
+    ? response({ version: 2, ...subject, applicationId: 'zhijun-desktop', workspaceId: 'f'.repeat(64),
+      capabilities: ['product.rpc', 'product.events', 'product.uploads', 'product.blobs'],
+      expiresAt: Math.floor(clock.wall() / 1000) + 5 }) : response({}));
+  const bridge = await clock.run(createBusinessBridge({ clock: clock.wall, activityClock: clock.now,
+    timers: clock.timers }).authorize({ session: peer, subject, applicationId: 'zhijun-desktop' }));
+  try {
+    // Initial context plus ten prior attempts leave only the control token.
+    await clock.run(Promise.all(Array.from({ length: 10 }, () =>
+      bridge.request(wire('POST', '/operations', { synthetic: 'earlier-read' })))));
+    const queued = Array.from({ length: 3 }, () =>
+      bridge.request(wire('POST', '/operations', { synthetic: 'new-read' })));
+    let visibleAt;
+    const result = bridge.request(wire('GET', `/operations/${id}?after=0&waitMs=0`))
+      .then(() => { visibleAt = clock.now(); });
+    const cancel = bridge.request(wire('POST', `/operations/${id}/cancel`, { requestId: 'cancel-old-page' }));
+    await clock.run(Promise.all([...queued, result, cancel]));
+    const cancellation = peer.calls.find(call => call.request.relative_path.endsWith('/cancel'));
+    assert.equal(cancellation.at, 0, 'cancellation keeps its reserved token');
+    assert.ok(visibleAt <= 1200, `ready page waited ${visibleAt} ms behind new jobs`);
+    const subsequent = peer.calls.slice(11).filter(call => !call.request.relative_path.endsWith('/cancel'));
+    assert.match(subsequent[0].request.relative_path, /\?after=0&waitMs=0$/);
+    t.diagnostic(`depleted quota: ready result visible at ${visibleAt} ms; cancellation at ${cancellation.at} ms`);
+  } finally { await bridge.close(); }
+});
+
 test('burst business work leaves a native slot and token for control, with no ninth native request', async () => {
   const clock = virtualClock(), sent = [], held = [];
   const scheduler = createV2Scheduler({ clock: clock.now, timers: clock.timers, send: request => {

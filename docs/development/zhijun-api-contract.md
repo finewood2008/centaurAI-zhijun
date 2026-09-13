@@ -1,8 +1,8 @@
 # 知君 P1 接口契约（对话 · 本体 · 确认）
 
-> 更新核对：2026-09-05，上游源码 `22dc9a3112058f06a1e4a385c1b2dc3175e39476`。第 1–18 节保留 P1 与后续历史增补，不是当前全部接口的完整 OpenAPI；对话管理以 [conversation-management.md](conversation-management.md) 为准，本轮新增事项/成果及来源合同见第 19–21 节。历史验证记录不代表本次同步已执行测试或部署。
+> 第 1–18 节保留 P1 与后续历史增补，不是当前全部接口的完整 OpenAPI；对话、附件和恢复语义见 [对话说明](conversations.md)，事项/成果及来源合同见第 19–21 节。最终以当前路由实现为准。
 >
-> 历史版本 p1-2026-09-02。当前知君业务路由要求 loopback 与访问 gate；写路由另要求 `X-Requested-By: centaur-vdb`，正式票据模式使用 `X-MindOS-Session`。data-engine 与远程 Agent 是否兼容需另见 [集成方案](INTEGRATION-0905.md)，不可从本契约推定已经可远程调用。
+> 历史版本 p1-2026-09-02。当前知君业务路由要求 loopback 与访问 gate；写路由另要求 `X-Requested-By: centaur-vdb`，正式票据模式使用 `X-MindOS-Session`。Data Engine、桌面传输和远程 Agent 的当前边界见 [架构说明](architecture.md)；本文件不是完整 OpenAPI，最终以路由实现为准。
 > 错误体沿用现状：`{"detail": "文案"}` 或 `{"detail": {"code": "...", "detail": "文案"}}`。
 
 ## 1. 标签契约（模型输出 → 前端徽章）
@@ -420,8 +420,24 @@ interface MatterBinding { matter: Matter | null; bindingRevision: number }
 - `ContextPlan` 新增 `matterBinding:{matterId,revision}`、`matterSuspended`、`matterHistoryAfterSeq`。默认只召回当前会话明确绑定的 active 事项；暂停/完成事项仅在明确回顾时参与。事项自身授权通过后，才可扩展检索与召回该事项的相关成果。
 - 计划修订、补查指纹及实际模型调用前检查均包含绑定/事项版本条件；切换事项或同事项重新绑定后旧预览不能继续发送。来源撤销、版本变化、依赖缺失/格式异常仍会阻止不安全复用，不把空或不明来源视为无依赖。
 
-详见 [个人上下文](personal-context-plan.md)、[任务路由](task-routing.md) 与 [回复辅助](reply-assistance.md)。本节接口属于知君后端新增能力，未说明 data-engine 已实现对应端点。
+详见 [记忆、章程与判断](memory-and-decisions.md)、[任务路由](task-routing.md) 与 [对话说明](conversations.md)。本节接口属于知君后端能力，不能据此推定 Data Engine 已实现同名端点。
 
 ## 21. 对话传输与恢复的当前入口
 
 当前普通聊天/原消息重试经 `services/chatStream.ts` 调用原 POST SSE，底层解析仍在 `services/sse.ts`；这不是 Electron SDK 已具备流能力的证明。路由预览支持 AbortSignal。发送端仅在尚未收到流事件、未取消、仍为当前会话，且 HTTP 409 为 ROUTE_CHANGED/PREVIEW_EXPIRED 时，最多重新预览并发送一次，沿用 requestId 与来源；已开始的流、网络失败、取消或来源变化不自动重播。预览内部另有一次受限刷新，仍需重新核对授权。输入恢复保留用户后来输入与辅助来源，不能移除来源后将失败草稿当普通自述重发。第 2 节为初始合同快照，当前请求、附加事件与恢复以 [chatStream.ts](../../frontend/mindos-web/src/services/chatStream.ts)、[conversations.py](../../backend/mindos/conversations.py) 及对应功能文档为准。
+
+## 22. 敏感规则设置 facade
+
+设置页只调用知君后端 facade，不直连 Data Agent Application API：
+
+| 方法与路径 | 请求 | 响应 / 语义 |
+| --- | --- | --- |
+| `GET /api/mindos/settings/sensitive-rules` | — | 规则列表、内置/自定义/启用计数、服务端动态容量、检测提示词预算、epoch 和 detectorRevision |
+| `GET /api/mindos/settings/sensitive-rules/{ruleId}` | — | 单条规则；只暴露整数 revision，不暴露原始 ETag |
+| `POST /api/mindos/settings/sensitive-rules/custom` | requestId、`rule:{规则字段}` | 创建自定义规则；同一未知结果重试复用 requestId |
+| `PUT /api/mindos/settings/sensitive-rules/custom/{ruleId}` | requestId、expectedRevision、`rule:{规则字段}` | 编辑或启停；后端把 expectedRevision 转换为精确 If-Match |
+| `DELETE /api/mindos/settings/sensitive-rules/custom/{ruleId}` | expectedRevision | 删除自定义规则；内置规则不可变 |
+
+规则写入字段为 `name`、`description`、`examples`、`counterExamples`、`enabled`、`deliveryMode` 和 `allowOriginalAfterConfirm`；`masking` 由服务端生成，仅随读取结果返回，不能由 Renderer 编辑或回传。`deliveryMode` 为 `confirm | always_mask | block`，只有 confirm 可以允许确认后原文。
+
+`CUSTOM_RULE_SIMILAR` 只向 Renderer 转发经校验的 `similarRuleId`。界面读取并展示该规则后，用户选择“仍要保存”才以新的 requestId 和 `acknowledgeSimilarRuleId` 重提；该确认请求自身结果不确定时复用确认阶段的 requestId。所有写操作都通过盒端 App 凭据和 `mindos.sensitive.policy.write` 能力完成，App Secret、If-Match、ETag 和 Data Agent 鉴权头不得进入 Renderer。

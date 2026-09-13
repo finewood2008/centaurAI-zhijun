@@ -110,13 +110,62 @@ async function testDelayedRelatedResponseDoesNotOverwriteNewMaterial() {
   assert.deepEqual(relatedApplied, ['B'], 'A 的延迟关联结果不应覆盖 B')
 }
 
+async function testDelayedAnalysisCannotKeepNextMaterialLoading() {
+  const gate = createSessionGate()
+  const pending = deferred()
+  const applied = []
+  let current = 'A'
+  let loading = false
+
+  const loadAnalysis = async (materialId, fetchAnalysis) => {
+    if (loading) return
+    loading = true
+    const session = gate.next()
+    try {
+      const result = await fetchAnalysis()
+      if (gate.isCurrent(session) && current === materialId) applied.push(result)
+    } finally {
+      if (gate.isCurrent(session) && current === materialId) loading = false
+    }
+  }
+
+  const loadA = loadAnalysis('A', () => pending.promise)
+  current = 'B'
+  gate.invalidate()
+  loading = false
+  await loadAnalysis('B', async () => 'B-analysis')
+  pending.resolve('A-analysis')
+  await loadA
+
+  assert.deepEqual(applied, ['B-analysis'])
+  assert.equal(loading, false, 'A 的延迟 finally 不得让 B 永久停在读取状态')
+}
+
 async function run() {
   await testDelayedDetailResponseDoesNotOverwriteNewMaterial()
   await testDelayedRelatedResponseDoesNotOverwriteNewMaterial()
+  await testDelayedAnalysisCannotKeepNextMaterialLoading()
   await testRetryTargetFrozenBeforeAwait()
   assert.match(detailSource, /async function loadDetail\(materialId: string, options: \{ background\?: boolean \} = \{\}\)[\s\S]*?stopCardIndexPolling\(\)/)
   assert.match(detailSource, /pollSession !== cardIndexPollSession \|\| detail\.value\?\.materialId !== materialId/)
-  console.log('detail-session: 3 tests OK')
+  assert.match(detailSource, /analysisLoadGate\.invalidate\(\)[\s\S]*?analysisLoading\.value = false/)
+  assert.match(detailSource, /detail\.value\?\.summary\.status === 'pending' && !summaryWaitExpired\.value/)
+  assert.match(detailSource, /!analysisWaitExpired\.value && current/)
+  assert.match(detailSource, /draft\.value\?\.status === 'pending' && !draftWaitExpired\.value/)
+  assert.match(detailSource, /analysisLoading \? '正在读取状态…'/)
+  assert.match(detailSource, /generationWaitExpired \? '重试生成'/)
+  assert.match(detailSource, /draftGenerationWaitExpired\.value[\s\S]*?api\.regenerateMaterialDraft\(materialId\)/)
+  assert.match(detailSource, /draftGenerationWaitExpired\.value && !draftDirty\.value && !draft\.value\?\.userEdited/)
+  assert.match(detailSource, /detail\.value\?\.materialId !== materialId \|\| draftDirty\.value/)
+  assert.match(detailSource, /draftRetryBlockedByEdits \? '请先保存草稿'/)
+  assert.doesNotMatch(detailSource, /api\.reparseMaterial\(materialId\)[\s\S]*?draft\.value = \{ \.\.\.draft\.value, status: 'pending' \}/)
+  const saveDraftSource = detailSource.match(/async function saveDraft\(\): Promise<boolean> \{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(saveDraftSource, /!draftDirty\.value && draft\.value\.status === 'ok'/)
+  assert.match(saveDraftSource, /api\.saveMaterialDraftCard/)
+  assert.doesNotMatch(saveDraftSource, /api\.getMaterialDraftCard/, 'normal save must use one logical write request')
+  assert.match(saveDraftSource, /detail\.value\?\.materialId !== materialId/)
+  assert.match(detailSource, /:disabled="draftEditingBlocked \|\| savingDraft \|\| confirmingDraft" @click="saveDraft"/)
+  console.log('detail-session: 20 tests OK')
 }
 
 run().catch((err) => {

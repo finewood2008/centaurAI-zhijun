@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Literal
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,7 +20,7 @@ class Strict(BaseModel):
 
 
 class MaterialRef(Strict):
-    materialId: str = Field(min_length=1, max_length=100)
+    materialId: str = Field(min_length=1, max_length=128)
     version: int = Field(ge=1)
 
 
@@ -24,7 +28,7 @@ class ImportFile(Strict):
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{16,80}$")
     name: str = Field(min_length=1, max_length=255)
     size: int = Field(default=0, ge=0, le=200 * 1024 * 1024)
-    materialId: str | None = Field(default=None, max_length=100)
+    materialId: str | None = Field(default=None, max_length=128)
     version: int | None = Field(default=None, ge=1)
 
 
@@ -49,6 +53,11 @@ class FileFailure(Strict):
     detail: str = Field(default="上传中断，请重试", max_length=300)
 
 
+class RagV2Decision(Strict):
+    interactionId: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    action: Literal["masked", "original", "continue-passed", "retry", "risk-release", "cancel"]
+
+
 def batch_for(conversation_id: str, batch_id: str, request: Request):
     store = svc.require_conversation(conversation_id, _device_scope_of(request))
     batch = store.get(batch_id)
@@ -69,6 +78,13 @@ def create_import(conversation_id: str, req: ImportCreate, request: Request):
         req.replyAssistance, req.content.strip(), retry_user_id=existing["message_id"] if existing else None)
     if len({f.id for f in req.files}) != len(req.files):
         raise svc.error("BAD_ATTACHMENTS", "文件标识重复", 400)
+    upload_constraints = None
+    if os.environ.get("ZHIJUN_WORKSPACE_ID") and any(not item.materialId for item in req.files):
+        try:
+            from zhijun_worker.data_agent_rag_v2 import configured_client
+            upload_constraints = configured_client().upload_constraints()
+        except Exception:
+            raise svc.error("RAG_V2_CAPABILITIES_UNAVAILABLE", "暂时无法核对 Data Agent 上传能力，请稍后重试", 503) from None
     for item in req.files:
         if item.materialId:
             record = svc.require_material(item.materialId, scope)
@@ -77,8 +93,13 @@ def create_import(conversation_id: str, req: ImportCreate, request: Request):
             item.name = record["fileName"]
             store.protect(item.materialId, scope)
         else:
-            from .validation import validate_import
-            if not item.size or validate_import(item.name, item.size)["status"] != "ok":
+            if upload_constraints is not None:
+                maximum, supported = upload_constraints
+                valid = bool(item.size) and item.size <= maximum and Path(item.name).suffix.casefold() in supported
+            else:
+                from .validation import validate_import
+                valid = bool(item.size) and validate_import(item.name, item.size)["status"] == "ok"
+            if not valid:
                 raise svc.error("BAD_ATTACHMENTS", "文件为空、不支持或超过大小限制", 400)
     batch = store.create(conversation_id, req.requestId, req.content.strip(), [f.model_dump() for f in req.files], req.localOnly,
                          input_meta={"replyAssistance": expression, "routingSources": sources} if expression else None)
@@ -153,7 +174,12 @@ def seal_import(conversation_id: str, batch_id: str, request: Request):
         for item in batch["files"]:
             if not item["material_id"] and item["state"] in {"pending", "uploading"}:
                 store.file_update(item["id"], "failed", error="上传未完成，请重新选择这个文件")
-        refs = svc.unique_refs([{"materialId": f["material_id"], "version": f["version"]} for f in batch["files"] if f["material_id"]])
+        visible = svc.batch_view(store.get(batch_id), store)
+        refs = svc.unique_refs([
+            {"materialId": f["materialId"], "version": f["version"]}
+            for f in visible["files"]
+            if f["state"] == "ready" and f["materialId"] and f["version"]
+        ])
         store.select(conversation_id, refs, bool(batch["local_only"]))
         store.update(batch_id, "queued")
     return svc.batch_view(store.get(batch_id), store)
@@ -224,8 +250,9 @@ def grant_consent(conversation_id: str, req: Consent, request: Request):
     if not refs or any((r["materialId"], r["version"]) not in known for r in refs):
         raise svc.error("ATTACHMENT_NOT_LINKED", "文件不在当前对话中", 400)
     if not req.localOnly:
-        for ref in refs:
-            svc.read_ref(ref, _device_scope_of(request))
+        if not os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            for ref in refs:
+                svc.read_ref(ref, _device_scope_of(request))
         service = svc.service_info()
         if not service["external"] or service["id"] != req.serviceId:
             raise svc.error("SERVICE_CHANGED", "模型服务已变化，请重新确认")
@@ -242,10 +269,52 @@ def preview(conversation_id: str, material_id: str, version: int, request: Reque
     ref = {"materialId": material_id, "version": version}
     if ref not in store.refs(conversation_id):
         raise svc.error("ATTACHMENT_NOT_LINKED", "文件不在当前对话中", 404)
-    record, _, text = svc.read_ref(ref, _device_scope_of(request))
+    interaction = conversation_id + ":preview:" + hashlib.sha256(
+        (material_id + ":" + str(version)).encode("utf-8")
+    ).hexdigest()[:24]
+    record, _, text = svc.read_ref(
+        ref, _device_scope_of(request), interaction_id=interaction
+    )
     offset = max(0, min(offset, len(text)))
     return {"name": record["fileName"], "text": text[offset:offset + 12000], "offset": offset,
             "totalChars": len(text), "hasMore": offset + 12000 < len(text)}
+
+
+def rag_v2_decision(conversation_id: str, req: RagV2Decision, request: Request):
+    store = svc.require_conversation(conversation_id, _device_scope_of(request))
+    if not req.interactionId.startswith(conversation_id + ":"):
+        raise svc.error(
+            "RAG_CONFIRMATION_CONTEXT_CHANGED",
+            "资料确认不属于当前对话，请重新发送本轮消息",
+            409,
+        )
+    from .data_agent_rag import decide
+
+    matching_batches = []
+    for batch in store.batches(conversation_id):
+        try:
+            prompt = json.loads(batch["rag_prompt_json"]) if batch.get("rag_prompt_json") else None
+        except (TypeError, json.JSONDecodeError):
+            prompt = None
+        if isinstance(prompt, dict) and prompt.get("interactionId") == req.interactionId:
+            matching_batches.append(batch)
+    try:
+        result = decide(req.interactionId, req.action)
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        if detail.get("code") in {
+            "RAG_CONFIRMATION_EXPIRED", "CONFIRM_TOKEN_EXPIRED",
+            "CONFIRM_TOKEN_CONSUMED", "CONFIRM_CONTEXT_CHANGED",
+        }:
+            for batch in matching_batches:
+                store.update(batch["id"], "queued")
+        raise
+    for batch in matching_batches:
+        if result["status"] == "cancelled":
+            store.update(batch["id"], "paused", "已取消敏感资料交付；文件仍保留")
+        else:
+            store.update(batch["id"], "queued")
+    return result
 
 
 def build_router(guard):
@@ -261,4 +330,5 @@ def build_router(guard):
     router.add_api_route("/{conversation_id}/references", set_references, methods=["PUT"], dependencies=writes)
     router.add_api_route("/{conversation_id}/file-consent", grant_consent, methods=["POST"], dependencies=writes)
     router.add_api_route("/{conversation_id}/files/{material_id}/preview", preview, methods=["GET"])
+    router.add_api_route("/{conversation_id}/rag-v2/decision", rag_v2_decision, methods=["POST"], dependencies=writes)
     return router

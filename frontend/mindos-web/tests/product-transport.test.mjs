@@ -24,6 +24,55 @@ function modules() {
 }
 const bytes = value => new TextEncoder().encode(value)
 
+test('upload API forwards the progress observer through the installed desktop transport', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('upload-box')
+  const progress = []
+  load('services/transport.ts').installProductTransport(async (path, init) => {
+    assert.equal(path, '/api/mindos/uploads')
+    assert.ok(init.body instanceof FormData)
+    init.onUploadProgress({ loaded: 3, total: 3, phase: 'finalizing' })
+    return Response.json({ materialId: 'accepted' })
+  })
+  const result = await load('services/api.ts').api.uploadFile(new File(['abc'], 'a.txt'), null, value => progress.push(value))
+  assert.equal(result.materialId, 'accepted')
+  assert.deepEqual(progress, [{ loaded: 3, total: 3, phase: 'finalizing' }])
+})
+
+test('sensitive rule API matches the trusted facade envelope', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('box-sensitive-rules')
+  const calls = []
+  load('services/transport.ts').installProductTransport(async (path, init = {}) => {
+    calls.push({ path, method: init.method, body: init.body ? JSON.parse(init.body) : undefined })
+    return Response.json(init.method === 'DELETE' ? { deleted: true } : {})
+  })
+  const api = load('services/api.ts').api
+  const rule = {
+    name: '项目代号', description: '能够识别尚未公开的内部项目代号信息。',
+    examples: ['灯塔计划'], counterExamples: ['普通项目'], enabled: true,
+    deliveryMode: 'confirm', allowOriginalAfterConfirm: true,
+  }
+  await api.createSensitiveRule({ requestId: 'rule-create-0001', ...rule })
+  await api.updateSensitiveRule('csr_rule_1', {
+    requestId: 'rule-update-0001', expectedRevision: 3, ...rule,
+  })
+  await api.deleteSensitiveRule('csr_rule_1', 4)
+
+  assert.deepEqual(calls[0], {
+    path: '/api/mindos/settings/sensitive-rules/custom', method: 'POST',
+    body: { requestId: 'rule-create-0001', rule },
+  })
+  assert.deepEqual(calls[1], {
+    path: '/api/mindos/settings/sensitive-rules/custom/csr_rule_1', method: 'PUT',
+    body: { requestId: 'rule-update-0001', expectedRevision: 3, rule },
+  })
+  assert.deepEqual(calls[2], {
+    path: '/api/mindos/settings/sensitive-rules/custom/csr_rule_1', method: 'DELETE',
+    body: { expectedRevision: 4 },
+  })
+})
+
 test('navigation reuses only ready hints and invalidates on box changes and onboarding writes', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('box-a')
@@ -223,10 +272,30 @@ test('multipart uploads use bounded ordered chunks and only upload handles in op
   product.uploadComplete = async (_context, input) => ok({ id: input.id, state: 'complete', size: received, received, nextIndex: 2 })
   const { client } = desktop(product)
   const form = new FormData(); form.append('file', new File([new Uint8Array(600000)], 'synthetic.txt')); form.append('folderId', '12')
-  const response = await client.request('/api/mindos/uploads', { method: 'POST', body: form })
+  const progress = []
+  const response = await client.request('/api/mindos/uploads', { method: 'POST', body: form, onUploadProgress: event => { progress.push(event); if (event.loaded === 524288) throw Error('view callback failed') } })
   await response.json()
   assert.deepEqual(calls.filter(c => c[0] === 'chunk').map(c => c[1]), [524288, 75712])
+  assert.deepEqual(progress, [
+    { loaded: 0, total: 600000, phase: 'uploading' },
+    { loaded: 524288, total: 600000, phase: 'uploading' },
+    { loaded: 600000, total: 600000, phase: 'finalizing' },
+  ])
+  assert.equal(calls.filter(c => c[0] === 'start').length, 1, 'progress callback failures never replay the upload')
   assert.deepEqual(calls.find(c => c[0] === 'start')[1].body, { kind: 'multipart', fields: { folderId: '12' }, files: [{ field: 'file', uploadId: 'b'.repeat(32) }] })
+  client.dispose()
+})
+
+test('failed upload acknowledgements never advance progress or submit the material', async () => {
+  const { product, calls } = host('{}')
+  const { client } = desktop(product)
+  product.uploadCreate = async (_context, input) => ok({ id: 'b'.repeat(32), state: 'open', size: input.size, received: 0, nextIndex: 0 })
+  product.uploadChunk = async (_context, input) => ok({ id: input.id, state: 'open', received: 1, nextIndex: 1 })
+  const form = new FormData(); form.append('file', new File(['synthetic'], 'synthetic.txt'))
+  const progress = []
+  await assert.rejects(client.request('/api/mindos/uploads', { method: 'POST', body: form, onUploadProgress: event => progress.push(event) }), /分片状态无效/)
+  assert.deepEqual(progress, [{ loaded: 0, total: 9, phase: 'uploading' }])
+  assert.equal(calls.filter(c => c[0] === 'start').length, 0)
   client.dispose()
 })
 

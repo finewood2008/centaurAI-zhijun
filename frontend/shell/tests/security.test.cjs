@@ -31,12 +31,15 @@ test('IPC checks the exact window, main frame, origin, and operation before disp
   assert.equal((await handler(event, 'fetch', ['http://127.0.0.1:8618'])).error.code, 'INVALID_REQUEST')
   assert.equal((await handler(event, 'getSnapshot', {})).error.code, 'INVALID_REQUEST')
   assert.equal(calls.length, 1)
+  const loginContext = { callId: 'remembered-login-1', expectedGeneration: 3 }
   assert.equal((await handler(event, 'product.requestMicrophone', [{}])).error.code, 'ACCESS_DENIED')
+  assert.equal((await handler(event, 'openProvisioning', [loginContext])).error.code, 'ACCESS_DENIED')
   focused = true
   assert.equal((await handler(event, 'product.requestMicrophone', [{}])).ok, true)
   assert.deepEqual(calls[1], ['product.requestMicrophone', [{}], 7])
-  const loginContext = { callId: 'remembered-login-1', expectedGeneration: 3 }
-  for (const [operation, args] of [['getRememberedLogin', [loginContext]], ['signInWithSavedPassword', [loginContext, false]]]) {
+  for (const [operation, args] of [['getRememberedLogin', [loginContext]], ['signInWithSavedPassword', [loginContext, false]],
+    ['resetPassword', [loginContext, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' }]],
+    ['openProvisioning', [loginContext]]]) {
     for (const invalid of invalidEvents) assert.equal((await handler(invalid, operation, args)).error.code, 'ACCESS_DENIED')
     const before = calls.length
     assert.equal((await handler(event, operation, args)).ok, true)
@@ -119,7 +122,7 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
     assert.equal(name, 'electron')
     return { contextBridge: { exposeInMainWorld: (name, value) => { assert.equal(name, 'zhijunDesktop'); api = value } }, ipcRenderer: fakeIpc }
   } })
-  assert.deepEqual(Object.keys(api).sort(), ['protocolVersion', 'getSnapshot', 'subscribe', 'beginSignIn', 'signInWithPassword', 'getRememberedLogin', 'signInWithSavedPassword', 'sendRegistrationCode', 'registerWithPassword', 'listDevices', 'claimDevice', 'connect', 'disconnect', 'signOut', 'materials', 'product', 'cancelRead'].sort())
+  assert.deepEqual(Object.keys(api).sort(), ['protocolVersion', 'getSnapshot', 'subscribe', 'beginSignIn', 'signInWithPassword', 'getRememberedLogin', 'signInWithSavedPassword', 'sendRegistrationCode', 'resetPassword', 'registerWithPassword', 'listDevices', 'claimDevice', 'openProvisioning', 'connect', 'disconnect', 'signOut', 'materials', 'product', 'cancelRead'].sort())
   assert.deepEqual(Object.keys(api.product).sort(), ['start', 'poll', 'cancel', 'uploadCreate', 'uploadChunk', 'uploadComplete', 'uploadStatus', 'uploadCancel', 'blobRead', 'save', 'openMedia', 'closeMedia', 'requestMicrophone'].sort())
   assert.equal(Object.isFrozen(api.product), true)
   const microphone = await api.product.requestMicrophone({ callId: 'microphone-denied-1', expectedGeneration: 3 })
@@ -148,13 +151,17 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
   await api.getRememberedLogin(context)
   await api.signInWithSavedPassword(context, false)
   await api.sendRegistrationCode(context, '13800000000')
+  await api.resetPassword(context, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' })
   await api.registerWithPassword(context, { phone: '13800000000', password: 'Synthetic-pass-1', code: '123456', rememberPassword: true })
   await api.claimDevice(context, 'ABCD-EFGH-IJKL-MNOP')
+  await api.openProvisioning(context)
   assert.deepEqual(invocations.slice(2).map(value => [value[0], value[1], [...value[2]]]), [
     ['zhijun:invoke', 'getRememberedLogin', [context]],
     ['zhijun:invoke', 'signInWithSavedPassword', [context, false]],
     ['zhijun:invoke', 'sendRegistrationCode', [context, '13800000000']],
+    ['zhijun:invoke', 'resetPassword', [context, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' }]],
     ['zhijun:invoke', 'registerWithPassword', [context, { phone: '13800000000', password: 'Synthetic-pass-1', code: '123456', rememberPassword: true }]],
     ['zhijun:invoke', 'claimDevice', [context, 'ABCD-EFGH-IJKL-MNOP']],
+    ['zhijun:invoke', 'openProvisioning', [context]],
   ])
 })

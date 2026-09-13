@@ -1,0 +1,63 @@
+# Keep the production ASAR allowlist identical to electron-builder.yml (tested).
+# Do not extend that config: electron-builder APPENDS extraResources arrays,
+# which would silently bundle Mac resources in the Windows installer.
+extends: null
+appId: com.qeeshu.zhijun
+productName: 知君
+asar: true
+npmRebuild: false
+electronDist: node_modules/electron/dist
+forceCodeSigning: true
+directories:
+  buildResources: assets
+  output: release-windows
+files:
+  - package.json
+  - main.js
+  - preload.cjs
+  - app-icon.cjs
+  - security.cjs
+  - provisioning-window.cjs
+  - provisioning-broker.cjs
+  - provisioning/**/*
+  - '!provisioning/preload.mjs'
+  - '!provisioning/preload-formal.mjs'
+  - '!node_modules/@nexusaos/device-provisioning-electron/**/*'
+  - '!node_modules/@nexusaos/device-provisioning-uni/**/*'
+  - production/**/*.cjs
+  - runtime/**/*.cjs
+  - assets/centaur.png
+  - '!**/*.map'
+extraResources:
+  - from: ../mindos-web/dist-desktop
+    to: mindos-web-dist
+  - from: ../shared/product-operations.json
+    to: shared/product-operations.json
+  - from: package-resources-windows/zhijun-product.json
+    to: zhijun-product.json
+  - from: package-resources-windows/connectivity-sidecar/windows-amd64
+    to: connectivity-sidecar/windows-amd64
+    filter:
+      - nexusaos-connectivity-sidecar.exe
+afterPack: scripts/after-pack-windows.cjs
+artifactName: 'Zhijun-${version}-win-${arch}.${ext}'
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: zip
+      arch: [x64]
+  icon: assets/centaur.png
+  requestedExecutionLevel: asInvoker
+  signExecutable: true
+  signtoolOptions:
+    sign: scripts/sign-windows.cjs
+    signingHashAlgorithms: [sha256]
+    publisherName: 'Zhuhai Qeeshu Technology Co., Ltd.'
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

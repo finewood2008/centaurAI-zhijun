@@ -101,6 +101,14 @@ def test_model_provider_fails_closed_and_stream_contract(monkeypatch):
     with pytest.raises(ProviderError, match="没有返回可显示的正文") as empty:
         list(provider.stream(request))
     assert empty.value.code == "MODEL_RESPONSE_EMPTY"
+    port.events = [{"type": "error", "code": "MODEL_PROVIDER_FAILED"}]
+    with pytest.raises(ProviderError, match="本地模型服务没有运行或尚未就绪") as unavailable:
+        list(provider.stream(request))
+    assert unavailable.value.code == "MODEL_PROVIDER_FAILED"
+    port.events = [{"type": "error", "code": "MODEL_TOTAL_TIMEOUT"}]
+    with pytest.raises(ProviderError, match="本地模型等待超时") as timeout:
+        list(provider.stream(request))
+    assert timeout.value.code == "MODEL_TOTAL_TIMEOUT"
     port.events = [{"type": "text", "text": "partial"}]
     with pytest.raises(ProviderError, match="模型能力调用失败"):
         list(provider.stream(request))
@@ -255,11 +263,26 @@ def test_chat_attachment_uses_trusted_upload_handle(tmp_path):
     root = tmp_path / "data"
     root.mkdir(mode=0o700)
     fixture = CAPABILITY_FIXTURE.replace("        if name=='materials.evidence':return []", """        if name=='uploads.describe':return {'fileName':'sample.txt','size':11}
-        if name=='materials.ingest':
-            assert payload=={'uploadId':'a'*32,'attachmentPurpose':'chat'}
-            return {'materialId':'material-fixture','versionNumber':1}
-        if name=='materials.processing':return {'record':{'versionNumber':1,'status':'available'},'hasText':True,'jobState':'done','snapshotId':'snap-central'}
+        if name=='uploads.read':
+            import base64
+            assert payload=={'id':'a'*32,'offset':0,'limit':11}
+            return {'id':'a'*32,'offset':0,'size':11,'data':base64.b64encode(b'hello world').decode(),'hasMore':False}
         if name=='materials.evidence':return []""")
+    fixture = fixture.replace("app=create_app(w,SyntheticCapabilities())", """from zhijun_worker import data_agent_rag_v2
+class SyntheticRagV2:
+    def upload_constraints(self):
+        return 50*1024*1024,{'.txt'}
+    def upload_bytes(self,filename,content,**kwargs):
+        assert filename=='sample.txt' and content==b'hello world'
+        assert kwargs['title']=='sample.txt' and kwargs['idempotency_key'].startswith('zj-upload-')
+        return {'jobId':'aij_'+'a'*32,'materialId':'material-fixture','materialVersion':1,
+                'statusUrl':'/v1/agent/apps/material-jobs/'+'aij_'+'a'*32}
+    def job_status(self,job_id):
+        assert job_id=='aij_'+'a'*32
+        return {'jobId':job_id,'materialId':'material-fixture','materialVersion':1,
+                'state':'ready','stage':'completed','indexState':'indexed'}
+data_agent_rag_v2.configured_client=lambda:SyntheticRagV2()
+app=create_app(w,SyntheticCapabilities())""")
     script = CHILD.replace("app=create_app(w)", fixture)
     extra = '''    cid={'conversationId':ident}
     batch=dispatch(client,'post_api_mindos_conversations_conversation_id_imports',
@@ -276,7 +299,7 @@ def test_chat_attachment_uses_trusted_upload_handle(tmp_path):
     assert 'material-fixture' in ChatImportStore().protected_ids()
     ref={'materialId':'material-fixture','version':1}
     ChatImportStore().grant([ref],'test-service')
-    assert ChatImportStore().allowed(ref,'test-service','snap-central')
+    assert ChatImportStore().allowed(ref,'test-service','rag-v2:material-fixture:1')
     assert not ChatImportStore().allowed({**ref,'version':2},'test-service')
     assert 'mindos.stores.material_pipeline_store' not in sys.modules
     assert 'mindos.services.ingestion' not in sys.modules

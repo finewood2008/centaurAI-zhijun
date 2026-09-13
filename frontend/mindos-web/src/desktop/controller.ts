@@ -1,7 +1,7 @@
 import type {
   CallContext, DesktopSnapshot, DeviceSummary, MaterialStatus, MaterialType,
   MaterialsPage, MaterialsQuery, PasswordCredentials, PublicError, Result, ZhijunDesktopV1,
-  RememberedLogin, RegistrationCredentials,
+  PasswordResetCredentials, RememberedLogin, RegistrationCredentials,
 } from '../../../shared/desktop-contract'
 
 export interface DesktopViewState {
@@ -14,7 +14,7 @@ export interface DesktopViewState {
   readonly loading: boolean
   readonly controlPending: boolean
   readonly pendingOperation: 'beginSignIn' | 'signInWithPassword' | 'signInWithSavedPassword' | 'sendRegistrationCode'
-    | 'registerWithPassword' | 'claimDevice' | 'disconnect' | 'signOut' | 'connect' | null
+    | 'resetPassword' | 'registerWithPassword' | 'claimDevice' | 'openProvisioning' | 'disconnect' | 'signOut' | 'connect' | null
   readonly error: PublicError | null
   readonly notice: string
 }
@@ -156,6 +156,30 @@ export class DesktopController {
     }
   }
 
+  async resetPassword(credentials: PasswordResetCredentials): Promise<boolean> {
+    const snapshot = this.state.snapshot
+    if (!this.bridge || this.disposed || !snapshot || this.state.controlPending
+      || snapshot.subject || !['signed_out', 'failed'].includes(snapshot.phase)) return false
+    const revision = ++this.controlRevision
+    const generation = snapshot.generation
+    this.patch({ controlPending: true, pendingOperation: 'resetPassword', error: null, notice: '' })
+    try {
+      const result = await this.bridge.resetPassword(this.context(), credentials)
+      if (this.disposed || revision !== this.controlRevision || generation !== this.state.snapshot?.generation) return false
+      if (!result.ok) { this.acceptError(result); return false }
+      if (result.generation !== generation || result.data.processed !== true) return false
+      this.patch({ notice: '密码重置请求已处理，请使用新密码登录' })
+      return true
+    } catch {
+      if (revision === this.controlRevision && generation === this.state.snapshot?.generation) {
+        this.patch({ error: unavailable() })
+      }
+      return false
+    } finally {
+      if (revision === this.controlRevision) this.patch({ controlPending: false, pendingOperation: null })
+    }
+  }
+
   async claimDevice(claimToken: string): Promise<boolean> {
     if (!this.bridge || this.disposed || !this.state.snapshot || this.state.controlPending) return false
     const revision = ++this.controlRevision
@@ -177,6 +201,31 @@ export class DesktopController {
     }
     if (claimed) await this.loadDevices()
     return Boolean(claimed)
+  }
+
+  async openProvisioning(): Promise<boolean> {
+    const snapshot = this.state.snapshot
+    if (!this.bridge || this.disposed || !snapshot || this.state.controlPending
+      || !snapshot.subject?.accountId || !snapshot.capabilities.provisioning
+      || !['selecting_device', 'failed'].includes(snapshot.phase)) return false
+    const revision = ++this.controlRevision
+    const generation = snapshot.generation
+    this.patch({ controlPending: true, pendingOperation: 'openProvisioning', error: null, notice: '' })
+    try {
+      const result = await this.bridge.openProvisioning(this.context())
+      if (this.disposed || revision !== this.controlRevision || generation !== this.state.snapshot?.generation) return false
+      if (!result.ok) { this.acceptError(result); return false }
+      if (result.generation !== generation || result.data.opened !== true) return false
+      this.patch({ notice: '已打开盒子配网窗口。请在独立窗口完成设置，返回后刷新已绑定盒子。' })
+      return true
+    } catch {
+      if (revision === this.controlRevision && generation === this.state.snapshot?.generation) {
+        this.patch({ error: unavailable() })
+      }
+      return false
+    } finally {
+      if (revision === this.controlRevision) this.patch({ controlPending: false, pendingOperation: null })
+    }
   }
 
   async getRememberedLogin(): Promise<RememberedLogin | null> {

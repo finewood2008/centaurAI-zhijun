@@ -766,6 +766,24 @@ class OntologyStore:
         with self._connect() as conn:
             return self._fetch_claim(conn, claim_id, with_evidence)
 
+    def get_claims(self, claim_ids: list[str], *, with_evidence: bool = True) -> list[dict]:
+        """Load claims in caller order with a bounded number of DB connections."""
+        ordered = list(dict.fromkeys(claim_ids))
+        if not ordered:
+            return []
+        found: dict[str, dict] = {}
+        with self._connect() as conn:
+            # Stay below SQLite builds whose host-parameter limit is 999.
+            for offset in range(0, len(ordered), 500):
+                chunk = ordered[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(_CLAIM_SELECT + f" WHERE c.id IN ({placeholders})", chunk).fetchall()
+                for row in rows:
+                    evidence = self._evidence_for(conn, row["id"]) if with_evidence else []
+                    claim = self._claim(row, evidence)
+                    found[claim["id"]] = claim
+        return [found[claim_id] for claim_id in ordered if claim_id in found]
+
     @staticmethod
     def _validate_claim_payload(payload: dict) -> dict:
         section = payload.get("section")

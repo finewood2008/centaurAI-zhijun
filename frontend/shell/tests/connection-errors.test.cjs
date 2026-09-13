@@ -15,9 +15,16 @@ const binding = { device_id: 'synthetic-device', application_id: 'zhijun-desktop
 const success = data => new Response(JSON.stringify({ code: 200, data }), { headers: { 'content-type': 'application/json' } });
 const rejection = (code, msg, status = 200) => new Response(JSON.stringify({ code, msg, success: false,
   data: { token: 'SYNTHETIC_PRIVATE_SENTINEL' } }), { status, headers: { 'content-type': 'application/json' } });
-const validTicket = body => ({ ...body, sessionId: 'synthetic-session', streamId: 'synthetic-stream',
-  gatewayUrl: 'wss://synthetic.invalid', token: 'SYNTHETIC_PRIVATE_SENTINEL', transportPolicy: 'DIRECT_ONLY',
-  connectBefore: '2099-01-01T00:00:00Z', expiresAt: '2099-01-01T01:00:00Z', iceServers: [{ urls: ['stun:synthetic.invalid'] }] });
+const validTicket = body => {
+  const relay = body.transportPolicy === 'TURN_ONLY';
+  return { ...body, sessionId: relay ? 'synthetic-relay-session' : 'synthetic-session',
+    streamId: relay ? 'synthetic-relay-stream' : 'synthetic-stream', gatewayUrl: 'wss://synthetic.invalid',
+    token: 'SYNTHETIC_PRIVATE_SENTINEL', transportPolicy: relay ? 'TURN_ONLY' : 'DIRECT_ONLY',
+    connectBefore: '2099-01-01T00:00:00Z', expiresAt: '2099-01-01T01:00:00Z',
+    iceServers: relay ? [{ urls: ['turns:synthetic.invalid'], username: 'synthetic-user',
+      credential: 'SYNTHETIC_PRIVATE_SENTINEL', expiresAt: '2099-01-01T00:30:00Z' }]
+      : [{ urls: ['stun:synthetic.invalid'] }] };
+};
 
 async function fixture(t, respond, nativeResult, failClose = false) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'zhijun-connect-errors-'));
@@ -111,17 +118,42 @@ test('native direct failures retain only fixed SDK diagnostics, separately from 
   const cases = [['SDK_DIRECT_UNAVAILABLE', 'ICE_FAILED', 'DIRECT_CONNECTION_UNAVAILABLE'],
     ['SDK_DIRECT_UNAVAILABLE', 'DIRECT_TIMEOUT', 'DIRECT_CONNECTION_UNAVAILABLE'],
     ['SDK_CONNECT_TIMEOUT', undefined, 'REQUEST_TIMEOUT'], ['IPC_SIDECAR_EXITED', undefined, 'TRANSPORT_UNAVAILABLE'],
-    ['UNKNOWN_PRIVATE_SENTINEL', undefined, 'TRANSPORT_UNAVAILABLE']];
-  for (const [sdkCode, detailCode, code] of cases) {
+    ['UNKNOWN_PRIVATE_SENTINEL', undefined, 'CONTRACT_MISMATCH', 'IPC_INVALID_MESSAGE']];
+  for (const [sdkCode, detailCode, code, expectedSdkCode = sdkCode] of cases) {
     const f = await fixture(t, body => success(validTicket(body)), request => ({ protocol_version: 1, type: 'error',
       operation: 'connect', request_id: request.request_id, code: sdkCode, ...(detailCode ? { detail_code: detailCode } : {}) }));
     await assert.rejects(f.connect(), error => {
       const safe = toPublicError(error); assert.equal(safe.code, code); assert.equal(safe.phase, 'native');
-      assert.equal(safe.sdkCode, sdkCode.startsWith('UNKNOWN') ? undefined : sdkCode);
+      assert.equal(safe.sdkCode, expectedSdkCode);
       assert.equal(safe.detailCode, detailCode); assert.equal(JSON.stringify(safe).includes('PRIVATE_SENTINEL'), false); return true;
     });
     assert.deepEqual(f.counts(), { sessionRequests: 1, nativeRequests: 1, closed: 1 });
   }
+});
+
+test('real SDK binds one eligible Direct failure into exactly one TURN fallback', async t => {
+  const tickets = [];
+  const f = await fixture(t, body => { tickets.push(body); return success(validTicket(body)); }, request => {
+    if (request.binding.transport_policy === 'DIRECT_ONLY') {
+      return { protocol_version: 1, type: 'error', operation: 'connect', request_id: request.request_id,
+        code: 'SDK_DIRECT_UNAVAILABLE', detail_code: 'ICE_FAILED', failed_session_id: 'synthetic-session' };
+    }
+    assert.equal(request.binding.transport_policy, 'TURN_ONLY');
+    return { protocol_version: 1, type: 'response', operation: 'connect', request_id: request.request_id,
+      session_id: 'synthetic-relay-native', policy: 'TURN_ONLY', selected_path: 'RELAY' };
+  });
+  const connected = await f.connect();
+  assert.equal(connected.selectedPath, 'RELAY');
+  assert.equal(tickets.length, 2);
+  assert.equal(tickets[0].transportPolicy, 'DIRECT_ONLY');
+  assert.equal(tickets[0].fallbackFromSessionId, undefined);
+  assert.deepEqual({ profile: tickets[1].profile, transportPolicy: tickets[1].transportPolicy,
+    fallbackFromSessionId: tickets[1].fallbackFromSessionId, fallbackReason: tickets[1].fallbackReason }, {
+    profile: 'REMOTEOPS_COMPATIBILITY', transportPolicy: 'TURN_ONLY',
+    fallbackFromSessionId: 'synthetic-session', fallbackReason: 'ICE_FAILED',
+  });
+  assert.deepEqual(f.counts(), { sessionRequests: 2, nativeRequests: 2, closed: 0 });
+  await connected.close();
 });
 
 test('ticket failures are invocation-local and public diagnostic allowlists reject arbitrary strings', async () => {

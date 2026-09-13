@@ -11,19 +11,23 @@ const original = { requestId: 'same-user-message', routeRevision: 'old-preview',
 const code = ts.transpileModule(await readFile(new URL('../src/services/chatStream.ts', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText
-function harness(send, preview = async (_cid, body) => ({ ...body, routeRevision: 'new-preview' })) {
-  const calls = [], previews = [], failures = [], exports = {}
+function harness(send, preview = async (_cid, body) => ({ ...body, routeRevision: 'new-preview' }), rag = {}) {
+  const calls = [], previews = [], failures = [], decisions = [], exports = {}
   new Function('require', 'exports', code)(id => {
     if (id === './api') return { ApiError }
     if (id === './sse') return { streamPost: async (...args) => { calls.push(args); return send(...args) } }
     if (id === './taskRouting') return {
+      askRag: rag.ask || (async () => 'masked'),
       canRefreshRoute: e => ['ROUTE_CHANGED', 'PREVIEW_EXPIRED'].includes(e.code),
       prepareChatRoute: async (...args) => { previews.push(args); return preview(...args) },
+      ragPromptOf: value => value?.ragV2 || null,
+      requiresFreshRagSearch: e => ['CONFIRM_TOKEN_EXPIRED', 'CONFIRM_TOKEN_CONSUMED', 'CONFIRM_CONTEXT_CHANGED', 'RAG_CONFIRMATION_EXPIRED'].includes(e?.code),
+      submitRagDecision: async (...args) => { decisions.push(args); return rag.submit?.(...args) },
     }
     if (id.includes('useReplyRecovery')) return { reportReplyFailure: (...args) => failures.push(args) }
     throw new Error('Unmocked import: ' + id)
   }, exports)
-  return { ...exports, calls, previews, failures }
+  return { ...exports, calls, previews, failures, decisions }
 }
 {
   let attempts = 0
@@ -68,6 +72,17 @@ for (const error of [new ApiError('SOURCE_CHANGED'), new ApiError('SOURCE_UNAVAI
   const h = harness(async (_p, _b, handlers) => handlers.error({ code: 'ROUTE_CHANGED' }))
   assert.equal(await h.streamChat('conversation-1', original, { error: e => errors.push(e) }), true)
   assert.equal(errors.length, 1); assert.equal(h.calls.length, 1); assert.equal(h.previews.length, 0)
+}
+{
+  let attempts = 0
+  const prompt = { interactionId: 'rag-1', status: 'sensitive_confirmation_required', hits: [], passedCount: 0, canReadOriginal: false, riskAvailable: false }
+  const h = harness(async (_p, body, handlers) => {
+    if (++attempts === 1) handlers.error({ code: 'RAG_SENSITIVE_CONFIRMATION_REQUIRED', ragV2: prompt, userMessageId: 'user-1' })
+    else { assert.equal(body.retryUserId, 'user-1'); handlers.message_done({ messageId: 'answer-1' }) }
+  })
+  assert.equal(await h.streamChat('conversation-1', original, { error() {}, message_done() {} }), true)
+  assert.equal(h.calls.length, 2); assert.equal(h.decisions.length, 1); assert.equal(h.previews.length, 1)
+  assert.deepEqual(h.decisions[0].slice(0, 3), ['conversation-1', prompt, 'masked'])
 }
 {
   const h = harness(async () => { throw new ApiError('ROUTE_CHANGED') }, async () => null)

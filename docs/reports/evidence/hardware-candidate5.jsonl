@@ -1,5 +1,0 @@
-{"case":"voice","status":"pass","characters":40,"materialCount":0,"matchedPhraseCount":2,"expectedPhraseCount":2}
-{"case":"pdf","status":"pass","characters":46,"sourceBytes":868}
-{"case":"docx","status":"pass","characters":48,"sourceBytes":36686}
-{"case":"image_ocr","status":"pass","characters":110,"sourceBytes":24316}
-{"case":"safe_material_qwen","status":"pass","safeCharacters":82,"summaryCharacters":43,"entityCount":2,"relationCount":0}

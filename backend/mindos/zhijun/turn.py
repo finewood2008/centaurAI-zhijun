@@ -272,6 +272,11 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
                    "retryable": True}
             if detail.get("preview"):
                 err["preview"] = detail["preview"]
+            if detail.get("ragV2"):
+                # data_agent_rag has already reduced this to redacted previews,
+                # counts and an opaque interaction id. Tokens and evidence text
+                # never cross the SSE boundary.
+                err["ragV2"] = detail["ragV2"]
             if meta["contextStage"] == "supplemented":
                 err["stage"] = "supplemented"
                 meta["contextPending"] = {"code": err["code"], "stage": "supplemented"}

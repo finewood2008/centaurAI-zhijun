@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 
-from ..chat_imports import attachment_context, read_ref, service_info
+from ..chat_imports import attachment_context, read_ref, require_material, service_info
 from ..stores.alignment_store import digest
 from ..stores.chat_import_store import ChatImportStore
 from ..stores.routing_store import RoutingStore
@@ -117,9 +117,17 @@ class Router:
         try:
             if kind == "material":
                 mref = {"materialId": ident, "version": ref["materialVersion"]}
-                record, snapshot, text = read_ref(mref, self.scope)
-                base.update(title=record["fileName"], version=digest([mref, snapshot["snapshot_id"], digest(text)]),
-                            materialRef={**mref, "snapshotId": snapshot["snapshot_id"]})
+                if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+                    record = require_material(ident, self.scope)
+                    if record["versionNumber"] != mref["version"]:
+                        raise ValueError("资料版本已变化")
+                    fence = f"rag-v2:{ident}:{mref['version']}"
+                    base.update(title=record["fileName"], version=digest([mref, fence]),
+                                materialRef={**mref, "snapshotId": fence})
+                else:
+                    record, snapshot, text = read_ref(mref, self.scope)
+                    base.update(title=record["fileName"], version=digest([mref, snapshot["snapshot_id"], digest(text)]),
+                                materialRef={**mref, "snapshotId": snapshot["snapshot_id"]})
             elif kind in ("claim", "claim_history"):
                 claim = self.onto.get_claim(ident)
                 states = ("retracted", "superseded") if kind == "claim_history" else ("confirmed", "working")
@@ -361,7 +369,12 @@ class Router:
             kind, ident = s["kind"], s["id"]
             try:
                 if kind == "material":
-                    read_ref({"materialId": ident, "version": s["ref"]["materialVersion"]}, self.scope)
+                    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+                        record = require_material(ident, self.scope)
+                        if record["versionNumber"] != s["ref"]["materialVersion"]:
+                            raise ValueError("资料版本已变化")
+                    else:
+                        read_ref({"materialId": ident, "version": s["ref"]["materialVersion"]}, self.scope)
                 elif kind in ("claim", "claim_history"):
                     c = self.onto.get_claim(ident)
                     states = ("retracted", "superseded") if kind == "claim_history" else ("working", "confirmed")
@@ -573,6 +586,12 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
     # These sources are part of the actual user text, so omitSources cannot strip them.
     refs.extend(expression_refs)
     service = service_info(p)["id"]
+    # Data Agent confirmations are scoped to this conversation and immutable
+    # request inputs. Never reuse a browser-provided request id directly as an
+    # interaction id: it may contain unsupported characters or cross 128 bytes.
+    rag_interaction = router.cid + ":r:" + digest([
+        request_id or "", content, material_refs or [], retry_user_id or ""
+    ])[:24]
     handling = router.store.handling(router.scope)
     action = handling["action"] if p.external and handling["enabled"] and handling["service"] == service else "ask"
     restricted_seen = False
@@ -740,7 +759,8 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
         refs.extend(lookup_stage["sources"])
     context_plan = build_context_plan(router, content, allowed_history, provider=p, intent=intent,
                                       omit=omit or intent == "charter", queries=supplemental_queries,
-                                      complex=bool(supplemental_queries), material_refs=material_refs)
+                                      complex=bool(supplemental_queries), material_refs=material_refs,
+                                      rag_interaction_id=rag_interaction + ":context")
     context_plan["stage"] = "supplemented" if supplemental_queries is not None else "initial"
     if lookup_stage:
         context_plan["stage"] = lookup_stage["stage"]
@@ -767,7 +787,9 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
         excluded.extend({"id": r["materialId"], "reason": "本轮明确不使用这些文件"} for r in material_refs)
     attached_materials = []
     if material_refs and not omit:
-        text, attached_materials = attachment_context(material_refs, router.scope, content, external=p.external)
+        text, attached_materials = attachment_context(material_refs, router.scope, content,
+                                                      external=p.external,
+                                                      interaction_id=rag_interaction + ":attachments")
         system.append(text)
         refs.extend(router.ref("material", r["materialId"], materialVersion=r["version"]) for r in material_refs)
     if router.conv.get("decisionId") and not omit:

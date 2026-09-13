@@ -58,6 +58,7 @@ class OllamaMaterialScheduler:
         self._shutdown_flag = threading.Event()
         self._sequence = itertools.count()
         self._pending_tokens: dict[tuple[str, str], int] = {}
+        self._running_keys: dict[tuple[str, str], int] = {}
 
     @classmethod
     def instance(cls) -> OllamaMaterialScheduler:
@@ -128,6 +129,12 @@ class OllamaMaterialScheduler:
                 "deduplicatedPending": len(self._pending_tokens),
             }
 
+    def has_task(self, material_id: str, kind: str) -> bool:
+        """Return whether a keyed task is queued or currently executing."""
+        key = (material_id, kind)
+        with self._lock:
+            return key in self._pending_tokens or key in self._running_keys
+
     def submit(
         self,
         priority: int,
@@ -172,6 +179,7 @@ class OllamaMaterialScheduler:
 
     def _worker_loop(self) -> None:
         while not self._shutdown_flag.is_set():
+            claimed_key: tuple[str, str] | None = None
             try:
                 task = self._queue.get(timeout=0.2)
             except queue.Empty:
@@ -185,6 +193,8 @@ class OllamaMaterialScheduler:
                             continue
                         # 已领取任务不再是 pending；运行期间的新请求只保留一个后继任务。
                         del self._pending_tokens[task.key]
+                        self._running_keys[task.key] = self._running_keys.get(task.key, 0) + 1
+                        claimed_key = task.key
                 if task.material_id and task.kind:
                     logger.debug("Running scheduled Ollama task: material=%s kind=%s", task.material_id, task.kind)
                 task.task_fn()
@@ -198,6 +208,13 @@ class OllamaMaterialScheduler:
                 else:
                     logger.exception("Uncaught exception in scheduled Ollama task")
             finally:
+                if claimed_key is not None:
+                    with self._lock:
+                        remaining = self._running_keys.get(claimed_key, 0) - 1
+                        if remaining > 0:
+                            self._running_keys[claimed_key] = remaining
+                        else:
+                            self._running_keys.pop(claimed_key, None)
                 self._queue.task_done()
 
 

@@ -60,6 +60,9 @@ KIND_VISUAL_DESCRIPTION = "VISUAL_DESCRIPTION"
 MAX_INPUT_CHARS = 6000
 MAX_SUMMARY_CHARS = 200
 _MODEL_RETRY_DELAY_SECONDS = 90
+# ``pending`` rows outlive the in-memory scheduler. Treat them as renewable
+# leases so a service restart cannot leave the UI in "正在生成" forever.
+_PENDING_GENERATION_LEASE_SECONDS = 15 * 60
 
 # 实体 schema 约束（P14-04）
 ENTITY_TYPES = {"person", "place", "organization", "term"}
@@ -167,6 +170,16 @@ def _retry_due(record: dict | None) -> bool:
         return time.time() >= float(content.get("retryAfter") or 0)
     except (TypeError, ValueError):
         return True
+
+
+def _pending_retry_due(record: dict | None, *, now: float | None = None) -> bool:
+    if record is None or record.get("status") != "pending":
+        return False
+    try:
+        updated_at = float(record.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        updated_at = 0
+    return (time.time() if now is None else now) - updated_at >= _PENDING_GENERATION_LEASE_SECONDS
 
 
 def _submit_derived_task(kind: str, fn, material_id: str, source_path: str, force: bool) -> bool:
@@ -1423,32 +1436,87 @@ def refresh_analysis(material_id: str, source_path: str) -> dict:
             and record.get("input_hash") != current_input_hash
         )
 
+    def has_live_task(kind: str) -> bool:
+        task_kinds = [kind.lower()]
+        # The summary task normally produces entities in the same model call.
+        if kind == KIND_ENTITY_EXTRACTION:
+            task_kinds.append(KIND_SUMMARY.lower())
+        return any(
+            _ollama_scheduler.has_task(material_id, task_kind) is True
+            for task_kind in task_kinds
+        )
+
     # 先公开 pending，再提交后台任务。否则本次接口虽已成功重投任务，前端仍会
     # 收到 skipped 并停止轮询，直到用户手动刷新页面才看得到新结果。
     recovered_kinds: set[str] = set()
+    recovery_now = time.time()
     for kind, record in records.items():
-        if not skipped_with_new_text(record):
+        skipped_recovered = skipped_with_new_text(record)
+        stale_pending = _pending_retry_due(record, now=recovery_now)
+        if not skipped_recovered and not stale_pending:
             continue
-        store.set_derived_record(
+        if stale_pending:
+            if has_live_task(kind):
+                continue
+            claimed = store.renew_pending_derived_lease(
+                OWNER_MATERIAL,
+                material_id,
+                kind,
+                recovery_now - _PENDING_GENERATION_LEASE_SECONDS,
+                renewed_at=recovery_now,
+            )
+            if claimed is None:
+                records[kind] = store.get_derived_record(OWNER_MATERIAL, material_id, kind)
+                continue
+            records[kind] = claimed
+        else:
+            records[kind] = store.set_derived_record(
+                OWNER_MATERIAL,
+                material_id,
+                kind,
+                "pending",
+                dict(record.get("content") or {}),
+                current_input_hash,
+                str(record.get("generator") or _generator_name(get_provider().get_local_snapshot())),
+            )
+        recovered_kinds.add(kind)
+
+    def finish_recovery_if_rejected(kind: str, scheduled) -> None:
+        if kind not in recovered_kinds or scheduled:
+            return
+        record = records[kind]
+        if record is None:
+            return
+        failed_content = {
+            **(record.get("content") or {}),
+            "errorCode": "generation_queue_unavailable",
+            "errorDetail": "本地生成队列暂不可用",
+            "retryAfter": recovery_now + _MODEL_RETRY_DELAY_SECONDS,
+        }
+        finished = store.finish_pending_derived_lease(
             OWNER_MATERIAL,
             material_id,
             kind,
-            "pending",
-            dict(record.get("content") or {}),
-            current_input_hash,
-            str(record.get("generator") or _generator_name(get_provider().get_local_snapshot())),
+            float(record.get("updated_at") or 0),
+            status="unavailable",
+            content=failed_content,
+            failed_at=recovery_now,
         )
-        records[kind] = {**record, "status": "pending", "input_hash": current_input_hash}
-        recovered_kinds.add(kind)
+        if finished is not None:
+            records[kind] = finished
 
     summary = records[KIND_SUMMARY]
 
     summary_scheduled = False
-    if summary is None or _retry_due(summary) or KIND_SUMMARY in recovered_kinds:
+    if (
+        (summary is None or _retry_due(summary) or KIND_SUMMARY in recovered_kinds)
+        and not has_live_task(KIND_SUMMARY)
+    ):
         summary_scheduled = _submit_derived_task(
             KIND_SUMMARY, _generate_summary_and_entities,
             material_id, source_path, False,
         )
+    finish_recovery_if_rejected(KIND_SUMMARY, summary_scheduled)
 
     tasks = {
         KIND_TAG_SUGGESTIONS: _generate_tag_suggestions,
@@ -1457,10 +1525,13 @@ def refresh_analysis(material_id: str, source_path: str) -> dict:
     scheduled: dict[str, bool] = {}
     for kind, fn in tasks.items():
         rec = records[kind]
-        if rec is None or _retry_due(rec) or kind in recovered_kinds:
+        if (rec is None or _retry_due(rec) or kind in recovered_kinds) and not has_live_task(kind):
             scheduled[kind] = _submit_derived_task(
                 kind, fn, material_id, source_path, False,
             )
+            finish_recovery_if_rejected(kind, scheduled[kind])
+        else:
+            scheduled[kind] = False
     # 关系独立处理：缺失/失败/不可用，或输入 hash 相对当前实体产物已过期
     rel = records[KIND_RELATION_EXTRACTION]
     needs_relation = False
@@ -1478,8 +1549,9 @@ def refresh_analysis(material_id: str, source_path: str) -> dict:
                 # 在 _generate_relations 里再次 read_error → unavailable 循环）
                 logger.warning("refresh_analysis 读取正文失败，跳过关系过期判断: %s", material_id)
     relation_scheduled = False
-    if needs_relation:
+    if needs_relation and not has_live_task(KIND_RELATION_EXTRACTION):
         relation_scheduled = _submit_relations(material_id, source_path, False)
+    finish_recovery_if_rejected(KIND_RELATION_EXTRACTION, relation_scheduled)
     return {
         "summaryScheduled": summary_scheduled,
         "tagScheduled": scheduled.get(KIND_TAG_SUGGESTIONS, False),

@@ -119,11 +119,12 @@ CHILD = r'''
 import os,json,sys,hashlib
 from pathlib import Path
 root=Path(sys.argv[1]).resolve();account=sys.argv[2];foreign=sys.argv[3]
+secret_root=root.parent/(root.name+'-secrets');secret_root.mkdir(mode=0o700)
 wid=hashlib.sha256(json.dumps(['device-test',account,1],separators=(',',':')).encode()).hexdigest()
 for key in list(os.environ):
     if key.startswith(('CENTAUR','MINDOS_','ZHIJUN_')):os.environ.pop(key)
 os.environ.update(ZHIJUN_WORKSPACE_ID=wid,MINDOS_RUNTIME_ENV='production',MINDOS_LOCAL_WEB_DEBUG_ACCESS='0',
- CENTAURAI_DATABASE_DATA_ROOT=str(root),CENTAUR_SECRET_STORE_DIR=str(root/'secrets'),
+ CENTAURAI_DATABASE_DATA_ROOT=str(root),CENTAUR_SECRET_STORE_DIR=str(secret_root),
  CENTAUR_METADATA_DB=str(root/'db/meta.db'),CENTAUR_GBRAIN_HOME=str(root/'gbrain'),
  CENTAUR_MCP_DATA_DIR=str(root/'mcp/data'),CENTAUR_MCP_CONFIG_DIR=str(root/'mcp/config'))
 from zhijun_worker.workspace import Workspace

@@ -15,6 +15,11 @@ _INSTRUCTION = ("## 本轮实际提供的个人上下文与证据\n以下是参�
     "明确引用下列理解、经历或资料时，在相应句末标 [p1] 等对应标识；只用本轮已有的标识。未引用不等于未受影响；不要为展示来源而强行套用无关记录。"
     "历史依赖只用于权限检查，不表示已经读取祖先原文。片段不等于完整审阅；依据不足时直接说明。")
 
+_MATERIAL_LOOKUP_RE = re.compile(
+    r"资料|材料|文件|文档|附件|报告|合同|笔记|档案|原文|上传|导入|"
+    r"(?:记录|资料|文档|文件)(?:中|里|内|显示|写|提到)"
+)
+
 
 def _personal_fact_terms(content):
     """Current explicit fact questions only, not inferred intent or old topics."""
@@ -39,6 +44,31 @@ def _uncovered_personal_fact(item, terms, provided):
     # equally, do not interrupt for another private copy of an already covered
     # subject. This only chooses a preview candidate; Guard still owns consent.
     return not any(anchors <= _tokens((old.get("claim") or {}).get("content", old["text"])) for old in provided)
+
+
+def _has_material_ancestry(message):
+    meta = message.get("meta") or {}
+    if meta.get("materialRefs"):
+        return True
+    if any(isinstance(ref, dict) and ref.get("kind") == "material" for ref in meta.get("routingSources") or []):
+        return True
+    context = ((meta.get("routingProvenance") or {}).get("contextPlan") or {})
+    return any(
+        isinstance(item, dict) and item.get("kind") == "material"
+        for item in [*(context.get("background") or []), *(context.get("evidence") or [])]
+    )
+
+
+def _needs_implicit_material_search(content, allowed_history, focus, *, queries=None, complex=False):
+    """Keep whole-workspace RAG off the critical path for ordinary brief chat.
+
+    Explicit attachments are assembled separately. Implicit material search is
+    reserved for an observable document/personal-fact need, a supplemental deep
+    lookup, or a continuation already grounded in material evidence.
+    """
+    if complex or queries or _MATERIAL_LOOKUP_RE.search(content) or _personal_fact_terms(content):
+        return True
+    return bool(focus.get("continuation") and any(_has_material_ancestry(message) for message in allowed_history[-12:]))
 
 
 def render_context_plan(plan):
@@ -80,7 +110,8 @@ def fit_context_plan(plan, max_bytes):
 
 
 def build_context_plan(router, content, allowed_history, *, provider, purpose="chat",
-                       intent="conversation", omit=False, queries=None, complex=False, material_refs=None):
+                       intent="conversation", omit=False, queries=None, complex=False, material_refs=None,
+                       rag_interaction_id=None):
     from .memory_context import build_focus, matter_control, explicit_matter_review
     from .memory_retrieval import confirmed_background, retrieve_claims
     matter_binding, matter_candidate = context_sources.bound_matter(router, include_inactive=explicit_matter_review(content))
@@ -203,10 +234,17 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
     candidates = [{"ref": context_sources.claim_ref(router, c),
                    "category": "historical" if c["trustState"] not in ("confirmed", "working") else "ontology", "claim": c,
                    "text": context_sources.claim_text(c), "score": c.get("score", 0)} for c in claims]
-    for adapter in (context_sources.history_candidates, context_sources.summary_candidates,
-                    context_sources.decision_candidates, context_sources.material_candidates):
-        candidates.extend(adapter(router, search_queries, cutoff=router.mode.get("cutoff", 0) if provider.external else 0)
-                          if adapter is context_sources.history_candidates else adapter(router, search_queries))
+    adapters = [context_sources.history_candidates, context_sources.summary_candidates,
+                context_sources.decision_candidates]
+    if _needs_implicit_material_search(content, allowed_history, focus, queries=queries, complex=complex):
+        adapters.append(context_sources.material_candidates)
+    for adapter in adapters:
+        if adapter is context_sources.history_candidates:
+            candidates.extend(adapter(router, search_queries, cutoff=router.mode.get("cutoff", 0) if provider.external else 0))
+        elif adapter is context_sources.material_candidates:
+            candidates.extend(adapter(router, search_queries, interaction_id=rag_interaction_id))
+        else:
+            candidates.extend(adapter(router, search_queries))
     if matter_ready:
         candidates.append(matter_candidate)
         if not matter_ready["missing"]:

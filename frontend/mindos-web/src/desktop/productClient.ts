@@ -2,6 +2,7 @@ import type { CallContext, Result } from '../../../shared/desktop-contract'
 import type { ProductDesktop, ProductOperationRequest, ProductStart } from '../../../shared/product-contract'
 import { resolveProductOperation, type ProductOperation } from '../services/productCatalog'
 import { onProductScopeReset, workspaceRequestSignal } from '../shared/productScope.ts'
+import { reportUploadProgress, type ProductRequestInit } from '../services/transport.ts'
 
 interface Binding { generation: number; workspaceId: string }
 class ProductFailure extends Error {
@@ -14,6 +15,11 @@ const cancelled = () => new DOMException('操作已取消或连接已变化', 'A
 /** Adapt bounded host jobs to the original product's Response/ReadableStream contract. */
 export function createDesktopProductClient(product: ProductDesktop, binding: () => Binding | null) {
   const media = new Map<string, { handle: string; generation: number }>()
+  // Only ownership metadata is retained: no request body, IDs, paths or replay queue.
+  const pendingMutations = new Set<Binding>()
+  let uncertainMutation: Binding | undefined
+  const hasPendingMutations = (value: Binding) => [...pendingMutations, ...(uncertainMutation ? [uncertainMutation] : [])].some(item =>
+    item.generation === value.generation && item.workspaceId === value.workspaceId)
   let disposed = false
   const current = (owner: Binding) => !disposed && binding()?.workspaceId === owner.workspaceId && binding()?.generation === owner.generation
   const owner = () => {
@@ -58,7 +64,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     } else if (operation.body === 'none' && init.body != null) throw new ProductFailure('读取请求不能带正文', 'INVALID_REQUEST', 400)
     return { operation, definition: { version: 1, requestId, operationId: operation.id, params, query, body } }
   }
-  async function upload(form: FormData, value: Binding, signal: AbortSignal, operation: ProductOperation, owned: string[]) {
+  async function upload(form: FormData, value: Binding, signal: AbortSignal, operation: ProductOperation, owned: string[], onProgress?: ProductRequestInit['onUploadProgress']) {
     const fields: Record<string, string> = {}
     const files: Array<{ field: string; uploadId: string }> = []
     const allowed = operation.path.endsWith('/versions') ? ['versionNote', 'targetFolderId'] : operation.path === '/api/mindos/uploads' ? ['folderId'] : []
@@ -70,6 +76,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
         continue
       }
       if (field !== 'file' || files.length || entry.size < 1 || entry.size > 209715200) throw new ProductFailure('文件大小或数量超出限制', 'INVALID_REQUEST', 400)
+      reportUploadProgress(onProgress, { loaded: 0, total: entry.size, phase: 'uploading' })
       const create = product.uploadCreate(context(value), { requestId: crypto.randomUUID(), fileName: entry.name, contentType: entry.type || 'application/octet-stream', size: entry.size })
       create.then(result => { if (signal.aborted && result.ok) ignore(product.uploadCancel(context(value), { id: result.data.id })) }, () => {})
       const created = await rpc(create, value, signal)
@@ -82,6 +89,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
         const chunk = await rpc(product.uploadChunk(context(value), { id: created.id, index, bytes }), value, signal)
         index++
         if (chunk.id !== created.id || chunk.nextIndex !== index || chunk.received !== offset + bytes.byteLength) throw new ProductFailure('文件分片状态无效')
+        reportUploadProgress(onProgress, { loaded: chunk.received, total: entry.size, phase: chunk.received === entry.size ? 'finalizing' : 'uploading' })
       }
       const complete = await rpc(product.uploadComplete(context(value), { id: created.id }), value, signal)
       if (complete.id !== created.id || complete.state !== 'complete' || complete.received !== entry.size) throw new ProductFailure('文件传输未完成')
@@ -91,7 +99,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     return { kind: 'multipart', fields, files }
   }
 
-  async function request(path: string, init: RequestInit = {}): Promise<Response> {
+  async function request(path: string, init: ProductRequestInit = {}): Promise<Response> {
     const value = owner()
     const { operation, definition: original } = requestDefinition(path, init)
     const lifetime = workspaceRequestSignal(init.signal)
@@ -100,6 +108,12 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     let job: ProductStart | undefined
     let finished = false
     let cancelSent = false
+    let mutation: Binding | undefined
+    let outcomeUnknown = false
+    const rememberUncertainty = (error: unknown) => {
+      if (mutation && error instanceof ProductFailure && ['WRITE_OUTCOME_UNKNOWN', 'TRANSPORT_UNAVAILABLE',
+        'REQUEST_TIMEOUT', 'CONNECTIVITY_SESSION_EXPIRED'].includes(error.code)) outcomeUnknown = true
+    }
     const cancelJob = () => {
       if (job && !finished && !cancelSent) {
         cancelSent = true
@@ -107,14 +121,19 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
       }
     }
     const cleanup = () => {
+      if (mutation) {
+        pendingMutations.delete(mutation)
+        if (outcomeUnknown && current(value)) uncertainMutation = { ...value }
+      }
       signal.removeEventListener('abort', cancelJob)
       lifetime.dispose()
       for (const id of uploads) ignore(product.uploadCancel(context(value), { id }))
     }
     try {
       signal.throwIfAborted()
+      if (operation.mutating) { mutation = { ...value }; pendingMutations.add(mutation) }
       const definition = operation.body === 'multipart'
-        ? { ...original, body: await upload(init.body instanceof FormData ? init.body : new FormData(), value, signal, operation, uploads) }
+        ? { ...original, body: await upload(init.body instanceof FormData ? init.body : new FormData(), value, signal, operation, uploads, init.onUploadProgress) }
         : original
       const starting = product.start(context(value), definition)
       starting.then(result => {
@@ -175,6 +194,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
               finished = true
               controller.close()
             } catch (error) {
+              rememberUncertainty(error)
               cancelJob()
               rejectHeaders(error)
               try { controller.error(error) } catch { /* Reader already cancelled. */ }
@@ -185,7 +205,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
       })
       const head = await headersReady
       return new Response(head.status === 204 || head.status === 205 || head.status === 304 ? null : stream, head)
-    } catch (error) { cancelJob(); finished = true; cleanup(); throw error }
+    } catch (error) { rememberUncertainty(error); cancelJob(); finished = true; cleanup(); throw error }
   }
 
   async function saveText(fileName: string, text: string, contentType: string): Promise<void> {
@@ -271,7 +291,8 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     const value = owner()
     return (await rpc(product.requestMicrophone(context(value)), value)).allowed
   }
-  const reset = () => { for (const url of [...media.keys()]) releasePreview(url) }
+  const reset = () => { pendingMutations.clear(); uncertainMutation = undefined; for (const url of [...media.keys()]) releasePreview(url) }
   const stopReset = onProductScopeReset(reset)
-  return { request, requestMicrophone, saveText, saveResource, preview, releasePreview, dispose() { reset(); disposed = true; stopReset() } }
+  return { request, requestMicrophone, saveText, saveResource, preview, releasePreview, hasPendingMutations,
+    dispose() { reset(); disposed = true; stopReset() } }
 }

@@ -22,8 +22,8 @@ function mount(name, initialProps, api) {
 }
 function routing(overrides = {}) {
   const calls = [], states = {
-    a: { mode: { mode: 'online', revision: 1, service: 'service' }, service: { id: 'service', name: '合成服务', external: true }, defaultAuthorization: { active: true, revision: 2, includeFiles: false }, pending: [{ task_key: 'extract_turn', preview_id: 'p', count: 8, reason: 'CONSENT_REQUIRED' }] },
-    b: { mode: { mode: 'local', revision: 1 }, service: { id: 'service', external: true }, defaultAuthorization: { active: false, revision: 0 }, pending: [] },
+    a: { mode: { mode: 'online', revision: 1, service: 'service' }, service: { id: 'service', name: '合成服务', model: 'online-model', external: true }, localService: { id: 'local', name: '本机', model: 'qwen3.5:2b', external: false }, defaultAuthorization: { active: true, revision: 2, includeFiles: false }, pending: [{ task_key: 'extract_turn', preview_id: 'p', count: 8, reason: 'CONSENT_REQUIRED' }] },
+    b: { mode: { mode: 'local', revision: 1 }, service: { id: 'service', model: 'online-model', external: true }, localService: { id: 'local', name: '本机', model: 'qwen3.5:2b', external: false }, defaultAuthorization: { active: false, revision: 0 }, pending: [] },
   }
   const api = {
     routePath: id => `/routing/${id}`,
@@ -34,6 +34,10 @@ function routing(overrides = {}) {
       if (path.includes('/pending/')) return { missing: ['x'], revision: 'new-preview' }
       if (path.endsWith('/resume')) return { queuedCount: 8, pendingCount: 0 }
       if (path.endsWith('/grant')) return {}
+      if (method === 'PUT') {
+        states[cid] = { ...states[cid], mode: { mode: body.mode, revision: states[cid].mode.revision + 1,
+          ...(body.mode === 'online' ? { service: states[cid].service.id } : {}) } }
+      }
       return copy(states[cid])
     },
     askRoute: async () => ({ action: 'allow', keys: ['x'] }),
@@ -43,6 +47,118 @@ function routing(overrides = {}) {
   }
   return { ...mount('RoutingPanel', { conversationId: 'a', disabled: false }, api), api, calls, states }
 }
+
+// Reading authoritative state must never look like an explicit user choice.
+// A successful mode action (including re-selecting the active online pill) is
+// the only signal that may override a pending system-prompt local route.
+{
+  const h = routing(); await flush()
+  assert.equal(h.emits.filter(e => e[0] === 'mode-selected').length, 0)
+  h.ui.chooseOnline()
+  assert.deepEqual(h.emits.findLast(e => e[0] === 'mode-selected'), ['mode-selected', 'online'])
+  h.ui.open.value = false
+  await h.ui.change('local')
+  assert.deepEqual(h.emits.findLast(e => e[0] === 'mode-selected'), ['mode-selected', 'local'])
+  h.api.routingRequest = async () => { throw new Error('切换失败') }
+  const selectedBeforeFailure = h.emits.filter(e => e[0] === 'mode-selected').length
+  assert.equal(await h.ui.change('online'), false)
+  assert.equal(h.emits.filter(e => e[0] === 'mode-selected').length, selectedBeforeFailure)
+  h.close()
+}
+
+// Both choices stay visible. Local is one click; online still opens the
+// acknowledgement drawer instead of silently sending content off-device.
+{
+  const h = routing(); await flush()
+  assert.equal(h.ui.currentMode.value, 'online')
+  assert.equal(h.ui.localModelLabel.value, 'qwen3.5:2b')
+  assert.equal(await h.ui.useLocal(), true)
+  const request = h.calls.findLast(c => c.method === 'PUT')
+  assert.deepEqual(request.body, { mode: 'local', acknowledge: false, serviceId: 'service', expectedRevision: 1, freshContext: false })
+  h.props.conversationId = 'b'; await flush()
+  h.ui.chooseOnline()
+  assert.equal(h.ui.open.value, true)
+  assert.equal(h.calls.filter(c => c.method === 'PUT').length, 1, 'online requires the explicit drawer acknowledgement')
+  h.close()
+}
+
+// The settings-page pause flow refreshes before trusting an apparently-local
+// state and performs one bounded retry after a concurrent revision conflict.
+{
+  const h = routing(); await flush()
+  h.ui.state.value = { ...h.ui.state.value, mode: { mode: 'local', revision: 1 } }
+  h.states.a.mode = { mode: 'online', revision: 2, service: 'service' }
+  assert.equal(await h.ui.ensureLocal(), true)
+  assert.equal(h.calls.findLast(c => c.method === 'PUT').body.expectedRevision, 2)
+
+  h.states.a.mode = { mode: 'online', revision: 4, service: 'service' }
+  const original = h.api.routingRequest
+  let conflicts = 0
+  h.api.routingRequest = async (path, method = 'GET', body) => {
+    if (method === 'PUT' && conflicts++ === 0) {
+      h.states.a.mode = { mode: 'online', revision: 5, service: 'service' }
+      throw new Error('模式已更新，请刷新')
+    }
+    return original(path, method, body)
+  }
+  assert.equal(await h.ui.ensureLocal(), true)
+  assert.equal(conflicts, 2)
+  assert.equal(h.calls.findLast(c => c.method === 'PUT').body.expectedRevision, 5)
+  h.close()
+}
+
+// A persisted online choice cannot look healthy after the online channel is
+// disabled; the user receives a direct local-model action.
+{
+  const h = routing(); await flush()
+  h.ui.state.value = { ...h.ui.state.value, service: { id: 'local', name: '本机', model: 'qwen3.5:2b', external: false } }
+  assert.equal(h.ui.onlineAvailable.value, false)
+  assert.equal(h.ui.onlineModelLabel.value, '未启用')
+  assert.equal(h.ui.attentionLabel.value, '在线模型不可用')
+  h.close()
+}
+
+// A configured-but-paused provider can be activated from settings without
+// silently changing the routing mode or bypassing the egress acknowledgement.
+{
+  const h = routing(); await flush()
+  h.states.a.mode = { mode: 'local', revision: 2 }
+  h.states.a.service = { id: 'local', name: '本机', model: 'qwen3.5:2b', external: false }
+  await h.ui.refresh()
+  let activations = 0
+  h.props.activateOnlineChannel = async () => {
+    activations += 1
+    h.states.a.service = { id: 'deepseek', name: 'DeepSeek', model: 'deepseek-v4-flash', external: true }
+    return h.ui.refresh()
+  }
+  h.ui.acknowledge.value = true
+  await h.ui.enableOnlineChannel()
+  assert.equal(activations, 1)
+  assert.equal(h.ui.onlineAvailable.value, true)
+  assert.equal(h.ui.currentMode.value, 'local', 'channel activation must not silently switch the conversation')
+  assert.equal(h.ui.acknowledge.value, false, 'the user must confirm egress after the service identity becomes authoritative')
+  assert.equal(h.calls.filter(c => c.method === 'PUT').length, 0)
+  h.close()
+}
+
+// Failed activation is shown next to the action that failed; it must not be
+// hidden at the bottom of the long authorization drawer.
+{
+  const h = routing(); await flush()
+  h.states.a.mode = { mode: 'local', revision: 2 }
+  h.states.a.service = { id: 'local', name: '本机', model: 'qwen3.5:2b', external: false }
+  await h.ui.refresh()
+  h.props.activateOnlineChannel = async () => { throw new Error('还没有已保存的在线供应商。请关闭此面板，在下方添加供应商、Token 和模型。') }
+  await h.ui.enableOnlineChannel()
+  assert.match(h.ui.error.value, /还没有已保存的在线供应商/)
+  assert.equal(h.ui.onlineAvailable.value, false)
+  h.close()
+}
+assert.match(sources.RoutingPanel, /data-testid="routing-online-activation-error"/)
+assert.ok(
+  sources.RoutingPanel.indexOf('data-testid="routing-online-activation-error"') < sources.RoutingPanel.indexOf('资料来源默认授权'),
+  'activation failure must render before the remaining long-form authorization settings',
+)
 
 // A pending task covered by the explicit auto-egress policy gets an exact
 // receipt before resume without opening another dialog.

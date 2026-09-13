@@ -137,7 +137,10 @@ function createBusinessBridge({ clock = Date.now, heartbeatMs = 10000, heartbeat
             relative_path: normalized.relative_path.replace(/&waitMs=(\d+)$/, (_, wait) => `&waitMs=${Math.min(Number(wait), 250)}`) };
           const isCancel = normalized.relative_path.endsWith('/cancel') || normalized.method === 'DELETE';
           const isContext = normalized.method === 'GET' && normalized.relative_path === '/api/mindos/zhijun/context';
-          const response = await send(normalized, { ...options, priority: isContext ? 0 : isCancel ? 1 : isPoll ? 3 : 2 });
+          // Finish admitted page reads before starting more work. Polls keep
+          // ordinary business quota (rank > 1); heartbeat/cancel reservations
+          // and scheduler aging still apply, including during active streams.
+          const response = await send(normalized, { ...options, priority: isContext ? 0 : isCancel ? 1 : isPoll ? 2 : 3 });
           if (closed) fail('SESSION_NOT_READY');
           if (product && response?.status >= 200 && response.status < 300) lastActivity = activityClock();
           return response;

@@ -1,6 +1,6 @@
 # 本机开发：一个入口启动知君
 
-> 产品源：`22dc9a3112058f06a1e4a385c1b2dc3175e39476`，2026-09-05 同步复核。本文补充当前工程的平台与测试隔离边界；本轮实际验证见 [同步记录](UPSTREAM-SYNC-0905.md)。
+本文说明当前工程的平台、进程管理与测试隔离边界；具体行为以 `zhijun.sh` 和对应测试为准。
 
 在仓库根目录运行：
 
@@ -16,7 +16,7 @@ bash zhijun.sh stop
 
 日志位于 `data/run/dev/backend.log`、`web.log`，进程记录在同目录 `services.json`，均不提交仓库。服务异常退出后，查看日志并再次 `start`，仅补启动缺失服务；不安装登录项或系统常驻任务，不自动切换模型或修改任何授权。
 
-本入口用于本机开发，依赖现有 Python 虚拟环境与 Node 依赖；不自动安装依赖或构建生产应用。正式部署仍使用部署文档中的系统服务。
+本入口用于本机开发，依赖现有 Python 虚拟环境与 Node 依赖；不自动安装依赖或构建生产应用。正式盒端部署和 NPU-only 运行约束由 CentaurOS 的当前发布流程负责，本仓库不复制一份可能漂移的系统部署手册。
 
 该入口依赖 `fcntl`、bash、lsof、ps 与 POSIX 进程组，目前在 macOS 验证。Linux 需确认这些工具和进程检查行为；源测试 `test_dev_runtime.py` 还有 `/private/tmp` 平台路径假设，本次未承诺 Linux 通过。Windows 应继续使用已有 PowerShell/启动脚本，不直接运行该 Python supervisor。
 

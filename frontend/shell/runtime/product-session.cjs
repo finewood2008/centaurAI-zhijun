@@ -6,6 +6,9 @@ const { assert, exact, integer, ID, REQUEST_ID, SHA, LIMITS, STATES, TERMINAL } 
 const MEDIA = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif',
   'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/flac', 'audio/mp4', 'audio/aac', 'audio/webm', 'video/mp4', 'video/webm', 'video/ogg']);
 const productMethods = ['start', 'poll', 'cancel', 'uploadCreate', 'uploadChunk', 'uploadComplete', 'uploadStatus', 'uploadCancel', 'blobRead', 'save', 'openMedia', 'closeMedia', 'requestMicrophone'];
+const TERMINAL_CONNECTION_ERRORS = ['SESSION_EXPIRED', 'AUTHENTICATION_REQUIRED', 'CONNECTIVITY_SESSION_EXPIRED',
+  'TRANSPORT_UNAVAILABLE', 'SESSION_NOT_READY', 'SESSION_QUOTA_EXHAUSTED'];
+const UNCERTAIN_WRITE_ERRORS = [...TERMINAL_CONNECTION_ERRORS, 'REQUEST_TIMEOUT'];
 function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000, onTerminal = () => {}, budget = { active: new Set() } }) {
   let closed = false;
   const jobs = new Map(), uploads = new Map(), blobs = new Map(), media = new Map();
@@ -19,7 +22,7 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
   let mediaStreams = 0, saves = 0;
   function current() { assert(!closed && isCurrent(), 'STALE_GENERATION'); }
   function reportTerminal(error) {
-    const terminal = error?.sessionTerminal || (['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error?.code) ? error : undefined);
+    const terminal = error?.sessionTerminal || (TERMINAL_CONNECTION_ERRORS.includes(error?.code) ? error : undefined);
     if (terminal && !terminalReported) { terminalReported = true; onTerminal(terminal); }
   }
   function trimJobs() {
@@ -48,9 +51,9 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
       current(); return P.decodeJson(response);
     } catch (error) {
       if (mutation && error instanceof DesktopError && !error.definitelyNotSent
-          && ['REQUEST_TIMEOUT', 'TRANSPORT_UNAVAILABLE', 'SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error.code)) {
+          && UNCERTAIN_WRITE_ERRORS.includes(error.code)) {
         const unknown = new DesktopError('WRITE_OUTCOME_UNKNOWN');
-        if (['SESSION_EXPIRED', 'CONNECTIVITY_SESSION_EXPIRED', 'SESSION_QUOTA_EXHAUSTED'].includes(error.code)) unknown.sessionTerminal = error;
+        if (TERMINAL_CONNECTION_ERRORS.includes(error.code)) unknown.sessionTerminal = error;
         throw unknown;
       }
       throw error;
@@ -346,18 +349,29 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     async invoke(method, input) {
       current(); assert(Object.hasOwn(methods, method));
       let rejectGuard;
+      // A heartbeat can close the session while a write is awaiting its reply.
+      // The outer cancellation guard must retain the same uncertainty as wire().
+      const mutation = method === 'start' ? P.operationRequest(input, uploads).operation.mutating
+        : ['cancel', 'uploadCreate', 'uploadChunk', 'uploadComplete', 'uploadCancel'].includes(method);
       try {
         const task = methods[method](input);
         const value = await Promise.race([task, new Promise((_, reject) => { rejectGuard = reject; guards.add(reject); })]);
         current(); return value;
-      } catch (error) { reportTerminal(error); throw error; }
+      } catch (error) {
+        if (mutation && error instanceof DesktopError && !error.definitelyNotSent && UNCERTAIN_WRITE_ERRORS.includes(error.code)) {
+          const unknown = new DesktopError('WRITE_OUTCOME_UNKNOWN');
+          if (TERMINAL_CONNECTION_ERRORS.includes(error.code)) unknown.sessionTerminal = error;
+          error = unknown;
+        }
+        reportTerminal(error); throw error;
+      }
       finally { guards.delete(rejectGuard); }
     },
     mediaResponse,
-    close() {
+    close(reason = new DesktopError('STALE_GENERATION')) {
       if (closed) return; closed = true;
       host.revokeMicrophone?.(microphoneOwner);
-      for (const reject of guards) reject(new DesktopError('STALE_GENERATION'));
+      for (const reject of guards) reject(reason);
       for (const controller of requestControllers) controller.abort();
       for (const upload of uploads.values()) session.releaseTransfer?.(upload.reservation);
       // Local suppression is immediate. Session teardown and the box lease own
