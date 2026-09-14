@@ -54,6 +54,7 @@ import { useChatImports } from '@/composables/useChatImports'
 import ChatFilesPanel from '@/components/conversation/ChatFilesPanel.vue'
 import ImportBatchCard from '@/components/conversation/ImportBatchCard.vue'
 import { createSessionGate } from '@/composables/sessionGate'
+import { createMemoryAttentionPoller } from '@/composables/useMemoryAttentionPolling'
 import { reviewNote } from '@/shared/ontology'
 import { MODEL_UNAVAILABLE_TEXT, modelUnavailable } from '@/shared/model'
 import { extractionSkipNote, hasConversationOutcomes } from '@/shared/labels'
@@ -427,14 +428,33 @@ const showOutcomesCard = computed(() => !streaming.value && !!current.value && h
 
 const loadGate = createSessionGate()
 let conversationDetailAbort: AbortController | null = null
-const pollGate = createSessionGate()
+const memoryPoller = createMemoryAttentionPoller({
+  isCurrent: conversationId => alive && currentId.value === conversationId && current.value?.id === conversationId,
+  poll: async (conversationId, jobIds) => {
+    // Paused/failed work is no longer pending, but still needs a visible status.
+    const [, resumed, nextStatus] = await Promise.all([
+      refreshMemoryAttention(conversationId),
+      routingPanel.value?.reconcileRecentExtractionJobs(conversationId, jobIds),
+      getZhijunStatus(),
+    ])
+    if (!alive || currentId.value !== conversationId || current.value?.id !== conversationId) return false
+    status.value = nextStatus
+    // Unavailable/busy routing is unknown, not a successful final-state read.
+    return resumed !== false || (nextStatus.pendingJobs ?? 1) > 0
+  },
+  onTimeout: conversationId => routingPanel.value?.reportMemoryPollingTimeout(conversationId),
+  onSettled: async conversationId => {
+    // Very fast jobs may finish without pendingJobs ever being observed > 0.
+    // Re-read after convergence rather than relying only on the count watcher.
+    await Promise.all([refreshMemoryAttention(conversationId), refreshOutcomes(conversationId, true), loadStats()])
+  },
+})
 const memoryLoadGate = createSessionGate()
 const memoryAttention = ref<ConversationMemoryAttention | null>(null)
 const memoryDraftBusy = ref(false)
 const memoryDraftError = ref('')
 const memoryPlacement = computed(() => placeMemoryAttention(memoryAttention.value, messages.value, current.value?.id ?? null))
 const memoryDraft = computed(() => memoryAttention.value?.draft ?? null)
-let memoryTimer: ReturnType<typeof setTimeout> | undefined
 let abortController: AbortController | null = null
 // 新建会话后先本地替换路由，再由本页继续流式；此时跳过 watcher 的重新加载。
 let skipLoadFor: string | null = null
@@ -1158,7 +1178,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           const e = d as ExtractionEvent
           if (!alive) return
           if (e.state === 'queued') {
-            pollMemoryAttention(conv.id)
+            pollMemoryAttention(conv.id, e.jobId ? [e.jobId] : [])
             void alignmentPrivacy.value?.refresh()
             if (conv.mode === 'onboarding') void pollMap()
           } else if (e.state === 'skipped') {
@@ -1272,10 +1292,8 @@ function stop() {
 }
 
 function clearMemoryAttention() {
-  pollGate.invalidate()
+  memoryPoller.stop()
   memoryLoadGate.invalidate()
-  clearTimeout(memoryTimer)
-  memoryTimer = undefined
   memoryAttention.value = null
   memoryDraftError.value = ''
 }
@@ -1299,19 +1317,11 @@ function onPendingMemoryChanged() {
   if (current.value) void refreshOutcomes(current.value.id, true)
 }
 
-function pollMemoryAttention(conversationId: string) {
-  clearTimeout(memoryTimer)
-  const ticket = pollGate.next()
-  let attempts = 0
-  const tick = async () => {
-    if (!alive || !pollGate.isCurrent(ticket) || currentId.value !== conversationId) return
-    await refreshMemoryAttention(conversationId)
-    attempts += 1
-    if (!alive || !pollGate.isCurrent(ticket) || currentId.value !== conversationId || attempts >= 40) return
-    if (attempts >= 3 && pendingJobs.value === 0) return
-    memoryTimer = setTimeout(tick, 3000)
-  }
-  memoryTimer = setTimeout(tick, 3000)
+function pollMemoryAttention(conversationId: string, jobIds: string[] = []) {
+  memoryPoller.start(conversationId, jobIds)
+}
+function onMemoryJobsResumed(event: { conversationId: string; jobIds: string[] }) {
+  pollMemoryAttention(event.conversationId, event.jobIds)
 }
 
 async function dismissMemory(kind: 'claim' | 'alignment', id: string, discard = false) {
@@ -1537,7 +1547,7 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="zj-page__tools">
-          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" />
+          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" @jobs-resumed="onMemoryJobsResumed" />
           <MatterWorkspace v-if="loadedConversationId && conversationAuxPhase >= 2 && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>

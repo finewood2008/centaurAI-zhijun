@@ -27,7 +27,9 @@ assert.doesNotMatch(conversation, /getInbox|seenClaimIds|pollInbox|attachLateCan
 assert.match(conversation, /memoryPlacement\?\.kind === 'claim'/)
 assert.match(conversation, /memoryPlacement\?\.kind === 'alignment'/)
 assert.match(conversation, /dismissMemory\('claim', memoryPlacement\.claim\.id, true\)/)
-assert.match(conversation, /clearTimeout\(memoryTimer\)/)
+// Timer cancellation and stale in-flight responses are exercised by the real
+// poller tests; this check verifies the conversation wires its scope reset in.
+assert.match(conversation, /function clearMemoryAttention\(\)\s*\{\s*memoryPoller\.stop\(\)/)
 assert.match(conversation, /memoryLoadGate\.isCurrent\(ticket\)/)
 const background = conversation.slice(conversation.indexOf('function clearMemoryAttention()'), conversation.indexOf('async function onReview('))
 assert.doesNotMatch(background, /scrollToBottom|\.focus\(/, 'passive memory changes must not move reading position or focus')

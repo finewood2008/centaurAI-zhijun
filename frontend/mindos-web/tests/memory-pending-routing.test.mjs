@@ -242,6 +242,108 @@ function pending(overrides = {}) {
   return { ...mount('MemoryPending', { conversationId: 'a', pendingCount: 2 }, api), api, calls }
 }
 
+function automaticRouting() {
+  const grants = []
+  const h = routing({
+    grantDefaultDeConsent: async (cid, preview, signal) => { grants.push({ cid, preview, signal }); return true },
+    askRoute: async () => { throw Error('background observation must never open a dialog') },
+  })
+  const job = (jobId, state = 'paused') => ({ jobId, state, previewId: 'preview-' + jobId, previewExpired: false })
+  h.states.a.pending = [{ task_key: 'extract_turn', count: 3, jobs: [job('old'), job('fresh'), job('failed', 'failed')] }]
+  const preview = { conversationId: 'a', purpose: 'extract_turn', revision: 'preview-fresh', missing: [], blocked: [], sources: [],
+    deConsentRequired: true, defaultAuthorization: { applies: true, autoEgress: true, revision: 3 } }
+  const original = h.api.routingRequest
+  h.api.routingRequest = async (path, method = 'GET', body, signal) => {
+    if (path.includes('/pending/')) { h.calls.push({ path, method, body, signal }); return copy(preview) }
+    if (path.endsWith('/resume')) { h.calls.push({ path, method, body, signal }); return { queuedCount: 1, jobIds: ['fresh'] } }
+    return original(path, method, body)
+  }
+  return { ...h, grants, preview }
+}
+
+// Only a new extraction's exact paused job may be resumed, not its old group.
+{
+  const h = automaticRouting(); await flush()
+  assert.equal(await h.ui.reconcileRecentExtractionJobs('a', ['fresh', 'failed']), true)
+  assert.equal(h.grants.length, 1)
+  assert.deepEqual(h.calls.find(c => c.path.endsWith('/resume')).body, { task: 'extract_turn', jobId: 'fresh', localOnly: false })
+  assert.equal(await h.ui.reconcileRecentExtractionJobs('a', ['fresh']), false, 'a repeat pause requires manual attention')
+  assert.equal(h.grants.length, 1)
+  assert.equal(h.ui.open.value, false)
+  h.close()
+}
+
+// Merely viewing a backlog, old failed jobs, inapplicable policy and a foreign
+// preview must never mint a receipt or grant anything.
+for (const change of [
+  h => { h.preview.defaultAuthorization.applies = false },
+  h => { h.preview.defaultAuthorization.autoEgress = false },
+  h => { h.preview.conversationId = 'b' },
+  h => { h.preview.purpose = 'draft_turn' },
+  h => { h.states.a.pending[0].jobs[1].previewExpired = true },
+]) {
+  const h = automaticRouting(); await flush(); change(h)
+  await h.ui.reconcileRecentExtractionJobs('a', [])
+  await h.ui.reconcileRecentExtractionJobs('a', ['fresh', 'failed'])
+  assert.equal(h.grants.length, 0)
+  assert.equal(h.calls.some(c => c.path.endsWith('/resume')), false)
+  h.close()
+}
+
+// Navigation during grant aborts it and cannot resume on either old or new page.
+{
+  const h = automaticRouting(); await flush()
+  const grant = defer(); let signal
+  h.api.grantDefaultDeConsent = async (_cid, _preview, abort) => { signal = abort; return grant.promise }
+  const operation = h.ui.reconcileRecentExtractionJobs('a', ['fresh']); await flush()
+  h.props.conversationId = 'b'; await flush()
+  assert.equal(signal.aborted, true)
+  grant.resolve(true); await operation
+  assert.equal(h.calls.some(c => c.path.endsWith('/resume')), false)
+  assert.equal(h.ui.state.value.mode.mode, 'local')
+  h.close()
+}
+
+// A competing explicit action also invalidates an in-flight automatic grant.
+{
+  const h = automaticRouting(); await flush()
+  const grant = defer()
+  h.api.grantDefaultDeConsent = async () => grant.promise
+  const operation = h.ui.reconcileRecentExtractionJobs('a', ['fresh']); await flush()
+  await h.ui.change('local')
+  grant.resolve(true); await operation
+  assert.equal(h.calls.some(c => c.path.endsWith('/resume')), false)
+  h.close()
+}
+
+// A manually requested reprepare emits only its returned job IDs for polling.
+{
+  const h = automaticRouting(); await flush()
+  await h.ui.reconcileRecentExtractionJobs('a', ['fresh'])
+  assert.equal(h.grants.length, 1)
+  h.ui.reportMemoryPollingTimeout('a')
+  assert.match(h.ui.backgroundNotice.value, /仍未结束/)
+  await h.ui.pending({ task_key: 'extract_turn', previewExpired: true }, true)
+  assert.deepEqual(h.emits.find(e => e[0] === 'jobs-resumed'), ['jobs-resumed', { conversationId: 'a', jobIds: ['fresh'] }])
+  assert.equal(h.grants.length, 1, 'reprepare itself grants nothing')
+  assert.equal(h.ui.backgroundNotice.value, '')
+  await h.ui.reconcileRecentExtractionJobs('a', ['fresh'])
+  assert.equal(h.grants.length, 2, 'explicit reprepare permits one new bounded attempt for its returned ID')
+  h.close()
+}
+
+// Busy/failed reads cannot be mistaken for successfully finished extraction.
+{
+  const h = automaticRouting(); await flush()
+  h.ui.busy.value = true
+  assert.equal(await h.ui.reconcileRecentExtractionJobs('a', ['fresh']), undefined)
+  h.ui.busy.value = false
+  h.api.routingRequest = async () => { throw Error('offline') }
+  assert.equal(await h.ui.reconcileRecentExtractionJobs('a', ['fresh']), undefined)
+  assert.equal(h.grants.length, 0)
+  h.close()
+}
+
 // The optional queue reads all topics without reserving attention or generating messages.
 {
   const h = pending(); await flush(); assert.equal(h.calls.length, 0)

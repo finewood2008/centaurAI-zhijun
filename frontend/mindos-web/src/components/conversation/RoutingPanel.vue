@@ -7,10 +7,12 @@ const props = defineProps<{ conversationId?: string; disabled?: boolean; activat
 const emit = defineEmits<{
   (e: 'mode', value: string): void
   (e: 'mode-selected', value: string): void
+  (e: 'jobs-resumed', value: { conversationId: string; jobIds: string[] }): void
 }>()
 const state = ref<any>(null)
 const error = ref('')
 const notice = ref('')
+const backgroundNotice = ref('')
 const acknowledge = ref(false)
 const open = ref(false)
 const busy = ref(false)
@@ -48,6 +50,9 @@ let mutation = 0
 let alive = true
 let pendingController: AbortController | null = null
 let readController: AbortController | null = null
+// Only jobs explicitly queued by this page may use the existing default policy.
+// A second pause is left for manual review, never an automatic retry loop.
+const automaticAttempts = new Set<string>()
 function begin() {
   pendingController?.abort(); pendingController = null
   const ticket = ++mutation, target = path.value
@@ -73,6 +78,7 @@ watch(path, () => {
   readController?.abort(); readController = null
   mutation++; sequence++; busy.value = false
   open.value = false; state.value = null; error.value = ''; notice.value = ''
+  backgroundNotice.value = ''; automaticAttempts.clear()
   acknowledge.value = false; configureDefault.value = false; consentAcknowledge.value = false
   configureHandling.value = false
   includeFiles.value = false; includeCharter.value = false; autoEgress.value = false
@@ -206,8 +212,16 @@ async function pending(task: any, reprepare = false) {
         localOnly = choice.action === 'local'
       }
     }
-    const result = await routingRequest<{ queuedCount?: number; pendingCount?: number }>(target + '/resume', 'POST', { task: task.task_key, localOnly }, abort.signal)
     if (!valid()) return
+    const result = await routingRequest<{ queuedCount?: number; pendingCount?: number; jobIds?: string[] }>(target + '/resume', 'POST', { task: task.task_key, localOnly }, abort.signal)
+    if (!valid()) return
+    if (task.task_key === 'extract_turn' && props.conversationId && result.jobIds?.length) {
+      // A new explicit user action starts a fresh bounded attempt for only the
+      // jobs the server actually requeued, never the whole historical backlog.
+      for (const id of result.jobIds) automaticAttempts.delete(id)
+      backgroundNotice.value = ''
+      emit('jobs-resumed', { conversationId: props.conversationId, jobIds: result.jobIds })
+    }
     notice.value = reprepare ? '正在重新准备待办，没有增加授权；仍需授权的内容会在这里提示。'
       : result.queuedCount === 0 ? '这些任务已经排队，无需重复恢复。'
       : `${result.queuedCount ? `已恢复 ${result.queuedCount} 项待办` : '任务已排队'}，处理完成后会更新到对话里。${result.pendingCount ? `还有 ${result.pendingCount} 项需要核对。` : ''}`
@@ -215,7 +229,49 @@ async function pending(task: any, reprepare = false) {
   finally { if (valid()) { busy.value = false; pendingController = null } }
   if (valid()) await refresh()
 }
-defineExpose({ refresh, useLocal, ensureLocal })
+async function reconcileRecentExtractionJobs(conversationId: string, jobIds: string[]): Promise<boolean | undefined> {
+  if (!alive || props.conversationId !== conversationId) return false
+  if (busy.value) return undefined
+  if (!await refresh() || props.conversationId !== conversationId || busy.value) return undefined
+  backgroundNotice.value = ''
+  const tracked = new Set(jobIds)
+  const jobs = (state.value?.pending ?? []).filter((task: any) => task.task_key === 'extract_turn')
+    .flatMap((task: any) => task.jobs ?? [])
+    .filter((job: any) => tracked.has(job.jobId) && job.state === 'paused' && job.previewId
+      && !job.previewExpired && !automaticAttempts.has(job.jobId))
+  if (!jobs.length) return false
+  const valid = begin(), target = actionPath.value
+  const abort = new AbortController(); pendingController = abort
+  let resumed = false
+  try {
+    for (const job of jobs) {
+      if (!valid()) break
+      const preview = await routingRequest<RoutePreview>(target + '/pending/' + encodeURIComponent(job.previewId), 'GET', undefined, abort.signal)
+      if (!valid()) break
+      if (preview.conversationId !== conversationId || preview.purpose !== 'extract_turn'
+          || preview.defaultAuthorization?.applies !== true || preview.defaultAuthorization.autoEgress !== true) continue
+      automaticAttempts.add(job.jobId)
+      if (!await grantDefaultDeConsent(conversationId, preview, abort.signal) || !valid()) continue
+      const result = await routingRequest<{ queuedCount?: number }>(target + '/resume', 'POST', {
+        task: 'extract_turn', jobId: job.jobId, localOnly: false,
+      }, abort.signal)
+      if (!valid()) break
+      resumed = result.queuedCount !== 0 || resumed
+    }
+  } catch (e) {
+    if (valid()) error.value = e instanceof Error ? e.message : '个人理解整理需要核对，请打开模型与授权。'
+  } finally {
+    if (valid()) { busy.value = false; pendingController = null }
+  }
+  // Preserve a failed grant/resume message; refreshing here would clear it.
+  return valid() && resumed
+}
+function reportMemoryPollingTimeout(conversationId: string) {
+  if (alive && props.conversationId === conversationId) {
+    backgroundNotice.value = '个人理解整理仍未结束，可稍后打开「模型与授权」查看状态；原对话已保留。'
+  }
+}
+defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, reportMemoryPollingTimeout })
 </script>
 <template>
   <section class="routing-panel" aria-label="对话处理方式">
@@ -232,6 +288,7 @@ defineExpose({ refresh, useLocal, ensureLocal })
       模型与授权 <span v-if="policy?.active" class="routing-default">已授权</span><ChevronDown :size="13" aria-hidden="true" />
     </button>
     <button v-if="state?.pending?.length || error || state?.error || policy?.serviceChanged || handling?.serviceChanged || (currentMode === 'online' && !onlineAvailable)" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ attentionLabel }}</button>
+    <p v-if="backgroundNotice" class="routing-fine" role="status">{{ backgroundNotice }}</p>
     <SideDrawer :open="open" title="模型与授权" @close="open = false">
       <div class="routing-settings">
         <section v-if="state" class="routing-group">

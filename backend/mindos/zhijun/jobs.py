@@ -133,7 +133,9 @@ def _routing_pause(exc):
     code = detail.get("code", "")
     if preview or code in {"SOURCE_UNAVAILABLE", "SOURCE_CHANGED", "SOURCE_LIMIT", "ROUTE_CHANGED", "ONLINE_SERVICE_CHANGED",
                            "CHARTER_CHANGED", "CHARTER_POLICY_CONFLICT", "CHARTER_CONTEXT_TOO_LARGE"}:
-        reason = "source_unavailable" if preview.get("blocked") else "consent_required" if preview.get("missing") else code.lower() or "consent_required"
+        reason = ("source_unavailable" if preview.get("blocked") else "consent_required"
+                  if preview.get("missing") or preview.get("deConsentRequired") or code == "ROUTE_CONSENT_REQUIRED"
+                  else code.lower() or "consent_required")
         return {"state": "paused", "reason": reason,
                 "detail": "相关来源已失效或无法核验，请重新核对；不会绕过来源限制" if preview.get("blocked") else detail.get("detail", "后台任务等待核对"),
                 **({"previewId": preview["revision"]} if preview.get("revision") else {})}

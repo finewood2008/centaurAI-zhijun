@@ -1042,6 +1042,15 @@ class GuardedProvider:
             if self.background:
                 self.router.store.pending(self.router.cid, self.purpose, preview["revision"], "后台任务与当前人生章程冲突，已暂停")
             fail("CHARTER_POLICY_CONFLICT", preview["charterConflict"]["detail"], preview)
+        if self.background and self.external and preview.get("deConsentRequired"):
+            # Source permission is not the exact DE egress receipt. A background
+            # worker cannot mint user consent: expose this payload for the active
+            # client to authorize (explicitly or under its still-valid policy).
+            # Pause before the model adapter turns a missing receipt into a
+            # terminal ProviderError, retaining the preview for safe recovery.
+            self.router.store.pending(self.router.cid, self.purpose, preview["revision"],
+                                      "个人理解等后台整理需要核对本次外发授权，原对话仍保留")
+            fail("ROUTE_CONSENT_REQUIRED", "后台整理等待本次模型外发授权；请核对后继续", preview)
         if self.background and not preview["missing"]:
             self.revision = preview["revision"]
         if self.external and (preview["missing"] or not self.revision or preview["revision"] != self.revision):
