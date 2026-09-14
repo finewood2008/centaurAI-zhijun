@@ -34,6 +34,22 @@ def client_with(response):
 
 
 class SensitiveRuleStatusClientTest(unittest.TestCase):
+    def test_new_contract_is_validated_and_normalized_for_existing_desktop(self):
+        for state, historical_scan_required in (
+            ("active", False), ("applying", False), ("applying", True),
+        ):
+            with self.subTest(state=state, historical_scan_required=historical_scan_required):
+                expected = {"state": state, "applying": state == "applying"}
+                client = client_with(Response({
+                    **expected, "historicalScanRequired": historical_scan_required,
+                }))
+                self.assertEqual(client.get_sensitive_rule_status(), expected)
+                self.assertEqual(client._opener.open.call_count, 1)
+                request = client._opener.open.call_args.args[0]
+                self.assertEqual(request.method, "GET")
+                self.assertTrue(request.full_url.endswith("/sensitive-delivery/status"))
+                self.assertIsNone(request.data)
+
     def test_only_public_status_get_is_requested_with_existing_credentials(self):
         for state in ("active", "applying"):
             expected = {"state": state, "applying": state == "applying"}
@@ -55,7 +71,14 @@ class SensitiveRuleStatusClientTest(unittest.TestCase):
             {"state": "failed", "applying": False},
             {"state": ["active"], "applying": False},
             {"state": "active", "applying": False, "queueDepth": 5},
+            {"state": "active", "applying": False, "historicalScanRequired": True},
+            {"state": "applying", "historicalScanRequired": True},
+            {"state": "applying", "applying": True, "historicalScanRequired": False, "queueDepth": 5},
         ]
+        malformed.extend(
+            {"state": "applying", "applying": True, "historicalScanRequired": value}
+            for value in (None, 0, 1, "false", "true", [], {})
+        )
         for value in malformed:
             with self.subTest(value=value):
                 with self.assertRaisesRegex(DataAgentRagV2Error, "INVALID_SENSITIVE_RULE_STATUS_RESPONSE"):
@@ -90,6 +113,35 @@ class SensitiveRuleStatusFacadeTest(unittest.TestCase):
         self.assertEqual(response.json(), {"state": "applying", "applying": True})
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.fake.get_sensitive_rule.assert_not_called()
+
+    def test_new_upstream_contract_passes_real_client_and_facade_to_legacy_desktop_shape(self):
+        for state, historical_scan_required in (
+            ("active", False), ("applying", False), ("applying", True),
+        ):
+            with self.subTest(state=state, historical_scan_required=historical_scan_required):
+                expected = {"state": state, "applying": state == "applying"}
+                upstream = client_with(Response({
+                    **expected, "historicalScanRequired": historical_scan_required,
+                }))
+                routes._client_override = upstream
+                response = self.client.get(PREFIX + "/status")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.json(), expected)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
+                self.assertEqual(upstream._opener.open.call_count, 1)
+
+    def test_facade_validates_new_field_even_if_client_is_replaced(self):
+        for hint in (False, True, None, 0, "true"):
+            with self.subTest(hint=hint):
+                self.fake.get_sensitive_rule_status.return_value = {
+                    "state": "applying", "applying": True, "historicalScanRequired": hint,
+                }
+                response = self.client.get(PREFIX + "/status")
+                self.assertEqual(response.status_code, 200 if type(hint) is bool else 502)
+                if type(hint) is bool:
+                    self.assertEqual(response.json(), {"state": "applying", "applying": True})
+                self.assertNotIn("historicalScanRequired", response.text)
+                self.assertEqual(response.headers["Cache-Control"], "no-store")
 
     def test_facade_rejects_internal_fields_even_if_client_is_replaced(self):
         self.fake.get_sensitive_rule_status.return_value = {

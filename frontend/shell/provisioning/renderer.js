@@ -466,7 +466,7 @@ element('wifi').addEventListener('submit', event => {
       const status = await api.provision(credentials, legacy ? 'CONFIRM_LEGACY_PLAINTEXT_WIFI' : '')
       if (epoch !== operationEpoch) return
       if (status?.state === 'connected') {
-        show('盒子已联网成功。请回到主窗口刷新盒子列表；如尚未绑定，请继续输入管理员提供的 6 位认领码。')
+        show('盒子已联网成功。请回到主窗口刷新盒子列表；如尚未绑定，请输入盒子上的 10 位认领码（大写字母和数字 2–7，兼容旧 20 位码）。')
       } else {
         const code = typeof status?.code === 'string' && Object.hasOwn(ERROR_MESSAGES, status.code)
           ? status.code : 'PROVISIONING_DEVICE_REJECTED'

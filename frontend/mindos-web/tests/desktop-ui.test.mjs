@@ -50,6 +50,7 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
 }
 
 async function connectionComponentFixture(savedLoginError, resetError) {
+  const claimValidation = await import('../src/desktop/claimToken.ts')
   const source = await readFile(new URL('../src/desktop/DesktopConnection.vue', import.meta.url), 'utf8')
   const code = ts.transpileModule(compileScript(parse(source).descriptor, { id: 'desktop-connection-login-test' }).content,
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
@@ -85,7 +86,7 @@ async function connectionComponentFixture(savedLoginError, resetError) {
       viewState.value = { ...viewState.value, notice: '密码重置请求已处理，请使用新密码登录' }
       return true
     },
-    claimDevice: async () => false,
+    claimDevice: async input => { controls.push({ operation: 'claimDevice', input }); return true },
     openProvisioning: async () => false,
     loadDevices: async () => {},
   }
@@ -95,7 +96,7 @@ async function connectionComponentFixture(savedLoginError, resetError) {
     if (id === 'vue') return { ...Vue, onBeforeUnmount: callback => cleanups.push(callback) }
     if (id === 'vue-router') return { useRoute: () => ({ meta: {} }) }
     if (id.endsWith('/claimToken') || id === './claimToken') {
-      return { isValidClaimToken: value => /^\d{6}$/.test(value), normalizeClaimToken: value => value.trim() }
+      return claimValidation
     }
     if (id.endsWith('/workspace') || id === './workspace') return { useDesktopWorkspace: () => ({ controller, state: viewState }) }
     if (id === './SecureConnectionProgress.vue') return { default: {} }
@@ -107,6 +108,55 @@ async function connectionComponentFixture(savedLoginError, resetError) {
   await Vue.nextTick()
   return { source, ui, controls, viewState, close() { cleanups.forEach(callback => callback()); scope.stop() } }
 }
+
+test('claim UI strictly validates Base32 codes without normalization and clears on success', async () => {
+  const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+  try {
+    for (const invalid of ['123456', '0123456789', ' ABCDEFGH23 ', 'abcdefgh23', 'ABCDEFGHIJKLMNOP2345A']) {
+      f.ui.claimToken.value = invalid
+      await f.ui.claimDevice()
+      assert.match(f.ui.formError.value, /10 位/)
+      assert.equal(f.controls.filter(item => item.operation === 'claimDevice').length, 0)
+    }
+    for (const code of ['ABCDEFGH23', 'ABCDEFGHIJKLMNOP2345']) {
+      f.ui.claimToken.value = code
+      await f.ui.claimDevice()
+      assert.deepEqual(f.controls.at(-1), { operation: 'claimDevice', input: code })
+      assert.equal(f.ui.claimToken.value, '')
+    }
+    const input = f.source.match(/<input[^>]*data-testid="claim-token"[^>]*>/)?.[0]
+    assert.ok(input)
+    assert.match(input, /type="text"/)
+    assert.ok(input.includes('pattern="([A-Z2-7]{10}|[A-Z2-7]{20})"'))
+    assert.match(input, /minlength="10"/)
+    assert.doesNotMatch(input, /maxlength=/, 'overlong pasted codes must not be truncated into valid credentials')
+  } finally { f.close() }
+})
+
+test('claim paste checks raw clipboard characters before native text-input sanitization', async () => {
+  const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+  const paste = (value, start = 0, end = f.ui.claimToken.value.length) => f.ui.pasteClaimCode({
+    clipboardData: { getData: type => { assert.equal(type, 'text/plain'); return value } },
+    target: { selectionStart: start, selectionEnd: end },
+  })
+  try {
+    for (const value of ['ABCDEFGH23\n', '\rABCDEFGH23', 'abcdefgh23', ' ABCDEFGH23', 'ABCDEFGHIJKLMNOP2345A']) {
+      paste(value)
+      assert.equal(f.ui.claimToken.value, '')
+      assert.match(f.ui.formError.value, /粘贴内容无效/)
+    }
+    paste('ABCDEFGH23')
+    assert.equal(f.ui.claimToken.value, 'ABCDEFGH23')
+    paste('45', 8, 10)
+    assert.equal(f.ui.claimToken.value, 'ABCDEFGH45')
+    paste('ABCDEFGHIJKLMNOP2345')
+    assert.equal(f.ui.claimToken.value, 'ABCDEFGHIJKLMNOP2345')
+    assert.equal(f.ui.formError.value, '')
+    const input = f.source.match(/<input[^>]*data-testid="claim-token"[^>]*>/)?.[0]
+    assert.ok(input.includes('@paste.prevent="pasteClaimCode"'))
+    assert.ok(input.includes('@drop.prevent'))
+  } finally { f.close() }
+})
 
 test('connected device label prefers a non-empty name and otherwise uses the device id', () => {
   assert.equal(connectedDeviceLabel({ accountId: 'account', deviceId: 'box-id', deviceName: '  公司 AMD 盒子  ' }), '公司 AMD 盒子')
@@ -350,15 +400,52 @@ test('registration and device claim use narrow IPC calls and refresh claimed dev
   assert.equal(f.devices.length, 1)
   f.devices[0].resolve(ok(1, []))
   await tick()
-  const claiming = f.controller.claimDevice('123456')
+  const claiming = f.controller.claimDevice('ABCDEFGH23')
   assert.equal(f.controls[2].operation, 'claimDevice')
   f.controls[2].resolve(ok(1, { deviceId: 'device-claimed-1', displayName: '新盒子', availability: 'unknown' }))
   await tick()
   assert.equal(f.devices.length, 2)
+  assert.deepEqual(f.controller.state.devices, [], 'redeem receipt is not a selectable device')
+  assert.match(f.controller.state.notice, /等待盒子完成授权/)
   f.devices[1].resolve(ok(1, [{ deviceId: 'device-claimed-1', displayName: '新盒子', availability: 'online' }]))
   assert.equal(await claiming, true)
   assert.equal(f.controller.state.devices[0].displayName, '新盒子')
-  assert.match(f.controller.state.notice, /已认领盒子/)
+  assert.match(f.controller.state.notice, /已完成授权/)
+  f.controller.dispose()
+})
+
+test('claim stays pending until the same device is authorized on a manual refresh', async () => {
+  const f = fixture({ ...snapshot('selecting_device', 1, 1), environment: 'production' })
+  await f.controller.start()
+  f.devices[0].resolve(ok(1, []))
+  await tick()
+  const claiming = f.controller.claimDevice('ABCDEFGHIJKLMNOP2345')
+  f.controls[0].resolve(ok(1, { deviceId: 'new-box', displayName: '新盒子', availability: 'unknown' }))
+  await tick()
+  f.devices[1].resolve(ok(1, [{ deviceId: 'other-box', displayName: '另一台盒子', availability: 'online' }]))
+  assert.equal(await claiming, true)
+  assert.match(f.controller.state.notice, /等待盒子完成授权/)
+  assert.equal(f.controller.state.devices.some(device => device.deviceId === 'new-box'), false)
+  const refresh = f.controller.loadDevices()
+  f.devices[2].resolve(ok(1, [{ deviceId: 'new-box', displayName: '新盒子', availability: 'online' }]))
+  await refresh
+  assert.match(f.controller.state.notice, /已完成授权/)
+  assert.equal(f.controls.length, 1, 'refresh never repeats the redeem write')
+  f.controller.dispose()
+})
+
+test('a late claim receipt cannot populate a signed-out account or trigger a refresh', async () => {
+  const f = fixture({ ...snapshot('selecting_device', 1, 1), environment: 'production' })
+  await f.controller.start()
+  f.devices[0].resolve(ok(1, []))
+  await tick()
+  const claiming = f.controller.claimDevice('ABCDEFGH23')
+  f.emit(snapshot('signed_out', 2, 2))
+  f.controls[0].resolve(ok(1, { deviceId: 'new-box', displayName: '新盒子', availability: 'unknown' }))
+  assert.equal(await claiming, false)
+  assert.deepEqual(f.controller.state.devices, [])
+  assert.equal(f.controller.state.notice, '')
+  assert.equal(f.devices.length, 1)
   f.controller.dispose()
 })
 

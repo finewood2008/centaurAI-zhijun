@@ -35,6 +35,7 @@ export class DesktopController {
   private deviceRevision = 0
   private controlRevision = 0
   private activeRead: CallContext | null = null
+  private pendingClaim: DeviceSummary | null = null
   private readonly bridge: ZhijunDesktopV1 | undefined
 
   private readonly options: { materials?: boolean }
@@ -84,6 +85,7 @@ export class DesktopController {
     if (previous && snapshot.generation < previous.generation) return
     const changedScope = !previous || snapshot.generation !== previous.generation
     if (changedScope) {
+      this.pendingClaim = null
       this.readRevision++
       this.deviceRevision++
       this.activeRead = null
@@ -195,9 +197,12 @@ export class DesktopController {
       const result = await this.bridge.claimDevice(this.context(), claimToken)
       if (this.disposed || revision !== this.controlRevision || generation !== this.state.snapshot?.generation) return false
       if (!result.ok) { this.acceptError(result); return false }
+      if (result.generation !== generation) return false
       claimed = result.data
-      this.patch({ devices: [...this.state.devices.filter(device => device.deviceId !== claimed?.deviceId), claimed],
-        notice: `已认领盒子“${claimed.displayName}”，正在刷新设备列表。` })
+      this.pendingClaim = claimed
+      ++this.deviceRevision
+      this.patch({ devices: this.state.devices.filter(device => device.deviceId !== claimed?.deviceId),
+        notice: `盒子“${claimed.displayName}”的认领已提交，正在等待盒子完成授权。请保持盒子联网，稍后点击“刷新设备”，无需再次认领。` })
     } catch {
       if (revision === this.controlRevision && generation === this.state.snapshot?.generation) this.patch({ error: unavailable() })
       return false
@@ -254,7 +259,14 @@ export class DesktopController {
     try {
       const result = await this.bridge.listDevices(context)
       if (!current()) return
-      if (result.ok && result.generation === context.expectedGeneration) this.patch({ devices: result.data })
+      if (result.ok && result.generation === context.expectedGeneration) {
+        this.patch({ devices: result.data })
+        const verified = this.pendingClaim && result.data.find(device => device.deviceId === this.pendingClaim?.deviceId)
+        if (verified) {
+          this.pendingClaim = null
+          this.patch({ notice: `盒子“${verified.displayName}”已完成授权，${verified.availability === 'offline' ? '当前离线，请保持盒子联网后刷新设备' : '可在列表中选择连接'}。` })
+        }
+      }
       else this.acceptError(result)
     } catch { if (current()) this.patch({ error: unavailable() }) }
     finally { if (current()) this.patch({ devicesLoading: false }) }

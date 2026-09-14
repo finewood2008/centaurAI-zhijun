@@ -82,6 +82,16 @@ v2通过同一SDK session请求 `GET /api/mindos/zhijun/context`，核对账号�
 
 `prepare-bridge-release.cjs` 仅保留旧 v1 bridge 的固定基线兼容能力，不是当前 CentaurOS、`zhijun.workspace` 或 NPU 运行时的部署入口。它生成本地审阅包，不执行部署。
 
+## 设备认领码
+
+设备认领对接 Device Console Claim：新码严格为 `[A-Z2-7]{10}`，兼容旧 `[A-Z2-7]{20}`；不接受 6 位数字、空格、小写或分隔符，也不自动修正输入。账号短信验证码和蓝牙配网的盒身确认码仍为 6 位，不受影响。
+
+客户端向 `POST /app-api/device-console-claims/redeem` 提交 `{claimCode, clientAttemptId}`，后者为 UUIDv4，并与 `Idempotency-Key` 一致；使用 `NEXUSAOS-CONSUMER-V1` 签名，不再调用旧 `/device-claims/redeem`。网络结果不确定时沿用本次幂等键，不记录或显示完整认领码。
+
+认领成功只表示提交归属，不等于可连接。界面提示等待盒子授权，用户可点击“刷新设备”；以 `GET /app-api/v1/sync/bootstrap` 返回的同一设备同时满足 `ownershipStatus=active`、`accessStatus=ready`、`securityStatus=normal`、`capabilities.canConnect.enabled=true` 为准。Bootstrap 使用 `NEXUSAOS-CONSUMER-APP-V1` 签名。状态缺失或服务不可用时不绕过校验、不自动重复认领，也不启用服务端功能开关。
+
+发行前须确认目标 Admin 支持新认领接口和 Bootstrap，并已完成 Console Claim / Consumer Pairing V2 的数据库迁移、功能门禁及盒端最新授权 ACK 验收。新版设备列表依赖 Bootstrap；门禁关闭或服务端仍是旧版本时不会退回旧列表。已有设备不需要重新认领，升级不修改其 Owner、认领历史或业务数据。本地测试不代表服务端门禁已开启或真实贴纸兑换已验收。
+
 ## 应用图标
 
 开发启动会在 macOS Dock 使用原有半人马图像；Windows/Linux 窗口和打包配置也指向同源资产。原图为 `../mindos-web/logo.jpg`。运行 `npm run icons:build` 会通过仓库内的 Swift/CoreGraphics 脚本去除原图近白背景，在暖白圆角底板外保留真实透明留白，再用 `sips` / `iconutil` 重建 `assets/centaur.png` 和 `assets/centaur.icns`。`assets/centaur-source.json` 记录源图、渲染脚本、构建脚本、布局参数和产物哈希，重复构建应得到相同结果。正式安装包仍需在对应平台构建核验，设置打包配置不代表安装包已经产出。

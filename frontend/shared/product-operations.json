@@ -1342,7 +1342,9 @@
         "folderId",
         "folder",
         "tag",
-        "recycled"
+        "recycled",
+        "limit",
+        "offset"
       ],
       "body": "none",
       "response": "json",

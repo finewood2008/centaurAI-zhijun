@@ -393,12 +393,23 @@ def _retry_after(headers: Any) -> Optional[int]:
 
 
 def sensitive_rule_status(value: Any) -> Dict[str, Any]:
-    """Accept only the public application state, never internal scan diagnostics."""
-    if (not isinstance(value, dict) or set(value) != {"state", "applying"}
+    """Validate both DE contracts and preserve the existing desktop status shape.
+
+    Newer DE versions add historicalScanRequired. It is a public boolean hint,
+    not permission to start a scan. Older desktop clients require exactly the
+    original two fields, so validate the hint without forwarding it or changing
+    the meaning of applying. Internal scan diagnostics remain forbidden.
+    """
+    required = {"state", "applying"}
+    if (not isinstance(value, dict)
+            or not required <= set(value) <= required | {"historicalScanRequired"}
             or not isinstance(value.get("state"), str)
             or value["state"] not in {"active", "applying"}
             or type(value.get("applying")) is not bool
-            or value["applying"] != (value["state"] == "applying")):
+            or value["applying"] != (value["state"] == "applying")
+            or ("historicalScanRequired" in value
+                and (type(value["historicalScanRequired"]) is not bool
+                     or (value["historicalScanRequired"] and not value["applying"])))):
         raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_STATUS_RESPONSE", status=502)
     return {"state": value["state"], "applying": value["applying"]}
 

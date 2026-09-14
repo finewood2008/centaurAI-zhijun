@@ -24,6 +24,27 @@ function modules() {
 }
 const bytes = value => new TextEncoder().encode(value)
 
+test('material pagination traverses API, renderer catalog and actual shell policy without allowing identity query fields', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('materials-pagination')
+  const resolveOperation = load('services/productCatalog.ts').resolveProductOperation
+  const require = createRequire(import.meta.url)
+  const policy = require('../../shell/runtime/product-policy.cjs')
+  let query
+  load('services/transport.ts').installProductTransport(async path => {
+    const resolved = resolveOperation(path)
+    const accepted = policy.operationRequest({ version: 1, requestId: 'materials-page-0001', operationId: resolved.operation.id, params: resolved.params, query: resolved.query, body: null })
+    assert.equal(accepted.operation.capability, 'materials')
+    assert.equal(accepted.operation.mutating, false)
+    query = accepted.value.query
+    return Response.json({ items: [], total: 0, folders: [] })
+  })
+  await load('services/api.ts').api.listMaterials({ limit: 50, offset: 100, keyword: '图纸', folderId: 7 })
+  assert.deepEqual(query, { limit: '50', offset: '100', keyword: '图纸', folderId: '7' })
+  assert.throws(() => resolveOperation('/api/mindos/materials?limit=50&accountId=other'))
+  assert.throws(() => resolveOperation('/api/mindos/materials?offset=0&offset=50'))
+})
+
 test('upload API forwards the progress observer through the installed desktop transport', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('upload-box')

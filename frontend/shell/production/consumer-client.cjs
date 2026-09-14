@@ -9,6 +9,8 @@ const text = (value, max) => typeof value === 'string' && value.length > 0 && va
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DEVICE_ID = /^[A-Za-z0-9._-]{1,36}$/;
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+const CONSOLE_CLAIM_CODE = /^(?:[A-Z2-7]{10}|[A-Z2-7]{20})$/;
+const CONSOLE_CLAIM_ROUTE = '/app-api/device-console-claims/redeem';
 const CLAIM_STATES = new Set(['waitingAppProof', 'waitingDeviceProof', 'ownershipCommitted', 'projectionPending',
   'deviceAckPending', 'completed', 'cancelled', 'expired', 'attentionRequired', 'failed']);
 const PAIRING_ERROR_CODES = new Set(['AUTH_REQUIRED', 'AUTH_SESSION_EXPIRED', 'CLIENT_REVOKED', 'CLIENT_KEY_INVALID',
@@ -28,6 +30,14 @@ class ConsumerPairingError extends Error {
   }
 }
 function fail(code = 'CONTRACT_MISMATCH') { throw new DesktopError(code); }
+function signingTarget(route) {
+  const parsed = new URL(route, 'https://consumer.invalid');
+  const encode = value => encodeURIComponent(value).replace(/[!'()*]/g,
+    character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  const pairs = [...parsed.searchParams].sort(([ak, av], [bk, bv]) =>
+    Buffer.compare(Buffer.from(ak), Buffer.from(bk)) || Buffer.compare(Buffer.from(av), Buffer.from(bv)));
+  return { path: parsed.pathname, query: pairs.map(([key, value]) => `${encode(key)}=${encode(value)}`).join('&') };
+}
 function exact(value, required, optional = []) {
   if (!plain(value) || required.some(key => !Object.hasOwn(value, key))
       || Object.keys(value).some(key => !required.includes(key) && !optional.includes(key))) fail();
@@ -148,6 +158,8 @@ function checkEnvelope(result, connectivity = false, purpose = 'auth') {
     ...(remoteCode ? { remoteCode } : {}), ...(text(result.requestId, 128) ? { traceId: result.requestId } : {}) }); };
   if (connectivity && result.applicationDenied) throw new DesktopError('APPLICATION_AUTHORIZATION_DENIED', { phase: 'ticket', httpStatus: result.httpStatus });
   if (result.code === 401) reject('AUTHENTICATION_REQUIRED');
+  if (purpose === 'console-claim' && result.code === 403
+    && ['CONSOLE_CLAIM_DISABLED', 'FEATURE_NOT_AVAILABLE'].includes(remoteCode)) reject('DEVICE_AUTHORIZATION_NOT_ENABLED');
   if (result.code === 403) reject('ACCESS_DENIED');
   if (result.code === 429) reject('RATE_LIMITED');
   if (purpose === 'password-login' && remoteCode === 'AUTH_RATE_LIMITED') reject('RATE_LIMITED');
@@ -158,10 +170,12 @@ function checkEnvelope(result, connectivity = false, purpose = 'auth') {
   if (['registration', 'password-reset'].includes(purpose)
       && (result.code === 602 || ['AUTH_RATE_LIMITED', 'SMS_RATE_LIMITED', 'SMS_DAILY_LIMIT',
         'PASSWORD_RESET_RATE_LIMITED'].includes(remoteCode))) reject('RATE_LIMITED');
-  if (purpose === 'claim' && ['DEVICE_ALREADY_CLAIMED', 'DEVICE_ALREADY_BOUND', 'CLAIM_TOKEN_ALREADY_CONSUMED'].includes(remoteCode)) reject('DEVICE_ALREADY_CLAIMED');
-  if (purpose === 'claim' && remoteCode === 'CLAIM_TOKEN_EXPIRED') reject('CLAIM_CODE_EXPIRED');
-  if (purpose === 'claim' && ['CLAIM_TOKEN_INVALID', 'CLAIM_TOKEN_REVOKED', 'CLAIM_TOKEN_STATE_INVALID'].includes(remoteCode)) reject('CLAIM_CODE_INVALID');
-  if (purpose === 'claim' && [400, 404, 409, 410, 422].includes(result.code)) reject('INVALID_REQUEST');
+  if (purpose === 'console-claim' && ['DEVICE_ALREADY_OWNED', 'OWNER_ALREADY_COMMITTED', 'OWNER_ALREADY_CHANGED',
+    'CONSOLE_CLAIM_CONFLICT', 'IDEMPOTENCY_CONFLICT'].includes(remoteCode)) reject('DEVICE_ALREADY_CLAIMED');
+  if (purpose === 'console-claim' && remoteCode === 'CONSOLE_CLAIM_EXPIRED') reject('CLAIM_CODE_EXPIRED');
+  if (purpose === 'console-claim' && ['CONSOLE_CLAIM_NOT_FOUND', 'CONSOLE_CLAIM_INACTIVE'].includes(remoteCode)) reject('CLAIM_CODE_INVALID');
+  if (purpose === 'console-claim' && result.code >= 500) reject('ACCOUNT_SERVICE_UNAVAILABLE');
+  if (purpose === 'console-claim' && [400, 404, 409, 410, 422].includes(result.code)) reject('INVALID_REQUEST');
   if (purpose === 'registration' && ([400, 409, 422].includes(result.code)
       || ['SMS_CODE_INVALID', 'PASSWORD_ALREADY_SET', 'PASSWORD_INVALID'].includes(remoteCode))) reject('INVALID_REQUEST');
   if (result.code !== 200 || result.success === false) {
@@ -179,7 +193,9 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
   let disposed = false;
   const requests = new Set();
   const claimAttempts = new Map();
-  function invalidate() { ++epoch; for (const controller of requests) controller.abort(); }
+  let claimSubject;
+  function clearClaimAttempts() { claimAttempts.clear(); claimSubject = undefined; }
+  function invalidate() { ++epoch; clearClaimAttempts(); for (const controller of requests) controller.abort(); }
   function requireLoginDeadline(current) {
     if (!Number.isSafeInteger(current.sessionExpiresAt) || current.sessionExpiresAt <= now()) fail('SESSION_EXPIRED');
     return current;
@@ -199,9 +215,14 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       const timestamp = String(Math.floor(now() / 1000));
       const nonce = crypto.randomBytes(24).toString('base64url');
       const digest = crypto.createHash('sha256').update(bytes).digest('hex');
-      const canonical = ['NEXUSAOS-CONSUMER-V1', signed.accountId, signed.clientId, method, route, timestamp, nonce, digest].join('\n');
+      const target = signingTarget(route);
+      const versioned = target.path.startsWith('/app-api/v1/');
+      const version = versioned ? 'NEXUSAOS-CONSUMER-APP-V1' : 'NEXUSAOS-CONSUMER-V1';
+      const canonical = [version, signed.accountId, signed.clientId, method, target.path,
+        ...(versioned ? [target.query] : []), timestamp, nonce, digest].join('\n');
       Object.assign(headers, { authorization: `Bearer ${signed.accessToken}`, 'x-nexus-client-id': signed.clientId,
         'x-nexus-timestamp': timestamp, 'x-nexus-nonce': nonce, 'x-nexus-body-sha256': digest,
+        ...(versioned ? { 'x-nexus-signature-version': version } : {}),
         'x-nexus-signature': await identity.sign(Buffer.from(canonical)) });
     }
     if (disposed || expected !== epoch) fail('STALE_GENERATION');
@@ -216,7 +237,9 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
         signal: controller.signal, ...(bytes.length ? { body: bytes } : {}) });
       // Gateways may return an HTML error page. The HTTP status is sufficient
       // to classify a service outage; never parse or reflect that response.
-      if (response.status >= 500 && response.status <= 599) {
+      const modernEnvelope = route === CONSOLE_CLAIM_ROUTE || route.startsWith('/app-api/v1/');
+      if (response.status >= 500 && response.status <= 599
+          && !(modernEnvelope && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') || ''))) {
         await response.body?.cancel();
         throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'account_service', httpStatus: response.status });
       }
@@ -236,10 +259,13 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       } finally { reader.releaseLock(); }
       let envelope;
       try { envelope = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))); } catch { fail(); }
-      if (!plain(envelope) || !Number.isInteger(envelope.code)) fail();
+      if (!plain(envelope) || (!Number.isInteger(envelope.code)
+        && !(modernEnvelope && envelope.code === undefined && typeof envelope.success === 'boolean'))
+        || (modernEnvelope && (typeof envelope.success !== 'boolean'
+          || (envelope.success && envelope.errorCode != null)))) fail();
       const headerRequestId = response.headers.get('x-request-id') || response.headers.get('request-id');
       if (headerRequestId && envelope.requestId && headerRequestId !== envelope.requestId) fail();
-      return { code: response.ok ? (envelope.code === 0 ? 200 : envelope.code) : response.status,
+      return { code: response.ok ? (envelope.code === undefined || envelope.code === 0 ? 200 : envelope.code) : response.status,
         success: envelope.success, data: envelope.data, httpStatus: response.status,
         errorCode: envelope.errorCode,
         requestIdHeader: headerRequestId, requestIdBody: envelope.requestId,
@@ -271,7 +297,8 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
         throw error;
       }
     },
-    save: store.save, remove: store.remove,
+    save: store.save,
+    remove: async () => { clearClaimAttempts(); await store.remove(); },
     exchange: async current => {
       requireLoginDeadline(current);
       const refreshed = tokens(checkEnvelope(await request('POST', '/app-api/auth/refresh',
@@ -299,7 +326,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     }
     if (disposed || expected !== epoch) fail('AUTHENTICATION_REQUIRED');
     if (response.code === 401) { await auth.clear(); fail('SESSION_EXPIRED'); }
-    return checkEnvelope(response, route.endsWith('/connectivity/sessions'), route === '/app-api/device-claims/redeem' ? 'claim' : 'auth');
+    return checkEnvelope(response, route.endsWith('/connectivity/sessions'));
   }
   async function protectedPairingRequest(method, route, body, extraHeaders, validate, signal) {
     const response = await protectedResponse(method, route, body, extraHeaders, signal);
@@ -316,10 +343,16 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     return Object.freeze({ data: validate(data), serverTime: response.serverTime,
       requestId: response.requestId, receivedMonotonicMs: response.receivedMonotonicMs });
   }
-  async function protectedResponse(method, route, body, extraHeaders, signal) {
+  async function protectedResponse(method, route, body, extraHeaders, signal, subject) {
     const expected = epoch;
+    if (subject && subject.epoch !== expected) fail('STALE_GENERATION');
     let response;
-    try { response = await auth.authorized(current => request(method, route, body, requireLoginDeadline(current), extraHeaders, signal), result => result.code === 401); }
+    try { response = await auth.authorized(current => {
+      if (subject && (subject.epoch !== epoch || current.accountId !== subject.accountId || current.clientId !== subject.clientId)) {
+        fail('STALE_GENERATION');
+      }
+      return request(method, route, body, requireLoginDeadline(current), extraHeaders, signal);
+    }, result => result.code === 401); }
     catch (error) {
       if (['AUTH_SESSION_MISSING', 'AUTH_SESSION_CHANGED', 'AUTH_INVALID_SESSION'].includes(error?.code)) fail('SESSION_EXPIRED');
       if (error?.code === 'AUTH_SESSION_STORAGE_FAILED') fail('SECURE_STORAGE_UNAVAILABLE');
@@ -378,6 +411,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       // A reset revokes every server session. Remove any local token copy before
       // returning the deliberately account-opaque acknowledgement.
       await auth.clear();
+      clearClaimAttempts();
       if (!guard()) fail('STALE_GENERATION');
       return Object.freeze({ processed: true });
     },
@@ -397,43 +431,85 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       }
     },
     async listDevices() {
-      const data = await protectedRequest('GET', '/app-api/devices');
-      if (!Array.isArray(data) || data.length > 256) fail();
-      const ids = new Set();
-      return data.map(device => {
-        if (!plain(device) || !DEVICE_ID.test(device.deviceId)
-          || ids.has(device.deviceId) || device.role !== 'owner' || !Array.isArray(device.scopes)
-          || !device.scopes.every(scope => text(scope, 128)) || typeof device.online !== 'boolean'
-          || (device.deviceName != null && !text(device.deviceName, 128))) fail();
-        ids.add(device.deviceId);
-        return { deviceId: device.deviceId, displayName: device.deviceName || device.deviceId,
-          availability: device.online ? 'online' : 'offline', allowed: device.scopes.includes('remote.p2p') };
-      }).filter(device => device.allowed).map(({ allowed, ...device }) => device);
-    },
-    async claimDevice(input) {
-      if (typeof input !== 'string' || input.length > 64 || /[\u0000-\u001f\u007f]/u.test(input)) fail('INVALID_REQUEST');
-      const claimToken = input.trim();
-      if (!/^\d{6}$/.test(claimToken)) fail('INVALID_REQUEST');
-      let idempotencyKey = claimAttempts.get(claimToken);
-      if (!idempotencyKey) {
-        if (claimAttempts.size >= 32) claimAttempts.delete(claimAttempts.keys().next().value);
-        idempotencyKey = crypto.randomUUID();
-        claimAttempts.set(claimToken, idempotencyKey);
-      }
+      // Cloud presence and old device-list membership cannot replace a real,
+      // latest device authorization ACK. Never fall back to the old list.
+      const expected = epoch;
       let data;
       try {
-        data = await protectedRequest('POST', '/app-api/device-claims/redeem',
-          { claimToken, idempotencyKey }, { 'idempotency-key': idempotencyKey });
+        ({ data } = await protectedPairingRequest('GET', '/app-api/v1/sync/bootstrap',
+          undefined, undefined, validateSyncBootstrap));
       } catch (error) {
-        if (!(error instanceof DesktopError) || !['REQUEST_TIMEOUT', 'ACCOUNT_SERVICE_UNAVAILABLE'].includes(error.code)) {
-          claimAttempts.delete(claimToken);
+        if (error instanceof ConsumerPairingError && error.code === 'FEATURE_NOT_AVAILABLE') {
+          throw new DesktopError('DEVICE_AUTHORIZATION_NOT_ENABLED', { remoteCode: error.code, traceId: error.requestId });
         }
         throw error;
       }
-      claimAttempts.delete(claimToken);
-      if (!plain(data) || !DEVICE_ID.test(data.deviceId)
-        || (data.deviceName != null && !text(data.deviceName, 128)) || data.state !== 'consumed') fail();
-      return { deviceId: data.deviceId, displayName: data.deviceName || data.deviceId, availability: 'unknown' };
+      const current = await auth.current();
+      if (disposed || expected !== epoch) fail('STALE_GENERATION');
+      if (data.account.accountId !== current.accountId || !plain(data.account.currentClient)
+        || data.account.currentClient.clientId !== current.clientId || data.account.currentClient.isCurrent !== true) fail();
+      if (data.account.accountStatus !== 'active' || data.account.currentClient.clientStatus !== 'active'
+        || data.account.currentClient.hasActiveSession !== true) fail('ACCESS_DENIED');
+      const ids = new Set();
+      return data.devices.map(device => {
+        if (!plain(device) || !DEVICE_ID.test(device.deviceId)
+          || ids.has(device.deviceId)
+          || !['claimPending', 'active', 'releasePending'].includes(device.ownershipStatus)
+          || !['projectionPending', 'deviceAckPending', 'ready', 'blocked'].includes(device.accessStatus)
+          || !['normal', 'disabled', 'quarantined'].includes(device.securityStatus)
+          || !['online', 'offline', 'unknown'].includes(device.cloudPresence)
+          || !plain(device.capabilities) || !plain(device.capabilities.canConnect)
+          || typeof device.capabilities.canConnect.enabled !== 'boolean'
+          || (device.deviceName != null && !text(device.deviceName, 128))) fail();
+        ids.add(device.deviceId);
+        return { deviceId: device.deviceId, displayName: device.deviceName || device.deviceId,
+          availability: device.cloudPresence, allowed: device.ownershipStatus === 'active'
+            && device.accessStatus === 'ready' && device.securityStatus === 'normal'
+            && device.capabilities.canConnect.enabled === true };
+      }).filter(device => device.allowed).map(({ allowed, ...device }) => device);
+    },
+    async claimDevice(input) {
+      // Factory sticker codes are opaque, exact Base32 strings. Never trim,
+      // uppercase, truncate or route them through the legacy six-digit API.
+      if (typeof input !== 'string' || ![10, 20].includes(input.length) || !CONSOLE_CLAIM_CODE.test(input)) fail('INVALID_REQUEST');
+      const claimCode = input;
+      const expected = epoch;
+      const current = requireLoginDeadline(await auth.current());
+      if (disposed || expected !== epoch) fail('STALE_GENERATION');
+      const subject = JSON.stringify([current.accountId, current.clientId]);
+      if (claimSubject !== subject) { clearClaimAttempts(); claimSubject = subject; }
+      let idempotencyKey = claimAttempts.get(claimCode);
+      if (!idempotencyKey) {
+        if (claimAttempts.size >= 32) fail('RESOURCE_EXHAUSTED');
+        idempotencyKey = crypto.randomUUID();
+        claimAttempts.set(claimCode, idempotencyKey);
+      }
+      let data;
+      try {
+        const response = await protectedResponse('POST', CONSOLE_CLAIM_ROUTE,
+          { claimCode, clientAttemptId: idempotencyKey }, { 'idempotency-key': idempotencyKey }, undefined,
+          { epoch: expected, accountId: current.accountId, clientId: current.clientId });
+        data = checkEnvelope(response, false, 'console-claim');
+        if (!text(response.requestIdHeader, 128) || response.requestIdHeader !== response.requestIdBody
+          || !isoTime(response.serverTime)) fail();
+        required(data, ['deviceId', 'ownership', 'claim', 'authorization']);
+        if (!DEVICE_ID.test(data.deviceId) || data.ownership !== 'claimed' || !plain(data.claim)
+          || !UUID_V4.test(data.claim.sessionId) || data.claim.status !== 'redeemed'
+          || !text(data.claim.bindingId, 128)
+          || (data.authorization !== null && (!plain(data.authorization)
+            || !['deviceAckPending', 'ready', 'blocked'].includes(data.authorization.state)))) fail();
+      } catch (error) {
+        // A lost or malformed response may follow a committed Owner write.
+        // Keep its attempt/body for manual recovery, never automatically replay.
+        if (expected === epoch && claimSubject === subject && (!(error instanceof DesktopError)
+          || !['REQUEST_TIMEOUT', 'ACCOUNT_SERVICE_UNAVAILABLE', 'CONTRACT_MISMATCH', 'RESPONSE_TOO_LARGE'].includes(error.code))) {
+          claimAttempts.delete(claimCode);
+        }
+        throw error;
+      }
+      // Receipt only. The runtime must not admit this to its connection list;
+      // listDevices/bootstrap is the sole authority for authorization readiness.
+      return { deviceId: data.deviceId, displayName: data.deviceId, availability: 'unknown' };
     },
     async preparePairing(input, idempotencyKey, signal) {
       if (!UUID_V4.test(idempotencyKey)) fail('INVALID_REQUEST');

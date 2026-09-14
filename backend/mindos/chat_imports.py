@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 _upload_lock = threading.Lock()
 _stop = threading.Event()
 _thread: threading.Thread | None = None
-RETRIEVAL_ONLY_MESSAGE = "知君仅检索已就绪资料，不再上传或处理文件；请在 Data Agent 管理页面导入资料，完成后回到对话检索。"
+RETRIEVAL_ONLY_MESSAGE = "对话不直接上传或处理文件；请在「资料与边界 → 原材料」导入，Data Engine 处理完成后回到对话检索并确认使用。"
 
 
 def require_import_enabled():
-    """The workspace App contract is retrieval-only, not material management."""
+    """Chat imports stay disabled; library management uses separate Gateway operations."""
     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
         raise error("RAG_RETRIEVAL_ONLY", RETRIEVAL_ONLY_MESSAGE)
 

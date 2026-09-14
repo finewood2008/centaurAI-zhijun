@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { saveProductText } from '@/services/productFiles'
-import { isDesktopProduct } from '@/shared/productScope'
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -16,7 +15,6 @@ import { PURGE_PHRASE, exportFileName, purgeConfirmed } from '@/shared/proposals
 
 const toast = useToast()
 const router = useRouter()
-const retrievalOnly = isDesktopProduct()
 
 // ---- 导出（JSON 下载）
 const exporting = ref(false)
@@ -73,11 +71,11 @@ async function doPurge() {
 }
 
 const primaryCards = [
-  { to: '/materials', icon: FolderOpen, title: retrievalOnly ? '资料使用说明' : '原材料', desc: retrievalOnly ? '资料由 Data Engine 管理，知君负责检索与确认使用' : '导入文档、图片、音频；查看处理状态与原件出处' },
-  { to: retrievalOnly ? '/chat' : '/search', icon: Search, title: '找回资料', desc: retrievalOnly ? '在对话中检索已授权资料，逐项确认使用的片段' : '搜索已经带入的资料，找回原文与细节' },
+  { to: '/materials', icon: FolderOpen, title: '原材料', desc: '导入文档、图片、音频；查看处理状态与原件出处' },
+  { to: '/search', icon: Search, title: '找回资料', desc: '搜索已经带入的资料，找回原文与细节' },
   { to: '/settings', icon: Settings, title: '偏好（模型与隐私）', desc: '用哪个模型、什么能出设备、提醒多不多' },
 ]
-const moreCards = retrievalOnly ? [] : [
+const moreCards = [
   { to: '/knowledge', icon: FileText, title: '知识档案', desc: '由资料整理出的知识卡片' },
   { to: '/recycle-bin', icon: Trash2, title: '回收站', desc: '恢复或永久清除已删除的资料' },
 ]
@@ -120,7 +118,7 @@ async function toggleProjection() {
   <div class="page zj-hub">
     <div class="page-head">
       <h1>让经历与资料用得上</h1>
-      <p>{{ retrievalOnly ? '在对话中检索资料；什么能出设备，在这里说清楚。' : '资料从这里进来；什么能出设备，也在这里说清楚。' }}</p>
+      <p>资料从这里进来；什么能出设备，也在这里说清楚。</p>
     </div>
 
     <div class="zj-hub__grid">
@@ -142,7 +140,7 @@ async function toggleProjection() {
     </section>
 
     <details class="zj-hub__adv">
-      <summary>{{ retrievalOnly ? '高级 · 导出与清理' : '高级 · 知识档案、回收站、导出与清理' }}</summary>
+      <summary>高级 · 知识档案、回收站、导出与清理</summary>
 
       <div class="zj-hub__grid zj-hub__grid--sub">
         <RouterLink v-for="c in moreCards" :key="c.to" :to="c.to" class="zj-hub__card">

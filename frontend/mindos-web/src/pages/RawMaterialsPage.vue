@@ -4,10 +4,11 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight, Eye, Folder, FolderPlus, Pencil, FolderInput, Play, Plus, Trash2, Upload, X } from 'lucide-vue-next'
 import { api, type FolderNode, type UploadResult } from '@/services/api'
-import { materialStatusMeta } from '@/shared/status'
+import { materialSensitiveScanStatusMeta, materialStatusMeta } from '@/shared/status'
 import { formatDate, formatFileType } from '@/shared/format'
 import { useToast } from '@/composables/useToast'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
+import MaterialPager from '@/components/ui/MaterialPager.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import IconButton from '@/components/ui/IconButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -20,9 +21,20 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const items = ref<UploadResult[]>([])
+const total = ref(0)
+const pageOffset = ref(0)
+const pageSize = 50
+const refreshing = ref(false)
+let lastFilters = ''
 type DisplayMaterial = UploadResult & { transientUpload?: boolean; uploadProgress?: UploadProgress }
 const transientUploads = ref<DisplayMaterial[]>([])
-const displayItems = computed<DisplayMaterial[]>(() => [...transientUploads.value, ...items.value])
+const awaitingList = ref<Array<{ item: UploadResult; until: number }>>([])
+const showAwaitingList = computed(() => pageOffset.value === 0 && !type.value && !status.value && !keyword.value.trim() && !tag.value.trim() && selectedFolderId.value === null)
+const displayItems = computed<DisplayMaterial[]>(() => {
+  const persisted = new Set(items.value.map(item => item.materialId))
+  const awaiting = showAwaitingList.value ? awaitingList.value.map(entry => entry.item).filter(item => !persisted.has(item.materialId)) : []
+  return [...transientUploads.value, ...awaiting, ...items.value]
+})
 const loading = ref(true)
 const error = ref('')
 const folderError = ref('')
@@ -47,6 +59,10 @@ function hasActiveMaterial(items: UploadResult[]) {
     item.status === 'uploaded'
     || item.status === 'queued'
     || item.status === 'processing'
+    || item.status === 'restoring'
+    || item.status === 'purging'
+    || item.sensitiveScan?.state === 'queued'
+    || item.sensitiveScan?.state === 'processing'
     || Boolean(item.knowledgeCard && activeKnowledgeCardStates.has(item.knowledgeCard.state))
   ))
 }
@@ -58,7 +74,7 @@ function stopRefreshTimer() {
 
 function scheduleRefresh() {
   stopRefreshTimer()
-  if (disposed || !hasActiveMaterial(items.value)) return
+  if (disposed || !(hasActiveMaterial(items.value) || (showAwaitingList.value && awaitingList.value.some(entry => entry.until > Date.now())))) return
   refreshTimer = setTimeout(() => {
     refreshTimer = null
     void loadMaterials()
@@ -90,6 +106,12 @@ function knowledgeCardMeta(item: DisplayMaterial) {
   if (!item.knowledgeCard) return { label: '状态未提供', className: 'is-muted' }
   if (item.knowledgeCard.errorCode === 'draft_missing') return { label: '尚未创建卡片', className: 'is-muted' }
   return knowledgeCardStateMeta[item.knowledgeCard.state] ?? { label: '状态待核对', className: 'is-failed' }
+}
+
+function displayStatus(item: UploadResult) {
+  return item.status === 'uploaded'
+    ? { label: '已上传，等待处理', tone: 'info' as const }
+    : materialStatusMeta(item.status)
 }
 
 // ---- P14-06：多级目录树（ID 驱动；null = 全部，未分类由 folderId=null 的资料表示）----
@@ -173,29 +195,46 @@ async function loadFolders() {
 
 async function loadMaterials() {
   stopRefreshTimer()
+  const filters = {
+    type: type.value, status: status.value, keyword: keyword.value.trim(),
+    folderId: selectedFolderId.value ?? undefined, tag: tag.value.trim(),
+  }
+  const signature = JSON.stringify(filters)
+  if (lastFilters !== signature) { pageOffset.value = 0; lastFilters = signature }
+  const offset = pageOffset.value
   const requestSession = materialLoadGate.next()
+  refreshing.value = true
   if (!loadedOnce) loading.value = true
   error.value = ''
   try {
-    const response = await api.listMaterials({
-      type: type.value,
-      status: status.value,
-      keyword: keyword.value.trim(),
-      // P14-06：选中目录时按子树筛选（包含全部后代）
-      folderId: selectedFolderId.value ?? undefined,
-      tag: tag.value.trim(),
-    })
+    const response = await api.listMaterials({ ...filters, limit: pageSize, offset })
     if (!materialLoadGate.isCurrent(requestSession)) return
+    const count = response.total ?? response.items.length
+    if (offset > 0 && offset >= count) {
+      pageOffset.value = Math.max(0, Math.floor((count - 1) / pageSize) * pageSize)
+      await loadMaterials()
+      return
+    }
+    total.value = count
     items.value = response.items
+    const observed = new Set(response.items.map(item => item.materialId))
+    awaitingList.value = awaitingList.value.filter(entry => !observed.has(entry.item.materialId))
     loadedOnce = true
   } catch (e) {
     if (materialLoadGate.isCurrent(requestSession)) error.value = e instanceof Error ? e.message : '原材料加载失败'
   } finally {
     if (materialLoadGate.isCurrent(requestSession)) {
       loading.value = false
+      refreshing.value = false
       scheduleRefresh()
     }
   }
+}
+
+function changePage(offset: number) {
+  if (refreshing.value || importing.value || !Number.isInteger(offset) || offset < 0 || offset >= total.value) return
+  pageOffset.value = offset
+  return loadMaterials()
 }
 
 async function importFiles(files: FileList | File[]) {
@@ -224,6 +263,8 @@ async function importFiles(files: FileList | File[]) {
           const row = transientUploads.value.find(item => item.materialId === transient.materialId)
           if (row && !disposed) row.uploadProgress = progress
         })
+        if (disposed) return
+        awaitingList.value.push({ item: uploaded, until: Date.now() + 300_000 })
         items.value = [uploaded, ...items.value.filter((item) => item.materialId !== uploaded.materialId)]
         loadedOnce = true
         accepted += 1
@@ -234,7 +275,12 @@ async function importFiles(files: FileList | File[]) {
         transientUploads.value = transientUploads.value.filter((item) => item.materialId !== transient.materialId)
       }
     }
-    await loadMaterials()
+    if (accepted) {
+      pageOffset.value = 0
+      type.value = ''; status.value = ''; keyword.value = ''; tag.value = ''
+      selectedFolderId.value = null
+    }
+    if (!disposed) await loadMaterials()
     if (accepted) toast({ type: 'success', message: `${accepted} 个文件已上传，正在按顺序处理` })
   } finally {
     importing.value = false
@@ -424,7 +470,7 @@ onBeforeUnmount(() => {
   <div class="page">
     <div class="page-head">
       <h1>原材料</h1>
-      <p>浏览与管理原始资料（原文件只读，不可编辑）。</p>
+      <p>导入与管理原始资料，查看解析和索引状态。原文件保持只读。</p>
     </div>
 
     <div class="ws-layout">
@@ -525,12 +571,13 @@ onBeforeUnmount(() => {
           <input ref="importInput" type="file" multiple hidden @change="onImportPick" />
         </div>
 
+        <p class="ws-material-note">资料由 Data Engine 处理；在对话中使用时，仍需确认材料及可用的脱敏方式。</p>
         <div v-if="loading" class="loading-state">正在加载原材料…</div>
         <ErrorState v-else-if="error && !displayItems.length" :message="error" retry-label="重试" @retry="loadMaterials" />
         <EmptyState
           v-else-if="!displayItems.length"
           title="暂无原材料"
-          description="上传文档或图片后，它们会出现在这里。"
+          description="可导入文档、图片或音频；若已设置筛选条件，可清除筛选后查看。"
         >
           <template #action>
             <BaseButton variant="primary" size="sm" :loading="importing" @click="importInput?.click()">
@@ -544,7 +591,11 @@ onBeforeUnmount(() => {
             资料状态暂未更新：{{ error }}
             <button type="button" @click="loadMaterials">重试</button>
           </p>
-          <div class="ws-table__head">共 {{ displayItems.length }} 项资料</div>
+          <div class="ws-table__head" aria-live="polite">
+            <span>共 {{ total }} 项资料 · 本页 {{ items.length }} 项<span v-if="transientUploads.length"> · 正在上传 {{ transientUploads.length }} 项</span></span>
+            <button type="button" :disabled="refreshing" @click="loadMaterials">{{ refreshing ? '更新中…' : '刷新状态' }}</button>
+          </div>
+          <p v-if="showAwaitingList && awaitingList.length" class="ws-table__sync" role="status">{{ awaitingList.length }} 项资料已上传，正在等待列表同步；暂未显示时可稍后刷新。</p>
           <div class="ws-table__scroll">
             <table class="ws-table__grid">
               <colgroup>
@@ -552,7 +603,6 @@ onBeforeUnmount(() => {
                 <col class="ws-table__type-col">
                 <col class="ws-table__folder-col">
                 <col class="ws-table__status-col">
-                <col class="ws-table__card-col">
                 <col class="ws-table__date-col">
                 <col class="ws-table__ops-col">
               </colgroup>
@@ -562,14 +612,16 @@ onBeforeUnmount(() => {
                   <th>类型</th>
                   <th>文件夹</th>
                   <th>状态</th>
-                  <th>知识卡片</th>
                   <th>导入时间</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="item in displayItems" :key="item.materialId" @click="!item.transientUpload && openMaterial(item)">
-                  <td class="ws-table__name" :title="item.fileName">{{ item.fileName }}</td>
+                  <td class="ws-table__name" :title="item.fileName">
+                    <button type="button" class="ws-material-name" :disabled="item.transientUpload" @click.stop="openMaterial(item)">{{ item.fileName }}</button>
+                    <span v-if="item.knowledgeCard" class="knowledge-card-state" :class="knowledgeCardMeta(item).className">知识卡片 · {{ knowledgeCardMeta(item).label }}</span>
+                  </td>
                   <td>{{ formatFileType(item.fileType) }}</td>
                   <td class="ws-table__folder" :title="folderDisplayName(item.folderId, item.folder)">{{ folderDisplayName(item.folderId, item.folder) }}</td>
                   <td>
@@ -577,14 +629,10 @@ onBeforeUnmount(() => {
                       <span>{{ item.uploadProgress.phase === 'finalizing' ? '上传 100% · 正在提交' : item.uploadProgress.total > 0 ? `上传中 ${Math.min(99, Math.floor(item.uploadProgress.loaded / item.uploadProgress.total * 100))}%` : '上传中…' }}</span>
                       <progress :value="item.uploadProgress.total > 0 ? item.uploadProgress.loaded : undefined" :max="Math.max(1, item.uploadProgress.total)" :aria-label="`${item.fileName} 上传进度`" />
                     </div>
-                    <StatusBadge v-else :meta="item.status === 'uploaded' ? { label: '已上传，等待处理', tone: 'info' } : materialStatusMeta(item.status)" />
-                  </td>
-                  <td>
-                    <span
-                      class="knowledge-card-state"
-                      :class="knowledgeCardMeta(item).className"
-                      :title="item.knowledgeCard?.errorCode || knowledgeCardMeta(item).label"
-                    >{{ knowledgeCardMeta(item).label }}</span>
+                    <template v-else>
+                      <StatusBadge :meta="displayStatus(item)" />
+                      <span v-if="item.sensitiveScan" class="ws-scan-status" :class="{ 'is-failed': item.sensitiveScan.state === 'failed' }">{{ materialSensitiveScanStatusMeta(item.sensitiveScan)?.label }}</span>
+                    </template>
                   </td>
                   <td>{{ formatDate(item.createdAt) }}</td>
                   <td class="ws-table__ops">
@@ -604,7 +652,7 @@ onBeforeUnmount(() => {
                         <Play :size="16" aria-hidden="true" />
                       </IconButton>
                       <IconButton
-                        v-if="item.status === 'uploaded' || item.status === 'queued' || item.status === 'failed'"
+                        v-if="!item.transientUpload && (item.status === 'uploaded' || item.status === 'queued' || item.status === 'failed')"
                         label="移出队列"
                         size="sm"
                         @click.stop="removeFromQueue(item)"
@@ -618,6 +666,7 @@ onBeforeUnmount(() => {
             </table>
           </div>
         </div>
+        <MaterialPager v-if="total > pageSize || pageOffset > 0" :total="total" :offset="pageOffset" :size="pageSize" :busy="refreshing || importing" @change="changePage" />
       </div>
     </div>
 
@@ -1056,11 +1105,25 @@ onBeforeUnmount(() => {
 }
 
 .ws-table__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 12px 16px;
   border-bottom: 1px solid var(--ws-border-color-3, #ebe7de);
   font-size: 12px;
   color: var(--ws-text-secondary-color, #686b66);
 }
+.ws-table__head button { border: 0; background: transparent; color: var(--ws-primary-color, #a6452e); font: inherit; cursor: pointer; padding: 4px; }
+.ws-table__head button:disabled { opacity: .55; cursor: default; }
+.ws-table__sync { margin: 0; padding: 10px 16px; font-size: 12px; color: var(--ws-text-secondary-color, #686b66); border-bottom: 1px solid var(--ws-border-color-3, #ebe7de); }
+.ws-material-note { margin: 0 0 16px; color: var(--ws-text-secondary-color, #686b66); font-size: 12px; line-height: 1.6; }
+.ws-material-name { display: block; max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ws-material-name:focus-visible { outline: 2px solid var(--ws-primary-color, #a6452e); outline-offset: 2px; }
+.ws-material-name:disabled { cursor: default; }
+.ws-scan-status { display: block; margin-top: 5px; font-size: 11px; line-height: 1.5; color: var(--ws-text-secondary-color, #686b66); }
+.ws-scan-status.is-failed { color: var(--ws-danger-color, #c43d3d); }
 
 /* 复杂表格小屏可横向滚动 */
 .ws-table__scroll {
@@ -1114,8 +1177,7 @@ onBeforeUnmount(() => {
 
 .ws-table__type-col { width: 48px; }
 .ws-table__folder-col { width: 72px; }
-.ws-table__status-col { width: 94px; }
-.ws-table__card-col { width: 112px; }
+.ws-table__status-col { width: 130px; }
 .ws-table__date-col { width: 100px; }
 .ws-table__ops-col { width: 80px; }
 
@@ -1141,7 +1203,10 @@ onBeforeUnmount(() => {
 .upload-progress { display: grid; gap: 5px; min-width: 0; font-size: 12px; color: #a66a1f; }
 .upload-progress progress { width: 100%; min-width: 0; height: 6px; accent-color: #aa432c; }
 .knowledge-card-state {
-  display: inline-block;
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 400;
   white-space: normal;
   overflow-wrap: anywhere;
   color: var(--ws-text-secondary-color, #686b66);

@@ -146,10 +146,25 @@ async function resetPassword(): Promise<void> {
     credentials.code = ''
   }
 }
+function pasteClaimCode(event: ClipboardEvent): void {
+  // Text inputs silently strip CR/LF on native paste. Validate the original
+  // clipboard text before allowing it to become a credential.
+  const pasted = event.clipboardData?.getData('text/plain')
+  const input = event.target as HTMLInputElement | null
+  const start = input?.selectionStart ?? 0
+  const end = input?.selectionEnd ?? claimToken.value.length
+  const value = claimToken.value.slice(0, start) + (pasted ?? '') + claimToken.value.slice(end)
+  if (pasted === undefined || !isValidClaimToken(value)) {
+    formError.value = '认领码粘贴内容无效：请使用完整的 10 位或旧 20 位码，仅含大写字母 A–Z 和数字 2–7，不含空白或换行。'
+    return
+  }
+  claimToken.value = value
+  formError.value = ''
+}
 async function claimDevice(): Promise<void> {
   formError.value = ''
   const value = normalizeClaimToken(claimToken.value)
-  if (!isValidClaimToken(value)) { formError.value = '请输入管理员生成的 6 位数字设备认领码。'; return }
+  if (!isValidClaimToken(value)) { formError.value = '请输入 10 位设备认领码（兼容旧 20 位码），仅含大写字母 A–Z 和数字 2–7，不含空格。'; return }
   if (await controller.claimDevice(value)) claimToken.value = ''
 }
 async function loadRememberedLogin(): Promise<void> {
@@ -269,14 +284,14 @@ onBeforeUnmount(() => {
 
         <section v-if="phase === 'selecting_device'" class="device-section" aria-labelledby="devices-title">
           <form class="claim-card" data-testid="device-claim" @submit.prevent="claimDevice">
-            <div><h2>认领新盒子</h2><p>输入管理员生成的 6 位一次性认领码。认领成功后立即失效；如需更换归属，请联系管理员处理。</p></div>
-            <label><span class="sr-only">设备认领码</span><input v-model="claimToken" data-testid="claim-token" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="请输入 6 位认领码" required /></label>
+            <div><h2>认领新盒子</h2><p>输入盒子上的 10 位认领码（大写字母 A–Z、数字 2–7，兼容旧 20 位码）。已有归属的盒子无需再次认领；提交后请等待盒子完成授权。</p></div>
+            <label><span class="sr-only">设备认领码</span><input v-model="claimToken" data-testid="claim-token" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" :spellcheck="false" pattern="([A-Z2-7]{10}|[A-Z2-7]{20})" minlength="10" placeholder="请输入 10 位认领码" required @paste.prevent="pasteClaimCode" @drop.prevent /></label>
             <button class="primary" type="submit" :disabled="state.controlPending" data-testid="claim-device">{{ state.pendingOperation === 'claimDevice' ? '正在认领…' : '认领盒子' }}</button>
           </form>
           <p v-if="formError" class="form-error" role="alert">{{ formError }}</p>
           <div class="section-heading"><h2 id="devices-title">已绑定的盒子</h2><button :disabled="state.devicesLoading || state.controlPending" data-testid="refresh-devices" @click="controller.loadDevices()">刷新设备</button></div>
           <p v-if="state.devicesLoading" role="status" class="empty-state">正在获取盒子列表…</p>
-          <p v-else-if="!state.devices.length" class="empty-state">暂无可选择的盒子。请确认当前账号已绑定设备，然后刷新列表。</p>
+          <p v-else-if="!state.devices.length" class="empty-state">暂无已完成授权的盒子。若刚提交认领，请保持盒子联网，稍后刷新设备。</p>
           <ul v-else class="device-grid">
             <li v-for="device in state.devices" :key="device.deviceId" class="device-card">
               <div><h3>{{ device.displayName }}</h3><p class="device-id">{{ device.deviceId }}</p><p>{{ device.availability === 'online' ? '在线' : device.availability === 'offline' ? '离线' : '状态待确认' }}</p></div>

@@ -183,7 +183,7 @@ test('legacy password login defaults remember to false and the flag stays outsid
   assert.equal(JSON.stringify(runtime.snapshot()).includes(credentials.password), false);
 });
 
-test('production registration enters device selection and a claim becomes selectable', async t => {
+test('production registration enters device selection but a claim receipt is not connectable', async t => {
   const calls = [];
   const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
     sendRegistrationCode: async phone => { calls.push(['code', phone]); return { expiresIn: 300 }; },
@@ -201,17 +201,41 @@ test('production registration enters device selection and a claim becomes select
   assert.equal(runtime.snapshot().phase, 'selecting_device');
   assert.equal(runtime.snapshot().subject.accountId, 'new-account');
   assert.equal((await call(runtime, 'listDevices')).ok, true);
-  const claimed = await call(runtime, 'claimDevice', 'ABCD-EFGH-JK2M-NP3Q');
+  for (const invalid of ['123456', '0123456789', ' ABCDEFGH23 ', 'abcdefgh23', 'ABCDEFGH23\n']) {
+    assert.equal((await call(runtime, 'claimDevice', invalid)).error.code, 'INVALID_REQUEST');
+  }
+  const claimed = await call(runtime, 'claimDevice', 'ABCDEFGH23');
   assert.deepEqual(claimed.data, { deviceId: 'claimed-device-1', displayName: '新盒子', availability: 'unknown' });
   assert.deepEqual(calls, [
     ['code', '13800000000'],
     ['register', { phone: registration.phone, password: registration.password, code: registration.code }, true, true],
-    ['claim', 'ABCD-EFGH-JK2M-NP3Q'],
+    ['claim', 'ABCDEFGH23'],
   ]);
+  assert.equal((await call(runtime, 'connect', 'claimed-device-1')).error.code, 'ACCESS_DENIED',
+    'a successful redeem cannot bypass the device authorization projection');
   for (const malformed of [{ ...registration, rememberPassword: 'yes' }, { ...registration, extra: true }]) {
     assert.equal((await call(runtime, 'registerWithPassword', malformed)).error.code, 'INVALID_REQUEST');
   }
 });
+
+test('a list started before a claim cannot re-admit the receipt device', async t => {
+  const oldList = deferred(); let reads = 0;
+  const claimed = { deviceId: 'claimed-device-1', displayName: '新盒子', availability: 'online' };
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    listDevices: async () => ++reads === 1 ? oldList.promise : [claimed],
+    claimDevice: async () => ({ ...claimed, availability: 'unknown' }),
+  }).adapter });
+  t.after(() => runtime.dispose());
+  assert.equal((await call(runtime, 'signInWithPassword', { phone: '13800000000', password: 'Synthetic-password-1' })).ok, true);
+  const listing = call(runtime, 'listDevices');
+  await tick();
+  assert.equal((await call(runtime, 'claimDevice', 'ABCDEFGHIJKLMNOP2345')).ok, true);
+  oldList.resolve([claimed]);
+  assert.equal((await listing).error.code, 'STALE_GENERATION');
+  assert.equal((await call(runtime, 'connect', claimed.deviceId)).error.code, 'ACCESS_DENIED');
+  assert.equal((await call(runtime, 'listDevices')).ok, true);
+  assert.equal((await call(runtime, 'connect', claimed.deviceId)).ok, true);
+})
 
 test('password reset is a narrow signed-out operation with an account-opaque receipt', async t => {
   const calls = [];

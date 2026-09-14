@@ -6,7 +6,9 @@ const { createConsumerClient, validatePassword, validatePasswordReset, LOGIN_SES
 const { createDesktopRuntime } = require('../runtime/desktop-runtime.cjs');
 const config = { consumerBaseUrl: 'https://consumer.example.test/prod-api' };
 const credentials = { phone: '13800000000', password: 'Synthetic-pass-1' };
-const device = { deviceId: 'device-synthetic-1', deviceName: '合成盒子', role: 'owner', scopes: ['remote.p2p'], online: true, secret: 'must-not-project' };
+const device = { deviceId: 'device-synthetic-1', deviceName: '合成盒子', ownershipStatus: 'active',
+  accessStatus: 'ready', securityStatus: 'normal', cloudPresence: 'online',
+  capabilities: { canConnect: { enabled: true } }, secret: 'must-not-project' };
 const reply = (data, code = 200) => new Response(JSON.stringify({ code, success: code === 200, data }), { headers: { 'content-type': 'application/json' } });
 const token = (number = 1) => ({ accountId: 'account-synthetic', clientId: 'client-synthetic', accessToken: `access-${number}`,
   refreshToken: `refresh-${number}-${'s'.repeat(40)}`, expiresIn: 3600 });
@@ -26,8 +28,16 @@ function verifySigned(store, url, init) {
   const digest = crypto.createHash('sha256').update(init.body || Buffer.alloc(0)).digest('hex');
   assert.equal(h['x-nexus-body-sha256'], digest);
   const parsed = new URL(url);
-  const route = parsed.pathname.replace('/prod-api', '') + parsed.search;
-  const canonical = ['NEXUSAOS-CONSUMER-V1', 'account-synthetic', 'client-synthetic', init.method, route,
+  const route = parsed.pathname.replace('/prod-api', '');
+  const versioned = route.startsWith('/app-api/v1/');
+  const version = versioned ? 'NEXUSAOS-CONSUMER-APP-V1' : 'NEXUSAOS-CONSUMER-V1';
+  assert.equal(h['x-nexus-signature-version'], versioned ? version : undefined);
+  const encode = value => encodeURIComponent(value).replace(/[!'()*]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  const query = [...parsed.searchParams].sort(([ak, av], [bk, bv]) =>
+    Buffer.compare(Buffer.from(ak), Buffer.from(bk)) || Buffer.compare(Buffer.from(av), Buffer.from(bv)))
+    .map(([key, value]) => `${encode(key)}=${encode(value)}`).join('&');
+  const canonical = [version, 'account-synthetic', 'client-synthetic', init.method, route,
+    ...(versioned ? [query] : []),
     h['x-nexus-timestamp'], h['x-nexus-nonce'], digest].join('\n');
   assert.ok(crypto.verify('sha256', Buffer.from(canonical), store.publicKey, Buffer.from(h['x-nexus-signature'], 'base64')));
   assert.equal(init.redirect, 'error');
@@ -48,6 +58,17 @@ const pairingView = (claimState = 'waitingAppProof') => ({
 const pairingReply = data => new Response(JSON.stringify({
   code: 200, success: true, data, time: '2026-09-10T12:00:00Z', requestId: 'request-synthetic-0001',
 }), { headers: { 'content-type': 'application/json', 'x-request-id': 'request-synthetic-0001' } });
+const modernReply = (data, status = 200, errorCode = null) => new Response(JSON.stringify({
+  success: status === 200, data, errorCode, serverTime: '2026-09-14T12:00:00Z', requestId: 'request-synthetic-0001',
+}), { status, headers: { 'content-type': 'application/json', 'x-request-id': 'request-synthetic-0001' } });
+const bootstrapAccount = () => ({ accountId: 'account-synthetic', accountStatus: 'active',
+  currentClient: { clientId: 'client-synthetic', clientStatus: 'active', isCurrent: true, hasActiveSession: true } });
+const bootstrapReply = (devices, account = bootstrapAccount()) => modernReply({ account, devices,
+  clients: [{ clientId: 'client-synthetic', clientStatus: 'active' }], activePairings: [], cursor: 'cursor-synthetic', snapshotSequence: 1 });
+const claimReceipt = (overrides = {}) => ({ deviceId: device.deviceId, ownership: 'claimed',
+  claim: { sessionId: '11111111-2222-4333-8444-555555555555', clientAttemptId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    status: 'redeemed', claimKind: 'factory_sticker', expiresAt: null, bindingId: 'binding-synthetic' },
+  authorization: { state: 'deviceAckPending' }, ...overrides });
 
 test('password input follows Admin UTF-8 byte budget and rejects extra identity fields', () => {
   assert.deepEqual(validatePassword(credentials), credentials);
@@ -80,7 +101,7 @@ test('real SDK auth coordinates login, signed devices/ticket, safe projection an
       assert.equal(init.headers.authorization, undefined); return reply(token());
     }
     verifySigned(store, url, init);
-    if (url.endsWith('/devices')) return reply([device]);
+    if (url.endsWith('/sync/bootstrap')) { assert.equal(init.body, undefined); return bootstrapReply([device]); }
     if (url.endsWith('/connectivity/sessions')) return reply({ sessionId: 'synthetic' });
     if (url.endsWith('/logout')) return reply(null);
     assert.fail(url);
@@ -108,13 +129,13 @@ test('registration drops debug SMS data and claim binds one idempotency key into
       return reply(token());
     }
     verifySigned(store, url, init);
-    if (url.endsWith('/device-claims/redeem')) {
+    if (url.endsWith('/device-console-claims/redeem')) {
       const body = JSON.parse(init.body);
-      assert.equal(init.headers['idempotency-key'], body.idempotencyKey);
-      assert.match(body.idempotencyKey, /^[0-9a-f-]{36}$/);
-      assert.equal(body.claimToken, '123456');
-      return reply({ deviceId: device.deviceId, deviceName: '认领盒子', bindingId: 'binding-1', ownershipEpoch: 1,
-        state: 'consumed', idempotent: false, consumedAt: '2026-09-09T00:00:00Z' });
+      assert.equal(init.headers['idempotency-key'], body.clientAttemptId);
+      assert.match(body.clientAttemptId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      assert.equal(body.claimCode, 'ABCDEFGH23');
+      assert.deepEqual(Object.keys(body).sort(), ['claimCode', 'clientAttemptId']);
+      return modernReply(claimReceipt());
     }
     assert.fail(url);
   } });
@@ -122,8 +143,8 @@ test('registration drops debug SMS data and claim binds one idempotency key into
   assert.deepEqual(receipt, { expiresIn: 300 });
   assert.equal(JSON.stringify(receipt).includes('private-debug-code'), false);
   assert.deepEqual(await client.register({ ...credentials, code: '123456' }), { accountId: 'account-synthetic' });
-  assert.deepEqual(await client.claimDevice(' 123456 '),
-    { deviceId: device.deviceId, displayName: '认领盒子', availability: 'unknown' });
+  assert.deepEqual(await client.claimDevice('ABCDEFGH23'),
+    { deviceId: device.deviceId, displayName: device.deviceId, availability: 'unknown' });
   assert.equal(calls.length, 3);
   await client.dispose();
 });
@@ -285,16 +306,17 @@ test('claim retries reuse the same idempotency key after an ambiguous network fa
   const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
     if (url.endsWith('/login')) return reply(token());
     verifySigned(store, url, init);
-    const body = JSON.parse(init.body); keys.push([body.idempotencyKey, init.headers['idempotency-key']]);
+    assert.ok(url.endsWith('/device-console-claims/redeem'));
+    const body = JSON.parse(init.body); keys.push([body.clientAttemptId, init.headers['idempotency-key'], init.headers['x-nexus-nonce']]);
     attempts++;
     if (attempts === 1) throw new Error('synthetic disconnect');
-    return reply({ deviceId: device.deviceId, deviceName: null, bindingId: 'binding-1', ownershipEpoch: 1,
-      state: 'consumed', idempotent: true, consumedAt: '2026-09-09T00:00:00Z' });
+    return modernReply(claimReceipt());
   } });
   await client.signIn(credentials);
-  await assert.rejects(client.claimDevice('654321'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
-  await client.claimDevice('654321');
+  await assert.rejects(client.claimDevice('ZYXWVUTS76'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
+  await client.claimDevice('ZYXWVUTS76');
   assert.equal(keys[0][0], keys[0][1]); assert.equal(keys[1][0], keys[1][1]); assert.equal(keys[0][0], keys[1][0]);
+  assert.notEqual(keys[0][2], keys[1][2]);
   await client.dispose();
 });
 
@@ -305,7 +327,9 @@ test('claim rejects malformed codes locally before a signed network request', as
     claims++; return reply({});
   } });
   await client.signIn(credentials);
-  for (const value of ['12345', '1234567', '123 456', '１２３４５６', 'AMD-A2A-248', 'ABCD-EFGH-JK2M-NP3Q', '12\n3456']) {
+  for (const value of ['123456', '1234567890', 'ABCDEFGH2', 'ABCDEFGH234', 'A'.repeat(19), 'A'.repeat(21),
+    ' ABCDEFGH23', 'ABCDEFGH23 ', 'ABCDEFGH23\n', 'abcdefgh23', 'ABCD-EFGH23', 'ABCDEF0123',
+    'ABCDEFGH89', 'ＡBCDEFGH23', 1234567890]) {
     await assert.rejects(client.claimDevice(value), { code: 'INVALID_REQUEST' });
   }
   assert.equal(claims, 0);
@@ -314,20 +338,21 @@ test('claim rejects malformed codes locally before a signed network request', as
 
 test('claim exposes safe, actionable states for expired and already-claimed codes', async () => {
   for (const [remoteCode, code] of [
-    ['CLAIM_TOKEN_EXPIRED', 'CLAIM_CODE_EXPIRED'],
-    ['CLAIM_TOKEN_INVALID', 'CLAIM_CODE_INVALID'],
-    ['CLAIM_TOKEN_REVOKED', 'CLAIM_CODE_INVALID'],
-    ['CLAIM_TOKEN_ALREADY_CONSUMED', 'DEVICE_ALREADY_CLAIMED'],
-    ['DEVICE_ALREADY_CLAIMED', 'DEVICE_ALREADY_CLAIMED'],
-    ['DEVICE_ALREADY_BOUND', 'DEVICE_ALREADY_CLAIMED'],
+    ['CONSOLE_CLAIM_EXPIRED', 'CLAIM_CODE_EXPIRED'],
+    ['CONSOLE_CLAIM_NOT_FOUND', 'CLAIM_CODE_INVALID'],
+    ['CONSOLE_CLAIM_INACTIVE', 'CLAIM_CODE_INVALID'],
+    ['DEVICE_ALREADY_OWNED', 'DEVICE_ALREADY_CLAIMED'],
+    ['OWNER_ALREADY_COMMITTED', 'DEVICE_ALREADY_CLAIMED'],
+    ['OWNER_ALREADY_CHANGED', 'DEVICE_ALREADY_CLAIMED'],
+    ['IDEMPOTENCY_CONFLICT', 'DEVICE_ALREADY_CLAIMED'],
   ]) {
     const store = memoryStore();
     const client = await createConsumerClient({ config, store, fetchImpl: async url => {
       if (url.endsWith('/login')) return reply(token());
-      return reply({ errorCode: remoteCode }, remoteCode === 'CLAIM_TOKEN_EXPIRED' ? 410 : 409);
+      return modernReply(null, remoteCode === 'CONSOLE_CLAIM_EXPIRED' ? 410 : 409, remoteCode);
     } });
     await client.signIn(credentials);
-    await assert.rejects(client.claimDevice('123456'), error => {
+    await assert.rejects(client.claimDevice('ABCDEFGH23'), error => {
       assert.equal(error.code, code);
       assert.equal(error.remoteCode, remoteCode);
       assert.equal(String(error.message).includes(remoteCode), false);
@@ -335,6 +360,194 @@ test('claim exposes safe, actionable states for expired and already-claimed code
     });
     await client.dispose();
   }
+});
+
+test('console claims preserve exact new 10 and existing 20 character codes and return only a receipt', async () => {
+  const store = memoryStore(); const bodies = [];
+  const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+    if (url.endsWith('/login')) return reply(token());
+    assert.ok(url.endsWith('/device-console-claims/redeem'));
+    verifySigned(store, url, init);
+    bodies.push(JSON.parse(init.body));
+    // Even a ready redeem view is not the current bootstrap authorization.
+    return modernReply(claimReceipt({ authorization: { state: 'ready' }, secret: 'do-not-project' }));
+  } });
+  await client.signIn(credentials);
+  for (const claimCode of ['ABCDEFGH23', 'ABCDEFGHIJKLMNOPQRST']) {
+    assert.deepEqual(await client.claimDevice(claimCode), {
+      deviceId: device.deviceId, displayName: device.deviceId, availability: 'unknown',
+    });
+    assert.equal(bodies.at(-1).claimCode, claimCode);
+  }
+  assert.notEqual(bodies[0].clientAttemptId, bodies[1].clientAttemptId);
+  await client.dispose();
+});
+
+test('console gate and service errors are explicit, redacted, and never fall back to legacy redeem', async () => {
+  for (const [status, remoteCode, code] of [
+    [403, 'CONSOLE_CLAIM_DISABLED', 'DEVICE_AUTHORIZATION_NOT_ENABLED'],
+    [403, 'FEATURE_NOT_AVAILABLE', 'DEVICE_AUTHORIZATION_NOT_ENABLED'],
+    [429, 'CONSOLE_CLAIM_RATE_LIMITED', 'RATE_LIMITED'],
+    [503, 'CONSOLE_CLAIM_UNAVAILABLE', 'ACCOUNT_SERVICE_UNAVAILABLE'],
+    [503, 'CONSOLE_CLAIM_RATE_LIMIT_UNAVAILABLE', 'ACCOUNT_SERVICE_UNAVAILABLE'],
+    [422, 'VALIDATION_ERROR', 'INVALID_REQUEST'],
+  ]) {
+    const store = memoryStore(); const routes = [];
+    const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+      if (url.endsWith('/login')) return reply(token());
+      routes.push(new URL(url).pathname);
+      return modernReply({ private: 'server-secret' }, status, remoteCode);
+    } });
+    await client.signIn(credentials);
+    await assert.rejects(client.claimDevice('ABCDEFGH23'), error => {
+      assert.equal(error.code, code);
+      assert.equal(error.remoteCode, remoteCode);
+      assert.equal(error.traceId, 'request-synthetic-0001');
+      assert.equal(String(error).includes('server-secret'), false);
+      return true;
+    });
+    assert.deepEqual(routes, ['/prod-api/app-api/device-console-claims/redeem']);
+    await client.dispose();
+  }
+});
+
+test('ambiguous malformed console responses keep the original body and attempt for manual recovery', async () => {
+  for (const response of [
+    () => new Response('{', { headers: { 'content-type': 'application/json' } }),
+    () => modernReply(claimReceipt({ ownership: 'unclaimed' })),
+    () => modernReply(claimReceipt({ claim: { status: 'pending' } })),
+    () => modernReply(claimReceipt({ authorization: { state: 'made-up' } })),
+  ]) {
+    const store = memoryStore(); const bodies = []; let claims = 0;
+    const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+      if (url.endsWith('/login')) return reply(token());
+      bodies.push(JSON.parse(init.body));
+      return ++claims === 1 ? response() : modernReply(claimReceipt());
+    } });
+    await client.signIn(credentials);
+    await assert.rejects(client.claimDevice('ABCDEFGH23'), { code: 'CONTRACT_MISMATCH' });
+    assert.equal(claims, 1, 'no automatic retry of a potentially committed Owner write');
+    await client.claimDevice('ABCDEFGH23');
+    assert.deepEqual(bodies[1], bodies[0]);
+    await client.dispose();
+  }
+});
+
+test('claim attempts cannot carry over to another account/client login', async () => {
+  const original = memoryStore(); const attempts = [];
+  const secondPhone = '13900000000';
+  const store = { ...original, identity: async phone => ({ ...await original.identity(phone),
+    clientId: phone === secondPhone ? 'client-second' : 'client-synthetic' }) };
+  const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+    if (url.endsWith('/login')) {
+      const second = JSON.parse(init.body).phone === secondPhone;
+      return reply({ ...token(), accountId: second ? 'account-second' : 'account-synthetic',
+        clientId: second ? 'client-second' : 'client-synthetic' });
+    }
+    attempts.push({ ...JSON.parse(init.body), clientId: init.headers['x-nexus-client-id'] });
+    throw new Error('synthetic response lost');
+  } });
+  await client.signIn(credentials);
+  await assert.rejects(client.claimDevice('ABCDEFGH23'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
+  await client.signIn({ ...credentials, phone: secondPhone });
+  await assert.rejects(client.claimDevice('ABCDEFGH23'), { code: 'ACCOUNT_SERVICE_UNAVAILABLE' });
+  assert.equal(attempts[0].claimCode, attempts[1].claimCode);
+  assert.notEqual(attempts[0].clientAttemptId, attempts[1].clientAttemptId);
+  assert.equal(attempts[1].clientId, 'client-second');
+  await client.dispose();
+});
+
+test('device list only admits bootstrap devices with all four latest authorization conditions', async () => {
+  const variants = [
+    { ...device, deviceId: 'pending-online', accessStatus: 'deviceAckPending' },
+    { ...device, deviceId: 'projection-online', accessStatus: 'projectionPending' },
+    { ...device, deviceId: 'blocked-online', accessStatus: 'blocked' },
+    { ...device, deviceId: 'owner-pending', ownershipStatus: 'claimPending' },
+    { ...device, deviceId: 'owner-release', ownershipStatus: 'releasePending' },
+    { ...device, deviceId: 'quarantined-online', securityStatus: 'quarantined' },
+    { ...device, deviceId: 'disabled-online', securityStatus: 'disabled' },
+    { ...device, deviceId: 'capability-disabled', capabilities: { canConnect: { enabled: false } } },
+    { ...device, deviceId: 'ready-offline', cloudPresence: 'offline' },
+    { ...device, deviceId: 'ready-unknown', cloudPresence: 'unknown' }, device,
+  ];
+  const store = memoryStore(); const routes = [];
+  const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+    if (url.endsWith('/login')) return reply(token());
+    routes.push(new URL(url).pathname); verifySigned(store, url, init);
+    return bootstrapReply(variants);
+  } });
+  await client.signIn(credentials);
+  const listed = await client.listDevices();
+  assert.deepEqual(listed.map(item => [item.deviceId, item.availability]), [
+    ['ready-offline', 'offline'], ['ready-unknown', 'unknown'], [device.deviceId, 'online'],
+  ]);
+  assert.equal(JSON.stringify(listed).includes('secret'), false);
+  assert.deepEqual(routes, ['/prod-api/app-api/v1/sync/bootstrap']);
+  await client.dispose();
+});
+
+test('bootstrap subject, current-client identity and account state fail closed', async () => {
+  const active = bootstrapAccount();
+  for (const [account, code] of [
+    [{ ...active, accountId: 'other-account' }, 'CONTRACT_MISMATCH'],
+    [{ ...active, currentClient: undefined }, 'CONTRACT_MISMATCH'],
+    [{ ...active, currentClient: { ...active.currentClient, clientId: 'other-client' } }, 'CONTRACT_MISMATCH'],
+    [{ ...active, currentClient: { ...active.currentClient, isCurrent: false } }, 'CONTRACT_MISMATCH'],
+    [{ ...active, currentClient: { ...active.currentClient, clientStatus: 'revoked' } }, 'ACCESS_DENIED'],
+    [{ ...active, currentClient: { ...active.currentClient, hasActiveSession: false } }, 'ACCESS_DENIED'],
+    ...['securityLocked', 'deletionPending', 'deleted'].map(accountStatus => [{ ...active, accountStatus }, 'ACCESS_DENIED']),
+  ]) {
+    const store = memoryStore();
+    const client = await createConsumerClient({ config, store, fetchImpl: async url =>
+      url.endsWith('/login') ? reply(token()) : bootstrapReply([device], account) });
+    await client.signIn(credentials);
+    await assert.rejects(client.listDevices(), { code });
+    await client.dispose();
+  }
+});
+
+test('missing or malformed bootstrap permission fields cannot be rescued by online presence', async () => {
+  for (const devices of [
+    [{ ...device, capabilities: {} }], [{ ...device, accessStatus: undefined }],
+    [{ ...device, capabilities: { canConnect: { enabled: 'true' } } }], [device, device],
+  ]) {
+    const store = memoryStore();
+    const client = await createConsumerClient({ config, store, fetchImpl: async url =>
+      url.endsWith('/login') ? reply(token()) : bootstrapReply(devices) });
+    await client.signIn(credentials);
+    await assert.rejects(client.listDevices(), { code: 'CONTRACT_MISMATCH' });
+    await client.dispose();
+  }
+});
+
+test('a gated bootstrap never falls back to the legacy device list', async () => {
+  const store = memoryStore(); const routes = [];
+  const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+    if (url.endsWith('/login')) return reply(token());
+    routes.push(new URL(url).pathname);
+    return modernReply(null, 403, 'FEATURE_NOT_AVAILABLE');
+  } });
+  await client.signIn(credentials);
+  await assert.rejects(client.listDevices(), { code: 'DEVICE_AUTHORIZATION_NOT_ENABLED', remoteCode: 'FEATURE_NOT_AVAILABLE' });
+  assert.deepEqual(routes, ['/prod-api/app-api/v1/sync/bootstrap']);
+  await client.dispose();
+});
+
+test('a late bootstrap result after another login cannot expose cached authorization', async () => {
+  const store = memoryStore(); const entered = deferred(); const pending = deferred();
+  const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+    if (url.endsWith('/login')) return reply(token());
+    entered.resolve(); return pending.promise;
+  } });
+  await client.signIn(credentials);
+  const listing = client.listDevices();
+  const rejected = assert.rejects(listing, { code: 'SESSION_EXPIRED' });
+  await entered.promise;
+  await client.signIn(credentials);
+  pending.resolve(bootstrapReply([device]));
+  await rejected;
+  assert.equal((await client.current()).accountId, 'account-synthetic', 'the replacement login remains intact');
+  await client.dispose();
 });
 
 test('password login preserves safe Admin rejection codes and distinguishes rate limiting', async () => {
@@ -387,7 +600,7 @@ test('a device without an Admin name falls back to its stable id', async () => {
   const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
     if (url.endsWith('/auth/password/login')) return reply(token());
     verifySigned(store, url, init);
-    if (url.endsWith('/devices')) return reply([unnamed]);
+    if (url.endsWith('/sync/bootstrap')) return bootstrapReply([unnamed]);
     assert.fail(url);
   } });
   await client.signIn(credentials);
@@ -422,7 +635,7 @@ test('refresh near seven days preserves the original deadline and remains restor
     fetchImpl: async (url, init) => {
       if (url.endsWith('/login')) return reply(token());
       if (url.endsWith('/refresh')) { refreshes++; return reply(token(2)); }
-      return init.headers.authorization === 'Bearer access-1' ? reply({}, 401) : reply([device]);
+      return init.headers.authorization === 'Bearer access-1' ? reply({}, 401) : bootstrapReply([device]);
     } });
   await client.signIn(credentials);
   const deadline = currentNow + LOGIN_SESSION_MS;
@@ -474,7 +687,7 @@ test('temporary refresh network failure keeps the login and its original deadlin
       if (++refreshes === 1) throw new Error('synthetic temporary network failure');
       return reply(token(2));
     }
-    return init.headers.authorization === 'Bearer access-1' ? reply({}, 401) : reply([device]);
+    return init.headers.authorization === 'Bearer access-1' ? reply({}, 401) : bootstrapReply([device]);
   } });
   await client.signIn(credentials);
   const deadline = (await store.load()).sessionExpiresAt;
@@ -494,7 +707,7 @@ test('parallel 401s rotate once and replay only after SDK coordinator supplies t
     if (url.endsWith('/refresh')) { refreshes++; await new Promise(resolve => setImmediate(resolve)); return reply(token(2)); }
     verifySigned(store, url, init);
     if (init.headers.authorization === 'Bearer access-1') { oldReads++; return reply({}, 401); }
-    newReads++; return reply([device]);
+    newReads++; return bootstrapReply([device]);
   } });
   await client.signIn(credentials);
   const results = await Promise.all([client.listDevices(), client.listDevices()]);
@@ -530,7 +743,7 @@ test('logout failure still clears local tokens and never reflects raw server err
 });
 
 test('bad response types, oversized streamed data and unknown device ownership fail closed', async () => {
-  for (const response of [() => new Response('not-json'), () => reply([ { ...device, role: 'stranger' } ]),
+  for (const response of [() => new Response('not-json'), () => bootstrapReply([ { ...device, ownershipStatus: 'stranger' } ]),
     () => new Response('x'.repeat(256 * 1024 + 1), { headers: { 'content-type': 'application/json' } })]) {
     const store = memoryStore();
     const client = await createConsumerClient({ config, store, fetchImpl: async url => url.endsWith('/login') ? reply(token()) : response() });
