@@ -96,6 +96,7 @@ def active_pending(r):
     confirmed = GrowthStore.instance().current_charter(scope=r.scope) is not None
     active_workspace = CharterDraftStore().active_workspace(r.cid, r.scope)
     latest_jobs = r.store.conversation_jobs(r.cid)
+    valid_previews = r.store.valid_preview_ids(r.cid)
     job_tasks = {job["kind"] for job in latest_jobs}
     pending = {p["task_key"]: {**p, "count": 1, "reason": "consent_required", "messageIds": [], "reasons": [{"code": "consent_required", "count": 1, "detail": p["detail"]}]}
                for p in r.store.pending(r.cid) if p["task_key"] not in job_tasks}
@@ -108,13 +109,19 @@ def active_pending(r):
             # Do not expose raw provider errors: they may contain request details.
             cause = {"PROVIDER_TIMEOUT": "模型等待超时", "PROVIDER_BUSY": "模型通道繁忙",
                 "PROVIDER_UNAVAILABLE": "模型服务暂时不可用", "PROVIDER_MISCONFIGURED": "模型连接设置需要检查",
-                "INVALID_JSON_REPLY": "模型返回的整理内容不完整", "EMPTY_REPLY": "模型没有返回整理内容"}.get(job.get("errorCode"), "本次整理未完成")
+                "INVALID_JSON_REPLY": "模型返回的整理内容不完整", "EMPTY_REPLY": "模型没有返回整理内容",
+                "MODEL_EGRESS_CONSENT_REQUIRED": "本次个人理解整理缺少模型外发授权",
+                "MODEL_JSON_INVALID": "模型返回的整理内容不完整"}.get(job.get("errorCode"), "本次整理未完成")
             result = {"reason": "task_failed", "detail": cause + "，原对话仍保留。可重试；继续前会重新核对当前模型、资料权限与人生章程。"}
         task = job["kind"]
         item = pending.setdefault(task, {"conversation_id": r.cid, "task_key": task, "preview_id": "",
             "count": 0, "failedCount": 0, "reason": result.get("reason", "consent_required"), "detail": "", "messageIds": [], "updated_at": "", "reasons": []})
         item["count"] += 1
         item["failedCount"] += int(failed)
+        preview_id = result.get("previewId", "")
+        item.setdefault("jobs", []).append({"jobId": job["jobId"], "previewId": preview_id,
+            "state": "failed" if failed else "paused", "reason": result.get("reason", "consent_required"),
+            "previewExpired": preview_id not in valid_previews})
         message_id = job["payload"].get("messageId")
         if message_id and message_id not in item["messageIds"]:
             item["messageIds"].append(message_id)
@@ -136,7 +143,7 @@ def active_pending(r):
             item["reason"] = "multiple_reasons"
             item["detail"] = "；".join(f"{entry['count']} 项：{entry['detail']}" for entry in item["reasons"])
         item["state"] = "failed" if item.get("failedCount") == item["count"] else "mixed" if item.get("failedCount") else "paused"
-        item["previewExpired"] = not bool(item["preview_id"] and r.store.get_preview(item["preview_id"], r.cid))
+        item["previewExpired"] = item["preview_id"] not in valid_previews
         values.append(item)
     return values
 
@@ -366,8 +373,10 @@ def default_state(request: Request):
 
 
 class Resume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     task: str = Field(max_length=100)
     localOnly: bool = False
+    jobId: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 def pending_preview(conversation_id: str, revision: str, request: Request):
@@ -375,7 +384,8 @@ def pending_preview(conversation_id: str, revision: str, request: Request):
     # Only an actual outstanding task may refresh an expired preview. Grants
     # still require the fresh version returned by prepare below.
     outstanding = active_pending(r)
-    bound = any(item["preview_id"] == revision for item in outstanding)
+    bound = any(item["preview_id"] == revision or any(job["previewId"] == revision
+                for job in item.get("jobs", [])) for item in outstanding)
     p = r.store.get_preview(revision, r.cid, include_expired=bound)
     if not p:
         fail("PREVIEW_EXPIRED", "后台预览已过期；请重新准备待办，由后台按当前内容再次核对，原消息仍保留")
@@ -396,6 +406,8 @@ def resume(conversation_id: str, req: Resume, request: Request):
     r = router_for(conversation_id, request)
     outstanding = any(t["task_key"] == req.task for t in active_pending(r))
     if req.task.startswith("file_reply:"):
+        if req.jobId is not None:
+            fail("TASK_CHANGED", "文件任务不支持此整理任务编号")
         if not outstanding:
             fail("TASK_CHANGED", "任务已恢复或不存在")
         imports = ChatImportStore(r.convs)
@@ -409,9 +421,10 @@ def resume(conversation_id: str, req: Resume, request: Request):
         fail("TASK_CHANGED", "未知后台任务")
     if req.task == "charter_draft" and not outstanding:
         fail("TASK_CHANGED", "章程编辑已结束；需要修改时请主动开始")
-    if not r.store.conversation_jobs(r.cid, req.task):
+    current_jobs = r.store.conversation_jobs(r.cid, req.task)
+    if not current_jobs or (req.jobId is not None and not any(job["jobId"] == req.jobId for job in current_jobs)):
         fail("TASK_CHANGED", "原任务不可用，请重新触发")
-    job_ids = r.store.resume_jobs(r.cid, req.task, local_only=req.localOnly)
+    job_ids = r.store.resume_jobs(r.cid, req.task, local_only=req.localOnly, job_id=req.jobId)
     return {"state": "queued", "jobIds": job_ids, "jobId": job_ids[0] if job_ids else None,
             "queuedCount": len(job_ids), "pendingCount": len(r.store.recoverable_jobs(r.cid, req.task))}
 

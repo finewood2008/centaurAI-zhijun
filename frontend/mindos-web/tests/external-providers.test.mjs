@@ -142,6 +142,51 @@ function setup(overrides = {}) {
   h.close()
 }
 
+// Platform-managed services never ask for a token or mutate provider metadata;
+// the product selects provider/model and includes the trusted catalog revision.
+{
+  const h = setup()
+  h.store.providers = [{ id: 'managed:platform', name: '平台在线服务', revision: 2,
+    providerRevision: 'a'.repeat(64), source: 'admin-managed', baseUrl: 'https://cloud.example.invalid/v1',
+    model: '', apiKeyConfigured: true, active: false }]
+  let discovery
+  h.api.getExternalProviderModels = async (...args) => {
+    discovery = args
+    return { providerId: args[0], revision: args[1], models: ['product-model-A', 'product-model-B'] }
+  }
+  await h.ui.refresh()
+  assert.equal(h.ui.managed.value, true)
+  h.ui.edit(); assert.equal(h.ui.editing.value, false)
+  await h.ui.save(); await h.ui.remove()
+  assert.equal(h.calls.length, 0)
+  await h.ui.fetchModels()
+  assert.equal(discovery[3], 'a'.repeat(64))
+  h.ui.model.value = 'product-model-B'
+  await h.ui.activate()
+  assert.deepEqual(h.calls[0], ['activate', { revision: 2, model: 'product-model-B', chatRevision: 4, providerRevision: 'a'.repeat(64) }])
+  assert.equal(h.ui.draft.apiKey, '')
+  h.close()
+}
+
+// Broker failure is visible but self-configured profiles remain editable;
+// the missing managed selection is never automatically replaced.
+{
+  const h = setup()
+  const own = copy(h.store.providers[0])
+  own.active = false
+  h.api.getExternalProviders = async () => ({ providers: [own], activeProviderId: 'managed:platform',
+    chatRevision: 4, platformStatus: 'unavailable', platformErrorCode: 'BROKER_UNAVAILABLE' })
+  await h.ui.refresh()
+  assert.equal(h.ui.platformStatus.value, 'unavailable')
+  assert.equal(h.ui.activeId.value, 'managed:platform')
+  assert.equal(h.ui.providers.value.length, 1)
+  assert.equal(h.calls.length, 0)
+  h.ui.choose(own.id); await flush(); h.ui.edit()
+  assert.equal(h.ui.editing.value, true)
+  assert.match(source, /已有平台选择不会自动切换到其他服务/)
+  h.close()
+}
+
 assert.doesNotMatch(source, /localStorage|sessionStorage|v-html/)
 assert.match(source, /type="password"/)
 assert.match(source, /已启用在线理解的对话/)

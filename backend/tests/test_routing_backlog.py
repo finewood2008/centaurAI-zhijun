@@ -117,6 +117,47 @@ class BacklogTests(unittest.TestCase):
         with self.onto._connect() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM ontology_jobs").fetchone()[0], 108)
 
+    def test_targeted_resume_does_not_replay_older_pauses_or_failures(self):
+        old_pause = self.pause(self.message())
+        old_failure = self.failure(self.message())
+        current = self.pause(self.message())
+        pending = self.routing_state()["pending"][0]
+        self.assertEqual({job["jobId"] for job in pending["jobs"]}, {old_pause, old_failure, current})
+        self.assertEqual(self.resume(jobId=current)["jobIds"], [current])
+        self.assertEqual(self.resume(jobId=current)["queuedCount"], 0)
+        self.assertEqual({job["jobId"] for job in self.store.recoverable_jobs(self.cid, "extract_turn")},
+                         {old_pause, old_failure})
+
+    def test_targeted_resume_rejects_foreign_or_wrong_purpose_job(self):
+        foreign = self.convs.create_conversation(device_scope="another-device")["id"]
+        foreign_job = self.pause(self.message(foreign))
+        wrong_purpose = self.failure(self.message(), kind="draft_turn")
+        self.pause(self.message())
+        for job_id in (foreign_job, wrong_purpose, "missing-job"):
+            response = self.client.post(self.url + "/routing/resume", json={"task": "extract_turn", "jobId": job_id})
+            self.assertEqual(response.status_code, 409)
+        self.assertEqual(len(self.store.paused_jobs(foreign)), 1)
+        self.assertEqual(len(self.store.recoverable_jobs(self.cid, "draft_turn")), 1)
+
+    def test_all_paused_jobs_expose_their_own_preview_for_recovery(self):
+        self.enable()
+        revisions = []
+        for _ in range(2):
+            message = self.message()
+            router = Router(self.onto, self.convs, self.cid)
+            request = ChatRequest(system="合成提取", messages=[{"role": "user", "content": message["content"]}])
+            preview = router.prepare("extract_turn", request, [router.ref("message", message["id"])], self.online)
+            revisions.append(preview["revision"])
+            self.pause(message, preview_id=preview["revision"])
+        with self.onto._connect() as db:
+            db.execute("UPDATE routing_previews SET created_at=?", (time.time() - 7200,))
+        pending = self.routing_state()["pending"][0]
+        self.assertEqual({job["previewId"] for job in pending["jobs"]}, set(revisions))
+        self.assertTrue(all(job["previewExpired"] for job in pending["jobs"]))
+        for revision in revisions:
+            response = self.client.get(self.url + "/routing/pending/" + revision)
+            self.assertEqual(response.status_code, 200, response.text)
+
     def test_later_completed_attempt_suppresses_old_pause_and_does_not_reextract(self):
         message = self.message()
         self.pause(message)
@@ -302,6 +343,16 @@ class BacklogTests(unittest.TestCase):
         self.assertEqual(self.onto.get_job(foreign_id)["state"], "failed")
         response = self.client.post("/api/mindos/conversations/" + foreign + "/routing/resume", json={"task": "extract_turn"})
         self.assertIn(response.status_code, (403, 404))
+
+    def test_historical_missing_receipt_failure_has_actionable_safe_message(self):
+        jid = self.failure(self.message())
+        with self.onto._connect() as db:
+            db.execute("UPDATE ontology_jobs SET error_code='MODEL_EGRESS_CONSENT_REQUIRED' WHERE job_id=?", (jid,))
+        item = self.routing_state()["pending"][0]
+        self.assertIn("缺少模型外发授权", item["detail"])
+        self.assertNotIn("private provider", str(item))
+        self.assertEqual(item["jobs"][0]["state"], "failed")
+        self.assertEqual(item["jobs"][0]["jobId"], jid)
 
     def test_newer_success_suppresses_failed_attempt(self):
         message = self.message()

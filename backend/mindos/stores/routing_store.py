@@ -188,7 +188,14 @@ class RoutingStore:
         with self.ontology._connect() as db:
             row = db.execute("SELECT payload_json FROM routing_previews WHERE id=? AND conversation_id=? AND created_at>?",
                              (token, conversation_id, 0 if include_expired else time.time() - 3600)).fetchone()
-            return json.loads(row[0]) if row else None
+        return json.loads(row[0]) if row else None
+
+    def valid_preview_ids(self, conversation_id):
+        """Read expiry metadata once when presenting a potentially large backlog."""
+        with self.ontology._connect() as db:
+            return {row[0] for row in db.execute(
+                "SELECT id FROM routing_previews WHERE conversation_id=? AND created_at>?",
+                (conversation_id, time.time() - 3600))}
 
     @staticmethod
     def _conversation_jobs(db, conversation_id, task=None):
@@ -219,7 +226,7 @@ class RoutingStore:
     def recoverable_jobs(self, conversation_id, task=None):
         return [job for job in self.conversation_jobs(conversation_id, task) if self.recoverable_job(job)]
 
-    def resume_jobs(self, conversation_id, task, *, local_only=False):
+    def resume_jobs(self, conversation_id, task, *, local_only=False, job_id=None):
         """Requeue current pauses/failures once, retaining their original job IDs.
 
         This does not grant anything: the worker reconstructs and checks the
@@ -229,6 +236,8 @@ class RoutingStore:
         from zhijun_worker.background import register
         with self.ontology._connect() as db:
             candidates = [self.ontology._job(row) for row in self._conversation_jobs(db, conversation_id, task)]
+        if job_id is not None:
+            candidates = [job for job in candidates if job["jobId"] == job_id]
         for candidate in candidates:
             if self.recoverable_job(candidate):
                 register(candidate["jobId"], task)
@@ -237,6 +246,8 @@ class RoutingStore:
             db.execute("BEGIN IMMEDIATE")
             for row in self._conversation_jobs(db, conversation_id, task):
                 job = self.ontology._job(row)
+                if job_id is not None and job["jobId"] != job_id:
+                    continue
                 if not self.recoverable_job(job):
                     continue
                 if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (task, job["ownerId"])).fetchone():

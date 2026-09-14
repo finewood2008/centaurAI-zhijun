@@ -1087,11 +1087,15 @@ export interface ExternalProviderProfile {
   apiKeyConfigured: boolean
   active: boolean
   pendingActivation?: boolean
+  source?: 'admin-managed' | 'runtime_settings'
+  providerRevision?: string
 }
 export interface ExternalProvidersResponse {
   providers: ExternalProviderProfile[]
   activeProviderId: string | null
   chatRevision: number
+  platformStatus?: 'available' | 'unavailable' | 'not_configured'
+  platformErrorCode?: string | null
 }
 export interface ExternalProviderDraft {
   name: string
@@ -1571,8 +1575,8 @@ export const api = {
   getExternalProviders: (signal?: AbortSignal) => request<ExternalProvidersResponse>('/system/models/external-providers', { signal }),
   createExternalProvider: (payload: ExternalProviderDraft) => postJson<ExternalProviderProfile>('/system/models/external-providers', payload),
   updateExternalProvider: (id: string, payload: ExternalProviderDraft & { revision: number }) => putJson<ExternalProviderProfile>(`/system/models/external-providers/${encodeURIComponent(id)}`, payload),
-  getExternalProviderModels: (id: string, revision: number, signal?: AbortSignal) => request<{ models: string[]; providerId: string; revision: number }>(`/system/models/external-providers/${encodeURIComponent(id)}/models`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision }), signal }),
-  activateExternalProvider: (id: string, payload: { revision: number; model: string; chatRevision: number }) => postJson<{ provider: ExternalProviderProfile; chat: ChatProviderConfig }>(`/system/models/external-providers/${encodeURIComponent(id)}/activate`, payload),
+  getExternalProviderModels: (id: string, revision: number, signal?: AbortSignal, providerRevision?: string) => request<{ models: string[]; providerId: string; revision: number }>(`/system/models/external-providers/${encodeURIComponent(id)}/models`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision, ...(providerRevision ? { providerRevision } : {}) }), signal }),
+  activateExternalProvider: (id: string, payload: { revision: number; model: string; chatRevision: number; providerRevision?: string }) => postJson<{ provider: ExternalProviderProfile; chat: ChatProviderConfig }>(`/system/models/external-providers/${encodeURIComponent(id)}/activate`, payload),
   deleteExternalProvider: (id: string, revision: number) => request<{ deleted: boolean }>(`/system/models/external-providers/${encodeURIComponent(id)}?revision=${revision}`, { method: 'DELETE' }),
   putChatProvider: (payload: ChatProviderPutPayload) =>
     putJson<ChatProviderConfig>('/system/models/chat-provider', payload),
