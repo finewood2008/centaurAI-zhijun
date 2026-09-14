@@ -127,6 +127,37 @@ try {
   await page.getByTestId('connect-synthetic-device').waitFor()
   assert.equal(await page.evaluate(() => window.__secureConnectionStats.starts.length), 0)
 
+  // Test the built Vue listener, not just its ref: native text inputs would
+  // otherwise silently remove CR/LF from a pasted credential.
+  const claimInput = page.getByTestId('claim-token')
+  const pasteClaim = text => claimInput.evaluate((input, value) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.setData('text/plain', value)
+    const event = new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true })
+    input.dispatchEvent(event)
+    return event.defaultPrevented
+  }, text)
+  for (const invalid of ['ABCDEFGH23\n', '\rABCDEFGH23', 'abcdefgh23', ' ABCDEFGH23', 'ABCDEFGHIJKLMNOP2345A']) {
+    await claimInput.fill('')
+    assert.equal(await pasteClaim(invalid), true)
+    assert.equal(await claimInput.inputValue(), '')
+    assert.match(await page.locator('.form-error').last().textContent(), /粘贴内容无效/)
+  }
+  assert.equal(await pasteClaim('ABCDEFGH23'), true)
+  assert.equal(await claimInput.inputValue(), 'ABCDEFGH23')
+  await claimInput.evaluate(input => input.setSelectionRange(8, 10))
+  assert.equal(await pasteClaim('45'), true)
+  assert.equal(await claimInput.inputValue(), 'ABCDEFGH45')
+  await claimInput.evaluate(input => input.setSelectionRange(0, input.value.length))
+  assert.equal(await pasteClaim('ABCDEFGHIJKLMNOP2345'), true)
+  assert.equal(await claimInput.inputValue(), 'ABCDEFGHIJKLMNOP2345')
+  assert.equal(await claimInput.evaluate(input => {
+    const event = new DragEvent('drop', { bubbles: true, cancelable: true })
+    input.dispatchEvent(event)
+    return event.defaultPrevented
+  }), true)
+  await claimInput.fill('')
+
   // Exercise the real controller's connect-pending cancellation path. The old
   // connect promise deliberately settles late after the generation was replaced.
   await page.getByTestId('connect-synthetic-device').click()

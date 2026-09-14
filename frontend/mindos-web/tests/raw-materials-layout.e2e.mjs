@@ -21,10 +21,11 @@ const records = names.map((fileName, index) => ({
   status: index === 2 ? 'queued' : 'available', errorCode: index === 2 ? 'service_interrupted' : null,
   createdAt: '2026-09-12T23:52:00+08:00', folderId: index === 1 ? 1 : null,
   knowledgeCard: { state: index === 1 ? 'index_failed' : 'draft' },
+  sensitiveScan: index === 1 ? { state: 'completed', completedFields: 12, totalFields: 12, retryable: false } : null,
 }))
 const mocks = {
   '@/services/api': `export const api={
-    listMaterials:async()=>({items:${JSON.stringify(records)}}),
+    listMaterials:async(params)=>{window.__lastMaterialQuery=params;return {items:${JSON.stringify(records)},total:121}},
     listFolderNodes:async()=>({items:[{id:1,parentId:null,name:'超长文件夹名称用于验证列宽和省略号',subtreeMaterialCount:1}]}),
     moveMaterial:async(...args)=>{window.__moves.push(args);},
   };`,
@@ -69,6 +70,15 @@ try {
     await page.setContent(`<style>${[...baseStyles, ...styles, shellCss].join('\n')}</style><div class="ws-app"><aside class="fixture-sidebar"></aside><main class="ws-app__main"><header class="fixture-header"></header><section class="ws-app__content"><div id="app"></div></section></main></div>`)
     await page.addScriptTag({ content: bundle.outputFiles[0].text })
     await page.locator('.ws-table__grid tbody tr').nth(2).waitFor()
+    await page.getByRole('navigation', { name: '原材料分页' }).waitFor()
+    if (width === 1440) {
+      assert.equal(await page.getByRole('button', { name: '上一页', exact: true }).isDisabled(), true)
+      await page.getByRole('button', { name: '下一页', exact: true }).click()
+      await page.getByText('共 121 项，第 2 / 3 页', { exact: true }).waitFor()
+      assert.equal(await page.evaluate(() => window.__lastMaterialQuery.offset), 50)
+      await page.getByRole('button', { name: '上一页', exact: true }).click()
+      await page.getByText('共 121 项，第 1 / 3 页', { exact: true }).waitFor()
+    }
     const dimensions = await page.evaluate(() => {
       const scroll = document.querySelector('.ws-table__scroll'), box = scroll.getBoundingClientRect()
       const content = document.querySelector('.ws-app__content')
@@ -78,7 +88,7 @@ try {
         overflowElements: [...scroll.querySelectorAll('*')].filter(el => el.getBoundingClientRect().right > box.right + 1).map(el => ({ class: el.className, right: el.getBoundingClientRect().right - box.right, opacity: getComputedStyle(el).opacity })),
         pageOverflow: document.documentElement.scrollWidth > innerWidth || content.scrollWidth > content.clientWidth,
         hiddenControls: controls.filter(button => { const r = button.getBoundingClientRect(); return r.left < box.left - 1 || r.right > box.right + 1 || r.width < 25 || r.height < 25 }).map(button => button.getAttribute('aria-label')),
-        titleEllipsis: [...document.querySelectorAll('.ws-table__name')].map(cell => ({ title: cell.title, overflow: getComputedStyle(cell).textOverflow, truncated: cell.scrollWidth > cell.clientWidth })),
+        titleEllipsis: [...document.querySelectorAll('.ws-table__name')].map(cell => { const button = cell.querySelector('.ws-material-name'); return { title: cell.title, overflow: getComputedStyle(button).textOverflow, truncated: button.scrollWidth > button.clientWidth } }),
       }
     })
     assert.equal(dimensions.pageOverflow, false, `${width}px: page must not scroll horizontally`)

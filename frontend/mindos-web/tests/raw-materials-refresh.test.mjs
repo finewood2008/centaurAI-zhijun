@@ -23,6 +23,103 @@ const material = (materialId, status = 'available') => ({
   versionNumber: 1, supersedesMaterialId: null, supersededByMaterialId: null, versionNote: null,
 })
 
+test('material pages use scoped list filters and reset to the first page when filters change', async () => {
+  const requests = []
+  const f = fixture({ listMaterials: async params => {
+    requests.push(params)
+    return { items: [material(`page-${params.offset}`)], total: 121 }
+  } })
+  try {
+    await f.ui.loadMaterials()
+    assert.equal(requests[0].limit, 50)
+    assert.equal(requests[0].offset, 0)
+    assert.equal(f.ui.total.value, 121)
+    await f.ui.changePage(50)
+    assert.equal(requests.at(-1).offset, 50)
+    f.ui.keyword.value = ' 查询 '
+    f.ui.selectedFolderId.value = 7
+    await f.ui.loadMaterials()
+    assert.equal(requests.at(-1).offset, 0)
+    assert.equal(requests.at(-1).keyword, '查询')
+    assert.equal(requests.at(-1).folderId, 7)
+    await f.ui.changePage(-50)
+    await f.ui.changePage(150)
+    assert.equal(requests.length, 3)
+  } finally { f.close() }
+})
+
+test('material pagination backs up when the last page disappears and rejects stale page responses', async () => {
+  const stale = deferred()
+  let count = 120
+  let deferredRead = false
+  const requests = []
+  const f = fixture({ listMaterials: async params => {
+    requests.push(params.offset)
+    if (deferredRead) { deferredRead = false; return stale.promise }
+    return { items: params.offset < count ? [material(`page-${params.offset}`)] : [], total: count }
+  } })
+  try {
+    await f.ui.loadMaterials()
+    await f.ui.changePage(100)
+    count = 60
+    await f.ui.loadMaterials()
+    assert.equal(f.ui.pageOffset.value, 50)
+    assert.deepEqual(requests.slice(-2), [100, 50])
+    deferredRead = true
+    const old = f.ui.loadMaterials()
+    f.ui.keyword.value = 'new'
+    await f.ui.loadMaterials()
+    stale.resolve({ items: [material('stale')], total: 999 })
+    await old
+    assert.equal(f.ui.items.value[0].materialId, 'page-0')
+    assert.equal(f.ui.total.value, 60)
+    assert.equal(f.ui.refreshing.value, false)
+  } finally { f.close() }
+})
+
+test('active sensitive scans and material lifecycle transitions continue polling', () => {
+  const f = fixture({})
+  try {
+    for (const state of ['queued', 'processing']) {
+      assert.equal(f.ui.hasActiveMaterial([{ ...material('scan'), sensitiveScan: { state } }]), true)
+    }
+    for (const state of ['completed', 'failed', 'canceled']) {
+      assert.equal(f.ui.hasActiveMaterial([{ ...material('scan'), sensitiveScan: { state } }]), false)
+    }
+    assert.equal(f.ui.hasActiveMaterial([material('restoring', 'restoring')]), true)
+    assert.equal(f.ui.hasActiveMaterial([material('purging', 'purging')]), true)
+  } finally { f.close() }
+})
+
+test('upload from a filtered later page resets pagination and keeps accepted rows through delayed list visibility', async () => {
+  let observed = false
+  const accepted = material('new-upload', 'uploaded')
+  const requests = []
+  const f = fixture({
+    listMaterials: async params => {
+      requests.push(params)
+      return { items: observed ? [accepted] : [material('old')], total: 150 }
+    },
+    uploadFile: async () => accepted,
+  })
+  try {
+    f.ui.keyword.value = 'old'
+    f.ui.selectedFolderId.value = 7
+    await f.ui.loadMaterials()
+    await f.ui.changePage(50)
+    await f.ui.importFiles([{ name: 'new.txt', type: 'text/plain', size: 3 }])
+    assert.equal(requests.at(-1).offset, 0)
+    assert.equal(requests.at(-1).keyword, '')
+    assert.equal(requests.at(-1).folderId, undefined)
+    assert.equal(f.ui.awaitingList.value.length, 1)
+    assert.deepEqual(f.ui.displayItems.value.map(item => item.materialId), ['new-upload', 'old'])
+    observed = true
+    await f.ui.loadMaterials()
+    assert.equal(f.ui.awaitingList.value.length, 0)
+    assert.deepEqual(f.ui.displayItems.value.map(item => item.materialId), ['new-upload'])
+  } finally { f.close() }
+})
+
 function fixture(api) {
   const mounts = [], unmounts = [], toasts = []
   const gate = (() => {

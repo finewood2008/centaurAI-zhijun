@@ -149,7 +149,7 @@ async function run() {
   assert.match(detailSource, /async function loadDetail\(materialId: string, options: \{ background\?: boolean \} = \{\}\)[\s\S]*?stopCardIndexPolling\(\)/)
   assert.match(detailSource, /pollSession !== cardIndexPollSession \|\| detail\.value\?\.materialId !== materialId/)
   assert.match(detailSource, /analysisLoadGate\.invalidate\(\)[\s\S]*?analysisLoading\.value = false/)
-  assert.match(detailSource, /detail\.value\?\.summary\.status === 'pending' && !summaryWaitExpired\.value/)
+  assert.match(detailSource, /!desktopManagement && detail\.value\?\.summary\?\.status === 'pending' && !summaryWaitExpired\.value/)
   assert.match(detailSource, /!analysisWaitExpired\.value && current/)
   assert.match(detailSource, /draft\.value\?\.status === 'pending' && !draftWaitExpired\.value/)
   assert.match(detailSource, /analysisLoading \? '正在读取状态…'/)

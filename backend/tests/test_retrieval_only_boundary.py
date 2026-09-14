@@ -137,7 +137,8 @@ def test_recovery_terminates_old_pending_imports_but_preserves_records(workspace
     assert after["files"] == before["files"]
     assert after["content"] == before["content"]
     assert workspace.convs.list_messages(workspace.cid) == messages
-    assert "Data Agent" in after["error"]
+    assert "资料与边界 → 原材料" in after["error"]
+    assert "确认使用" in after["error"]
     imports.process_batch(after, workspace.store)
     assert workspace.store.get(before["id"])["state"] == "failed"
 

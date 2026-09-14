@@ -63,14 +63,7 @@ test('workspace listing disables transitional polling and old attachment selecti
   h.close()
 })
 
-test('desktop legacy deep links load only a no-network retrieval explanation', async () => {
-  const routes = await read('../src/router/routes.ts')
-  for (const path of ['/materials', '/materials/:materialId', '/knowledge', '/knowledge/new', '/knowledge/:knowledgeId', '/recycle-bin', '/search', '/graph']) {
-    assert.ok(routes.split('\n').find(line => line.includes(`path: '${path}'`) && line.includes('component: materialPage(')), path)
-  }
-  const page = await read('../src/pages/RetrievalMaterialsPage.vue')
-  assert.doesNotMatch(page, /<script|fetch\(|services\/api/)
-  assert.match(page, /不会因入口调整被删除/)
+test('restoring material management does not restore the legacy chat attachment bypass', async () => {
   const composer = await read('../src/components/conversation/Composer.vue')
   assert.match(composer, /v-if="!retrievalOnly" ref="filesInput"/)
   assert.match(composer, /v-if="voiceAvailable"/, 'box ASR is not a material import')

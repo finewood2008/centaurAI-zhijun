@@ -22,6 +22,7 @@ export type PublicErrorCode =
   | 'INVALID_REQUEST'
   | 'CLAIM_CODE_INVALID'
   | 'CLAIM_CODE_EXPIRED'
+  | 'DEVICE_AUTHORIZATION_NOT_ENABLED'
   | 'DEVICE_ALREADY_CLAIMED'
   | 'OPERATION_NOT_ALLOWED'
   | 'ACCESS_DENIED'
@@ -183,6 +184,7 @@ export interface ZhijunDesktopV1 {
   registerWithPassword(context: CallContext, credentials: RegistrationCredentials): Promise<Result<DesktopSnapshot>>;
   listDevices(context: CallContext): Promise<Result<readonly DeviceSummary[]>>;
   /** Redeems a user-entered Admin claim code for the authenticated account. */
+  /** Exact Console Claim code (10/20 Base32 chars). Receipt only, not a connectable-device grant. */
   claimDevice(context: CallContext, claimToken: string): Promise<Result<DeviceSummary>>;
   /** Opens the isolated device-provisioning window. Wi-Fi credentials never cross this renderer bridge. */
   openProvisioning(context: CallContext): Promise<Result<ProvisioningWindowReceipt>>;

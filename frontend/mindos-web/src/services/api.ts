@@ -66,7 +66,7 @@ export const API_BASE = BASE
 
 const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
   RAG_QUERY_CLARIFICATION_REQUIRED: '请补充要检索的资料名称或主题。',
-  RAG_RETRIEVAL_ONLY: '资料由 Data Engine 管理；请在对话中检索已授权资料。',
+  RAG_RETRIEVAL_ONLY: '请在「资料与边界 → 原材料」导入，Data Engine 处理完成后回到对话检索并确认使用。',
   RAG_RISK_RESULT_UNKNOWN: '风险放行结果未能确认，不能重复领取；请重新发送问题，重新检索并确认。',
   REDACTION_NOT_READY: '部分资料仍在完成隐私处理，请稍后重试。',
   MATERIAL_PRIVACY_NOT_READY: '这份资料仍在完成隐私处理，请稍后重试。',
@@ -171,10 +171,19 @@ export interface ImportValidationResult {
 
 // MindOS 上传/处理状态（uploaded 上传中 / queued 等待处理 / processing 处理中 / available 已完成）
 // 文案与语义色统一映射见 src/shared/status.ts
-export type MaterialStatus = 'uploaded' | 'queued' | 'processing' | 'available' | 'failed' | 'deleted'
+export type MaterialStatus = 'uploaded' | 'queued' | 'processing' | 'available' | 'failed' | 'recycled' | 'restoring' | 'purging' | 'deleted'
+export interface MaterialSensitiveScanProgress {
+  state: 'queued' | 'processing' | 'completed' | 'failed' | 'canceled'
+  completedFields: number
+  totalFields: number
+  retryable: boolean
+  errorCode?: string | null
+  updatedAt?: number | null
+}
 export type MaterialKnowledgeCardState = 'waiting' | 'generating' | 'draft' | 'confirming' | 'indexing' | 'available' | 'failed' | 'recycled' | 'unknown' | 'draft_failed' | 'index_failed' | 'state_conflict' | 'recycling' | 'restoring' | 'purging' | 'purged' | 'merged'
 
 export interface UploadResult {
+  sensitiveScan?: MaterialSensitiveScanProgress | null
   materialId: string
   fileName: string
   fileType: 'document' | 'image' | 'audio'
@@ -1383,7 +1392,7 @@ export const api = {
   retryUpload: (materialId: string) => postJson<UploadResult>(`/mindos/uploads/${materialId}/retry`, {}),
   // 服务中断后显式继续持久化的暂停任务。
   resumeUpload: (materialId: string) => postJson<UploadResult>(`/mindos/uploads/${materialId}/resume`, {}),
-  listMaterials: (params: { type?: string; status?: string; keyword?: string; folderId?: number; folder?: string; tag?: string; recycled?: boolean } = {}) => {
+  listMaterials: (params: { type?: string; status?: string; keyword?: string; folderId?: number; folder?: string; tag?: string; recycled?: boolean; limit?: number; offset?: number } = {}) => {
     const query = new URLSearchParams()
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== '') query.set(key, String(value))

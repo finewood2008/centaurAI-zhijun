@@ -8,7 +8,9 @@
 
 ## 当前桌面的材料检索
 
-正式桌面和盒端 workspace 使用 Data Agent RAG V2 的检索专用子集。材料由 Data Engine Web 或内部受控流程接收、解析、索引和预识别；知君不上传文件，不创建或轮询材料任务，也不管理材料版本、知识卡或扫描重试。桌面旧资料维护路由显示检索说明，入口调整不删除历史资料。源码中的本机开发及历史附件逻辑不是正式 worker 的可用能力。
+对话中的材料上下文使用 Data Agent RAG V2 的检索专用子集；这不等于知君产品只有检索入口。“资料与边界”保留原材料导入、文件夹、列表、处理状态、文件详情、知识卡片和回收站管理。桌面通过既有工作区鉴权与操作白名单调用 Data Engine 的材料管理能力，解析、索引和预识别仍由 Data Engine 完成，不在知君另建解析队列。
+
+材料管理与对话使用是两个独立入口：上传、查看原件或确认知识卡片，不代表允许模型使用或外发该材料。对话输入框的历史自动附件上传/读取链路本次不恢复；需要讨论资料时，先在“资料与边界”导入，再在对话中检索、审阅和确认使用。材料管理接口不得作为 Search 或 Evidence Resolve 失败后的原文回退路径，敏感扫描启动与重试仍由 Data Engine 管理端负责。
 
 - 需要资料时，知君组织独立 Query；仅使用获准的相关用户历史消解指代，不把完整 messages、身份或工具声明传给 Search。
 - 普通闲聊不强制检索整个资料库；不限制材料时搜索当前 App 的授权就绪资料，指定范围只能缩小权限。
@@ -27,7 +29,7 @@
 - 材料审阅状态仅在当前 worker 内短期保存，重启或过期后重新检索和选择；历史引用不自动获得永久可读权限。
 - App ID/Secret 由盒端可信后端管理，普通确认 Token 和风险 Token 仅留在 worker 的短期状态中。默认长期凭据文件为 `$CENTAUR_SECRET_STORE_DIR/data-agent-rag-v2.json`，也可由 `ZHIJUN_DATA_AGENT_CREDENTIAL_FILE` 指向绝对路径；Renderer、日志和对话记录不得取得 Secret 或确认 Token。生产环境的 `CENTAUR_SECRET_STORE_DIR` 位于 Gateway 独立 secrets root 的 `rag-v2/<workspaceId>` 下，必须与工作区业务数据根互不包含。
 - 凭据文件必须由 worker 运行账户持有且权限为 `0600`。Data Engine Gateway 在工作区 worker 激活边界按需创建一次长期 App；只有 active、未过期、owner/device/workspace 绑定和 Secret 全部精确匹配，且能力完整时才复用。已停用、已撤销或缺少能力的 App 一律失败关闭，不会自动恢复权限。
-- 检索最小能力为 `mindos.read`、`mindos.search`、`mindos.sensitive.confirm`；规则管理按需加 `mindos.sensitive.policy.write`，原文按部署策略加 `mindos.sensitive.original.read`。知君不需要 import/upload.status；但当前 DE provisioning 仍含历史能力集合，不能据此宣称既有 App 已自动缩权。实际授权由 DE 团队受控配置；ownership epoch 变化不能扫描或批量停用其他应用。
+- 对话检索最小 App 能力为 `mindos.read`、`mindos.search`、`mindos.sensitive.confirm`；规则管理按需加 `mindos.sensitive.policy.write`，原文按部署策略加 `mindos.sensitive.original.read`。资料库导入管理使用现有 Gateway 的 `materials` 操作通道，不借此扩展 RAG App 权限，也不调用其历史 import/upload.status。当前 DE provisioning 仍含历史能力集合，不能据此宣称既有 App 已自动缩权。实际授权由 DE 团队受控配置；ownership epoch 变化不能扫描或批量停用其他应用。
 - Data Agent 地址优先使用 `ZHIJUN_DATA_AGENT_BASE_URL`；未设置时取 `ZHIJUN_CAPABILITY_URL` 的同源地址，最后才使用回环默认地址。非回环 HTTP 会被拒绝。
 - “偏好 → 敏感规则”通过知君可信后端管理 Data Agent 规则：可查看内置和自定义规则，创建、编辑、启停及删除自定义规则。内置规则只读；容量和检测提示词预算始终读取服务端返回值，不在前端写死。
 - 更新/删除使用服务端 revision 对应的 `ETag`/`If-Match` 做并发控制，Renderer 只接触 revision。`CUSTOM_RULE_SIMILAR` 先展示相似规则，用户确认用途不同后以新幂等键和 `acknowledgeSimilarRuleId` 重提。

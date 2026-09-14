@@ -371,12 +371,15 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     if (operation === 'claimDevice') {
       assert(typeof auth.claimDevice === 'function', 'OPERATION_NOT_ALLOWED');
       assert(['selecting_device', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
-      assert(safeText(input, 64) && input.trim().length >= 6);
+      assert(typeof input === 'string' && /^(?:[A-Z2-7]{10}|[A-Z2-7]{20})$/.test(input));
       const gen = generation;
-      const claimed = await bounded(callAdapter(() => auth.claimDevice(input.trim())), gen);
+      const claimed = await bounded(callAdapter(() => auth.claimDevice(input)), gen);
       ensureCurrent(gen);
       const projected = validateDevices([claimed])[0];
-      devices = [...devices.filter(value => value.deviceId !== projected.deviceId), projected];
+      ++devicesRevision;
+      // A redeem receipt is not authorization: only listDevices' verified
+      // bootstrap projection may add this device to the connectable list.
+      devices = devices.filter(value => value.deviceId !== projected.deviceId);
       return { ...projected };
     }
     if (operation === 'connect') {

@@ -18,7 +18,7 @@ export function useChatImports(options: {
   const retrievalOnly = ref(isDesktopProduct())
   function importBlocked() {
     if (!retrievalOnly.value) return false
-    options.notify('资料由 Data Engine 管理；请在对话中检索已授权资料。')
+    options.notify('请在「资料与边界 → 原材料」导入，Data Engine 处理完成后回到对话检索并确认使用。')
     return true
   }
   const batches = ref<ChatImportBatch[]>([])

@@ -1,6 +1,6 @@
 # 知君产品架构
 
-本文是现行架构入口，按 2026-09-13 的代码及已核验部署边界更新，覆盖知君桌面及其依赖的盒端、连接和云端服务。开发模式、历史兼容代码和待建设的 OTA 纳管能力不等于已交付能力。
+本文是现行架构入口，按 2026-09-14 的代码及已核验部署边界更新，覆盖知君桌面及其依赖的盒端、连接和云端服务。代码中的功能恢复不表示旧安装包已更新；开发模式、历史兼容代码和待建设的 OTA 纳管能力不等于已交付能力。
 
 产品定位见 [产品定义](../product/PRODUCT.md)。机器地址、容器 ID、安装包版本及摘要属于发布记录，不是架构常量。
 
@@ -62,8 +62,8 @@ Electron main
 下面展开相邻 Data Engine 当前源码的接线，不是某台盒子的运行进程清单。后台扫描、重排等可选能力是否生效还需核验部署开关和模型；不把设计文档中的规划节点当成现行服务。
 
 ```text
-材料准备面（Data Engine 管理；当前知君不上传材料）
-DE Web / 内部受控接收
+材料准备面（Data Engine 执行；知君提供资料管理界面）
+知君“资料与边界” → 已认证 Gateway materials 操作 / DE Web / 内部受控接收
   → Upload Runtime → 原件文件存储 + 材料登记 / App 归属
   → MaterialWorker：解析、提取
       → SQLite：任务、版本、快照元数据、结构化解析片段
@@ -239,7 +239,14 @@ Search 只接收独立 Query、检索类型、Top-K、实际 Search 的 `interac
 
 ### 5.4 材料维护与可选规则管理
 
-新版知君是**检索专用接入**：材料由 Data Engine Web 或内部受控流程接收。知君不上传文件、不创建/轮询材料任务、不管理材料版本、摘要、知识卡或扫描重试。桌面旧资料维护路由显示检索说明，入口调整不删除历史资料；保留旧源码不表示正式 worker 仍允许调用。
+知君区分**资料管理面**与**对话检索面**，不能把 RAG 接口的检索专用合同理解为删除产品的资料管理功能。
+
+- “资料与边界”提供原材料导入、文件夹与列表、上传进度和处理状态、文件详情、知识卡片、回收站及资料搜索入口。用户发起的操作经桌面窄 IPC、Remote Agent、工作区 Gateway 与 `product-operations.json` 中的 `materials` 白名单分发到 Data Engine，保留工作区身份、资源范围和变更校验；不开放任意 HTTP 代理。
+- 对话检索仍由 worker 使用 Data Agent RAG V2 App REST。导入、预览、下载原件或管理知识卡片均不等于授权模型使用；进入回答前仍须检索、用户选材、敏感交付及外发授权检查，不能以管理接口读取结果绕过这些步骤。
+- 原材料管理页面恢复不同时恢复对话输入框的旧自动附件读取链路，也不改变历史记录或自动重跑旧导入批次。敏感扫描启动、重试和历史回填仍属于 Data Engine 管理端。
+- 原材料两页的信息结构参考 Data Engine 普通 Web（不是 Pc 页面）：列表按 50 条分页，提供筛选、上传百分比、后台无闪屏刷新及敏感识别状态；详情按概览、受控原文件预览、解析正文、人工标签、相关内容和版本组织，知识卡片保留为知君的独立辅助区域。`sensitiveScan` 为可选投影，识别完成不代表已脱敏或获得外发授权；不复制 Web 默认 App 配置与未开放的敏感重试接口。
+- 分页发行依赖：`get_api_mindos_materials` 的 query 白名单新增 `limit`、`offset`，客户端和盒端 Gateway 使用的 `frontend/shared/product-operations.json` 必须同步部署；旧清单会拒绝分页请求。Data Engine 已有材料管理分发支持这两个参数，本次不修改 Data Engine 源码或新增 App 权限。安装包构建不代表盒端清单已经更新。
+- 新版 DE 已退休的旧摘要、智能分析、派生重生成和逐材料隐私复核接口不随页面恢复重新启用。桌面详情保留正文与原件、草稿知识卡片和版本管理，明确说明旧派生功能由 Data Engine 管理；不能在打开详情时继续调用退休接口或轮询不存在的摘要。
 
 解析、索引、敏感预识别及后台重扫属于 Data Engine。启用持久预识别交付时，Search 读取已持久化检测事实并检查覆盖状态；未启用时，当前运行时仍可走按请求的混合检测，因此不能承诺所有部署的检索都不等待检测模型。源码中 `MINDOS_SENSITIVE_PRECOMPUTE_SCAN_ENABLED` 与 `MINDOS_PRECOMPUTED_SENSITIVE_DELIVERY_ENABLED` 默认均关闭，后者要求前者开启；源码默认值不是某台盒子的实际配置。此分支由 DE 团队维护，知君只消费统一的状态、提示和交付结果。
 
@@ -273,7 +280,7 @@ NPU-only 是盒端**本地模型推理执行约束**，由 CentaurOS 的运行�
 | worker → RAG REST | `X-App-Id` / `X-App-Secret`、应用能力、材料及策略版本 | 每次提问不轮换凭据，遇到停用/撤权不自动恢复权限 |
 | worker → DE 模型出口 | worker proof、活动 execution/lease、服务与配置、来源、用途、实际请求许可 | 材料交付与使用确认不等于在线外发许可 |
 
-检索专用最小能力为 `mindos.read`、`mindos.search`、`mindos.sensitive.confirm`；规则管理按需增加 `mindos.sensitive.policy.write`，原文领取按部署策略增加 `mindos.sensitive.original.read`。当前产品不需要 import、上传状态或材料版本管理权限。
+对话检索最小 App 能力为 `mindos.read`、`mindos.search`、`mindos.sensitive.confirm`；规则管理按需增加 `mindos.sensitive.policy.write`，原文领取按部署策略增加 `mindos.sensitive.original.read`。资料管理通过独立的 Gateway `materials` 操作通道及工作区资源鉴权，不要求把 RAG App 的历史 import/upload.status 或版本管理接口重新用作材料管理入口。
 
 这不代表已有 App 已自动缩权：相邻 DE 当前 `rag_v2_provisioning.py` 的历史能力集合仍含 import/upload.status。知君不使用这些能力，实际授予范围须核验；能力治理由 DE 团队按完整集合、修订与现有 App 状态受控变更，本次 worker 升级不会自动扩权、缩权或轮换 Secret。
 

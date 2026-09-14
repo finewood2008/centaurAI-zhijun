@@ -153,7 +153,7 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
   await api.sendRegistrationCode(context, '13800000000')
   await api.resetPassword(context, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' })
   await api.registerWithPassword(context, { phone: '13800000000', password: 'Synthetic-pass-1', code: '123456', rememberPassword: true })
-  await api.claimDevice(context, 'ABCD-EFGH-IJKL-MNOP')
+  await api.claimDevice(context, 'ABCDEFGH23')
   await api.openProvisioning(context)
   assert.deepEqual(invocations.slice(2).map(value => [value[0], value[1], [...value[2]]]), [
     ['zhijun:invoke', 'getRememberedLogin', [context]],
@@ -161,7 +161,7 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
     ['zhijun:invoke', 'sendRegistrationCode', [context, '13800000000']],
     ['zhijun:invoke', 'resetPassword', [context, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' }]],
     ['zhijun:invoke', 'registerWithPassword', [context, { phone: '13800000000', password: 'Synthetic-pass-1', code: '123456', rememberPassword: true }]],
-    ['zhijun:invoke', 'claimDevice', [context, 'ABCD-EFGH-IJKL-MNOP']],
+    ['zhijun:invoke', 'claimDevice', [context, 'ABCDEFGH23']],
     ['zhijun:invoke', 'openProvisioning', [context]],
   ])
 })
