@@ -1446,8 +1446,14 @@ class OntologyStore:
             if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (kind, owner_id)).fetchone():
                 return None
         job_id = f"ojob_{uuid.uuid4().hex[:12]}"
-        from zhijun_worker.background import register
-        register(job_id, kind)
+        from zhijun_worker.background import register, BackgroundEnqueueError
+        registration_error = None
+        try:
+            register(job_id, kind)
+        except Exception as exc:
+            # Never queue a task whose execution origin was not authorized.
+            # Keep a failed record so existing manual recovery can recheck it.
+            registration_error = BackgroundEnqueueError(job_id, exc)
         now = time.time()
         with self._lock, self._connect() as conn:
             try:
@@ -1455,12 +1461,17 @@ class OntologyStore:
                     """
                     INSERT INTO ontology_jobs
                         (job_id, kind, owner_id, state, priority, attempts, input_hash, payload_json, created_at, updated_at)
-                    VALUES (?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                     """,
-                    (job_id, kind, owner_id, int(priority), input_hash or "", _json(payload or {}), now, now),
+                    (job_id, kind, owner_id, 'failed' if registration_error else 'queued', int(priority), input_hash or "", _json(payload or {}), now, now),
                 )
+                if registration_error:
+                    conn.execute("UPDATE ontology_jobs SET failure_class='registration', error_code=?, error_detail=?, finished_at=? WHERE job_id=?",
+                                 (registration_error.code, '后台整理未能登记，原消息已保留；重试前需重新核对授权。', now, job_id))
             except sqlite3.IntegrityError:
                 return None
+        if registration_error:
+            raise registration_error
         return job_id
 
     def claim_next_job(self, owner: str, lease_seconds: float = 120.0) -> dict | None:

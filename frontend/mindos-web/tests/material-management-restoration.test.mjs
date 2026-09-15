@@ -35,7 +35,7 @@ function pageSetup(name, load) {
   const exports = {}, mounts = [], cleanups = [], navigations = [], notices = []
   const req = id => {
     if (id === 'vue') return { ...Vue, onMounted: fn => mounts.push(fn), onBeforeUnmount: fn => cleanups.push(fn) }
-    if (id === 'vue-router') return { useRoute: () => ({ query: {} }), useRouter: () => ({ push: path => navigations.push(path) }) }
+    if (id === 'vue-router') return { onBeforeRouteLeave: () => {}, useRoute: () => ({ query: {} }), useRouter: () => ({ push: path => navigations.push(path) }) }
     if (id === '@/composables/useToast') return { useToast: () => value => notices.push(value) }
     if (id.startsWith('@/components/') || id === 'lucide-vue-next') return {}
     if (id.startsWith('@/')) return load(id.slice(2))

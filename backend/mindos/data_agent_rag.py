@@ -157,6 +157,8 @@ def _public_pending(interaction_id: str, entry: _Entry) -> dict:
     )
     return {
         "interactionId": interaction_id,
+        "query": entry.review_context.get("query", ""),
+        "scopeLabel": entry.review_context.get("scopeLabel", "已授权资料"),
         "status": ("sensitive_confirmation_required" if entry.state == "sensitive_confirmation_required"
                    else "sensitive_check_unavailable"),
         "hits": hits,
@@ -283,6 +285,9 @@ def _search_result(data: dict, material_ids: list[str], interaction_id: str) -> 
     if not isinstance(data, dict) or not isinstance(data.get("status"), str):
         raise ValueError("RAG_V2_SEARCH_INVALID")
     state = data["status"]
+    if state not in {"ok", "no_results", "sensitive_content_blocked",
+                     "sensitive_confirmation_required", "sensitive_check_unavailable"}:
+        raise ValueError("RAG_V2_SEARCH_INVALID")
     if state == "sensitive_confirmation_required":
         if not set(data) <= {"status", "confirmation", "detectionNotice"}:
             raise ValueError("RAG_V2_SEARCH_INVALID")
@@ -338,7 +343,10 @@ def _search_result(data: dict, material_ids: list[str], interaction_id: str) -> 
            or item["detectorRevision"] != data["detectorRevision"]
            for item in items):
         raise ValueError("RAG_V2_SEARCH_INVALID")
-    if state == "no_results" and items:
+    if state in {"no_results", "sensitive_content_blocked"} and items:
+        raise ValueError("RAG_V2_SEARCH_INVALID")
+    if (state == "no_results" and data.get("detectionNotice") is not None
+            and data["detectionNotice"]["retrievedCount"] > 0):
         raise ValueError("RAG_V2_SEARCH_INVALID")
     if state == "sensitive_check_unavailable" and items:
         raise ValueError("RAG_V2_SEARCH_INVALID")

@@ -155,13 +155,24 @@ function storedSession(value, now) {
     refreshToken: value.refreshToken, identityKey: value.identityKey, expiresAt: value.expiresAt,
     sessionExpiresAt: value.sessionExpiresAt });
 }
+const SESSION_REJECTION_CODES = new Set(['AUTH_REQUIRED', 'AUTHENTICATION_REQUIRED', 'AUTH_SESSION_EXPIRED']);
+function sessionRejected(result) {
+  // Only explicit authentication responses are terminal/refreshable. A service
+  // failure or arbitrary 403 must never erase a valid persisted login.
+  const explicit = result.code < 500 && result.success === false;
+  return result.code === 401 || (explicit && (SESSION_REJECTION_CODES.has(result.errorCode) || result.errorCode === 'CLIENT_REVOKED'));
+}
+function refreshableSessionRejected(result) {
+  if (result.code < 500 && result.success === false && result.errorCode === 'CLIENT_REVOKED') fail('SESSION_EXPIRED');
+  return sessionRejected(result);
+}
 function checkEnvelope(result, connectivity = false, purpose = 'auth') {
   const remoteCode = text(result.errorCode, 128) ? result.errorCode
     : plain(result.data) && text(result.data.errorCode, 128) ? result.data.errorCode : undefined;
   const reject = code => { throw new DesktopError(code, { httpStatus: result.httpStatus,
     ...(remoteCode ? { remoteCode } : {}), ...(text(result.requestId, 128) ? { traceId: result.requestId } : {}) }); };
   if (connectivity && result.applicationDenied) throw new DesktopError('APPLICATION_AUTHORIZATION_DENIED', { phase: 'ticket', httpStatus: result.httpStatus });
-  if (result.code === 401) reject('AUTHENTICATION_REQUIRED');
+  if (sessionRejected(result)) reject('AUTHENTICATION_REQUIRED');
   if (purpose === 'console-claim' && result.code === 403
     && ['CONSOLE_CLAIM_DISABLED', 'FEATURE_NOT_AVAILABLE'].includes(remoteCode)) reject('DEVICE_AUTHORIZATION_NOT_ENABLED');
   if (result.code === 403) reject('ACCESS_DENIED');
@@ -246,6 +257,10 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       // Gateways may return an HTML error page. The HTTP status is sufficient
       // to classify a service outage; never parse or reflect that response.
       const modernEnvelope = route === CONSOLE_CLAIM_ROUTE || route.startsWith('/app-api/v1/');
+      if (response.status === 401 && !/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') || '')) {
+        await response.body?.cancel();
+        return { code: 401, success: false, httpStatus: 401 };
+      }
       if (response.status >= 500 && response.status <= 599
           && !(modernEnvelope && /^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type') || ''))) {
         await response.body?.cancel();
@@ -322,7 +337,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
   async function protectedRequest(method, route, body, extraHeaders) {
     const expected = epoch;
     let response;
-    try { response = await auth.authorized(current => request(method, route, body, requireLoginDeadline(current), extraHeaders), result => result.code === 401); }
+    try { response = await auth.authorized(current => request(method, route, body, requireLoginDeadline(current), extraHeaders), refreshableSessionRejected); }
     catch (error) {
       if (['AUTH_SESSION_MISSING', 'AUTH_SESSION_CHANGED', 'AUTH_INVALID_SESSION'].includes(error?.code)) fail('SESSION_EXPIRED');
       if (error?.code === 'AUTH_SESSION_STORAGE_FAILED') fail('SECURE_STORAGE_UNAVAILABLE');
@@ -333,7 +348,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       throw error;
     }
     if (disposed || expected !== epoch) fail('AUTHENTICATION_REQUIRED');
-    if (response.code === 401) { await auth.clear(); fail('SESSION_EXPIRED'); }
+    if (sessionRejected(response)) { await auth.clear(); fail('SESSION_EXPIRED'); }
     return checkEnvelope(response, route.endsWith('/connectivity/sessions'));
   }
   async function protectedPairingRequest(method, route, body, extraHeaders, validate, signal) {
@@ -360,7 +375,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
         fail('STALE_GENERATION');
       }
       return request(method, route, body, requireLoginDeadline(current), extraHeaders, signal);
-    }, result => result.code === 401); }
+    }, refreshableSessionRejected); }
     catch (error) {
       if (['AUTH_SESSION_MISSING', 'AUTH_SESSION_CHANGED', 'AUTH_INVALID_SESSION'].includes(error?.code)) fail('SESSION_EXPIRED');
       if (error?.code === 'AUTH_SESSION_STORAGE_FAILED') fail('SECURE_STORAGE_UNAVAILABLE');
@@ -370,7 +385,7 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       throw error;
     }
     if (disposed || expected !== epoch) fail('AUTHENTICATION_REQUIRED');
-    if (response.code === 401) { await auth.clear(); fail('SESSION_EXPIRED'); }
+    if (sessionRejected(response)) { await auth.clear(); fail('SESSION_EXPIRED'); }
     return response;
   }
   async function establishSession(credentials, route, body, guard) {
@@ -457,8 +472,9 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       if (disposed || expected !== epoch) fail('STALE_GENERATION');
       if (data.account.accountId !== current.accountId || !plain(data.account.currentClient)
         || data.account.currentClient.clientId !== current.clientId || data.account.currentClient.isCurrent !== true) fail();
-      if (data.account.accountStatus !== 'active' || data.account.currentClient.clientStatus !== 'active'
-        || data.account.currentClient.hasActiveSession !== true) fail('ACCESS_DENIED');
+      if (data.account.accountStatus !== 'active' || data.account.currentClient.clientStatus !== 'active') fail('ACCESS_DENIED');
+      if (data.account.currentClient.hasActiveSession === false) { await auth.clear(); fail('SESSION_EXPIRED'); }
+      if (data.account.currentClient.hasActiveSession !== true) fail('ACCESS_DENIED');
       const ids = new Set();
       return data.devices.map(device => {
         if (!plain(device) || !DEVICE_ID.test(device.deviceId)

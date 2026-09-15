@@ -109,6 +109,45 @@ async function connectionComponentFixture(savedLoginError, resetError) {
   return { source, ui, controls, viewState, close() { cleanups.forEach(callback => callback()); scope.stop() } }
 }
 
+test('temporary account outage keeps the session and offers explicit recovery instead of an empty-account claim', async () => {
+  const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+  try {
+    f.viewState.value = { ...f.viewState.value,
+      snapshot: { ...snapshot('selecting_device', 2, 3), environment: 'production' },
+      error: { code: 'ACCOUNT_SERVICE_UNAVAILABLE', message: '账号服务暂时无法完成请求。' } }
+    await Vue.nextTick()
+    assert.equal(f.ui.accountServiceUnavailable.value, true)
+    assert.equal(f.ui.showAuth.value, false)
+    assert.equal(f.controls.length, 0, 'a transient outage must not automatically sign out or retry')
+    assert.match(f.source, /v-else-if="!state\.devices\.length && accountServiceUnavailable"[^>]*data-testid="device-list-unavailable"/)
+    assert.match(f.source, /data-testid="retry-account-devices" @click="controller\.loadDevices\(\)"/)
+    assert.match(f.source, /data-testid="reauthenticate" @click="signOut"/)
+    f.ui.signOut()
+    assert.deepEqual(f.controls.at(-1), { operation: 'signOut', input: undefined })
+    assert.equal(f.ui.authMode.value, 'login')
+    f.viewState.value = { ...f.viewState.value, error: null }
+    assert.equal(f.ui.accountServiceUnavailable.value, false, 'a successful retry restores the normal list/empty state')
+  } finally { f.close() }
+})
+
+test('terminal session expiration immediately renders the login state without requiring manual sign-out', async () => {
+  const f = await connectionComponentFixture('SESSION_EXPIRED')
+  try {
+    f.viewState.value = { ...f.viewState.value,
+      snapshot: { ...snapshot('selecting_device', 2, 3), environment: 'production' } }
+    await Vue.nextTick()
+    assert.equal(f.ui.showAuth.value, false)
+    f.viewState.value = { ...f.viewState.value,
+      snapshot: { ...snapshot('failed', 3, 4), environment: 'production', subject: null },
+      error: { code: 'SESSION_EXPIRED', message: '登录已过期，请重新登录。' } }
+    await Vue.nextTick()
+    assert.equal(f.ui.showAuth.value, true)
+    assert.equal(f.ui.canSignIn.value, true)
+    assert.equal(f.ui.accountServiceUnavailable.value, false)
+    assert.equal(f.controls.length, 0, 'the renderer must not start a sign-out loop')
+  } finally { f.close() }
+})
+
 test('claim UI strictly validates Base32 codes without normalization and clears on success', async () => {
   const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
   try {

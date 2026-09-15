@@ -95,6 +95,7 @@ interface UiMessage extends Message {
   streaming?: boolean
   // 抽取被跳过 / 还在整理时，这条回复下方的一行灰字
   extractionNote?: string
+  backgroundFailures?: string[]
 }
 
 const route = useRoute()
@@ -160,7 +161,9 @@ const reviewBusy = reactive<Record<string, boolean>>({})
 const listRef = ref<HTMLElement | null>(null)
 const composerRef = ref<InstanceType<typeof Composer> | null>(null)
 const matterWorkspace = ref<InstanceType<typeof MatterWorkspace> | null>(null)
-const matterSuspension = computed(() => messages.value.filter(m => m.role === 'assistant' && m.status === 'complete').at(-1)?.provenance?.contextPlan?.matterSuspended)
+// Failed/prepared replies also carry a topic boundary. Do not restore the old
+// matter merely because the latest answer failed or has not streamed yet.
+const matterSuspension = computed(() => messages.value.filter(m => m.role === 'assistant' && m.provenance?.contextPlan && 'matterSuspended' in m.provenance.contextPlan).at(-1)?.provenance?.contextPlan?.matterSuspended)
 
 // P2：判断草稿（商量模式）与回访会话
 const draft = ref<DecisionDraft | null>(null)
@@ -468,6 +471,8 @@ let abortController: AbortController | null = null
 // 新建会话后先本地替换路由，再由本页继续流式；此时跳过 watcher 的重新加载。
 let skipLoadFor: string | null = null
 let importingTurn = false
+let conversationCreation: Promise<Conversation> | null = null
+let conversationNavigation = 0
 
 const currentId = computed(() => {
   const id = route.params.conversationId
@@ -530,7 +535,7 @@ const modelBlocked = computed(() => modelUnavailable(status.value))
 // 后台还没整理完的事（抽取 / 草稿 / 摘要），页头只用一句淡字提示
 const pendingJobs = computed(() => status.value?.pendingJobs ?? 0)
 
-// ---- 空白态的三张起手卡：点一下把话头放进输入框，不自动发送
+// ---- 空白态的四张起手卡：替换当前话头，不自动发送
 interface Starter { title: string; desc: string; text: string; deliberate?: boolean }
 const STARTERS: Starter[] = [
   { title: '一起想清楚一件事', desc: '理清目标与取舍，需要时形成判断，由你核对后保存', text: '我在考虑一件事：', deliberate: true },
@@ -540,7 +545,7 @@ const STARTERS: Starter[] = [
 ]
 function useStarter(s: Starter) {
   composerRef.value?.setDeliberate(!!s.deliberate)
-  composerRef.value?.appendText(s.text)
+  composerRef.value?.replaceText(s.text)
 }
 
 function setPrefillLocalOnly(value: boolean) {
@@ -895,13 +900,15 @@ watch(
     if (previousId && id !== previousId && chatPreparation.value?.conversationId === previousId) abortController?.abort()
     // 进了任何一个会话（含刚从强制建档态新建的），?onboarding=1 的强制就结束
     if (id) forceOnboarding.value = false
-    const creatingPrefilledConversation = (streaming.value || importingTurn) && id && skipLoadFor === id
+    const creatingPrefilledConversation = id && skipLoadFor === id && current.value?.id === id
     const receivingPrefilledPrompt = typeof route.query.say === 'string' && !!route.query.say
     if (previousId !== undefined && id !== previousId && !creatingPrefilledConversation && !receivingPrefilledPrompt) setPrefillLocalOnly(false)
     if (creatingPrefilledConversation) {
       skipLoadFor = null
+      scheduleConversationAuxiliary(id)
       return
     }
+    conversationNavigation++
     skipLoadFor = null
     if (id) loadConversation(id)
     else resetToLanding()
@@ -946,6 +953,8 @@ function selectConversation(id: string, messageId?: string) {
 
 function newConversation() {
   listOpen.value = false
+  // A second click on the blank page invalidates an in-flight lazy creation.
+  if (!currentId.value) conversationNavigation++
   if (guidedOnboarding.value) {
     void skipOnboarding()
     return
@@ -978,11 +987,25 @@ async function confirmDelete() {
 }
 
 async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversation> {
-  if (current.value) return current.value
+  if (current.value && current.value.id === currentId.value) return current.value
+  if (currentId.value) throw new Error('对话正在读取，请稍后再试')
+  if (conversationCreation) return conversationCreation
+  const navigation = conversationNavigation
+  const check = () => {
+    if (!alive || navigation !== conversationNavigation || currentId.value) throw new Error('已切换对话，本次创建不会关联到其他对话，请重新打开事情与成果')
+  }
+  const pending = createCurrentConversation(mode, check)
+  conversationCreation = pending
+  try { return await pending }
+  finally { if (conversationCreation === pending) conversationCreation = null }
+}
+
+async function createCurrentConversation(mode: 'chat' | 'onboarding', check: () => void): Promise<Conversation> {
   if (mode === 'onboarding') {
     const progress = await updateOnboarding('start')
     if (!progress.conversationId) throw new Error('建档会话没有创建成功')
     const detail = await getConversation(progress.conversationId)
+    check()
     const conv = detail.conversation
     current.value = rememberConversationMetadata(conv)
     messages.value = detail.messages.map(toUi)
@@ -995,6 +1018,10 @@ async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversa
     return conv
   }
   const conv = await createConversation({ mode })
+  check()
+  // Persist the blank input under its newly created conversation before the
+  // Composer's conversation watcher runs. Keep provenance and undo intact.
+  composerRef.value?.adoptLandingDraft(conv.id)
   current.value = rememberConversationMetadata(conv)
   conversations.value = [conv, ...conversations.value]
   skipLoadFor = conv.id
@@ -1155,6 +1182,13 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
       {
         decision_draft: (d) => {
           const e = d as DecisionDraftEvent
+          if (e.state === 'failed') {
+            draftPending.value = false
+            draftTimedOut.value = false
+            draftPollGate.invalidate()
+            draftError.value = '回答已保存，但判断草稿整理未完成，请稍后重新整理。'
+            return
+          }
           if (e.state === 'queued' || !e.fields || !e.draftId) {
             draftPending.value = true
             draftTimedOut.value = false
@@ -1211,7 +1245,19 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
             void alignmentPrivacy.value?.refresh()
             if (conv.mode === 'onboarding') void pollMap()
           } else if (e.state === 'skipped') {
-            assistant.extractionNote = extractionSkipNote(e.reason)
+            if (!assistant.backgroundFailures?.length) assistant.extractionNote = extractionSkipNote(e.reason)
+          } else if (e.state === 'failed') {
+            // Background bookkeeping failed after the answer was saved. Keep
+            // the answer intact and expose the separate, retryable task state.
+            const note = !e.jobId
+              ? '回答已保存，但整理任务未能保存；请稍后检查整理状态。'
+              : e.taskKind === 'charter_draft'
+                ? '回答已保存，但人生章程草稿整理未完成，请稍后重新整理。'
+                : '回答已保存，但个人理解整理未完成，可在“模型与授权”中重新整理。'
+            assistant.backgroundFailures = [...new Set([...(assistant.backgroundFailures || []), note])]
+            assistant.extractionNote = assistant.backgroundFailures.join('\n')
+            void refreshMemoryAttention(conv.id)
+            void routingPanel.value?.refresh()
           }
         },
         message_done: (d) => {
@@ -1583,7 +1629,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="zj-page__tools">
           <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" @jobs-resumed="onMemoryJobsResumed" />
-          <MatterWorkspace v-if="loadedConversationId && conversationAuxPhase >= 2 && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
+          <MatterWorkspace v-if="(!currentId || loadedConversationId) && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :ensure-conversation="async () => (await ensureConversation('chat')).id" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
           <button v-if="decision" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('review')">观察与复盘</button>

@@ -668,8 +668,8 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
         all_messages = [m for m in all_messages if m["seq"] < retry_message["seq"]]
     from .context_sources import bound_matter
     from .memory_context import matter_control
-    matter_binding, _ = bound_matter(router)
-    matter_state = matter_control(router, content, matter_binding, all_messages)
+    matter_binding, matter_candidate = bound_matter(router)
+    matter_state = matter_control(router, content, matter_binding, all_messages, matter_title=matter_candidate["title"] if matter_candidate else "")
     recent = all_messages[-12:]
     cutoff = router.mode["cutoff"] if p.external else 0
     chars = 0

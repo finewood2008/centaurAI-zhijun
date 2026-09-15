@@ -403,12 +403,17 @@ class OllamaProvider:
     name = "ollama"
     external = False
 
-    def __init__(self, base_url: str, model: str, *, timeout: float, keep_alive: int = 0, num_ctx: int = DEFAULT_LOCAL_NUM_CTX) -> None:
+    def __init__(self, base_url: str, model: str, *, timeout: float, keep_alive: int = 0, num_ctx: int = DEFAULT_LOCAL_NUM_CTX,
+                 gpu_policy: bool = False) -> None:
         self._base_url = base_url.rstrip("/")
         self.model = model
         self._timeout = timeout
         self._keep_alive = keep_alive
         self._num_ctx = int(num_ctx)
+        self._gpu_policy = gpu_policy
+        if gpu_policy and (self._base_url != "http://127.0.0.1:11435" or model != "qwen3:1.7b"
+                           or self._num_ctx != 4096 or keep_alive != 300):
+            raise ProviderError("GPU 部署配置不符合已签约的本地模型服务", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
 
     def _body(self, req: ChatRequest, *, stream: bool) -> dict:
         body = {
@@ -421,6 +426,10 @@ class OllamaProvider:
         }
         if req.json_schema is not None:
             body["format"] = "json"
+        if self._gpu_policy:
+            if type(req.max_tokens) is not int or req.max_tokens < 1:
+                raise ProviderError("GPU 输出预算必须为正整数", code="MODEL_REQUEST_INVALID", retryable=False)
+            body["options"].update(num_predict=min(req.max_tokens, 512), num_ctx=4096, num_thread=1, num_gpu=99)
         return body
 
     def stream(self, req: ChatRequest) -> Iterator[ChatEvent]:
@@ -699,15 +708,21 @@ def build_provider(snapshot=None) -> ChatProvider:
         ).encode("utf-8")).hexdigest() if isolated else None
         return result
     local = snap.local
+    if getattr(local, "configuration_error", None):
+        raise ProviderError("本地 GPU 配置与部署合同冲突，请修复工作区设置", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
     if workspace and (not local or not local.base_url or not local.model):
-        raise ProviderError("本地模型配置不完整：请先配置盒端已有的 NPU 模型服务",
+        raise ProviderError("本地模型配置不完整：请先配置盒端已有的本地模型服务",
                             code="PROVIDER_MISCONFIGURED", retryable=False)
     try:
         num_ctx = int((getattr(local, "context_window", None) or DEFAULT_LOCAL_NUM_CTX) if workspace
                       else (os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX))
     except ValueError:
         num_ctx = DEFAULT_LOCAL_NUM_CTX
-    return OllamaProvider(local.base_url, local.model, timeout=float(local.timeout_seconds), keep_alive=local.keep_alive, num_ctx=num_ctx)
+    gpu_policy = getattr(local, "backend", None) == "ollama_gpu"
+    if gpu_policy and (getattr(local, "max_output_tokens", None) != 512 or getattr(local, "num_thread", None) != 1):
+        raise ProviderError("GPU 推理预算与部署合同冲突", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
+    return OllamaProvider(local.base_url, local.model, timeout=float(local.timeout_seconds), keep_alive=local.keep_alive,
+                          num_ctx=num_ctx, gpu_policy=gpu_policy)
 
 
 def provider_status() -> dict:

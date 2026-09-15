@@ -47,21 +47,36 @@ def extraction_allowed(ontology, convs, cid, text):
 
 
 def process_candidates(valid, entities, *, store, conversation_id, message_id, user_text,
-                       routing_sources=None, input_origin=None, prev_assistant=None):
-    from .extract import admission, explicit_memory_request, persist
+                       routing_sources=None, input_origin=None, prev_assistant=None, request_message_id=None):
+    from .extract import admission, explicit_memory_request, followup_memory_request, memory_source_message, memory_request_declined, persist
     convs = ConversationStore.instance()
     message = convs.get_message(message_id)
     empty = {"created": [], "reaffirmed": [], "promoted": [], "suppressed": len(valid)}
     if (not message or message["conversationId"] != conversation_id or message["role"] != "user"
             or message["status"] != "complete" or message["content"] != user_text):
         return empty
-    # Recheck after a possibly slow model call; a new preference is effective now.
-    if not extraction_allowed(store, convs, conversation_id, user_text):
+    request = message
+    if request_message_id:
+        request = convs.get_message(request_message_id)
+        if (not request or request["conversationId"] != conversation_id or request["role"] != "user"
+                or request["status"] != "complete" or not followup_memory_request(request["content"])):
+            return empty
+        history = convs.list_messages(conversation_id)
+        source = memory_source_message(history, request)
+        if not source or source["id"] != message_id:
+            return empty
+        if any(m["role"] == "user" and m["seq"] > request["seq"] and memory_request_declined(m["content"]) for m in history):
+            return empty
+    # Recheck the request's permission after the model call; the source remains
+    # the original assertion even when manual mode requires a later save command.
+    if not extraction_allowed(store, convs, conversation_id, request["content"]):
         return empty
     ledger = MemoryStore(store)
-    topic = topic_for(convs, conversation_id, message_id)
+    if request_message_id and any(row["message_id"] == message_id for row in ledger.admissions(conversation_id)):
+        return empty  # replay/rephrased model output cannot create another candidate
+    topic = topic_for(convs, conversation_id, request["id"])
     long_term, contextual = admission(valid, user_text, input_origin, prev_assistant=prev_assistant)
-    explicit = explicit_memory_request(user_text)
+    explicit = explicit_memory_request(request["content"])
     # Every new extracted interpretation is a candidate, even in the legacy path.
     # [] still marks local-derived ancestry, never invents an external grant.
     sources = routing_sources if routing_sources is not None else []

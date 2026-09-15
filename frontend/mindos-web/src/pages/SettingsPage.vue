@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DataHubBackLink from '@/components/ui/DataHubBackLink.vue'
 // P1（§4）：设置页「模型与运行时」。
 // 复用双通道划分：材料处理固定本地 Ollama；对话问答可显式配置并授权的外部 OpenAI 兼容 API。
 // 契约：/api/system/models/*（require_local + revision 乐观锁）；test 提交表单暂存值不持久化。
@@ -671,6 +672,7 @@ onUnmounted(() => {
 
 <template>
   <div class="page">
+    <DataHubBackLink />
     <div class="page-head">
       <h1>偏好</h1>
       <p>关系怎么处、用哪个模型、什么能出设备。改动只对之后的对话生效。</p>

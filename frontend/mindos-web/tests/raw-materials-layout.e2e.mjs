@@ -24,13 +24,15 @@ const records = names.map((fileName, index) => ({
   sensitiveScan: index === 1 ? { state: 'completed', completedFields: 12, totalFields: 12, retryable: false } : null,
 }))
 const mocks = {
-  '@/services/api': `export const api={
-    listMaterials:async(params)=>{window.__lastMaterialQuery=params;return {items:${JSON.stringify(records)},total:121}},
+  '@/services/api': `const recycled=new Set();export const api={
+    listMaterials:async(params)=>{window.__lastMaterialQuery=params;return {items:${JSON.stringify(records)}.filter(row=>!recycled.has(row.materialId)),total:121-recycled.size}},
     listFolderNodes:async()=>({items:[{id:1,parentId:null,name:'超长文件夹名称用于验证列宽和省略号',subtreeMaterialCount:1}]}),
     moveMaterial:async(...args)=>{window.__moves.push(args);},
+    getMaterialDeletionImpact:async(id)=>({confirmToken:'synthetic-token',expectedRevision:7,blockingDependencies:[],cleanupSummary:{vectors:2,derivedRecords:3}}),
+    recycleMaterial:async(id,payload)=>{window.__recycle={id,payload};recycled.add(id)},
   };`,
   '@/composables/useToast': 'export const useToast=()=>()=>{};',
-  'vue-router': 'export const useRoute=()=>({query:{}}); export const useRouter=()=>({push:async target=>{window.__routes.push(target)}});',
+  'vue-router': "import {h} from 'vue'; export const onBeforeRouteLeave=()=>{}; export const useRoute=()=>({query:{}}); export const useRouter=()=>({push:async target=>{window.__routes.push(target)}}); export const RouterLink={props:['to'],setup:(props,{slots})=>()=>h('a',{href:props.to,onClick:e=>{e.preventDefault();window.__routes.push(props.to)}},slots.default?.())};",
 }
 const styles = []
 const bundle = await build({
@@ -111,6 +113,27 @@ try {
     if (width === 1200 || width === 1440 || width === 760) {
       await page.mouse.move(0, 0)
       await page.screenshot({ path: resolve(screenshots, `materials-${width}.png`), fullPage: true })
+    }
+    assert.equal(await page.getByRole('button', { name: '移至回收站', exact: true }).count(), 2, 'queued row has no recycle action')
+    if (width === 760 || width === 390) {
+      const navigations = await page.evaluate(() => window.__routes.length)
+      await page.getByRole('button', { name: '移至回收站', exact: true }).first().click()
+      const dialog = page.getByRole('dialog', { name: '移至回收站影响确认', exact: true })
+      await dialog.waitFor()
+      await dialog.getByRole('button', { name: '确认移至回收站', exact: true }).waitFor()
+      assert.equal(await dialog.getByRole('button', { name: /永久清除|彻底删除/ }).count(), 0)
+      assert.equal(await page.evaluate(() => window.__recycle), undefined, 'opening the preview never deletes')
+      assert.equal(await page.evaluate(() => window.__routes.length), navigations, 'recycle action must not navigate to detail')
+      assert.equal(await dialog.evaluate(el => el.getBoundingClientRect().right <= innerWidth && el.scrollWidth <= el.clientWidth), true, 'preview stays within narrow viewport')
+      await page.keyboard.press('Escape')
+      await dialog.waitFor({ state: 'hidden' })
+      await page.getByRole('button', { name: '移至回收站', exact: true }).first().click()
+      await dialog.getByRole('button', { name: '确认移至回收站', exact: true }).click()
+      await dialog.waitFor({ state: 'hidden' })
+      assert.deepEqual(await page.evaluate(() => window.__recycle), { id: 'synthetic-0', payload: { confirmToken: 'synthetic-token', expectedRevision: 7, dependencyActions: [] } })
+      assert.equal(await page.locator('.ws-table__grid tbody tr').count(), 2)
+      await page.getByRole('link', { name: '返回资料与边界', exact: true }).click()
+      assert.equal(await page.evaluate(() => window.__routes.at(-1)), '/data')
     }
     console.log(`PASS RawMaterialsPage ${width}px: table ${dimensions.tableScroll}/${dimensions.tableClient}px, page contained, ${width >= 760 ? 'actions visible and clickable' : 'phone table scroll retained'}`)
     await page.evaluate(() => window.__app.unmount())

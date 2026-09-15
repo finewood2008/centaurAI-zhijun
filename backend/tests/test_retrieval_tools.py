@@ -242,3 +242,39 @@ def test_offline_cases_are_declared_expectations_not_quality_claims():
             assert text in plan["query"]
         assert plan["historyUsed"] == expected.get("historyUsed", [])
         assert plan["scopeLabel"] == expected.get("scopeLabel", "授权资料库")
+
+
+@pytest.mark.parametrize("content", [
+    "大模型自我认知微调项目复现新版.docx",
+    "请帮我梳理大模型自我认知微调项目的复现步骤",
+    "复现大模型自我认知微调项目",
+    "阅读《实验记录 v2.pdf》",
+])
+def test_completed_raw_material_filename_and_named_project_open_review_search(content):
+    from mindos.zhijun.context_plan import _needs_implicit_material_search
+    assert _needs_implicit_material_search(content, [], {})
+    assert tools.plan_search(content)["query"] == content
+    assert tools.plan_search(content)["materialIds"] is None
+
+
+@pytest.mark.parametrize("content", ["你好", "帮我想一个新项目", "我今天完成了课程项目", "如何创建一个项目"])
+def test_ordinary_chat_does_not_search_the_material_library(content):
+    assert not tools.should_search_materials(content)
+
+
+def test_filename_followup_keeps_exact_extension_and_version_without_card_lookup():
+    filename = "大模型自我认知微调项目复现新版.docx"
+    history = [message("u-file", "user", "请帮我阅读" + filename)]
+    plan = tools.plan_search("帮我梳理这个项目的复现步骤", history)
+    assert plan["query"] == "梳理" + filename + "的复现步骤"
+    assert plan["historyUsed"] == ["u-file"]
+    with pytest.raises(HTTPException) as error:
+        tools.plan_search("帮我复现这个项目")
+    assert error_code(error) == "RAG_QUERY_CLARIFICATION_REQUIRED"
+
+
+def test_filename_followup_never_guesses_between_two_versions():
+    history = [message("u-files", "user", "阅读《实验 v1.docx》和《实验 v2.docx》")]
+    with pytest.raises(HTTPException) as error:
+        tools.plan_search("总结这个文件", history)
+    assert error_code(error) == "RAG_QUERY_CLARIFICATION_REQUIRED"

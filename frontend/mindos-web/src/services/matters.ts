@@ -23,11 +23,11 @@ const bindingPath = (cid: string) => '/mindos/conversations/' + encodeURICompone
 export const listMatters = (status: MatterStatus | 'all' = 'active', signal?: AbortSignal) => routingRequest<{ items: Matter[]; total: number }>('/mindos/matters?status=' + status, 'GET', undefined, signal)
 export const getMatter = (id: string) => routingRequest<Matter>(path(id))
 export const getMatterBinding = (cid: string) => routingRequest<MatterBinding>(bindingPath(cid))
-export const createMatter = (data: { requestId: string; title: string; conversationId?: string }) => routingRequest<Matter>('/mindos/matters', 'POST', data)
+export const createMatter = (data: { requestId: string; title: string; conversationId?: string; expectedBindingRevision?: number }) => routingRequest<Matter>('/mindos/matters', 'POST', data)
 export const bindMatter = (cid: string, matterId: string | null, expectedRevision: number, requestId: string) => routingRequest<MatterBinding>(bindingPath(cid), 'PUT', { matterId, expectedRevision, requestId })
 export const updateMatter = (id: string, data: Partial<Pick<Matter, 'title' | 'goal' | 'context' | 'nextStep' | 'outcome' | 'status'>> & { requestId: string; expectedRevision: number }) => routingRequest<Matter>(path(id), 'PATCH', data)
 export const listArtifacts = (id: string) => routingRequest<{ items: MatterArtifact[]; total: number }>(path(id) + '/artifacts')
-export const saveArtifact = (id: string, data: { requestId: string; conversationId: string; messageId: string; title?: string; kind: ArtifactKind }) => routingRequest<MatterArtifact>(path(id) + '/artifacts', 'POST', data)
+export const saveArtifact = (id: string, data: { requestId: string; conversationId: string; messageId: string; title?: string; kind: ArtifactKind; expectedBindingRevision?: number }) => routingRequest<MatterArtifact>(path(id) + '/artifacts', 'POST', data)
 export const updateArtifact = (id: string, data: { requestId: string; expectedRevision: number; title: string; markdown: string }) => routingRequest<MatterArtifact>('/mindos/artifacts/' + encodeURIComponent(id), 'PATCH', data)
 
 /** Called only by an explicit user action. Opening an existing matter never makes a model request. */

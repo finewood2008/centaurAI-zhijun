@@ -129,7 +129,7 @@ function fixture(api) {
   const exports = {}
   const require = id => {
     if (id === 'vue') return { ...Vue, onMounted: callback => mounts.push(callback), onBeforeUnmount: callback => unmounts.push(callback) }
-    if (id === 'vue-router') return { useRoute: () => ({ query: {} }), useRouter: () => ({ push: () => {} }) }
+    if (id === 'vue-router') return { onBeforeRouteLeave: () => {}, useRoute: () => ({ query: {} }), useRouter: () => ({ push: () => {} }) }
     if (id === '@/services/api') return { api }
     if (id === '@/shared/status') return { materialStatusMeta: () => ({}) }
     if (id === '@/shared/format') return { formatDate: String, formatFileType: String }
@@ -280,6 +280,63 @@ test('missing or new card states are never silently presented as pending', () =>
   }
   assert.equal(f.ui.knowledgeCardMeta({ ...row, knowledgeCard: { state: 'draft_failed', errorCode: 'draft_missing' } }).label, '尚未创建卡片')
   f.close()
+})
+
+test('list recycle hides transient, recycled and task-locked rows without bypassing lifecycle preview', () => {
+  const f = fixture({})
+  try {
+    assert.equal(f.ui.canRecycle(material('available')), true)
+    assert.equal(f.ui.canRecycle(material('failed', 'failed')), true)
+    for (const status of ['uploaded', 'queued', 'processing', 'restoring', 'purging', 'recycled', 'deleted']) {
+      assert.equal(f.ui.canRecycle(material('locked', status)), false)
+    }
+    for (const row of [
+      { ...material('transient'), transientUpload: true }, { ...material('recycled'), recycled: true },
+      { ...material('scan'), sensitiveScan: { state: 'processing' } },
+      { ...material('card'), knowledgeCard: { state: 'confirming' } },
+    ]) assert.equal(f.ui.canRecycle(row), false)
+    f.ui.openRecycle(material('first'))
+    f.ui.openRecycle(material('second'))
+    assert.equal(f.ui.recycleTarget.value.materialId, 'first')
+    f.ui.recycleBusy.value = true
+    f.ui.closeRecycle()
+    assert.equal(f.ui.recycleTarget.value.materialId, 'first')
+    f.ui.recycleBusy.value = false
+    f.ui.closeRecycle()
+    assert.equal(f.ui.recycleTarget.value, null)
+    assert.match(source, /label="移至回收站"[^>]+@click\.stop="openRecycle\(item\)"/)
+    assert.match(source, /<LifecycleDangerPanel[^>]+recycle-only auto-preview/)
+    assert.doesNotMatch(source, /api\.(?:recycleMaterial|purgeMaterial)\(/)
+  } finally { f.close() }
+})
+
+test('recycle removes accepted-upload projection and ignores earlier list responses; refresh shows restored material', async () => {
+  const oldList = deferred(), newList = deferred()
+  let reads = 0
+  const row = material('recyclable')
+  const f = fixture({
+    listMaterials: async () => ++reads === 1 ? oldList.promise : reads === 2 ? newList.promise : { items: [row], total: 1 },
+    listFolderNodes: async () => ({ items: [] }),
+  })
+  try {
+    f.ui.items.value = [row]
+    f.ui.total.value = 1
+    f.ui.awaitingList.value = [{ item: row, until: Date.now() + 5000 }]
+    const staleRequest = f.ui.loadMaterials()
+    f.ui.openRecycle(row)
+    const recycling = f.ui.onMaterialRecycled('recycle')
+    assert.equal(f.ui.items.value.length, 0)
+    assert.equal(f.ui.awaitingList.value.length, 0)
+    oldList.resolve({ items: [row], total: 1 })
+    await staleRequest
+    assert.equal(f.ui.items.value.length, 0)
+    newList.resolve({ items: [], total: 0 })
+    await recycling
+    assert.equal(f.ui.total.value, 0)
+    assert.equal(f.ui.recycleTarget.value, null)
+    await f.ui.loadMaterials()
+    assert.equal(f.ui.items.value[0].materialId, row.materialId)
+  } finally { f.close() }
 })
 
 test('upload progress updates the reactive row and 100 percent still waits for server acceptance', async () => {

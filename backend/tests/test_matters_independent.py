@@ -104,6 +104,24 @@ class MattersIndependentTests(unittest.TestCase):
         self.assertEqual(len(self.work.history("artifact", product["id"], "global")), 2)
         self.assertEqual(self.work.artifact(product["id"], "global"), value)
 
+    def test_parallel_new_matter_binding_has_one_winner_without_orphan(self):
+        original, _ = self.create()
+
+        def replace(number):
+            try:
+                return self.work.create("global", {"title": f"新事情 {number}"}, f"parallel-create-{number}", self.cid, 1)
+            except OntologyConflictError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(replace, (1, 2)))
+        winners = [value for value in results if value is not None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(self.work.binding(self.cid, "global")["matter"]["id"], winners[0]["id"])
+        self.assertEqual(self.work.binding(self.cid, "global")["bindingRevision"], 2)
+        self.assertEqual(len(self.work.list("global", "all")), 2)
+        self.assertIsNotNone(self.work.get(original["id"], "global"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -147,7 +147,7 @@ class ValidatedClaim:
 
 
 _MEMORY_ACTION_RE = r"(?:记住|记下(?:来)?|记录下来|保存(?:一下|下来)?|存进(?:本体|记忆)|记到本体)"
-_NO_MEMORY_RE = re.compile(r"(?:不要|不想|不必|不用|无需|不再|别|禁止).{0,12}" + _MEMORY_ACTION_RE + r"|(?:删除|撤回|忘掉|忘记).{0,12}(?:记忆|记录|理解|这条|这件事)")
+_NO_MEMORY_RE = re.compile(r"(?:不要|不想|不必|不用|无需|不再|暂不|先不|别|禁止).{0,12}" + _MEMORY_ACTION_RE + r"|(?:删除|撤回|忘掉|忘记).{0,12}(?:记忆|记录|理解|这条|这件事)")
 _MEMORY_REQUEST_RE = re.compile(
     r"(?:^|[。！!?？；;\n，,])\s*(?:请|麻烦|劳驾)?\s*(?:你|知君)?\s*(?:帮我|替我|为我)?\s*(?:把[^。！？!?；;\n]{1,40})?" + _MEMORY_ACTION_RE
     + r"|(?:我希望你|我想让你|我需要你|我要求你|这点请|这条请|这件事请)\s*" + _MEMORY_ACTION_RE
@@ -180,6 +180,38 @@ def memory_request_declined(user_text: str) -> bool:
             continue
         return True
     return False
+
+
+def followup_memory_request(user_text: str) -> bool:
+    """A save command with no new assertion refers to the nearest user turn."""
+    text = (user_text or "").strip()
+    return bool(explicit_memory_request(text) and re.fullmatch(
+        r"(?:请|麻烦|劳驾)?\s*(?:你|知君)?\s*(?:帮我|替我|为我)?\s*"
+        r"(?:把)?(?:这(?:一)?(?:条|点|件事|段(?:话|内容)?)|刚才(?:说的|那句话|的内容))?\s*"
+        + _MEMORY_ACTION_RE + r"(?:吧|一下)?[。！!]*", text))
+
+
+def memory_source_message(history: list[dict], request: dict) -> dict | None:
+    """Resolve only preceding user evidence, never an assistant's paraphrase.
+
+    Repeated save commands can refer to the same source. Any other user turn
+    terminates the search, including refusals, controls and file discussion.
+    """
+    if not followup_memory_request(request.get("content", "")):
+        return request
+    for message in reversed(history):
+        if message.get("seq", 0) >= request.get("seq", 0) or message.get("role") != "user":
+            continue
+        meta = message.get("meta") or {}
+        if (message.get("conversationId") != request.get("conversationId")
+                or message.get("status") != "complete" or meta.get("materialRefs")
+                or (meta.get("replyAssistance") or {}).get("kind") == "control"
+                or memory_request_declined(message.get("content", ""))):
+            return None
+        if followup_memory_request(message.get("content", "")):
+            continue
+        return message
+    return None
 
 
 def _specific_value(claim: ValidatedClaim) -> bool:
@@ -289,6 +321,10 @@ def admission(
 
 def should_extract(user_text: str, prev_assistant: str | None = None) -> tuple[bool, str]:
     text = (user_text or "").strip()
+    if memory_request_declined(text):
+        return False, "memory_declined"
+    if explicit_memory_request(text):
+        return True, "ok"
     if len(text) < MIN_TEXT_CHARS:
         # A complete short self-description ("我是医生", "我是程序员") is
         # not an acknowledgement. This only admits it to model extraction;
@@ -611,6 +647,7 @@ def run_extraction(
     prev_assistant: str | None,
     debug: dict | None = None,
     input_origin: dict | None = None,
+    request_message_id: str | None = None,
 ) -> dict:
     if input_origin and input_origin.get("kind") == "control":
         return {"state": "skipped", "reason": "conversation_control", "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}
@@ -629,6 +666,8 @@ def run_extraction(
         history = provider.router.convs.list_messages(conversation_id)
         previous = [m for m in history if m["role"] == "assistant" and m["seq"] < (provider.router.convs.get_message(message_id) or {}).get("seq", 0)]
         provider.refs = [provider.router.ref("message", message_id)]
+        if request_message_id and request_message_id != message_id:
+            provider.refs.append(provider.router.ref("message", request_message_id))
         if prev_assistant and previous:
             provider.refs.append(provider.router.ref("message", previous[-1]["id"]))
     request = build_request(user_text, prev_assistant, known, existing_claims=existing, debug=debug)
@@ -641,7 +680,7 @@ def run_extraction(
     from .memory import process_candidates
     if guarded:
         provider.assert_current()
-    summary = process_candidates(valid, entities, store=store, conversation_id=conversation_id, message_id=message_id, user_text=user_text, routing_sources=sources, input_origin=input_origin, prev_assistant=prev_assistant)
+    summary = process_candidates(valid, entities, store=store, conversation_id=conversation_id, message_id=message_id, user_text=user_text, routing_sources=sources, input_origin=input_origin, prev_assistant=prev_assistant, request_message_id=request_message_id)
     summary.update({"state": "done", "reason": "ok", "candidates": len(valid), "provider": provider.name})
     return summary
 

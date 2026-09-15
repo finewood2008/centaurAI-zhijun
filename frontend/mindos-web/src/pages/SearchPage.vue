@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DataHubBackLink from '@/components/ui/DataHubBackLink.vue'
 // 统一搜索：分类 Tab + 结果计数 + 相关度 + 片段高亮 + 来源 Badge（B3 FE-UI-015）
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -149,6 +150,7 @@ onBeforeUnmount(() => searchGate.invalidate())
 
 <template>
   <div class="page">
+    <DataHubBackLink />
     <div class="page-head">
       <h1>搜索记忆</h1>
       <p>关键词与自然语言检索，优先显示知识档案，再显示原材料证据。</p>

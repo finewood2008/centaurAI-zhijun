@@ -10,6 +10,29 @@ _RETROSPECTIVE = re.compile(r"回顾|以前|过去|当时|曾经|那时候|历�
 _COURTESY = re.compile(r"^(?:你好|谢谢|好的|好|嗯|收到|再见)[。！!\s]*$")
 _MATTER_RESUME = re.compile(r"(?:回到|继续)(?:刚才|之前|原来|当前关联的)?(?:这件事|那件事|这项工作|这个项目|这次沟通)")
 _MATTER_REVIEW = re.compile(r"(?:回顾|复盘)(?:一下)?(?:刚才|之前|原来|当前关联的)?(?:这件事|这项工作|这个项目|这次沟通)")
+_MATTER_NEW_REQUEST = re.compile(r"^(?:(?:现在|接下来|另外)[，,\s]*)?(?:我想|我准备|我打算|我需要|请帮我|帮我|准备做|我(?:和|与).{0,24}(?:分歧|矛盾|沟通))")
+_MATTER_TOPICS = tuple(re.compile(pattern) for pattern in (
+    r"课程设计|课程作业|毕业设计|学业|考试|论文|机器学习|大学课程",
+    r"产品搭档|产品伙伴|合伙人|客户|供应商|职责|业务谈判|商务|同事|老板",
+    r"女儿|儿子|孩子|家庭|父母|夫妻|伴侣",
+    r"看病|就医|体检|病情|治疗|健康",
+    r"旅行|旅游|行程|酒店|出游",
+))
+
+
+def unrelated_matter_request(content, matter_title):
+    """Only suspend on a self-contained request with disjoint explicit topics.
+
+    Generic questions, short answers, examples and an unknown topic do not
+    imply a switch. This is a reversible reference control, not a new binding
+    or a model-derived statement about the user.
+    """
+    text = str(content or "").strip()
+    if not _MATTER_NEW_REQUEST.search(text) or re.search(r"这件事|这个项目|当前事情|刚才|之前|例如|比如|假如|如果", text):
+        return False
+    old = {index for index, pattern in enumerate(_MATTER_TOPICS) if pattern.search(str(matter_title or ""))}
+    new = {index for index, pattern in enumerate(_MATTER_TOPICS) if pattern.search(text)}
+    return bool(old and new and old.isdisjoint(new))
 
 
 def explicit_matter_review(content):
@@ -17,7 +40,7 @@ def explicit_matter_review(content):
     return bool(_MATTER_REVIEW.search(text) and not re.search(r"(?:不要|不用|不必|无需|别|不)(?:再|继续)?(?:回顾|复盘)", text))
 
 
-def matter_control(router, content, binding, messages=None):
+def matter_control(router, content, binding, messages=None, matter_title=""):
     """Carry an explicit UI/topic control, never private historical prose.
 
     The marker belongs to this conversation and binding revision. An explicit
@@ -40,7 +63,7 @@ def matter_control(router, content, binding, messages=None):
     after_seq = int(previous.get("matterHistoryAfterSeq") or 0) if same_binding else (latest_seq if (previous.get("matterBinding") or {}).get("matterId") else 0)
     text = str(content or "")
     resume = _MATTER_RESUME.search(text) and not re.search(r"(?:不要|不用|不必|无需|别|不)(?:再)?(?:回到|继续)", text)
-    if _SWITCH.search(text):
+    if _SWITCH.search(text) or (not resume and not explicit_matter_review(content) and unrelated_matter_request(text, matter_title)):
         suspended, after_seq = True, latest_seq
     elif resume or explicit_matter_review(content):
         suspended, after_seq = False, latest_seq

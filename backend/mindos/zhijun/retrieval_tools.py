@@ -100,6 +100,27 @@ _LEADING_SEARCH_RE = re.compile(
     r"^(?:帮我\s*)?(?:查找|检索|搜索|查询|查一下)(?:一下)?\s*[,，:：]?\s*",
     re.IGNORECASE,
 )
+_LEADING_MATERIAL_ACTION_RE = re.compile(
+    r"^(?:梳理|复现|还原|阅读|读取|总结|分析)(?:一下)?\s*", re.IGNORECASE,
+)
+_FILENAME_RE = re.compile(
+    r"[^\s/\\《》“”\"，,。！？?：:；;]{1,200}\.(?:docx?|pdf|pptx?|xlsx?|txt|md|csv)"
+    r"(?=$|[\s》”\"，,。！？?：:；;的中里内])", re.IGNORECASE,
+)
+
+
+def should_search_materials(content: str) -> bool:
+    """Recognize concrete file/project requests even without the word '资料'.
+
+    This only opens Search and review, never authorizes result use. Generic
+    project creation and discussion do not inspect the material library.
+    """
+    if _FILENAME_RE.search(content):
+        return True
+    value = _planning_view(content)
+    action = re.search(r"梳理|复现|还原", content)
+    return bool(action and re.search(r"[^\s，,。！？?]{2,100}项目", value)
+                and not re.search(r"(?:一个|某个|什么|新)项目", value))
 
 
 SEARCH_MATERIALS_TOOL = {
@@ -193,7 +214,7 @@ def _dependent_follow_up(content: str) -> bool:
     )
 
 
-def _planning_view(content: str) -> str:
+def _planning_view(content: str, *, keep_action: bool = False) -> str:
     """Remove request framing only for dependency analysis and rewriting.
 
     A self-contained query is returned to the caller verbatim.  This view is
@@ -201,7 +222,10 @@ def _planning_view(content: str) -> str:
     """
     value = content.strip()
     value = _LEADING_POLITE_RE.sub("", value, count=1)
+    value = _LEADING_POLITE_RE.sub("", value, count=1)
     value = _LEADING_SEARCH_RE.sub("", value, count=1)
+    if not keep_action:
+        value = _LEADING_MATERIAL_ACTION_RE.sub("", value, count=1)
     return value.strip()
 
 
@@ -225,7 +249,12 @@ def _subject_candidate(content: str) -> str | None:
         return quoted[0].strip()
     if len(quoted) > 1:
         return None
-    cleaned = _LEADING_REQUEST_RE.sub("", value).strip()
+    cleaned = _LEADING_REQUEST_RE.sub("", _planning_view(value)).strip()
+    filenames = _FILENAME_RE.findall(cleaned)
+    if len(filenames) == 1:
+        return filenames[0]
+    if len(filenames) > 1:
+        return None
     match = _QUESTION_SUBJECT_RE.match(cleaned)
     if match:
         candidate = match.group("subject").strip(" ，,的")
@@ -338,6 +367,9 @@ def plan_search(
             ident, subject = previous
             query = _rewrite_follow_up(planning, subject)
             history_used.append(ident)
+    action = _LEADING_MATERIAL_ACTION_RE.match(_planning_view(current, keep_action=True))
+    if action and query != current:
+        query = action.group(0) + query
     query = _query(query)
     return {
         "query": query,

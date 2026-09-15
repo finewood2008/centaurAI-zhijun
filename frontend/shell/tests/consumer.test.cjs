@@ -577,7 +577,7 @@ test('bootstrap subject, current-client identity and account state fail closed',
     [{ ...active, currentClient: { ...active.currentClient, clientId: 'other-client' } }, 'CONTRACT_MISMATCH'],
     [{ ...active, currentClient: { ...active.currentClient, isCurrent: false } }, 'CONTRACT_MISMATCH'],
     [{ ...active, currentClient: { ...active.currentClient, clientStatus: 'revoked' } }, 'ACCESS_DENIED'],
-    [{ ...active, currentClient: { ...active.currentClient, hasActiveSession: false } }, 'ACCESS_DENIED'],
+    [{ ...active, currentClient: { ...active.currentClient, hasActiveSession: false } }, 'SESSION_EXPIRED'],
     ...['securityLocked', 'deletionPending', 'deleted'].map(accountStatus => [{ ...active, accountStatus }, 'ACCESS_DENIED']),
   ]) {
     const store = memoryStore();
@@ -856,4 +856,75 @@ test('credential rejection clears the public runtime subject so the user can sig
   assert.equal((await runtime.invoke('listDevices', [context('synthetic-list')], 1)).error.code, 'SESSION_EXPIRED');
   assert.equal(runtime.snapshot().subject, null); assert.equal(runtime.snapshot().phase, 'failed');
   assert.equal(await store.load(), undefined); await runtime.dispose();
+});
+
+for (const rejection of ['html401', 'AUTH_SESSION_EXPIRED', 'AUTH_REQUIRED', 'AUTHENTICATION_REQUIRED']) {
+  test(`restored login ${rejection} refreshes once, then returns to login on refresh rejection`, async () => {
+    const store = memoryStore(); let refreshes = 0, reads = 0;
+    const first = await createConsumerClient({ config, store, fetchImpl: async () => reply(token()) });
+    await first.signIn(credentials); await first.dispose();
+    const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+      if (url.endsWith('/refresh')) { refreshes++; return new Response('expired', { status:401 }); }
+      reads++;
+      return rejection === 'html401' ? new Response('<html>private</html>', { status:401 })
+        : new Response(JSON.stringify({ success:false, errorCode:rejection, requestId:'request-synthetic-0001',
+          serverTime:'2026-09-14T12:00:00Z' }), { headers:{ 'content-type':'application/json' } });
+    } });
+    const runtime = createDesktopRuntime({ mode:'production', adapter:client });
+    for (let i = 0; i < 20 && runtime.snapshot().phase === 'authenticating'; i++) await new Promise(r => setImmediate(r));
+    assert.ok(runtime.snapshot().subject, 'persisted identity initially restores');
+    const result = await runtime.invoke('listDevices', [{ callId:'restored-read', expectedGeneration:runtime.snapshot().generation }], 1);
+    assert.equal(result.error.code, 'SESSION_EXPIRED');
+    assert.equal(runtime.snapshot().subject, null);
+    assert.equal(await store.load(), undefined);
+    assert.equal(refreshes, 1); assert.equal(reads, 1);
+    await runtime.dispose();
+  });
+}
+
+test('HTML access-token rejection can refresh successfully without signing the user out', async () => {
+  const store=memoryStore(); let refreshes=0;
+  const client=await createConsumerClient({config,store,fetchImpl:async(url,init)=>{
+    if(url.endsWith('/login'))return reply(token());
+    if(url.endsWith('/refresh')){refreshes++;return reply(token(2));}
+    return init.headers.authorization==='Bearer access-1' ? new Response('',{status:401}) : bootstrapReply([device]);
+  }});
+  await client.signIn(credentials);
+  assert.equal((await client.listDevices()).length,1);assert.equal(refreshes,1);
+  assert.equal((await store.load()).accessToken,'access-2');await client.dispose();
+});
+
+test('revoked client and explicit inactive session require login, without retrying revoked credentials', async () => {
+  for(const kind of ['revoked','inactive']){
+    const store=memoryStore();let refreshes=0;
+    const client=await createConsumerClient({config,store,fetchImpl:async url=>{
+      if(url.endsWith('/login'))return reply(token());
+      if(url.endsWith('/refresh')){refreshes++;return reply(token(2));}
+      const account=bootstrapAccount();account.currentClient.hasActiveSession=false;
+      return kind==='revoked' ? modernReply(null,401,'CLIENT_REVOKED') : bootstrapReply([],account);
+    }});
+    await client.signIn(credentials);await assert.rejects(client.listDevices(),{code:'SESSION_EXPIRED'});
+    assert.equal(refreshes,0);assert.equal(await store.load(),undefined);await client.dispose();
+  }
+});
+
+test('service outages, throttling and ordinary forbidden responses preserve the saved login without refresh loops', async () => {
+  for (const kind of ['network', 'server', 'throttled', 'forbidden', 'missing-session-field']) {
+    const store = memoryStore(); let refreshes = 0;
+    const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+      if (url.endsWith('/login')) return reply(token());
+      if (url.endsWith('/refresh')) { refreshes++; return reply(token(2)); }
+      if (kind === 'network') throw new TypeError('synthetic network failure');
+      if (kind === 'server') return modernReply(null, 503, 'AUTHENTICATION_REQUIRED');
+      if (kind === 'throttled') return modernReply(null, 429, 'RATE_LIMITED');
+      if (kind === 'forbidden') return modernReply(null, 403, 'ACCESS_DENIED');
+      const account = bootstrapAccount(); delete account.currentClient.hasActiveSession;
+      return bootstrapReply([], account);
+    } });
+    await client.signIn(credentials);
+    await assert.rejects(client.listDevices(), error => !['SESSION_EXPIRED', 'AUTHENTICATION_REQUIRED'].includes(error.code));
+    assert.equal((await store.load()).accessToken, 'access-1', kind);
+    assert.equal(refreshes, 0, kind);
+    await client.dispose();
+  }
 });
