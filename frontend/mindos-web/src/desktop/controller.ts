@@ -1,5 +1,5 @@
 import type {
-  CallContext, DesktopSnapshot, DeviceSummary, MaterialStatus, MaterialType,
+  CallContext, ConsumerSmsScene, DesktopSnapshot, DeviceSummary, MaterialStatus, MaterialType,
   MaterialsPage, MaterialsQuery, PasswordCredentials, PublicError, Result, ZhijunDesktopV1,
   PasswordResetCredentials, RememberedLogin, RegistrationCredentials,
 } from '../../../shared/desktop-contract'
@@ -144,13 +144,13 @@ export class DesktopController {
     }
   }
 
-  async sendRegistrationCode(phone: string): Promise<number | null> {
+  async sendRegistrationCode(phone: string, scene?: ConsumerSmsScene): Promise<number | null> {
     if (!this.bridge || this.disposed || !this.state.snapshot || this.state.controlPending) return null
     const revision = ++this.controlRevision
     const generation = this.state.snapshot.generation
     this.patch({ controlPending: true, pendingOperation: 'sendRegistrationCode', error: null, notice: '' })
     try {
-      const result = await this.bridge.sendRegistrationCode(this.context(), phone)
+      const result = await this.bridge.sendRegistrationCode(this.context(), phone, scene)
       if (this.disposed || revision !== this.controlRevision || generation !== this.state.snapshot?.generation) return null
       if (!result.ok) { this.acceptError(result); return null }
       this.patch({ notice: `验证码已发送，请查看手机短信；验证码 ${result.data.expiresIn} 秒内有效。` })

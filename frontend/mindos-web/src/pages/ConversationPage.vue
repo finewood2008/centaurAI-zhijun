@@ -55,6 +55,7 @@ import ChatFilesPanel from '@/components/conversation/ChatFilesPanel.vue'
 import ImportBatchCard from '@/components/conversation/ImportBatchCard.vue'
 import { createSessionGate } from '@/composables/sessionGate'
 import { createMemoryAttentionPoller } from '@/composables/useMemoryAttentionPolling'
+import { createInFlightReads } from '@/composables/inFlightReads'
 import { reviewNote } from '@/shared/ontology'
 import { MODEL_UNAVAILABLE_TEXT, modelUnavailable } from '@/shared/model'
 import { extractionSkipNote, hasConversationOutcomes } from '@/shared/labels'
@@ -185,6 +186,8 @@ const isReview = computed(() => current.value?.mode === 'review')
 const isOnboarding = computed(() => current.value?.mode === 'onboarding')
 const showDraftPanel = computed(() => (!!draft.value && draft.value.status !== 'discarded') || draftPending.value || draftTimedOut.value)
 const workspaceOpen = ref(false)
+const workspaceVisited = ref(false)
+watch(workspaceOpen, open => { if (open) workspaceVisited.value = true })
 const workspaceTab = ref<'draft' | 'map' | 'review' | 'memory'>('draft')
 function openWorkspace(tab: 'draft' | 'map' | 'review' | 'memory') {
   workspaceTab.value = tab
@@ -199,7 +202,7 @@ function workspaceKey(event: KeyboardEvent) {
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
   tabs[next]?.click(); tabs[next]?.focus()
 }
-watch(() => current.value?.id, () => { workspaceOpen.value = false })
+watch(() => current.value?.id, () => { workspaceOpen.value = false; workspaceVisited.value = false })
 
 // ---- 建档：一边聊，本体图一边亮起来
 const ONBOARDING_STEPS: { title: string; section: Section }[] = [
@@ -407,9 +410,10 @@ async function onSubmitReview(payload: { reflection: string; lessons: string[]; 
 
 // 这段对话留下了什么：刷新会话列表里该项的产出摘要（接口不存在时静默）；
 // showCard 为真且还停在这个会话时，同时更新消息流底部那张「这段对话留下的」小卡
+const pageReads = createInFlightReads()
 async function refreshOutcomes(conversationId: string, showCard = false) {
   try {
-    const o = await getConversationOutcomes(conversationId)
+    const o = await pageReads.run(`outcomes:${conversationId}`, () => getConversationOutcomes(conversationId))
     if (!alive || !o) return
     if (showCard && current.value?.id === conversationId) turnOutcomes.value = o
     const brief = {
@@ -430,12 +434,16 @@ const loadGate = createSessionGate()
 let conversationDetailAbort: AbortController | null = null
 const memoryPoller = createMemoryAttentionPoller({
   isCurrent: conversationId => alive && currentId.value === conversationId && current.value?.id === conversationId,
+  onActiveChange: active => {
+    if (active) clearStatusTimer()
+    else scheduleStatusPoll()
+  },
   poll: async (conversationId, jobIds) => {
     // Paused/failed work is no longer pending, but still needs a visible status.
     const [, resumed, nextStatus] = await Promise.all([
       refreshMemoryAttention(conversationId),
       routingPanel.value?.reconcileRecentExtractionJobs(conversationId, jobIds),
-      getZhijunStatus(),
+      readStatus(),
     ])
     if (!alive || currentId.value !== conversationId || current.value?.id !== conversationId) return false
     status.value = nextStatus
@@ -446,7 +454,8 @@ const memoryPoller = createMemoryAttentionPoller({
   onSettled: async conversationId => {
     // Very fast jobs may finish without pendingJobs ever being observed > 0.
     // Re-read after convergence rather than relying only on the count watcher.
-    await Promise.all([refreshMemoryAttention(conversationId), refreshOutcomes(conversationId, true), loadStats()])
+    // The settling tick already fetched attention; only derived summaries remain.
+    await Promise.all([refreshOutcomes(conversationId, true), loadStats()])
   },
 })
 const memoryLoadGate = createSessionGate()
@@ -592,23 +601,40 @@ function friendlyError(err: unknown, fallback: string): string {
 }
 
 let statusTimer: number | null = null
+let statusPollAttempts = 0
+function clearStatusTimer() {
+  if (statusTimer !== null) window.clearTimeout(statusTimer)
+  statusTimer = null
+}
+function scheduleStatusPoll() {
+  clearStatusTimer()
+  // The memory observer owns the status read while it is tracking this turn.
+  // Otherwise keep a slower, bounded catch-up for jobs already running on entry.
+  if (!alive || memoryPoller.isActive() || (status.value?.pendingJobs ?? 0) <= 0 || statusPollAttempts >= 8) return
+  statusTimer = window.setTimeout(() => {
+    statusTimer = null
+    statusPollAttempts++
+    void loadStatus()
+  }, 15_000)
+}
+function readStatus() {
+  return pageReads.run('status', getZhijunStatus)
+}
 async function loadStatus() {
   let next: ZhijunStatus | null = null
   try {
-    next = await getZhijunStatus()
+    next = await readStatus()
   } catch {
     next = null
   }
   if (!alive) return
   status.value = next
-  // 后台还在整理时每 8 秒看一眼，整理完就停
-  if (statusTimer) window.clearTimeout(statusTimer)
-  statusTimer = (status.value?.pendingJobs ?? 0) > 0 ? window.setTimeout(() => void loadStatus(), 8000) : null
+  scheduleStatusPoll()
 }
 
 async function loadStats() {
   try {
-    const next = await getOntologyStats()
+    const next = await pageReads.run('stats', getOntologyStats)
     if (!alive) return
     stats.value = next
   } catch {
@@ -692,7 +718,10 @@ async function refreshConversationBackground(conversationId: string) {
 async function refreshAfterTurn(conversationId: string) {
   await Promise.allSettled([loadConversations(), refreshCurrentMetadata(conversationId)])
   if (!alive || streaming.value || currentId.value !== conversationId) return
-  await Promise.allSettled([refreshOutcomes(conversationId, true), routingPanel.value?.refresh()])
+  await Promise.allSettled([refreshOutcomes(conversationId, true),
+    // The observer will reconcile routing in its first tick; do not start a
+    // competing refresh that can abort/restart the same panel read.
+    memoryPoller.isActive() ? undefined : routingPanel.value?.refresh()])
   if (!alive || streaming.value || currentId.value !== conversationId) return
   await refreshMemoryAttention(conversationId)
 }
@@ -1293,6 +1322,9 @@ function stop() {
 
 function clearMemoryAttention() {
   memoryPoller.stop()
+  statusPollAttempts = 0
+  scheduleStatusPoll()
+  pageReads.clear()
   memoryLoadGate.invalidate()
   memoryAttention.value = null
   memoryDraftError.value = ''
@@ -1301,14 +1333,16 @@ function clearMemoryAttention() {
 // 只读取当前会话由服务端选定的一个核对位。不抢焦点、不滚动，也不把别的会话的候选挂过来。
 async function refreshMemoryAttention(conversationId = current.value?.id) {
   if (!conversationId || current.value?.id !== conversationId || currentId.value !== conversationId || !alive) return
-  const ticket = memoryLoadGate.next()
-  try {
-    const next = await getConversationMemoryAttention(conversationId)
-    if (!alive || !memoryLoadGate.isCurrent(ticket) || current.value?.id !== conversationId || currentId.value !== conversationId) return
-    memoryAttention.value = next
-  } catch {
-    // 整理状态不可用不影响聊天，也不使用全局 inbox 作为替代。
-  }
+  return pageReads.run(`attention:${conversationId}`, async () => {
+    const ticket = memoryLoadGate.next()
+    try {
+      const next = await getConversationMemoryAttention(conversationId)
+      if (!alive || !memoryLoadGate.isCurrent(ticket) || current.value?.id !== conversationId || currentId.value !== conversationId) return
+      memoryAttention.value = next
+    } catch {
+      // 整理状态不可用不影响聊天，也不使用全局 inbox 作为替代。
+    }
+  }).catch(() => { /* Navigation may cancel the read before dispatch. */ })
 }
 
 function onPendingMemoryChanged() {
@@ -1318,6 +1352,7 @@ function onPendingMemoryChanged() {
 }
 
 function pollMemoryAttention(conversationId: string, jobIds: string[] = []) {
+  statusPollAttempts = 0
   memoryPoller.start(conversationId, jobIds)
 }
 function onMemoryJobsResumed(event: { conversationId: string; jobIds: string[] }) {
@@ -1370,7 +1405,7 @@ async function reviewMemoryDraft(action: 'save' | 'dismiss') {
 }
 
 watch(pendingJobs, (n, old) => {
-  if ((old ?? 0) > 0 && n === 0 && current.value) {
+  if ((old ?? 0) > 0 && n === 0 && current.value && !memoryPoller.isActive()) {
     void refreshMemoryAttention()
     // 「这段对话留下的」再刷一次：整理完的理解会补进来
     if (turnOutcomes.value) void refreshOutcomes(current.value.id, true)
@@ -1475,7 +1510,7 @@ onBeforeUnmount(() => {
   clearMemoryAttention()
   draftPollGate.invalidate()
   mapPollGate.invalidate()
-  if (statusTimer) window.clearTimeout(statusTimer)
+  clearStatusTimer()
   if (glowTimer) window.clearTimeout(glowTimer)
 })
 </script>
@@ -1748,7 +1783,7 @@ onBeforeUnmount(() => {
         </section>
         </div>
         <div v-show="workspaceTab === 'review'" id="workspace-review" role="tabpanel" aria-labelledby="workspace-review-tab">
-        <LearningCard v-if="decision && loadedConversationId && conversationAuxPhase >= 4" :key="`learning-${loadedConversationId}-${decision.id}`" :conversation-id="loadedConversationId" :decision="decision" />
+        <LearningCard v-if="workspaceVisited && decision && loadedConversationId && conversationAuxPhase >= 4" :key="`learning-${loadedConversationId}-${decision.id}`" :conversation-id="loadedConversationId" :decision="decision" />
         <ReviewOutcomePanel
           v-if="isReview && decision"
           :decision="decision"

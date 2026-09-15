@@ -34,6 +34,10 @@ export type PublicErrorCode =
   | 'REQUEST_TIMEOUT'
   | 'RESOURCE_EXHAUSTED'
   | 'RATE_LIMITED'
+  | 'CLIENT_BUSY'
+  | 'BOX_BUSY'
+  | 'WORKSPACE_STORAGE_FULL'
+  | 'REMOTE_RATE_LIMITED'
   | 'SESSION_QUOTA_EXHAUSTED'
   | 'CONTRACT_MISMATCH'
   | 'RESPONSE_TOO_LARGE'
@@ -140,6 +144,8 @@ export interface RegistrationCredentials extends PasswordCredentials {
   readonly code: string;
 }
 
+export type ConsumerSmsScene = 'consumer_login' | 'consumer_register' | 'consumer_reset_password';
+
 export interface RegistrationCodeReceipt {
   readonly expiresIn: number;
 }
@@ -176,8 +182,8 @@ export interface ZhijunDesktopV1 {
   signInWithPassword(context: CallContext, credentials: PasswordCredentials): Promise<Result<DesktopSnapshot>>;
   /** The decrypted password stays in the main process. This never signs in automatically. */
   signInWithSavedPassword(context: CallContext, rememberPassword: boolean): Promise<Result<DesktopSnapshot>>;
-  /** Sends an SMS registration/reset proof. Debug codes and provider details never cross IPC. */
-  sendRegistrationCode(context: CallContext, phone: string): Promise<Result<RegistrationCodeReceipt>>;
+  /** Sends an SMS proof; omitted scene keeps the legacy login template. No debug codes cross IPC. */
+  sendRegistrationCode(context: CallContext, phone: string, scene?: ConsumerSmsScene): Promise<Result<RegistrationCodeReceipt>>;
   /** Processes an SMS-proved reset without authenticating or disclosing whether the account exists. */
   resetPassword(context: CallContext, credentials: PasswordResetCredentials): Promise<Result<PasswordResetReceipt>>;
   /** Registers the Consumer account and enters the authenticated device-selection state. */

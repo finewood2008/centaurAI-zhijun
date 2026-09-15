@@ -290,7 +290,14 @@ def admission(
 def should_extract(user_text: str, prev_assistant: str | None = None) -> tuple[bool, str]:
     text = (user_text or "").strip()
     if len(text) < MIN_TEXT_CHARS:
-        if (len(normalize_text(text)) < 2 or not _answer_section(prev_assistant)
+        # A complete short self-description ("我是医生", "我是程序员") is
+        # not an acknowledgement. This only admits it to model extraction;
+        # quote, value, scope and working-only persistence checks still apply.
+        # Anchor the whole utterance: quoted, hypothetical, negative and
+        # interrogative fragments must not gain this length exemption.
+        short_identity = bool(re.fullmatch(r"我是[\u4e00-\u9fffA-Za-z]{2,}[。！!]?", text)
+                              and not _QUESTION_RE.search(text))
+        if not short_identity and (len(normalize_text(text)) < 2 or not _answer_section(prev_assistant)
                 or _EMPTY_ANSWER_RE.fullmatch(normalize_text(text)) or _question_source(text, text)):
             return False, "too_short"
     if not _FIRST_PERSON_RE.search(text) and text.rstrip().endswith(("？", "?")):

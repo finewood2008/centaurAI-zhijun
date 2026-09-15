@@ -125,6 +125,10 @@ function validatePhone(value) {
   if (typeof value !== 'string' || !/^1\d{10}$/.test(value)) fail('INVALID_REQUEST');
   return value;
 }
+function validateSmsScene(value = 'consumer_login') {
+  if (!['consumer_login', 'consumer_register', 'consumer_reset_password'].includes(value)) fail('INVALID_REQUEST');
+  return value;
+}
 function validateRegistration(value) {
   if (!plain(value) || Object.keys(value).length !== 3 || !/^\d{6}$/.test(value.code)) fail('INVALID_REQUEST');
   return { ...validatePassword({ phone: value.phone, password: value.password }), code: value.code };
@@ -164,7 +168,11 @@ function checkEnvelope(result, connectivity = false, purpose = 'auth') {
   if (result.code === 429) reject('RATE_LIMITED');
   if (purpose === 'password-login' && remoteCode === 'AUTH_RATE_LIMITED') reject('RATE_LIMITED');
   if (purpose === 'password-login' && remoteCode === 'PASSWORD_INVALID') reject('AUTHENTICATION_FAILED');
-  if (purpose === 'password-reset' && remoteCode === 'SMS_CODE_INVALID') reject('VERIFICATION_CODE_INVALID');
+  // Admin uses the same machine code for an incorrect or expired SMS proof in
+  // registration and password reset. Classify it before generic input errors;
+  // do not guess from HTTP 400 alone or reflect the remote message.
+  if (['registration', 'password-reset'].includes(purpose)
+      && remoteCode === 'SMS_CODE_INVALID') reject('VERIFICATION_CODE_INVALID');
   if (purpose === 'password-reset' && ([400, 422].includes(result.code)
       || ['PASSWORD_WEAK', 'VALIDATION_ERROR'].includes(remoteCode))) reject('INVALID_REQUEST');
   if (['registration', 'password-reset'].includes(purpose)
@@ -177,7 +185,7 @@ function checkEnvelope(result, connectivity = false, purpose = 'auth') {
   if (purpose === 'console-claim' && result.code >= 500) reject('ACCOUNT_SERVICE_UNAVAILABLE');
   if (purpose === 'console-claim' && [400, 404, 409, 410, 422].includes(result.code)) reject('INVALID_REQUEST');
   if (purpose === 'registration' && ([400, 409, 422].includes(result.code)
-      || ['SMS_CODE_INVALID', 'PASSWORD_ALREADY_SET', 'PASSWORD_INVALID'].includes(remoteCode))) reject('INVALID_REQUEST');
+      || ['PASSWORD_ALREADY_SET', 'PASSWORD_INVALID'].includes(remoteCode))) reject('INVALID_REQUEST');
   if (result.code !== 200 || result.success === false) {
     if (connectivity) throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'ticket', httpStatus: result.httpStatus });
     if (purpose === 'password-reset') reject('ACCOUNT_SERVICE_UNAVAILABLE');
@@ -392,10 +400,11 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
       const credentials = validatePassword(input);
       return establishSession(credentials, '/app-api/auth/password/login', credentials, guard);
     },
-    async sendRegistrationCode(input) {
+    async sendRegistrationCode(input, requestedScene) {
       if (disposed) fail('OPERATION_NOT_ALLOWED');
       const phone = validatePhone(input);
-      const data = checkEnvelope(await request('POST', '/app-api/auth/sms/send', { phone }), false, 'registration');
+      const scene = validateSmsScene(requestedScene);
+      const data = checkEnvelope(await request('POST', '/app-api/auth/sms/send', { phone, scene }), false, 'registration');
       if (!plain(data) || !Number.isInteger(data.expiresIn) || data.expiresIn < 1 || data.expiresIn > 3600) fail();
       return { expiresIn: data.expiresIn };
     },
@@ -574,5 +583,5 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
     async dispose() { disposed = true; claimAttempts.clear(); invalidate(); },
   });
 }
-module.exports = { createConsumerClient, validatePassword, validateRegistration, validatePasswordReset, validatePhone,
+module.exports = { createConsumerClient, validatePassword, validateRegistration, validatePasswordReset, validatePhone, validateSmsScene,
   LOGIN_SESSION_MS };

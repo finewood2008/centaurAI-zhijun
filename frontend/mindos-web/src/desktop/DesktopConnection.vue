@@ -93,7 +93,9 @@ function setAuthMode(mode: 'login' | 'register' | 'reset'): void {
 async function sendRegistrationCode(): Promise<void> {
   formError.value = ''
   if (!/^1\d{10}$/.test(phone.value)) { formError.value = '请输入正确的 11 位手机号。'; return }
-  const expiresIn = await controller.sendRegistrationCode(phone.value)
+  const scene = authMode.value === 'register' ? 'consumer_register'
+    : authMode.value === 'reset' ? 'consumer_reset_password' : 'consumer_login'
+  const expiresIn = await controller.sendRegistrationCode(phone.value, scene)
   if (!expiresIn) return
   codeSeconds.value = Math.min(60, expiresIn)
   if (codeTimer) clearInterval(codeTimer)

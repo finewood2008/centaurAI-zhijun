@@ -90,7 +90,7 @@ function createV2Scheduler({ send, clock = () => performance.now(), timers = { s
     if (closed) return;
     const now = clock();
     refill(now);
-    for (let i = queue.length - 1; i >= 0; i--) if (queue[i].expires <= now) settle(queue.splice(i, 1)[0], notSent('RATE_LIMITED'));
+    for (let i = queue.length - 1; i >= 0; i--) if (queue[i].expires <= now) settle(queue.splice(i, 1)[0], notSent('CLIENT_BUSY'));
     const candidates = queue.filter(item => hasSlot(item) && readyAt(item, now) <= now);
     candidates.sort((a, b) => priority(a, now) - priority(b, now) || a.sequence - b.sequence);
     const item = candidates[0];
@@ -141,7 +141,7 @@ function createV2Scheduler({ send, clock = () => performance.now(), timers = { s
   function request(request, { priority: rank = 2, signal, onDispatch, onWork, reservation, handshake = false } = {}) {
     if (closed) return Promise.reject(closed);
     if (signal?.aborted) return Promise.reject(notSent('STALE_GENERATION'));
-    if (queue.length >= maxQueued) return Promise.reject(notSent('RESOURCE_EXHAUSTED'));
+    if (queue.length >= maxQueued) return Promise.reject(notSent('CLIENT_BUSY'));
     return new Promise((resolve, reject) => {
       const item = { request, priority: rank, signal, onDispatch, reservation, handshake, resolve, reject,
         sequence: ++sequence, enqueued: clock(), ready: clock(), expires: clock() + queueTimeoutMs, attempt: 0 };

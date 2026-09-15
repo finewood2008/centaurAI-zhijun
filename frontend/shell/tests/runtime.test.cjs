@@ -98,6 +98,41 @@ test('provisioning capability follows the isolated host and opens without accept
   assert.equal((await call(unavailable, 'openProvisioning')).error.code, 'OPERATION_NOT_ALLOWED');
 });
 
+test('an account already owning boxes can open provisioning to add a new box', async t => {
+  let opened = 0;
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture().adapter,
+    provisioningHost: { open: () => { opened++; return { opened: true }; } } });
+  t.after(() => runtime.dispose());
+  assert.equal((await call(runtime, 'signInWithPassword', {
+    phone: '13800000000', password: 'Synthetic-password-1', rememberPassword: false,
+  })).ok, true);
+  const listed = await call(runtime, 'listDevices');
+  assert.equal(listed.ok, true);
+  assert.equal(listed.data.length, 2, 'existing ownership must not hide new-device setup');
+  assert.equal((await call(runtime, 'openProvisioning')).ok, true);
+  assert.equal(opened, 1);
+});
+
+test('an account can disconnect its existing box and scan for a new one', async t => {
+  let opened = 0;
+  const base = fixture();
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: base.adapter,
+    provisioningHost: { open: () => { opened++; return { opened: true }; } } });
+  t.after(() => runtime.dispose());
+  assert.equal((await call(runtime, 'signInWithPassword', {
+    phone: '13800000000', password: 'Synthetic-password-1', rememberPassword: false,
+  })).ok, true);
+  assert.equal((await call(runtime, 'listDevices')).ok, true);
+  assert.equal((await call(runtime, 'connect', 'synthetic-box-a')).ok, true);
+  assert.equal((await call(runtime, 'openProvisioning')).ok, false);
+  assert.equal((await call(runtime, 'disconnect')).ok, true);
+  assert.equal(runtime.snapshot().phase, 'selecting_device');
+  assert.equal((await call(runtime, 'listDevices')).data.length, 2);
+  assert.equal((await call(runtime, 'openProvisioning')).ok, true);
+  assert.equal(opened, 1);
+  assert.equal(base.sessions[0].closed, 1);
+});
+
 test('remembered-login IPC projects metadata and validates exact shape, mode, flag and generation', async t => {
   let value = { phone: '13800000000', passwordSaved: true }, metadataReads = 0, savedLogins = 0;
   const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
@@ -181,6 +216,27 @@ test('legacy password login defaults remember to false and the flag stays outsid
   assert.equal((await call(runtime, 'signInWithPassword', { ...credentials, rememberPassword: true })).ok, true);
   assert.deepEqual(calls, [{ credentials, flag: false, current: true }, { credentials, flag: true, current: true }]);
   assert.equal(JSON.stringify(runtime.snapshot()).includes(credentials.password), false);
+});
+
+test('SMS IPC accepts an optional supported scene and rejects malformed scene arguments', async t => {
+  const calls = [];
+  const runtime = createDesktopRuntime({ mode: 'production', adapter: fixture({
+    sendRegistrationCode: async (phone, scene) => { calls.push({ phone, scene }); return { expiresIn: 300 }; },
+  }).adapter });
+  t.after(() => runtime.dispose());
+  const invoke = extras => runtime.invoke('sendRegistrationCode', [
+    { callId: `sms-scene-${++nextCall}`, expectedGeneration: 0 }, '13800000000', ...extras,
+  ], 1);
+  for (const args of [[], ['consumer_login'], ['consumer_register'], ['consumer_reset_password']]) {
+    assert.equal((await invoke(args)).ok, true);
+  }
+  assert.deepEqual(calls.map(call => call.scene),
+    ['consumer_login', 'consumer_login', 'consumer_register', 'consumer_reset_password']);
+  for (const scene of [null, '', 'register', 'consumer_reset_password ', {}, [], 1]) {
+    assert.equal((await invoke([scene])).error.code, 'INVALID_REQUEST');
+  }
+  assert.equal((await invoke(['consumer_register', 'extra'])).error.code, 'INVALID_REQUEST');
+  assert.equal(calls.length, 4);
 });
 
 test('production registration enters device selection but a claim receipt is not connectable', async t => {

@@ -92,11 +92,35 @@ function validateWireRequest(value) {
   } else assert(!Object.hasOwn(value, 'body') && !Object.hasOwn(value.headers, 'Content-Type'));
   return value;
 }
+// Read only a small, fixed-code gateway envelope. Never expose arbitrary server
+// text (which may contain paths, credentials or business content) as diagnostics.
+const GATEWAY_CAPACITY_CODES = Object.freeze({
+  WORKSPACE_OPERATION_CAPACITY: 'BOX_BUSY',
+  WORKSPACE_SESSION_CAPACITY: 'BOX_BUSY',
+  WORKSPACE_WORKER_CAPACITY: 'BOX_BUSY',
+  WORKSPACE_BACKGROUND_CAPACITY: 'BOX_BUSY',
+  WORKSPACE_PREVIEW_CAPACITY: 'BOX_BUSY',
+  WORKSPACE_RESULT_CAPACITY: 'BOX_BUSY',
+  WORKSPACE_OBJECT_LIMIT: 'WORKSPACE_STORAGE_FULL',
+  WORKSPACE_QUOTA_EXCEEDED: 'WORKSPACE_STORAGE_FULL',
+});
+function gatewayCapacityError(response) {
+  let remoteCode;
+  if (response.body instanceof Uint8Array && response.body.byteLength <= 8192) {
+    try {
+      const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
+      if (plain(value) && typeof value.code === 'string' && Object.hasOwn(GATEWAY_CAPACITY_CODES, value.code)) remoteCode = value.code;
+    } catch { /* Unknown/non-JSON responses keep a generic, credential-free error. */ }
+  }
+  return new DesktopError(remoteCode ? GATEWAY_CAPACITY_CODES[remoteCode] : 'REMOTE_RATE_LIMITED',
+    { httpStatus: 429, ...(remoteCode ? { remoteCode } : {}) });
+}
 function decodeJson(response, max = LIMITS.page) {
   assert(plain(response) && integer(response.status, 100, 599) && response.body instanceof Uint8Array, 'CONTRACT_MISMATCH');
   assert(response.body.byteLength <= max, 'RESPONSE_TOO_LARGE');
   if (response.status !== 200 && response.status !== 201 && response.status !== 202) {
-    const code = [401, 403].includes(response.status) ? 'ACCESS_DENIED' : response.status === 429 ? 'RESOURCE_EXHAUSTED' : 'REMOTE_ERROR';
+    if (response.status === 429) throw gatewayCapacityError(response);
+    const code = [401, 403].includes(response.status) ? 'ACCESS_DENIED' : 'REMOTE_ERROR';
     throw new DesktopError(code, { httpStatus: response.status });
   }
   assert(plain(response.headers), 'CONTRACT_MISMATCH');
@@ -116,5 +140,5 @@ function blobDescriptor(value) {
     && (value.fileName === undefined || filename(value.fileName)), 'CONTRACT_MISMATCH');
   return { ...value };
 }
-module.exports = { OPERATIONS, BASE, LIMITS, ID, REQUEST_ID, SHA, STATES, TERMINAL, plain, exact, integer, text, filename, mime,
+module.exports = { OPERATIONS, BASE, LIMITS, ID, REQUEST_ID, SHA, STATES, TERMINAL, plain, exact, integer, text, filename, mime, gatewayCapacityError,
   assert, jsonBytes, operationRequest, request, validateWireRequest, decodeJson, base64, blobDescriptor };

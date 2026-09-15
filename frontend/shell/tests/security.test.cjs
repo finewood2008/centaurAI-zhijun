@@ -151,6 +151,8 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
   await api.getRememberedLogin(context)
   await api.signInWithSavedPassword(context, false)
   await api.sendRegistrationCode(context, '13800000000')
+  await api.sendRegistrationCode(context, '13800000000', 'consumer_register')
+  await api.sendRegistrationCode(context, '13800000000', 'consumer_reset_password')
   await api.resetPassword(context, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' })
   await api.registerWithPassword(context, { phone: '13800000000', password: 'Synthetic-pass-1', code: '123456', rememberPassword: true })
   await api.claimDevice(context, 'ABCDEFGH23')
@@ -159,6 +161,8 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
     ['zhijun:invoke', 'getRememberedLogin', [context]],
     ['zhijun:invoke', 'signInWithSavedPassword', [context, false]],
     ['zhijun:invoke', 'sendRegistrationCode', [context, '13800000000']],
+    ['zhijun:invoke', 'sendRegistrationCode', [context, '13800000000', 'consumer_register']],
+    ['zhijun:invoke', 'sendRegistrationCode', [context, '13800000000', 'consumer_reset_password']],
     ['zhijun:invoke', 'resetPassword', [context, { phone: '13800000000', code: '123456', password: 'Synthetic-new-password-1' }]],
     ['zhijun:invoke', 'registerWithPassword', [context, { phone: '13800000000', password: 'Synthetic-pass-1', code: '123456', rememberPassword: true }]],
     ['zhijun:invoke', 'claimDevice', [context, 'ABCDEFGH23']],

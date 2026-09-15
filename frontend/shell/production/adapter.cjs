@@ -40,7 +40,7 @@ async function createProductionAdapter({ config, directory, safeStorage, consume
       if (!guard()) throw new DesktopError('STALE_GENERATION');
       return identity;
     },
-    sendRegistrationCode: phone => client.sendRegistrationCode(phone),
+    sendRegistrationCode: (phone, scene) => client.sendRegistrationCode(phone, scene),
     async resetPassword(input, guard = () => true) {
       const receipt = await client.resetPassword(input, guard);
       if (!guard()) throw new DesktopError('STALE_GENERATION');
