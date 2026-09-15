@@ -75,18 +75,22 @@ def service_info(provider=None) -> dict:
     parsed = urlsplit(base)
     host = parsed.hostname or provider.name
     identity = f"{provider.name}|{parsed.scheme}://{host}:{parsed.port or ''}{parsed.path.rstrip('/')}"
+    configuration_revision = getattr(provider, "configuration_revision", None)
+    if configuration_revision:
+        # Endpoint equality is not account equality. A credential/profile/model
+        # change must invalidate both previews and durable source grants.
+        identity += "|" + str(configuration_revision)
     return {"id": hashlib.sha256(identity.encode()).hexdigest(), "name": host,
             "model": provider.model, "external": external}
 
 
 def local_provider(*, num_ctx: int = 4096, timeout: float | None = None):
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from zhijun_worker.model import CapabilityProvider
-        return CapabilityProvider(local_only=True)
     from .runtime_config_provider import get_provider
-    from .zhijun.provider import OllamaProvider
+    from .zhijun.provider import OllamaProvider, ProviderError
 
     local = get_provider().get_chat_snapshot().local
+    if os.environ.get("ZHIJUN_WORKSPACE_ID") and (not local.base_url or not local.model):
+        raise ProviderError("请先配置知君的本地 NPU 模型服务", code="PROVIDER_MISCONFIGURED", retryable=False)
     return OllamaProvider(local.base_url, local.model, timeout=timeout if timeout is not None else float(local.timeout_seconds),
                           keep_alive=local.keep_alive, num_ctx=num_ctx)
 

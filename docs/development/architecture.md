@@ -12,7 +12,7 @@
 - **Remote Agent 是盒端连接与转发组件**：负责经过认证的设备会话、应用路由约束和本地转发，不执行知君领域业务。
 - **知君 Gateway 是 Data Engine 侧的工作区网关**：负责工作区身份、lease、操作分发和 worker 生命周期，与 Remote Agent 不同。
 - **Remote Gateway 是服务端连接网关**：知君当前主要用它交换信令；它与盒内知君 Gateway 不是同一个网关，也不是最终回答模型。
-- **Data Engine / Data Agent 提供资料和基础能力**：负责材料接收、索引、敏感预识别、授权检索、证据交付，以及当前盒端模型能力服务；最终回答由知君组织。
+- **Data Engine / Data Agent 提供资料能力**：负责材料接收、索引、敏感预识别、授权检索和证据交付；知君聊天与本体抽取直接复用 Web 模型适配器，不经过 DE 模型调用与授权层。
 - **Admin / Consumer 是账号与授权控制面**。Admin 上线、连接成功、工作区可用、模型可用与允许外发资料是不同状态，不能相互替代。
 
 ## 2. 组件及逻辑拓扑
@@ -28,7 +28,7 @@
 | 知君 Gateway | 盒端 Data Engine 服务内；工作区授权、受控操作分发、worker 管理 | 不提供任意 HTTP、Shell 或文件系统代理 |
 | 知君 worker | 盒端独立 Python 进程；知君领域逻辑、领域数据、检索与生成编排 | 不实现 Data Engine 的解析、向量索引和敏感检测算法，不自行启动模型 |
 | Data Agent RAG V2 | 盒端 Data Engine 的 App REST 接口；授权检索、敏感交付、证据复核、可选规则管理 | 不接收完整知君对话历史，不生成最终对话答案 |
-| DE Capability / 模型出口 | 盒端；已认证的模型描述、流式/结构化生成、实际请求的出口校验 | 不是 RAG REST 的替代接口，不允许绕过材料授权 |
+| 知君模型适配器 / 出口检查 | worker 内；复用 Web 的本地/在线生成、配置、来源授权与流式解析 | 不把 DE 模型能力作为聊天或本体抽取的前置依赖，不允许绕过材料授权 |
 | CentaurOS 推理运行时 | 盒端；模型加载、硬件适配、推理服务与 NPU-only 执行约束 | 不由桌面版本、CSS 或模型名称决定实际硬件 |
 | 在线模型供应商或用户配置的中转服务 | 外部服务；接收本轮获准内容并生成回答 | 不等同于 Admin、Remote Gateway 或 TURN，不因配置成功就取得资料授权 |
 
@@ -50,8 +50,8 @@ Electron main
                                              │               ├── SQLite：材料状态、权限、检测、证据
                                              │               ├── ChromaDB + BM25：授权材料检索
                                              │               └── 文件存储：原件、大正文快照
-                                             └── 签名能力调用 → DE 模型能力 / 出口校验
-                                                                  ├── 本地推理运行时
+                                             └── 知君来源授权 → Web 共用模型适配器
+                                                                  ├── 已配置的本地 NPU 服务
                                                                   └── 获准的在线模型
 ```
 
@@ -90,7 +90,7 @@ Electron main
       → Search 结果；需要时经敏感 Confirm 才交付片段
   → 知君：用户审阅材料并选择本轮子集
   → Evidence Resolve：重读索引块，复核权限、版本、策略及证据绑定
-  → 知君：有界材料上下文 + 独立在线外发许可 → DE 模型能力 → 最终回答
+  → 知君：有界材料上下文 + 独立在线外发许可 → 知君模型适配器 → 最终回答
 ```
 
 原件、解析快照和 Chroma 文本块是三个不同层次。Search、Confirm 与 Evidence Resolve 的材料正文来自受控索引块，不是知君读取原件，也不是每轮重新解析文件。向量召回先把已授权来源条件下推到 Chroma，再复核版本与交付条件；不是全库 Top-K 后才做权限过滤。BM25 补充向量召回，相关性准入后才可重排，重排不会扩大 App 权限或绕过敏感交付。
@@ -108,7 +108,7 @@ ChromaDB 使用本机 `PersistentClient`，base/delta 是索引代际与增量�
 | MaterialWorker / MaterialIndexingService | 消费材料任务，执行解析、快照、分块、向量化与索引发布 | Data Engine 后台工作流；不是知君业务 worker，也不是回答模型 |
 | SensitiveScanWorker / 交付 Guard | 前者按开关后台扫描；后者在请求边界执行检测/策略/确认检查 | 数据交付安全组件，不是可自行批准资料使用的“敏感 Agent” |
 | Embedding / BM25 / CrossEncoder | 分别负责向量表示、词面召回、可选本地相关性重排 | 检索服务和算法；不生成最终答案 |
-| DE 模型能力 / 推理运行时 | 向知君提供受控流式生成与结构化生成；管理实际模型请求 | 与检索算法模型、敏感语义检测区分，最终回答仍由知君组织 |
+| DE 材料模型 / 推理运行时 | 服务材料处理、检索算法与敏感检测 | 与知君聊天、本体抽取适配器分离；旧材料关系提取兼容代码仍可使用 DE 本地能力，不是聊天必经链 |
 | 知识卡、Claim / Projection 等治理组件 | DE 另有 Web/治理接线及按开关启动的后台任务 | 不在当前知君 App RAG V2 的必经链中；不能画成每次对话都执行 |
 | 旧 Agent 内容接口 / MCP | 旧 Agent 内容路由返回 `LEGACY_AGENT_API_RETIRED`；MCP 仅健康/迁移提示，历史内容调用已退役 | 不是当前知君 RAG 的接口或旁路；不接入旧 `answer` 生成链 |
 
@@ -167,7 +167,7 @@ DE 的 `GatewayManager` 按 workspace 管理、按需复用 worker，不是每�
 | 原始材料、解析、索引、持久化敏感检测事实 | Data Engine；知君不读其数据目录或绕过交付接口读取全文 |
 | 检索结果、确认令牌与用户本轮选择 | worker 内短期状态；临时证据不是永久可读授权，令牌不进入历史或日志 |
 | 长期 RAG App 凭据 | 独立 `secrets_root/rag-v2/<workspaceId>`，与业务数据和源码分离；DE 应用存储保存 Secret 哈希 |
-| workspace 模型配置与云端 API key | DE 的工作区模型存储及加密 Secret Store；不交给 worker 或 Renderer 持有 |
+| workspace 模型配置与云端 API key | 知君工作区 `db/runtime_settings.db` 与私有 secret root 的 `model-secrets.db`；密钥只由可信 worker 解析，不返回 Renderer，不读取 DE 旧密钥 |
 | workspace 签名 key、subject、UDS | Gateway 管理的临时私有运行目录 |
 | 桌面账号状态、配置和诊断 | 用户电脑；凭据由 main 安全存储，诊断不记录正文或秘密 |
 
@@ -186,7 +186,7 @@ DE 的 `GatewayManager` 按 workspace 管理、按需复用 worker，不是每�
 | App 与检索权限 | SQLite：`db/agent_gateway.db`、`db/agent_access.db`，结合材料归属和策略检查 | 前者保存 App 身份与 Secret 哈希，后者提供主体范围、材料授权及权限修订；不是知君聊天记录库 |
 | 敏感规则与检测事实 | SQLite：`db/sensitive_delivery_policy.db`、`db/sensitive_detection.db` | 规则修订、检测版本、扫描任务、覆盖及检测事实；持久事实不是可随意清掉的性能缓存 |
 | 确认与证据数据库 | SQLite：`db/sensitive_confirmation.db`、`db/sensitive_evidence.db` | 确认令牌哈希、幂等回执、绑定描述符和证据状态；不持久保存检索正文或明文 Confirm Token |
-| 模型配置与凭据 | DE workspace 模型存储、运行配置与独立加密 Secret Store | 模型选择、配置、secret 引用及受保护的 API key；不放进向量索引或用户对话 |
+| DE 模型配置与凭据 | DE 自身模型存储、运行配置与独立 Secret Store | 只供 DE 的材料与其它能力使用，不再作为知君聊天/本体的配置源 |
 | 其他 DE 治理数据 | 例如 `db/card_ledger.db`、`db/claim_store.db`、`db/projection_registry.db` | 服务其他知识治理能力；不能据文件名推断已启用，或并入知君检索必经链 |
 | 非持久检索缓存 | 进程内 BM25、Query 向量 LRU、检测/决策 LRU | 可失效重建；不单独部署 Redis，不作为授权事实源 |
 
@@ -216,7 +216,7 @@ Search 只接收独立 Query、检索类型、Top-K、实际 Search 的 `interac
   → 用户审阅已允许交付的片段，选择本轮实际使用的子集
   → Evidence Resolve 复核，组装有界上下文
   → 在线模式另行核对外发来源、服务、用途和实际请求
-  → 提交轮次，worker 经 DE 模型能力取得流式回答
+  → 提交轮次，worker 经知君模型适配器取得流式回答
   → 展示并保存实际模型、来源、引用及终态回执
 ```
 
@@ -258,11 +258,13 @@ Search 只接收独立 Query、检索类型、Top-K、实际 Search 的 `interac
 
 ## 6. 模型与流式回答
 
-worker 的 `CapabilityProvider` 通过已认证的 DE `model.describe`、`model.stream`、`model.complete_json` 使用模型。它不是从桌面或 worker 任意直连模型 URL：正式流经反向能力接口，由 DE 的模型 transport 构造凭据并发起实际本地/在线请求。RAG REST 则直接使用 App 凭据，不经过这条反向模型能力通道。
+worker 的聊天和本体抽取直接复用 Web 的 `OpenAICompatibleProvider` / `OllamaProvider`。模型配置和密钥属于已验证的知君 workspace；正式进程忽略全局模型环境覆盖，不从 DE 的模型存储继承配置。设置页的聊天配置与供应商管理共 9 条 catalog 操作由 `models` 改为 `domain`，经签名 dispatch 送达 worker。RAG REST 独立使用 App 凭据。
 
-在线调用同时经过知君来源授权和 DE 的出口许可/实际请求校验；服务、模型配置、来源、用途或请求变化后必须复核。两层不是任选其一，敏感交付确认也不能替代它们。
+在线调用经过知君来源授权、精确预览及实际 HTTP 边界的 `EGRESS_PERMIT` 复核；服务身份和预览绑定不透明配置摘要，同端点轮换凭据也使旧授权失效。DE 不再接收模型提示词预览或签发聊天/本体的外发凭据。材料选择与敏感交付确认仍然保留，不能替代知君在线外发许可。Gateway 的签名调度和后台任务生命周期登记仍保留，它们不是模型代理。
 
-上游流经 DE 能力协议、worker 轮次协议及桌面 transport/SSE 消费。中转站有调用记录只说明上游收到请求，不证明正文、合法终态和回执到达知君。worker 区分 text/usage/done/error；缺少结束或中途失败不能伪装为完整成功，已经收到的部分内容与错误应按轮次协议保留。
+上游流经知君模型适配器、worker 轮次协议及桌面 transport/SSE 消费。中转站有调用记录只说明上游收到请求，不证明正文、合法终态和回执到达知君。worker 区分 text/usage/done/error；缺少结束或中途失败不能伪装为完整成功，已经收到的部分内容与错误应按轮次协议保留。
+
+新工作区未配置本地模型时明确报未配置，不使用默认 CPU Ollama。已有 NPU 服务的持久配置、旧 DE 密钥需用户重新输入的升级步骤、目录与锁约束见 [工作区模型配置](../workspace-model-configuration.md)。本次源码变更不等于盒子已经升级，也不自动重跑历史失败的本体任务。
 
 本地/在线由用户明确选择，在线失败不自动回落本地。实际去向以消息 `provider`、`model`、`external` 与路由审计为准，不看模型自称。详见 [模型路由](task-routing.md)。
 
@@ -278,13 +280,13 @@ NPU-only 是盒端**本地模型推理执行约束**，由 CentaurOS 的运行�
 | 桌面 → Remote Agent | Consumer 授权、短期票据、应用/profile 与连接协议 | 登录不等于任意盒子/路由可访问，连接票据不是 App Secret |
 | Agent → 知君 Gateway → worker | Agent bridge proof、workspace/lease、所有权代次、操作白名单、worker 签名和重放检查 | 不由 Renderer 自报可信账号/设备，不复用旧代次 |
 | worker → RAG REST | `X-App-Id` / `X-App-Secret`、应用能力、材料及策略版本 | 每次提问不轮换凭据，遇到停用/撤权不自动恢复权限 |
-| worker → DE 模型出口 | worker proof、活动 execution/lease、服务与配置、来源、用途、实际请求许可 | 材料交付与使用确认不等于在线外发许可 |
+| worker → 模型服务 | 知君工作区配置/密钥、服务与配置摘要、来源、用途、实际 HTTP 请求许可 | 材料交付与使用确认不等于在线外发许可；不默认继承 DE/Web 密钥 |
 
 对话检索最小 App 能力为 `mindos.read`、`mindos.search`、`mindos.sensitive.confirm`；规则管理按需增加 `mindos.sensitive.policy.write`，原文领取按部署策略增加 `mindos.sensitive.original.read`。资料管理通过独立的 Gateway `materials` 操作通道及工作区资源鉴权，不要求把 RAG App 的历史 import/upload.status 或版本管理接口重新用作材料管理入口。
 
 这不代表已有 App 已自动缩权：相邻 DE 当前 `rag_v2_provisioning.py` 的历史能力集合仍含 import/upload.status。知君不使用这些能力，实际授予范围须核验；能力治理由 DE 团队按完整集合、修订与现有 App 状态受控变更，本次 worker 升级不会自动扩权、缩权或轮换 Secret。
 
-Gateway 在验证后的工作区激活边界管理长期 App 凭据；业务请求不得遇错就 create/rotate。明文 Secret 文件仅供可信运行账户读取，不进入源码、发行包、业务数据目录、日志或模型上下文。模型 API key 由 DE 的工作区 Secret Store 管理，不从部署级配置自动继承给新工作区。
+Gateway 在验证后的工作区激活边界管理长期 App 凭据；业务请求不得遇错就 create/rotate。明文 App Secret 文件仅供可信运行账户读取，不进入源码、发行包、业务数据目录、日志或模型上下文。聊天模型 API key 由知君工作区私有 Secret Store 管理，不从部署级配置或 DE 自动继承给新工作区。密文与其应用加密密钥在同一私有数据库，不能把它描述为防止完整数据库副本离线解密的安全保险库。
 
 RAG 客户端允许回环 HTTP，非回环必须 HTTPS；实际 Gateway 能力地址限制在回环。worker 的进程隔离不等于网络/文件系统强沙箱，OS 和容器安全须另行验收。
 
@@ -297,8 +299,8 @@ RAG 客户端允许回环 HTTP，非回环必须 HTTPS；实际 Gateway 能力�
 | 变更 | 更新单元 | 不能替代的工作 |
 |---|---|---|
 | 页面、IPC、连接状态机、SDK/sidecar | 桌面安装包 | 重启盒子不会更新已安装页面 |
-| 对话、Query、材料确认、领域逻辑 | 知君 worker 源码及其运行进程 | 重打桌面包不会更新旧 worker |
-| RAG REST、知君 Gateway、模型能力与上游流解析 | Data Engine 发行/镜像，由对应团队维护 | 只换 worker 挂载不会更新镜像内 DE 实现 |
+| 对话、本体、模型调用/流式解析、Query、材料确认、领域逻辑 | 知君 worker 源码及其运行进程 | 重打桌面包不会更新旧 worker；模型设置 catalog 须客户端与盒端一起更新 |
+| RAG REST、知君 Gateway、DE 材料能力 | Data Engine 发行/镜像，由对应团队维护 | 只换 worker 挂载不会更新镜像内 DE 实现 |
 | 盒端连接、应用/profile/路由 | Remote Agent 及受控配置 | 不等于更新知君业务或资料索引 |
 | 账号、设备绑定、授权、出票 | Admin / Consumer | 不证明桌面和盒端合同配套 |
 | 服务端连接信令 | Remote Gateway 独立服务 | 不属于盒端 manager 的容器升级范围 |
@@ -333,7 +335,7 @@ manager 不是任意配置写入器：当前合同不负责桌面包、Admin/云
 | 已连接但 ACCESS_DENIED / 合同不符 | 主体、lease、workspace、catalog 与版本 | 不能通过跳过鉴权或扩大路由解决 |
 | 本体/判断读取慢 | 桌面读取调度、工作区检查、worker 查询和领域存储 | 不把所有页面加载算成模型推理 |
 | 检索等待或空结果 | Query、RAG status/detectionNotice、App 权限、证据状态 | 暂扣不是无结果，人工确认不是模型超时 |
-| 云端已调用但空白/半途报错 | 上游流、DE 能力流、worker 终态、连接与前端消费 | 上游计费不能证明端到端成功 |
+| 云端已调用但空白/半途报错 | 上游流、知君模型适配器、worker 终态、连接与前端消费 | 上游计费不能证明端到端成功；旧版本另需检查 DE 能力流 |
 | 更新后行为未变 | 实际进程路径、镜像、代码挂载、catalog、安装版本 | 仓库源码或一个版本标签不能证明线上更新 |
 
 连接使用脱敏 `connection-timing.jsonl` 与 `connection-report.cjs` 分析；connect 指标可能包含 ticket 耗时，不能重复相加。检索错误保留安全 code、traceId、Retry-After 和结果未知语义；模型以执行回执定位。诊断不记录密码、票据、Secret、Confirm/risk token、敏感原文或完整上下文；不能以减少必要安全检查冒充性能优化。

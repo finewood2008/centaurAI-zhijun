@@ -278,7 +278,9 @@ class RoutingTests(unittest.TestCase):
         guarded = GuardedProvider(router, old, "chat", [], revision=preview["revision"])
         with self.assertRaises(HTTPException) as raised:
             list(guarded.stream(request))
-        self.assertEqual(raised.exception.detail["code"], "ROUTE_CHANGED")
+        # A different model account now has a different service identity, so
+        # the online-mode fence rejects it before the queued-request fence.
+        self.assertEqual(raised.exception.detail["code"], "ONLINE_SERVICE_CHANGED")
         self.assertFalse(old.requests)
 
     def test_source_changed_between_preview_and_network_blocks(self):

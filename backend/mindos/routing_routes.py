@@ -274,12 +274,7 @@ def charter_exception(conversation_id: str, req: CharterException, request: Requ
 
 def revoke(conversation_id: str, req: Revoke, request: Request):
     r = router_for(conversation_id, request)
-    policy = r.store.revoke(r.scope, req.key)
-    import os
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from zhijun_worker.consent import revoke as revoke_de
-        revoke_de(req.key)
-        _register_default_policy(policy, action="revoke", key=req.key)
+    r.store.revoke(r.scope, req.key)
     return {"revoked": True, "notice": "已停止后续使用；无法收回已经发送的内容"}
 
 
@@ -313,40 +308,7 @@ def set_default_consent(conversation_id: str, req: DefaultConsent, request: Requ
                                    expected_revision=req.expectedRevision)
     except ValueError as exc:
         fail("DEFAULT_CONSENT_CHANGED", str(exc))
-    import os
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        try:
-            _register_default_policy(saved, provider)
-        except Exception:
-            # An enable must fail closed when DE could not persist the standing
-            # policy. Roll back locally so the UI cannot claim auto-send works.
-            if saved["enabled"]:
-                r.store.set_policy(r.scope, enabled=False, service=saved["service"], service_name=saved["serviceName"],
-                                   include_files=saved["includeFiles"], include_charter=saved["includeCharter"],
-                                   auto_egress=False, configuration_revision=saved.get("configurationRevision", ""),
-                                   purposes=saved["purposes"], expected_revision=saved["revision"])
-            raise
     return default_state(request) if conversation_id == "default" else state(conversation_id, request)
-
-
-def _register_default_policy(policy, provider=None, *, action=None, key=None):
-    import os
-    if not os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        return
-    from zhijun_worker.capabilities import require
-    if action == "revoke":
-        payload = {"action": "revoke", "key": key, "policyRevision": policy["revision"]}
-    elif policy["enabled"]:
-        provider = provider or build_provider()
-        payload = {"action": "enable", "policyRevision": policy["revision"],
-                   "serviceId": policy["service"],
-                   "configurationRevision": getattr(provider, "configuration_revision", ""),
-                   "purposes": policy["purposes"], "includeFiles": bool(policy["includeFiles"]),
-                   "includeCharter": bool(policy.get("includeCharter", False)),
-                   "autoEgress": bool(policy.get("autoEgress", False))}
-    else:
-        payload = {"action": "disable", "policyRevision": policy["revision"]}
-    require().call("domain.consent-policy.register", payload)
 
 
 def audits(conversation_id: str, request: Request):

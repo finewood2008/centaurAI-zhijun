@@ -1073,6 +1073,8 @@ export interface RuntimeTestResult {
 }
 
 export interface ChatProviderConfig {
+  configurationRequired?: boolean
+  configurationMessage?: string | null
   revision: number
   provider: 'ollama' | 'openai'
   externalEnabled: boolean

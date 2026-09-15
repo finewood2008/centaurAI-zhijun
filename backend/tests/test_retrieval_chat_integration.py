@@ -28,11 +28,9 @@ def chat(monkeypatch):
 
     def capability_call(operation, payload):
         calls.append((operation, payload))
-        assert operation == "domain.preview.register", "native evidence must not read legacy material metadata"
-        return {}
+        raise AssertionError("native RAG must not call legacy materials or DE model/consent capabilities: " + operation)
 
     monkeypatch.setattr("zhijun_worker.capabilities.require", lambda: SimpleNamespace(call=capability_call))
-    monkeypatch.setattr("zhijun_worker.consent.receipt", lambda *args, **kwargs: {})
     case.capability_calls = calls
     case.no_legacy = Mock(side_effect=AssertionError("native evidence must not use legacy material registration"))
     monkeypatch.setattr("mindos.zhijun.routing.require_material", case.no_legacy)

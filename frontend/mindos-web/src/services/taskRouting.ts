@@ -19,6 +19,8 @@ export interface RoutePreview {
   charterUnresolved?: Array<{ id: string; text: string; reason: string }>
 }
 export function needsDeConsent(preview: RoutePreview): boolean {
+  // Compatibility only for older box workers. New workers authorize model
+  // requests in Zhijun and do not return deConsentRequired.
   return isDesktopProduct() && preview.service.external && preview.deConsentRequired === true
 }
 export function canUseDefaultDeConsent(preview: RoutePreview): boolean {
