@@ -32,16 +32,16 @@ async function componentCode(name) {
   return ts.transpileModule(compileScript(parse(source).descriptor, { id:'matters-' + name }).content, { compilerOptions:{ module:ts.ModuleKind.CommonJS, target:ts.ScriptTarget.ES2022 } }).outputText
 }
 const code = await componentCode('MatterWorkspace')
-function setup() {
-  const props = Vue.reactive({ conversationId:'conversation-a', disabled:false })
-  const state = { bindings:{ 'conversation-a':{ matter:null, bindingRevision:0 }, 'conversation-b':{ matter:record('matter-b','conversation-b'), bindingRevision:1 } }, artifacts:[], wait:null,writeWait:null }
+function setup(initialProps = {}) {
+  const props = Vue.reactive({ conversationId:'conversation-a', disabled:false, ...initialProps })
+  const state = { bindings:{ 'conversation-a':{ matter:null, bindingRevision:0 }, 'conversation-b':{ matter:record('matter-b','conversation-b'), bindingRevision:1 } }, artifacts:[], wait:null,writeWait:null, creates:0 }
   const calls = [], emits = [], cleanups = [], exports = {}
   const api = {
     artifactLabels:Object.fromEntries(kinds.map(k => [k, k])),
     async getMatterBinding(cid) { calls.push(['binding',cid]); const value = clone(state.bindings[cid]); if (state.wait?.cid === cid) { const wait = state.wait; state.wait = null; await wait.promise } return value },
     async listMatters() { calls.push(['list']); return { items:Object.values(state.bindings).map(b => b.matter).filter(Boolean) } },
     async listArtifacts(id) { calls.push(['artifacts',id]); return { items:clone(state.artifacts.filter(a => a.matterId === id)) } },
-    async createMatter(data) { calls.push(['create',clone(data)]); if (state.writeWait) await state.writeWait.promise; const matter = { ...record('matter-a',data.conversationId), title:data.title }; state.bindings[data.conversationId] = { matter,bindingRevision:1 }; return clone(matter) },
+    async createMatter(data) { calls.push(['create',clone(data)]); if (state.writeWait) await state.writeWait.promise; const prior = state.bindings[data.conversationId]; assert.equal(data.expectedBindingRevision, prior.bindingRevision, '关联已变化，请刷新'); state.creates++; const matter = { ...record(state.creates === 1 ? 'matter-a' : 'matter-new-' + state.creates,data.conversationId), title:data.title }; state.bindings[data.conversationId] = { matter,bindingRevision:prior.bindingRevision+1 }; return clone(matter) },
     async bindMatter(cid,id,revision,requestId) { calls.push(['bind',cid,id,revision,requestId]); assert.equal(revision,state.bindings[cid].bindingRevision); state.bindings[cid] = { matter:id ? record(id,cid) : null,bindingRevision:revision+1 }; return clone(state.bindings[cid]) },
     async updateMatter(id,data) { calls.push(['edit',id,clone(data)]); const binding = Object.values(state.bindings).find(b => b.matter?.id === id); assert.equal(data.expectedRevision,binding.matter.revision); binding.matter = { ...binding.matter,...data,revision:data.expectedRevision+1 }; return clone(binding.matter) },
     async saveArtifact(id,data) { calls.push(['save-reply',id,clone(data)]); assert.ok(['assistant-complete','assistant-next'].includes(data.messageId)); assert.equal('markdown' in data,false,'server must fetch the complete source message'); const artifact = { id:data.messageId === 'assistant-complete' ? 'artifact-a' : 'artifact-b',matterId:id,title:'完整沟通提纲',kind:data.kind,markdown:data.messageId === 'assistant-complete' ? reply : '# 下一条完整回复',revision:1,userEdited:false,sourceMessageId:data.messageId,sourceConversationId:data.conversationId }; state.artifacts = [artifact,...state.artifacts.filter(a => a.id !== artifact.id)]; return clone(artifact) },
@@ -130,6 +130,68 @@ function setup() {
   h.props.conversationId = 'conversation-a'; await tick()
   assert.equal(h.ui.fields.goal,'还没保存的用户原文','switching away and back preserves pending manual edits')
   assert.equal(h.ui.matter.value.revision,1,'restoring a manual draft does not silently rebase its revision')
+  h.close()
+}
+{
+  const h = setup({ conversationId:null }); await tick()
+  assert.equal(h.calls.length,0,'a visible blank-page entry makes no request and creates nothing on mount')
+  const wait = defer(); let creations = 0
+  h.props.ensureConversation = async () => {
+    creations++; await wait.promise
+    h.state.bindings['lazy-conversation'] = { matter:null,bindingRevision:0 }
+    h.props.conversationId = 'lazy-conversation'
+    return 'lazy-conversation'
+  }
+  const first = h.ui.show(), second = h.ui.show()
+  assert.equal(creations,1,'rapid repeated entry clicks share the lazy creation')
+  wait.resolve(); await Promise.all([first,second]); await tick()
+  assert.equal(h.ui.open.value,true)
+  assert.equal(h.calls.filter(c => c[0] === 'binding').length,1,'watch and entry initialization share the binding read')
+  h.ui.newTitle.value = '空白对话的事情'; await h.ui.connect(true)
+  assert.equal(h.state.bindings['lazy-conversation'].matter.title,'空白对话的事情')
+  assert.equal(h.calls.find(c => c[0] === 'create')[1].expectedBindingRevision,0)
+  h.close()
+}
+{
+  const h = setup({ conversationId:null,ensureConversation:async () => { throw new Error('合成创建失败，请重试') } }); await tick()
+  await h.ui.show()
+  assert.equal(h.ui.open.value,true); assert.match(h.ui.error.value,/创建失败/)
+  assert.equal(h.ui.opening.value,false,'failure leaves the entry retryable')
+  h.close()
+}
+{
+  const h = setup(); await tick()
+  h.ui.newTitle.value = '原来的课程设计'; await h.ui.connect(true)
+  const oldId = h.ui.matter.value.id
+  h.props.suspension = { matterId:oldId,revision:1 }; await tick()
+  assert.equal(h.ui.suspended.value,true)
+  h.ui.saveFromReply({ id:'assistant-next',content:'# 新话题成果' }); await tick()
+  await h.ui.saveReply(); h.ui.prepare('communication'); h.ui.review()
+  assert.equal(h.calls.filter(c => c[0] === 'save-reply').length,0,'suspended old matter cannot receive new-topic artifact')
+  assert.equal(h.emits.length,0,'prepare/review do not silently restore suspended context')
+  h.ui.newTitle.value = '与产品搭档沟通'; await h.ui.connect(true)
+  assert.notEqual(h.ui.matter.value.id,oldId)
+  assert.equal(h.ui.bindingRevision.value,2)
+  assert.equal(h.ui.suspended.value,false)
+  await h.ui.saveReply()
+  const saved = h.calls.find(c => c[0] === 'save-reply')
+  assert.equal(saved[1],h.ui.matter.value.id)
+  assert.equal(saved[2].expectedBindingRevision,2)
+  h.ui.fields.goal = '用户还没有保存的目标'
+  await h.ui.show()
+  assert.equal(h.ui.fields.goal,'用户还没有保存的目标','opening/refetch preserves manual drafts')
+  h.close()
+}
+{
+  const h = setup(); await tick()
+  h.state.bindings['conversation-a'] = { matter:record('matter-a'),bindingRevision:1 }
+  await h.ui.load()
+  h.state.bindings['conversation-a'] = { matter:record('other-device-matter'),bindingRevision:2 }
+  h.ui.newTitle.value = '旧页面的新事情'
+  await h.ui.connect(true)
+  assert.match(h.ui.error.value,/关联已变化|刷新/)
+  assert.equal(h.ui.newTitle.value,'旧页面的新事情','conflicts preserve proposed title')
+  assert.equal(h.state.bindings['conversation-a'].matter.id,'other-device-matter')
   h.close()
 }
 {

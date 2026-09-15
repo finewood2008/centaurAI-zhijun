@@ -28,6 +28,7 @@ class MatterCreate(Write):
     context: str = Field(default="", max_length=6000)
     nextStep: str = Field(default="", max_length=2000)
     conversationId: str | None = Field(default=None, min_length=1, max_length=100)
+    expectedBindingRevision: int | None = Field(default=None, ge=0, strict=True)
 
     @field_validator("title", "goal", "context", "nextStep", mode="before")
     @classmethod
@@ -68,6 +69,7 @@ class ArtifactCreate(Write):
     messageId: str = Field(min_length=1, max_length=100)
     title: str = Field(default="", max_length=120)
     kind: ArtifactKind = "freeform"
+    expectedBindingRevision: int | None = Field(default=None, ge=0, strict=True)
 
 
 class ArtifactEdit(Write):
@@ -137,7 +139,7 @@ def create_matter(body: MatterCreate, request: Request):
     store, scope = resources(request)
     if body.conversationId:
         require_conversation(body.conversationId, scope)
-    return apply(lambda: store.create(scope, body.model_dump(exclude={"requestId", "conversationId"}), body.requestId, body.conversationId))
+    return apply(lambda: store.create(scope, body.model_dump(exclude={"requestId", "conversationId", "expectedBindingRevision"}), body.requestId, body.conversationId, body.expectedBindingRevision))
 
 
 def edit_matter(matter_id: str, body: MatterEdit, request: Request):
@@ -197,7 +199,7 @@ def create_artifact(matter_id: str, body: ArtifactCreate, request: Request):
     if not markdown.strip() or len(markdown) > 50000:
         raise HTTPException(409, "这条回复为空或过长，暂不能保存为一份成果")
     payload = {"title": body.title.strip() or matter["title"], "kind": body.kind, "markdown": markdown}
-    return apply(lambda: store.save_artifact(matter_id, scope, payload, message, source, body.requestId))
+    return apply(lambda: store.save_artifact(matter_id, scope, payload, message, source, body.requestId, body.expectedBindingRevision))
 
 
 def edit_artifact(artifact_id: str, body: ArtifactEdit, request: Request):

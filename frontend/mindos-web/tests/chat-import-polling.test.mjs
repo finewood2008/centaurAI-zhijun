@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createChatImportPoller, hasTransitionalImports } from '../src/composables/chatImportPolling.ts'
+import { createChatImportPoller, hasTransitionalImports, shouldRetryChatImportError } from '../src/composables/chatImportPolling.ts'
 
 const deferred = () => {
   let resolve
@@ -32,7 +32,7 @@ const listing = (signature, state = 'complete', fileState = 'ready') => ({
   items: state === 'empty' ? [] : [{ state, files: [{ state: fileState }] }],
 })
 
-function fixture(read, refreshMessages, isTargetCurrent) {
+function fixture(read, refreshMessages, isTargetCurrent, extraOptions = {}) {
   const clock = fakeTimers()
   const applied = [], changes = [], errors = []
   const poller = createChatImportPoller({
@@ -46,6 +46,8 @@ function fixture(read, refreshMessages, isTargetCurrent) {
     intervalMs: 2500,
     maxBackoffMs: 10000,
     timers: clock.api,
+    shouldRetry: shouldRetryChatImportError,
+    ...extraOptions,
   })
   return { poller, clock, applied, changes, errors }
 }
@@ -101,7 +103,7 @@ test('failures back off exponentially to the cap and a success resets the delay'
     const next = replies.shift()
     if (next instanceof Error) throw next
     return next
-  })
+  }, undefined, undefined, { maxAutomaticRetries: 4 })
   await f.poller.start('conversation-a')
   assert.deepEqual(f.clock.delays(), [2500])
   for (const expected of [5000, 10000, 10000]) {
@@ -111,6 +113,69 @@ test('failures back off exponentially to the cap and a success resets the delay'
   f.clock.runNext(); await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(f.clock.delays(), [2500])
   assert.equal(f.errors.length, 4)
+})
+
+test('unknown failures exhaust a finite automatic budget; manual refresh starts a new budget', async () => {
+  let reads = 0
+  const f = fixture(async () => { reads++; throw new TypeError('Failed to fetch') })
+  await f.poller.start('conversation-a')
+  for (const expected of [2500, 5000, 10000]) {
+    assert.deepEqual(f.clock.delays(), [expected])
+    f.clock.runNext(); await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.equal(reads, 4)
+  assert.equal(f.clock.count(), 0)
+  await f.poller.refresh()
+  assert.equal(reads, 5)
+  assert.deepEqual(f.clock.delays(), [2500])
+  f.poller.dispose()
+})
+
+test('capacity, permanent HTTP and cancellation errors stop without matching message text', async () => {
+  for (const fields of [
+    { code: 'WORKSPACE_STORAGE_FULL', status: 503 },
+    { code: 'WORKSPACE_OBJECT_LIMIT', status: 503 },
+    { code: 'WORKSPACE_QUOTA_EXCEEDED', status: 503 },
+    { code: 'BOX_BUSY', status: 503 },
+    { remoteCode: 'WORKSPACE_OPERATION_CAPACITY', status: 503 },
+    { status: 401 }, { status: 403 }, { status: 404 }, { status: 429 }, { status: 507 }, { name: 'AbortError' },
+  ]) {
+    const error = Object.assign(new Error('arbitrary message'), fields)
+    const f = fixture(async () => { throw error })
+    await f.poller.start('conversation-a')
+    assert.equal(f.clock.count(), 0, JSON.stringify(fields))
+    assert.deepEqual(f.errors, [error])
+  }
+  assert.equal(shouldRetryChatImportError(new Error('WORKSPACE_STORAGE_FULL')), true, 'message text is not an error code')
+  assert.equal(shouldRetryChatImportError({ status: 408 }), true)
+  assert.equal(shouldRetryChatImportError({ status: 503 }), true)
+})
+
+test('repeated message refresh failures also exhaust the automatic budget', async () => {
+  let reads = 0, messageRefreshes = 0
+  const f = fixture(async () => listing(++reads === 1 ? 'before' : 'after', 'queued'), async () => {
+    messageRefreshes++; throw new Error('message refresh failed')
+  })
+  await f.poller.start('conversation-a')
+  for (let i = 0; i < 4; i++) {
+    f.clock.runNext(); await new Promise(resolve => setImmediate(resolve))
+  }
+  assert.equal(messageRefreshes, 4)
+  assert.equal(f.clock.count(), 0, 'successful listing alone must not reset failed synchronization budget')
+})
+
+test('an explicit refresh queued behind capacity failure recovers with one read', async () => {
+  const pending = deferred()
+  let reads = 0
+  const f = fixture(() => ++reads === 1 ? pending.promise : Promise.resolve(listing('recovered')))
+  const initial = f.poller.start('conversation-a')
+  const manual = f.poller.refresh()
+  const repeatedManual = f.poller.refresh()
+  pending.reject(Object.assign(new Error('full'), { code: 'WORKSPACE_STORAGE_FULL' }))
+  await Promise.all([initial, manual, repeatedManual])
+  assert.equal(reads, 2)
+  assert.deepEqual(f.applied, ['recovered'])
+  assert.equal(f.clock.count(), 0)
 })
 
 test('a failed message refresh keeps the old signature and retries with backoff', async () => {
@@ -159,6 +224,24 @@ test('a changed external conversation ref suppresses a result before its watcher
   await request
   assert.deepEqual(f.applied, [])
   assert.equal(f.clock.count(), 0)
+})
+
+test('a late capacity error cannot alter another conversation error or retry budget', async () => {
+  const pending = deferred()
+  const networkError = new TypeError('Failed to fetch')
+  const f = fixture(async id => {
+    if (id === 'conversation-a') return pending.promise
+    throw networkError
+  })
+  const old = f.poller.start('conversation-a')
+  await f.poller.start('conversation-b')
+  pending.reject(Object.assign(new Error('old capacity failure'), { code: 'WORKSPACE_STORAGE_FULL' }))
+  await old
+  assert.deepEqual(f.errors, [networkError])
+  assert.deepEqual(f.clock.delays(), [2500])
+  f.clock.runNext(); await new Promise(resolve => setImmediate(resolve))
+  assert.deepEqual(f.clock.delays(), [5000])
+  f.poller.dispose()
 })
 
 test('transition classification covers upload, read and reply work only', () => {

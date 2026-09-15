@@ -11,7 +11,7 @@ export interface ReplyBatch {
 export interface ReplyInputDraft {
   text: string
   origin?: ReplyAssistanceInput
-  undo?: { inserted: string; offset: number; origin?: ReplyAssistanceInput }
+  undo?: { inserted: string; offset: number; replaced?: string; origin?: ReplyAssistanceInput }
 }
 export const REPLY_CONTROLS = {
   rephrase: '请换一种更简单、具体的说法，一次只问一个问题。',
@@ -28,9 +28,17 @@ export function appendReply(text: string, extra: string, current: ReplyAssistanc
     origin: { messageId: incoming.messageId, selections, control: incoming.control || current?.control } as ReplyAssistanceInput }
 }
 
-export function undoReply(text: string, insertion: { inserted: string; offset: number }) {
+/** Conversation controls replace the whole draft and never inherit candidate sources. */
+export function replaceReply(text: string, incoming: ReplyAssistanceInput) {
+  if (incoming.control !== 'rephrase' && incoming.control !== 'pause') throw new Error('请选择有效的对话操作。')
+  const inserted = REPLY_CONTROLS[incoming.control]
+  return { text: inserted, inserted, offset: 0, replaced: text,
+    origin: { messageId: incoming.messageId, selections: [], control: incoming.control } as ReplyAssistanceInput }
+}
+
+export function undoReply(text: string, insertion: { inserted: string; offset: number; replaced?: string }) {
   if (text.slice(insertion.offset, insertion.offset + insertion.inserted.length) !== insertion.inserted) return null
-  return text.slice(0, insertion.offset) + text.slice(insertion.offset + insertion.inserted.length)
+  return text.slice(0, insertion.offset) + (insertion.replaced ?? '') + text.slice(insertion.offset + insertion.inserted.length)
 }
 
 /** Failure recovery keeps later typing, and never launders an assisted draft into unassisted text. */

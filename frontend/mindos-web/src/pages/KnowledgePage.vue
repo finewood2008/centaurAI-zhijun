@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DataHubBackLink from '@/components/ui/DataHubBackLink.vue'
 // 知识成品列表：搜索 / 标签与目录管理。
 // P14-07：知识成品多级目录树——左侧 KNOWLEDGE 目录筛选侧栏 + 卡片移动 / 目录管理
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
@@ -256,6 +257,7 @@ onBeforeUnmount(() => loadGate.invalidate())
 
 <template>
   <div class="page">
+    <DataHubBackLink />
     <div class="page-head knowledge-head">
       <div>
         <h1>知识档案</h1>

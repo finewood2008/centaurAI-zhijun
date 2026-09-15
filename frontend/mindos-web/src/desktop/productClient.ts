@@ -3,10 +3,12 @@ import type { ProductDesktop, ProductOperationRequest, ProductStart } from '../.
 import { resolveProductOperation, type ProductOperation } from '../services/productCatalog'
 import { onProductScopeReset, workspaceRequestSignal } from '../shared/productScope.ts'
 import { reportUploadProgress, type ProductRequestInit } from '../services/transport.ts'
+import { createPollPacing, waitForPoll } from './pollPacing.ts'
+import { COMPLETED_SSE_STREAM } from '../shared/streamCompletion.ts'
 
 interface Binding { generation: number; workspaceId: string }
 class ProductFailure extends Error {
-  constructor(message: string, readonly code = 'TRANSPORT_UNAVAILABLE', readonly status = 503) { super(message) }
+  constructor(message: string, readonly code = 'TRANSPORT_UNAVAILABLE', readonly status = 503, readonly remoteCode?: string) { super(message) }
 }
 const CHUNK_BYTES = 524288
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
@@ -30,7 +32,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
   const context = (value: Binding): CallContext => ({ callId: crypto.randomUUID(), expectedGeneration: value.generation })
   function unwrap<T>(result: Result<T>, value: Binding): T {
     if (!current(value) || result.generation !== value.generation) throw cancelled()
-    if (!result.ok) throw new ProductFailure(result.error.message, result.error.code)
+    if (!result.ok) throw new ProductFailure(result.error.message, result.error.code, result.error.httpStatus ?? 503, result.error.remoteCode)
     return result.data
   }
   async function rpc<T>(promise: Promise<Result<T>>, value: Binding, signal?: AbortSignal): Promise<T> {
@@ -107,6 +109,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     const uploads: string[] = []
     let job: ProductStart | undefined
     let finished = false
+    let domainCompleted = false
     let cancelSent = false
     let mutation: Binding | undefined
     let outcomeUnknown = false
@@ -149,6 +152,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
       let total = 0
       let cursor = 0
       const deadline = Date.now() + 600000
+      const pacing = createPollPacing()
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
           const enqueue = (bytes: Uint8Array) => {
@@ -161,7 +165,8 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
             try {
               while (!receivedEnd) {
                 signal.throwIfAborted()
-                if (Date.now() > deadline) throw new ProductFailure('操作等待超时，写入结果可能需要重新核对', 'REQUEST_TIMEOUT', 504)
+                if (Date.now() >= deadline) throw new ProductFailure('操作等待超时，写入结果可能需要重新核对', 'REQUEST_TIMEOUT', 504)
+                const pollStarted = Date.now()
                 const page = await rpc(product.poll(context(value), { id: job!.id, after: cursor, waitMs: 8000 }), value, signal)
                 if (page.id !== job!.id || page.cursor < cursor) throw new ProductFailure('响应游标无效')
                 for (const event of page.events) {
@@ -189,19 +194,34 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
                 }
                 if (page.cursor !== cursor) throw new ProductFailure('响应游标与事件不一致')
                 if (TERMINAL.has(page.state) && !page.hasMore && !receivedEnd) throw new ProductFailure('操作已结束，但响应不完整')
-                if (!receivedEnd && !page.events.length) await new Promise(resolve => setTimeout(resolve, 25))
+                const delay = pacing.nextDelay(page.events.length > 0, Date.now() - pollStarted)
+                if (!receivedEnd) await waitForPoll(Math.min(delay, Math.max(0, deadline - Date.now())), signal)
               }
               finished = true
               controller.close()
             } catch (error) {
-              rememberUncertainty(error)
-              cancelJob()
-              rejectHeaders(error)
-              try { controller.error(error) } catch { /* Reader already cancelled. */ }
+              // A late poll failure cannot turn a delivered domain terminal
+              // event into an unknown mutation or revoke its background work.
+              if (!domainCompleted) {
+                rememberUncertainty(error)
+                cancelJob()
+                rejectHeaders(error)
+                try { controller.error(error) } catch { /* Reader already cancelled. */ }
+              }
             } finally { finished = true; cleanup() }
           })()
         },
-        cancel() { cancelJob(); lifetime.abort(); finished = true; cleanup() },
+        cancel(reason) {
+          // SSE message_done/error can precede the Gateway end event. Closing
+          // that local reader must not revoke already registered extraction.
+          // Set finished before abort: abort synchronously invokes cancelJob.
+          if (operation.response === 'sse' && reason === COMPLETED_SSE_STREAM) {
+            domainCompleted = true
+            finished = true
+          }
+          else cancelJob()
+          lifetime.abort(); finished = true; cleanup()
+        },
       })
       const head = await headersReady
       return new Response(head.status === 204 || head.status === 205 || head.status === 304 ? null : stream, head)
@@ -232,8 +252,11 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
       let status = 0
       let resource: import('../../../shared/product-contract').ProductBlob | undefined
       const deadline = Date.now() + 600000
+      const pacing = createPollPacing()
       while (!ended) {
-        if (Date.now() > deadline) throw new ProductFailure('原件准备超时')
+        lifetime.signal.throwIfAborted()
+        if (Date.now() >= deadline) throw new ProductFailure('原件准备超时', 'REQUEST_TIMEOUT', 504)
+        const pollStarted = Date.now()
         const page = await rpc(product.poll(context(value), { id: job.id, after: cursor, waitMs: 8000 }), value, lifetime.signal)
         if (page.id !== job.id || page.cursor < cursor) throw new ProductFailure('原件响应游标无效')
         for (const event of page.events) {
@@ -250,8 +273,9 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
           else if (event.kind === 'end') ended = true
         }
         if (page.cursor !== cursor) throw new ProductFailure('原件响应游标与事件不一致')
-        if (!ended && !page.events.length) await new Promise(resolve => setTimeout(resolve, 25))
         if (TERMINAL.has(page.state) && !page.hasMore && !ended) throw new ProductFailure('原件准备未完成')
+        const delay = pacing.nextDelay(page.events.length > 0, Date.now() - pollStarted)
+        if (!ended) await waitForPoll(Math.min(delay, Math.max(0, deadline - Date.now())), lifetime.signal)
       }
       if (status !== 200 || !resource || resource.size > operation.maxResponseBytes) throw new ProductFailure('原件暂不可用')
       const saved = await rpc(product.save(context(value), { fileName, contentType: resource.contentType, source: { kind: 'blob', id: resource.id } }), value, lifetime.signal)

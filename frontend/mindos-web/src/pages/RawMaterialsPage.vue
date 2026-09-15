@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import DataHubBackLink from '@/components/ui/DataHubBackLink.vue'
 // 原材料资料库：桌面端多级目录树筛选侧栏 + 高密表格（B2 FE-UI-011 / P14-06 目录树）
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronRight, Eye, Folder, FolderPlus, Pencil, FolderInput, Play, Plus, Trash2, Upload, X } from 'lucide-vue-next'
 import { api, type FolderNode, type UploadResult } from '@/services/api'
 import { materialSensitiveScanStatusMeta, materialStatusMeta } from '@/shared/status'
@@ -14,6 +15,7 @@ import IconButton from '@/components/ui/IconButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import LifecycleDangerPanel from '@/components/lifecycle/LifecycleDangerPanel.vue'
 import { createSessionGate } from '@/composables/sessionGate'
 import type { UploadProgress } from '@/services/transport'
 
@@ -455,6 +457,66 @@ function openMaterial(item: UploadResult) {
   router.push({ path: `/materials/${item.materialId}`, query: { name: item.fileName } })
 }
 
+// 列表只提供软删除；依赖和并发校验仍由统一生命周期预览及执行接口完成。
+const recycleTarget = ref<UploadResult | null>(null)
+const recycleBusy = ref(false)
+const recycleDialog = ref<HTMLElement | null>(null)
+let recycleTrigger: HTMLElement | null = null
+onBeforeRouteLeave(() => !recycleBusy.value)
+watch(recycleTarget, async (target) => {
+  if (typeof document === 'undefined') return
+  if (target) {
+    recycleTrigger = document.activeElement as HTMLElement | null
+    await nextTick()
+    recycleDialog.value?.focus()
+  } else {
+    if (recycleTrigger?.isConnected) recycleTrigger.focus()
+    recycleTrigger = null
+  }
+})
+
+function onRecycleKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') { event.preventDefault(); closeRecycle(); return }
+  if (event.key !== 'Tab' || !recycleDialog.value) return
+  const controls = Array.from(recycleDialog.value.querySelectorAll<HTMLElement>('button:not(:disabled), select:not(:disabled), input:not(:disabled), [href]'))
+  const first = controls[0], last = controls.at(-1)
+  if (!first || !last) { event.preventDefault(); return }
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === recycleDialog.value)) {
+    event.preventDefault(); last.focus()
+  } else if (!event.shiftKey && (document.activeElement === last || document.activeElement === recycleDialog.value)) {
+    event.preventDefault(); first.focus()
+  }
+}
+
+function canRecycle(item: DisplayMaterial) {
+  return Boolean(item.materialId) && !item.transientUpload && !item.recycled
+    && (item.status === 'available' || item.status === 'failed')
+    && !hasActiveMaterial([item])
+}
+
+function openRecycle(item: DisplayMaterial) {
+  if (recycleTarget.value || recycleBusy.value || !canRecycle(item)) return
+  recycleTarget.value = item
+}
+
+function closeRecycle() {
+  if (!recycleBusy.value) recycleTarget.value = null
+}
+
+async function onMaterialRecycled(action: 'recycle' | 'purge' | 'unrecycle') {
+  if (action !== 'recycle' || !recycleTarget.value) return
+  const materialId = recycleTarget.value.materialId
+  // 不让较早发出的列表请求把刚回收的行重新写回来。
+  materialLoadGate.invalidate()
+  stopRefreshTimer()
+  items.value = items.value.filter(item => item.materialId !== materialId)
+  awaitingList.value = awaitingList.value.filter(entry => entry.item.materialId !== materialId)
+  total.value = Math.max(0, total.value - 1)
+  recycleTarget.value = null
+  toast({ type: 'success', message: '已移至回收站，可在回收站恢复' })
+  await Promise.allSettled([loadMaterials(), loadFolders()])
+}
+
 onMounted(async () => {
   await Promise.allSettled([loadFolders(), loadMaterials()])
 })
@@ -468,6 +530,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
+    <DataHubBackLink />
     <div class="page-head">
       <h1>原材料</h1>
       <p>导入与管理原始资料，查看解析和索引状态。原文件保持只读。</p>
@@ -643,6 +706,9 @@ onBeforeUnmount(() => {
                       <IconButton v-if="!item.transientUpload" label="移动文件夹" size="sm" @click.stop="openMove(item)">
                         <FolderInput :size="16" aria-hidden="true" />
                       </IconButton>
+                      <IconButton v-if="canRecycle(item)" label="移至回收站" size="sm" :disabled="!!recycleTarget || recycleBusy" @click.stop="openRecycle(item)">
+                        <Trash2 :size="16" aria-hidden="true" />
+                      </IconButton>
                       <IconButton
                         v-if="item.status === 'queued' && item.errorCode === 'service_interrupted'"
                         label="继续处理"
@@ -669,6 +735,19 @@ onBeforeUnmount(() => {
         <MaterialPager v-if="total > pageSize || pageOffset > 0" :total="total" :offset="pageOffset" :size="pageSize" :busy="refreshing || importing" @change="changePage" />
       </div>
     </div>
+
+    <Teleport to="body">
+      <div v-if="recycleTarget" class="gov-modal-mask" @click.self="closeRecycle" @keydown.stop="onRecycleKeydown">
+        <div ref="recycleDialog" class="gov-modal gov-modal--recycle" role="dialog" aria-modal="true" aria-label="移至回收站影响确认" tabindex="-1">
+          <h3>移至回收站</h3>
+          <p class="gov-modal-hint">回收后不再用于默认列表和检索，原材料可从回收站恢复。</p>
+          <LifecycleDangerPanel :key="recycleTarget.materialId" target-type="material" :target-id="recycleTarget.materialId" :target-title="recycleTarget.fileName" :recycled="false" compact recycle-only auto-preview @busy-change="recycleBusy = $event" @completed="onMaterialRecycled" @cancel="closeRecycle" />
+          <div class="gov-modal-actions">
+            <BaseButton variant="secondary" size="sm" :disabled="recycleBusy" @click="closeRecycle">关闭</BaseButton>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- 移动资料到目录 -->
     <div v-if="moveTarget" class="gov-modal-mask" @click.self="moveTarget = null">
@@ -985,6 +1064,8 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--ws-text-primary-color, #1d211f);
 }
+
+.gov-modal--recycle { max-width: 620px; max-height: calc(100dvh - 40px); overflow-y: auto; }
 
 .gov-modal-hint {
   margin: 0 0 8px;

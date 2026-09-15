@@ -2,8 +2,20 @@
 from contextlib import contextmanager
 import json
 import os
+import re
 
 from .capabilities import execution, require, CapabilityError
+
+
+class BackgroundEnqueueError(CapabilityError):
+    """A durable failed task, not a failed chat or permission to run it."""
+    def __init__(self, job_id, cause):
+        code = getattr(cause, 'code', '')
+        code = code if isinstance(code, str) and re.fullmatch(r'[A-Z][A-Z0-9_]{0,79}', code) else 'BACKGROUND_ENQUEUE_FAILED'
+        status = getattr(cause, 'status', 503)
+        status = status if isinstance(status, int) and 400 <= status <= 599 else 503
+        self.job_id = job_id
+        super().__init__(code, status)
 
 
 def _store():

@@ -121,14 +121,24 @@ class MattersStore:
             matter = self._matter(db.execute("SELECT * FROM work_matters WHERE id=? AND device_scope=?", (row["matter_id"], scope)).fetchone(), db) if row and row["matter_id"] else None
         return {"matter": matter, "bindingRevision": row["revision"] if row else 0}
 
-    def create(self, scope, payload, request_id, cid=None):
+    def create(self, scope, payload, request_id, cid=None, binding_revision=None):
         fingerprint = digest(["create_matter", payload, cid])
+        if binding_revision is not None:
+            fingerprint = digest([fingerprint, binding_revision])
         with self.ontology._lock, self.ontology._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = self._prior(db, scope, request_id, fingerprint)
             if previous is not None:
                 return previous
-            if cid and db.execute("SELECT 1 FROM work_matter_bindings WHERE conversation_id=? AND matter_id IS NOT NULL", (cid,)).fetchone():
+            old = db.execute("SELECT * FROM work_matter_bindings WHERE conversation_id=?", (cid,)).fetchone() if cid else None
+            if old and old["device_scope"] != scope:
+                raise OntologyConflictError("这段对话不属于当前设备")
+            if binding_revision is not None:
+                if not cid or (old["revision"] if old else 0) != binding_revision:
+                    raise OntologyConflictError("对话关联已变化，请刷新后再选择；新事情尚未创建")
+            elif old and old["matter_id"]:
+                # Older clients can still create the first matter, but cannot
+                # replace a binding without explicitly acknowledging its version.
                 raise OntologyConflictError("这段对话已关联另一件事，请先切换或解除关联")
             ident, now = "matter_" + uuid.uuid4().hex[:12], utc_now()
             db.execute("INSERT INTO work_matters VALUES(?,?,?,?,?,?,?,?,NULL,1,'[]',?,?)", (ident, scope, payload["title"],
@@ -180,13 +190,25 @@ class MattersStore:
         with self.ontology._connect() as db:
             return [self._artifact(row) for row in db.execute("SELECT * FROM work_artifacts WHERE matter_id=? AND device_scope=? ORDER BY updated_at DESC,id", (ident, scope))]
 
-    def save_artifact(self, ident, scope, payload, message, source, request_id):
+    def save_artifact(self, ident, scope, payload, message, source, request_id, binding_revision=None):
         fingerprint = digest(["save_artifact", ident, payload, message["id"]])
+        if binding_revision is not None:
+            fingerprint = digest([fingerprint, binding_revision])
         with self.ontology._lock, self.ontology._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = self._prior(db, scope, request_id, fingerprint)
             if previous is not None:
                 return previous
+            binding = db.execute("SELECT * FROM work_matter_bindings WHERE conversation_id=? AND device_scope=?", (message["conversationId"], scope)).fetchone()
+            if not binding or binding["matter_id"] != ident or (binding_revision is not None and binding["revision"] != binding_revision):
+                raise OntologyConflictError("对话关联已变化，请刷新并确认当前事情后再保存文稿")
+            plan = ((message.get("meta") or {}).get("routingProvenance") or {}).get("contextPlan") or {}
+            original = plan.get("matterBinding") or {}
+            suspended = plan.get("matterSuspended") or {}
+            if suspended.get("matterId") == ident:
+                raise OntologyConflictError("这条回复已切换话题，不能保存到已暂停参考的旧事情")
+            if original.get("matterId") and original["matterId"] != ident and suspended != original:
+                raise OntologyConflictError("这条回复属于另一件事，请选择当前事情的回复再保存")
             aid, now = "artifact_" + uuid.uuid4().hex[:12], utc_now()
             db.execute("INSERT INTO work_artifacts VALUES(?,?,?,?,?,?,0,1,?,?,?,?,?)", (aid, ident, scope, payload["title"], payload["kind"], payload["markdown"], message["id"], message["conversationId"], json.dumps([source], ensure_ascii=False), now, now))
             item = self._artifact(db.execute("SELECT * FROM work_artifacts WHERE id=?", (aid,)).fetchone())

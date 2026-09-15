@@ -69,11 +69,25 @@ SCENARIO = r'''
         {'mode':'online','acknowledge':True,'expectedRevision':0,'serviceId':service},cid)
     assert mode.status_code==200,mode.text
     action=ACTION
-    if action in {'default','revoked','configuration_changed'}:
+    if action in {'default','revoked','configuration_changed','charter_default','charter_previous'}:
         policy=dispatch(client,'put_api_mindos_conversations_conversation_id_routing_default_consent',
-            {'enabled':True,'includeFiles':False,'includeCharter':True,'autoEgress':True,
+            {'enabled':True,'includeFiles':False,'includeCharter':not action.startswith('charter_'),'autoEgress':True,
              'acknowledge':True,'serviceId':service,'expectedRevision':0},cid)
         assert policy.status_code==200,policy.text
+    charter=None
+    if action.startswith('charter_'):
+        from mindos.stores.growth_store import GrowthStore
+        from mindos.stores.chat_import_store import ChatImportStore
+        from mindos.stores.charter_draft_store import render_document
+        clause={'id':'synthetic-private-charter','section':'与知君合作','text':'合成私密章程正文，不应进入抽取请求',
+                'kind':'principle','scope':'global','context':'','control':None,'sources':[]}
+        charter=GrowthStore.instance().create_charter({'document':render_document([clause]),'clauses':[clause],
+            'expectedVersion':0,'workspaceId':'synthetic-memory-workspace',
+            'metadata':{'scope':ChatImportStore(convs).scope(ident),'origin':'workspace','sources':[]}})
+        if action=='charter_previous':
+            convs.append_message(ident,'assistant','合成上一条私密回复。你的职业是什么？',meta={
+                'routingOrigin':{'service':service},'routingSources':[
+                    {'kind':'charter_clause','id':charter['id']+':'+clause['id']}]})
     message=convs.append_message(ident,'user','请记住：我长期认同做决定前尊重当事人的意愿。',meta={'routingSources':[]})
     origin=execution.set({'requestId':'synthetic-message-request',
         'operationId':'post_api_mindos_conversations_conversation_id_messages'})
@@ -97,9 +111,16 @@ SCENARIO = r'''
         assert response.status_code==200,response.text
         return response.json()
     result=run_claimed()
-    if action=='default':
+    if action in {'default','charter_default','charter_previous'}:
         assert result['state']=='done' and len(result['created'])==1,result
         assert len(generated)==1
+        if charter:
+            from mindos.stores.chat_import_store import ChatImportStore
+            assert not routes.policy(ChatImportStore(convs).scope(ident))['includeCharter']
+            assert not any(s['kind'].startswith('charter') for s in generated[0]['sources'])
+            assert clause['text'] not in generated[0]['request']['system']
+            assert '合成上一条私密回复' not in str(generated[0]['request']['messages'])
+            assert generated[0]['charterBasis']['version']==charter['version']
     elif action=='configuration_changed':
         assert result['state']=='paused' and result['reason']=='online_service_changed',result
         assert not generated and not onto.list_claims(trust_states=('confirmed','working'))
@@ -134,7 +155,8 @@ SCENARIO = r'''
 '''
 
 
-@pytest.mark.parametrize('action', ['default','pause_only','explicit','source_changed','revoked','configuration_changed'])
+@pytest.mark.parametrize('action', ['default','pause_only','explicit','source_changed','revoked','configuration_changed',
+                                  'charter_default','charter_previous'])
 def test_workspace_memory_background_consent(tmp_path, action):
     backend = Path(__file__).resolve().parents[1]
     root = tmp_path / 'workspace'

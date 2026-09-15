@@ -55,7 +55,9 @@ try {
     }
     const subscribers = new Set()
     const pendingConnections = []
-    const stats = { starts: [], disconnects: [], connects: [], fetches: [], deviceLists: 0 }
+    let deviceListMode = 'success'
+    let pendingDeviceList
+    const stats = { starts: [], disconnects: [], connects: [], fetches: [], deviceLists: 0, signOuts: 0 }
     window.__secureConnectionStats = stats
     window.fetch = async input => { stats.fetches.push(String(input)); throw new Error('Unexpected renderer fetch') }
     const result = (data, generation = snapshot.generation) => Promise.resolve({ ok: true, generation, data })
@@ -64,7 +66,7 @@ try {
       const environment = options.environment || 'production'
       const ready = phase === 'ready'
       const hasDevice = !['signed_out', 'selecting_device', 'authenticating'].includes(phase)
-      const subject = phase === 'signed_out' ? null : {
+      const subject = phase === 'signed_out' || options.expired ? null : {
         accountId: 'synthetic-owner',
         ...(hasDevice ? { deviceId: 'synthetic-device', deviceName: '合成盒子' } : {}),
         ...(ready ? { workspaceId: 'a'.repeat(64) } : {}),
@@ -74,13 +76,17 @@ try {
         protocolVersion: 1, environment, generation, sequence: ++sequence, phase, subject,
         capabilities: capabilities(ready),
         ...(phase === 'failed' ? { error: {
-          code: 'TRANSPORT_UNAVAILABLE', message: '合成连接失败', recovery: 'user_reconnect',
+          code: options.expired ? 'SESSION_EXPIRED' : 'TRANSPORT_UNAVAILABLE',
+          message: options.expired ? '登录已过期，请重新登录。' : '合成连接失败',
+          recovery: options.expired ? 'user_sign_in' : 'user_reconnect',
         } } : {}),
       }
       for (const listener of subscribers) listener(structuredClone(snapshot))
       return structuredClone(snapshot)
     }
     window.__secureConnectionPublish = publish
+    window.__setDeviceListMode = mode => { deviceListMode = mode }
+    window.__resolveDeviceList = () => pendingDeviceList?.()
     window.__settleOldConnections = () => {
       for (const pending of pendingConnections.splice(0)) {
         pending.resolve({ ok: true, generation: pending.snapshot.generation, data: pending.snapshot })
@@ -92,7 +98,14 @@ try {
       getSnapshot: () => result(structuredClone(snapshot)),
       listDevices: () => {
         stats.deviceLists++
-        return result([{ deviceId: 'synthetic-device', displayName: '合成盒子', availability: 'online' }])
+        const devices = [{ deviceId: 'synthetic-device', displayName: '合成盒子', availability: 'online' }]
+        if (deviceListMode === 'unavailable') return Promise.resolve({ ok: false, generation: snapshot.generation,
+          error: { code: 'ACCOUNT_SERVICE_UNAVAILABLE', message: '账号服务暂时无法完成请求。', recovery: 'user_read' } })
+        if (deviceListMode === 'pending') {
+          const generation = snapshot.generation
+          return new Promise(resolveDevices => { pendingDeviceList = () => resolveDevices({ ok: true, generation, data: devices }) })
+        }
+        return result(devices)
       },
       connect(context, deviceId) {
         stats.connects.push({ expectedGeneration: context.expectedGeneration, deviceId })
@@ -103,7 +116,7 @@ try {
         stats.disconnects.push({ expectedGeneration: context.expectedGeneration })
         return result(publish('selecting_device'))
       },
-      signOut: () => result(publish('signed_out')),
+      signOut: () => { stats.signOuts++; return result(publish('signed_out')) },
       materials: { list: () => { throw new Error('Legacy materials must not load') } },
       product: {
         start(_context, request) {
@@ -288,10 +301,76 @@ try {
   await page.getByTestId('connect-synthetic-device').waitFor()
   assert.equal(await page.locator('[aria-label="已建立加密连接"]').count(), 0, 'disconnect must remove the topbar lock immediately')
 
+  // A transient account error preserves the authenticated subject. Exercise the
+  // actual renderer/controller and click handler, including a pending retry.
+  const recoveryBefore = await page.evaluate(() => structuredClone(window.__secureConnectionStats))
+  await page.evaluate(() => {
+    window.__setDeviceListMode('unavailable')
+    window.__secureConnectionPublish('selecting_device')
+  })
+  await page.getByTestId('device-list-unavailable').waitFor()
+  assert.match(await page.getByTestId('account').innerText(), /synthetic-owner/)
+  assert.equal(await page.getByTestId('password-login').count(), 0)
+  assert.equal(await page.getByText('暂无已完成授权的盒子。若刚提交认领，请保持盒子联网，稍后刷新设备。', { exact: true }).count(), 0,
+    'unavailable device service must not be presented as an empty account')
+  assert.equal(await page.getByTestId('reauthenticate').isEnabled(), true)
+  await page.clock.runFor(30000)
+  const unavailable = await page.evaluate(() => structuredClone(window.__secureConnectionStats))
+  assert.equal(unavailable.deviceLists, recoveryBefore.deviceLists + 1, 'temporary account outage must not retry automatically')
+  assert.equal(unavailable.signOuts, recoveryBefore.signOuts, 'temporary outage must not sign out automatically')
+  assert.equal(unavailable.starts.length, recoveryBefore.starts.length, 'account recovery cannot dispatch business work')
+  await page.screenshot({ path: join(screenshots, 'account-service-unavailable.png'), fullPage: true, animations: 'disabled' })
+  await page.evaluate(() => window.__setDeviceListMode('pending'))
+  await page.getByTestId('retry-account-devices').click()
+  await page.getByText('正在获取盒子列表…', { exact: true }).waitFor()
+  assert.equal(await page.getByTestId('refresh-devices').isDisabled(), true)
+  assert.equal(await page.getByTestId('password-login').count(), 0)
+  assert.match(await page.getByTestId('account').innerText(), /synthetic-owner/)
+  await page.evaluate(() => window.__resolveDeviceList())
+  await page.getByTestId('connect-synthetic-device').waitFor()
+  assert.equal(await page.getByTestId('device-list-unavailable').count(), 0)
+  assert.equal(await page.getByTestId('account-service-recovery').count(), 0)
+  const recovered = await page.evaluate(() => structuredClone(window.__secureConnectionStats))
+  assert.equal(recovered.deviceLists, unavailable.deviceLists + 1, 'one user click performs exactly one retry')
+  assert.equal(recovered.signOuts, recoveryBefore.signOuts)
+  await page.screenshot({ path: join(screenshots, 'account-devices-recovered.png'), fullPage: true, animations: 'disabled' })
+
+  await page.evaluate(() => {
+    window.__setDeviceListMode('unavailable')
+    window.__secureConnectionPublish('selecting_device')
+  })
+  await page.getByTestId('reauthenticate').click()
+  await page.getByTestId('password-login').waitFor()
+  assert.equal(await page.getByTestId('show-login').getAttribute('aria-selected'), 'true')
+  assert.equal(await page.getByTestId('account').count(), 0)
+  assert.equal(await page.getByTestId('account-service-recovery').count(), 0)
+  assert.equal(await page.evaluate(() => window.__secureConnectionStats.signOuts), recoveryBefore.signOuts + 1,
+    'explicit reauthentication performs one sign-out and opens the login form')
+  await page.screenshot({ path: join(screenshots, 'account-reauthenticate-login.png'), fullPage: true, animations: 'disabled' })
+
+  // Re-enter an authenticated state so terminal expiry is tested independently
+  // of the explicit sign-out above.
+  await page.evaluate(() => window.__secureConnectionPublish('selecting_device'))
+  await page.getByTestId('device-list-unavailable').waitFor()
+  assert.equal(await page.getByTestId('password-login').count(), 0)
+  const signOutsBeforeExpiry = await page.evaluate(() => window.__secureConnectionStats.signOuts)
+  await page.evaluate(() => window.__secureConnectionPublish('failed', { expired: true }))
+  await page.getByTestId('password-login').waitFor()
+  assert.equal(await page.getByTestId('login-phone').isVisible(), true)
+  assert.equal(await page.getByTestId('login-password').isVisible(), true)
+  assert.equal(await page.getByTestId('sign-in').isEnabled(), true)
+  assert.equal(await page.getByTestId('account').count(), 0)
+  assert.equal(await page.getByTestId('connect-synthetic-device').count(), 0)
+  assert.equal(await page.getByTestId('account-service-recovery').count(), 0)
+  assert.match(await page.getByTestId('error').innerText(), /SESSION_EXPIRED/)
+  assert.equal(await page.evaluate(() => window.__secureConnectionStats.signOuts), signOutsBeforeExpiry,
+    'terminal expiry must render login without a renderer sign-out loop')
+  await page.screenshot({ path: join(screenshots, 'session-expired-login.png'), fullPage: true, animations: 'disabled' })
+
   assert.deepEqual(unexpected, [], 'the synthetic desktop test must not reach an API or external origin')
   assert.deepEqual(await page.evaluate(() => window.__secureConnectionStats.fetches), [])
   assert.deepEqual(pageErrors, [])
-  console.log(`secure connection E2E passed: truthful phases/path, timer reset, cancellation, safety claims, responsive/reduced-motion UI; screenshots ${screenshots}`)
+  console.log(`secure connection E2E passed: truthful phases/path, timer reset, cancellation, safety claims, responsive/reduced-motion UI, account outage/manual retry recovery and expiry-to-login; screenshots ${screenshots}`)
 } catch (error) {
   if (page) {
     await page.screenshot({ path: join(screenshots, 'failure.png'), fullPage: true }).catch(() => {})

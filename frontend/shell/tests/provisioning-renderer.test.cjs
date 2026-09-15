@@ -39,7 +39,7 @@ function fixture(overrides = {}) {
     'secure-notice', 'candidates', 'device-actions', 'device-info', 'networks', 'wifi', 'ssid', 'legacy',
     'mode-description', 'physical-confirmation-panel', 'physical-confirmation', 'physical-code',
     'confirm-physical', 'wifi-panel', 'ownership-panel', 'confirm-ownership', 'v2-progress',
-    'v2-state', 'v2-guidance', 'refresh-state']
+    'v2-state', 'v2-guidance', 'refresh-state', 'scan-status']
   const elements = Object.fromEntries(ids.map(id => [id, new FakeElement()]))
   elements.security.value = 'wpa-personal'
   let snapshotListener = () => {}
@@ -289,4 +289,78 @@ test('legacy status and provisioning failures do not expose device reasons', asy
   await flush(); await flush()
   assert.equal(f.elements.result.textContent, '盒子未能完成操作，请检查状态后重试。')
   assert.doesNotMatch(f.elements.result.textContent, /RAW_PROVISION_REASON|UNKNOWN_DEVICE_CODE/)
+})
+
+test('formal scan lists additions/removals live and disables expired selections', async () => {
+  let emitDiscovery
+  const scan = deferred()
+  const f = fixture({ testBuild: false,
+    onDiscoverySnapshot(listener) { emitDiscovery = listener }, scan: () => scan.promise })
+  f.elements.scan.click()
+  emitDiscovery({ state: 'scanning', candidates: [] })
+  assert.match(f.elements['scan-status'].textContent, /正在扫描.*暂未发现/)
+  assert.equal(f.elements['cancel-scan'].hidden, false)
+  assert.equal(f.elements['cancel-scan'].disabled, false)
+  const first = { candidateId: 'candidate-a', name: 'CentaurOS-Setup-AAAAAA' }
+  const second = { candidateId: 'candidate-b', name: 'CentaurOS-Setup-BBBBBB' }
+  emitDiscovery({ state: 'scanning', candidates: [first] })
+  scan.resolve([first])
+  await flush()
+  emitDiscovery({ state: 'scanning', candidates: [first, second] })
+  assert.equal(f.elements.candidates.children.length, 2)
+  assert.match(f.elements['scan-status'].textContent, /已发现 2 台/)
+  assert.equal(f.elements.candidates.children[0].children[0].disabled, false)
+  emitDiscovery({ state: 'scanning', candidates: [second] })
+  assert.equal(f.elements.candidates.children.length, 1)
+  emitDiscovery({ state: 'completed', candidates: [second] })
+  assert.equal(f.elements.candidates.children[0].children[0].disabled, true)
+  assert.match(f.elements['scan-status'].textContent, /扫描结束/)
+  assert.equal(f.elements.scan.disabled, false)
+})
+
+test('formal cancel scan preempts pending scan without waiting for its timeout', async () => {
+  let emitDiscovery
+  let cancelled = 0
+  const scan = deferred()
+  const f = fixture({ testBuild: false,
+    onDiscoverySnapshot(listener) { emitDiscovery = listener }, scan: () => scan.promise,
+    cancelScan: async () => {
+      cancelled++
+      emitDiscovery({ state: 'cancelled', candidates: [] })
+      scan.reject(new Error('PROVISIONING_SCAN_CANCELLED'))
+    } })
+  f.elements.scan.click()
+  emitDiscovery({ state: 'scanning', candidates: [] })
+  f.elements['cancel-scan'].click()
+  await flush(); await flush()
+  assert.equal(cancelled, 1)
+  assert.equal(f.elements.result.textContent, '已取消扫描。')
+  assert.equal(f.elements.scan.disabled, false)
+})
+
+test('formal scan uses exact safe message codes preserved by the isolated bridge', async () => {
+  const f = fixture({ testBuild: false, scan: async () => { throw new Error('NotAllowedError') } })
+  f.elements.scan.click()
+  await flush()
+  assert.match(f.elements.result.textContent, /蓝牙访问未获允许/)
+  assert.doesNotMatch(f.elements.result.textContent, /配网操作未完成/)
+  const unknown = fixture({ testBuild: false, scan: async () => { throw new Error('SECRET details: NotAllowedError') } })
+  unknown.elements.scan.click()
+  await flush()
+  assert.doesNotMatch(unknown.elements.result.textContent, /SECRET|details/)
+})
+
+test('formal empty scan is actionable rather than an unfinished pairing failure', async () => {
+  let emitDiscovery
+  const scan = deferred()
+  const f = fixture({ testBuild: false,
+    onDiscoverySnapshot(listener) { emitDiscovery = listener }, scan: () => scan.promise })
+  f.elements.scan.click()
+  emitDiscovery({ state: 'completed', candidates: [], errorCode: 'PROVISIONING_SCAN_TIMEOUT' })
+  scan.reject(new Error('PROVISIONING_SCAN_TIMEOUT'))
+  await flush()
+  assert.match(f.elements.result.textContent, /本轮未发现/)
+  assert.equal(f.elements.result.classList.contains('error'), false)
+  assert.equal(f.elements['v2-state'].textContent, '准备开始')
+  assert.equal(f.elements.scan.disabled, false)
 })

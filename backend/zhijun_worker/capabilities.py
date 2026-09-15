@@ -59,23 +59,37 @@ class HttpCapabilities:
         body = json.dumps({"name": name, "payload": payload,
                            "executionRequestId": action.get("requestId"),
                            "operationId": action.get("operationId")}, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
-        proof = sign(self.workspace.key, self.workspace.workspace_id, self.workspace.ownership_epoch, "POST", path, body)
-        request = urllib.request.Request(self.origin + path, data=body, method="POST",
-                                         headers={HEADER: proof, "Content-Type": "application/json"})
-        try:
-            return self.opener.open(request, timeout=180)
-        except urllib.error.HTTPError as exc:
-            raw = exc.read(8193)
+        for attempt in range(2):
+            proof = sign(self.workspace.key, self.workspace.workspace_id, self.workspace.ownership_epoch, "POST", path, body)
+            request = urllib.request.Request(self.origin + path, data=body, method="POST",
+                                             headers={HEADER: proof, "Content-Type": "application/json"})
             try:
-                error = json.loads(raw).get("error", {})
-                code = error.get("code", "CAPABILITY_REJECTED")
-                if not isinstance(code, str) or not code.isascii() or not code.replace("_", "").isalnum() or len(code) > 80:
+                return self.opener.open(request, timeout=180)
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+                try:
+                    raw = exc.read(8193)
+                finally:
+                    exc.close()
+                rejected_before_dispatch = False
+                try:
+                    error = json.loads(raw).get("error", {})
+                    code = error.get("code", "CAPABILITY_REJECTED")
+                    if not isinstance(code, str) or not code.isascii() or not code.replace("_", "").isalnum() or len(code) > 80:
+                        code = "CAPABILITY_REJECTED"
+                    rejected_before_dispatch = error.get("rejectedBeforeDispatch") is True
+                except (ValueError, AttributeError):
                     code = "CAPABILITY_REJECTED"
-            except (ValueError, AttributeError):
-                code = "CAPABILITY_REJECTED"
-            raise CapabilityError(code, exc.code) from None
-        except OSError:
-            raise CapabilityError() from None
+                # Renew only a registration that DE explicitly rejected before
+                # capability dispatch. Never replay uncertain writes, old-DE
+                # generic 401s, network failures, or consumed/replayed proofs.
+                if (attempt == 0 and name == "domain.background.register"
+                        and path == "/internal/zhijun/capabilities" and status == 401
+                        and code == "WORKER_PROOF_EXPIRED" and rejected_before_dispatch):
+                    continue
+                raise CapabilityError(code, status) from None
+            except OSError:
+                raise CapabilityError() from None
 
     def call(self, name, payload):
         with self._request(name, payload, "/internal/zhijun/capabilities") as response:

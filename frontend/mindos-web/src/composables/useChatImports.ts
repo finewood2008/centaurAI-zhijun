@@ -2,7 +2,7 @@ import { computed, onBeforeUnmount, ref, watch, type Ref } from 'vue'
 import { api, chatImports, type ChatImportBatch, type ChatImportFile, type ChatMaterialRef, type ChatFileService, type ChatFilePreview, type UploadResult } from '@/services/api'
 import { validateImport } from '@/features/import/validation'
 import type { ReplyAssistanceInput } from '@/shared/replyAssistance'
-import { createChatImportPoller, hasTransitionalImports } from './chatImportPolling'
+import { createChatImportPoller, hasTransitionalImports, shouldRetryChatImportError } from './chatImportPolling'
 import { askRag, requiresFreshRagSearch, submitRagDecision } from '@/services/taskRouting'
 import { isDesktopProduct } from '@/shared/productScope'
 
@@ -60,6 +60,7 @@ export function useChatImports(options: {
     isTransitional: data => !retrievalOnly.value && hasTransitionalImports(data.items),
     refreshMessages: options.refreshMessages,
     isTargetCurrent: id => options.conversationId.value === id,
+    shouldRetry: shouldRetryChatImportError,
     onSuccess: () => {
       loadError.value = ''
     },

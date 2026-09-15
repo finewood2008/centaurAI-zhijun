@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DataHubBackLink from '@/components/ui/DataHubBackLink.vue'
 // P15-05：回收站聚合原材料与知识卡片；恢复和永久清除都复用统一生命周期面板。
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -36,6 +37,7 @@ onBeforeUnmount(() => loadGate.invalidate())
 
 <template>
   <div class="page recycle-bin">
+    <DataHubBackLink />
     <div class="page-head"><h1>回收站</h1><p>回收的资料和知识卡片不会参与默认列表、搜索、图谱与问答。永久清除不可恢复。</p></div>
     <p v-if="error" class="error-state">{{ error }}</p>
     <p v-else-if="loading" class="loading-state">正在加载回收站…</p>

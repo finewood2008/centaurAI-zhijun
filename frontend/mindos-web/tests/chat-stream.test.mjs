@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import ts from 'typescript'
 
 class ApiError extends Error {
-  constructor(code, status = 409) { super(code); this.code = code; this.status = status }
+  constructor(message, status = 409, code = message) { super(message); this.code = code; this.status = status }
 }
 const original = { requestId: 'same-user-message', routeRevision: 'old-preview', content: '我想准备一次重要沟通',
   replyAssistance: { messageId: 'assistant-1', selections: [{ batchId: 'batch-1', candidateId: 'choice-1' }] } }
@@ -35,6 +35,7 @@ function harness(send, preview = async (_cid, body) => ({ ...body, routeRevision
   const h = harness(async (_path, _body, handlers) => {
     if (++attempts === 1) throw new ApiError('ROUTE_CHANGED')
     handlers.meta({ messageId: 'reply-1' }); handlers.token({ t: '可以先明确沟通目标。' })
+    handlers.message_done({ messageId: 'reply-1', status: 'complete' })
   }, async (_cid, body, signal) => {
     assert.ok(signal); return { ...body, routeRevision: 'new-preview', localOnly: true }
   })
@@ -99,3 +100,9 @@ for (const error of [new ApiError('SOURCE_CHANGED'), new ApiError('SOURCE_UNAVAI
   assert.equal(h.calls.length, 0)
 }
 console.log('PASS chat stream: stable identity, finite preview refresh, authorization, source failures, cancellation, and no replay after SSE')
+
+{
+  const h = harness(async (_p, _b, handlers) => { handlers.meta({ messageId: 'reply-1' }) })
+  await assert.rejects(h.streamChat('conversation-1', original, { meta() {} }), { code: 'CHAT_STREAM_INCOMPLETE' })
+  assert.equal(h.calls.length, 1); assert.equal(h.previews.length, 0, 'EOF without domain terminal is not replayed')
+}

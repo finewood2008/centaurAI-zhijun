@@ -119,6 +119,8 @@ function retainRequestUntilBodyEnds(response: Response, dispose: () => void): Re
     },
     async cancel(reason) {
       try {
+        // Preserve the in-process completion marker; an unqualified cancel
+        // would turn successful SSE cleanup into remote task cancellation.
         await reader.cancel(reason)
       } finally {
         finish()

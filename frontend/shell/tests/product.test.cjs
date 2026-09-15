@@ -150,6 +150,83 @@ test('poll rejects credential-bearing headers, unbounded data, invalid base64 an
   }
 });
 
+test('rejected poll pages do not commit terminal state or cursor before a corrected read', async t => {
+  let page = jobPage([headerEvent(), bytesEvent('first'), { seq: 3, kind: 'end' }], { cursor: 4 });
+  const manager = make(req => req.method === 'POST' ? started : page);
+  t.after(() => manager.close());
+  await manager.invoke('start', request());
+  await assert.rejects(manager.invoke('poll', { id, after: 0, waitMs: 0 }), { code: 'CONTRACT_MISMATCH' });
+  page = jobPage([headerEvent(), bytesEvent('first'), bytesEvent('second', 3), { seq: 4, kind: 'end' }]);
+  const corrected = await manager.invoke('poll', { id, after: 0, waitMs: 0 });
+  assert.equal(corrected.cursor, 4);
+  assert.equal(Buffer.concat(corrected.events.filter(e => e.kind === 'chunk').map(e => e.data)).toString(), 'firstsecond');
+});
+
+test('failed header pages cannot authorize subsequent headerless chunks or skip event numbers', async t => {
+  let page = jobPage([headerEvent()], { cursor: 2 });
+  const manager = make(req => req.method === 'POST' ? started : page);
+  t.after(() => manager.close());
+  await manager.invoke('start', request());
+  await assert.rejects(manager.invoke('poll', { id, after: 0, waitMs: 0 }), { code: 'CONTRACT_MISMATCH' });
+  page = jobPage([bytesEvent('not authorized by the rejected header', 1)]);
+  await assert.rejects(manager.invoke('poll', { id, after: 0, waitMs: 0 }), { code: 'CONTRACT_MISMATCH' });
+  page = jobPage([headerEvent(), bytesEvent('gap', 3), { seq: 4, kind: 'end' }]);
+  await assert.rejects(manager.invoke('poll', { id, after: 0, waitMs: 0 }), { code: 'CONTRACT_MISMATCH' });
+  page = jobPage([headerEvent(), bytesEvent('valid'), { seq: 3, kind: 'end' }]);
+  assert.equal((await manager.invoke('poll', { id, after: 0, waitMs: 0 })).cursor, 3);
+});
+
+test('rejected response-size accounting is rolled back and repeated valid pages are counted once', async t => {
+  let page = jobPage([headerEvent(), bytesEvent(Buffer.alloc(170000))], { state: 'running', hasMore: true });
+  const manager = make(req => req.method === 'POST' ? started : page);
+  t.after(() => manager.close());
+  await manager.invoke('start', request());
+  await manager.invoke('poll', { id, after: 0, waitMs: 0 });
+  await manager.invoke('poll', { id, after: 0, waitMs: 0 });
+  page = jobPage([bytesEvent(Buffer.alloc(170000), 3)], { state: 'running', hasMore: true });
+  await manager.invoke('poll', { id, after: 2, waitMs: 0 });
+  page = jobPage([bytesEvent(Buffer.alloc(190000), 4)], { state: 'running', hasMore: true });
+  assert.ok(response(page).body.length < P.LIMITS.eventPage);
+  await assert.rejects(manager.invoke('poll', { id, after: 3, waitMs: 0 }), { code: 'RESPONSE_TOO_LARGE' });
+  page = jobPage([bytesEvent('valid tail', 4), { seq: 5, kind: 'end' }]);
+  assert.equal((await manager.invoke('poll', { id, after: 3, waitMs: 0 })).cursor, 5);
+});
+
+test('a rejected blob page does not grant blob reads or retain conflicting descriptors', async t => {
+  const content = Buffer.from('test');
+  const descriptor = { id: blobId, size: content.length, sha256: sha(content), contentType: 'text/plain' };
+  let blobReads = 0;
+  let page = jobPage([headerEvent(), { seq: 2, kind: 'blob', blob: descriptor }, { seq: 3, kind: 'end' }], { cursor: 4 });
+  const manager = make(req => {
+    if (req.method === 'POST') return started;
+    if (req.path.includes('/blobs/')) {
+      blobReads++;
+      return { ...descriptor, offset: 0, data: content.toString('base64'), hasMore: false };
+    }
+    return page;
+  });
+  t.after(() => manager.close());
+  await manager.invoke('start', request());
+  await assert.rejects(manager.invoke('poll', { id, after: 0, waitMs: 0 }), { code: 'CONTRACT_MISMATCH' });
+  await assert.rejects(manager.invoke('blobRead', { id: blobId, offset: 0, limit: 4 }), { code: 'OPERATION_NOT_ALLOWED' });
+  assert.equal(blobReads, 0);
+  page = jobPage([headerEvent(), { seq: 2, kind: 'blob', blob: descriptor }, { seq: 3, kind: 'end' }]);
+  await manager.invoke('poll', { id, after: 0, waitMs: 0 });
+  assert.deepEqual(Buffer.from((await manager.invoke('blobRead', { id: blobId, offset: 0, limit: 4 })).data), content);
+});
+
+test('poll enforces the Gateway encoded page budget and accepts a 32-event page', async t => {
+  let page = jobPage([headerEvent(), bytesEvent(Buffer.alloc(200000)), { seq: 3, kind: 'end' }]);
+  assert.ok(response(page).body.length > P.LIMITS.eventPage);
+  assert.ok(200000 < P.LIMITS.eventPage, 'decoded bytes alone do not enforce the wire page budget');
+  const manager = make(req => req.method === 'POST' ? started : page);
+  t.after(() => manager.close());
+  await manager.invoke('start', request());
+  await assert.rejects(manager.invoke('poll', { id, after: 0, waitMs: 0 }), { code: 'RESPONSE_TOO_LARGE' });
+  page = jobPage([headerEvent(), ...Array.from({ length: 30 }, (_, i) => bytesEvent('合成片段', i + 2)), { seq: 32, kind: 'end' }]);
+  assert.equal((await manager.invoke('poll', { id, after: 0, waitMs: 0 })).events.length, 32);
+});
+
 test('uploads hash actual chunks, duplicate ACK once, verify complete and reference only acknowledged files', async () => {
   let completeHash; let index = 0, received = 0;
   const first = new Uint8Array(P.LIMITS.chunk).fill(97), last = new Uint8Array([98]);

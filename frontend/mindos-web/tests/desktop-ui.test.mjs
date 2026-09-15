@@ -28,8 +28,8 @@ function fixture(initial = snapshot('signed_out', 0, 0)) {
   let listener
   let unsubscribed = false
   const reads = [], devices = [], controls = [], cancellations = []
-  const invoke = operation => (context, deviceId) => {
-    const result = deferred(); controls.push({ operation, context, deviceId, ...result }); return result.promise
+  const invoke = operation => (context, deviceId, scene) => {
+    const result = deferred(); controls.push({ operation, context, deviceId, scene, ...result }); return result.promise
   }
   const bridge = {
     protocolVersion: 1,
@@ -76,7 +76,7 @@ async function connectionComponentFixture(savedLoginError, resetError) {
       }
     },
     getRememberedLogin: async () => ({ phone: '13800000000', passwordSaved: true }),
-    sendRegistrationCode: async phone => { controls.push({ operation: 'sendRegistrationCode', input: phone }); return 300 },
+    sendRegistrationCode: async (phone, scene) => { controls.push({ operation: 'sendRegistrationCode', input: phone, scene }); return 300 },
     resetPassword: async credentials => {
       controls.push({ operation: 'resetPassword', input: { ...credentials } })
       if (resetError) {
@@ -108,6 +108,45 @@ async function connectionComponentFixture(savedLoginError, resetError) {
   await Vue.nextTick()
   return { source, ui, controls, viewState, close() { cleanups.forEach(callback => callback()); scope.stop() } }
 }
+
+test('temporary account outage keeps the session and offers explicit recovery instead of an empty-account claim', async () => {
+  const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+  try {
+    f.viewState.value = { ...f.viewState.value,
+      snapshot: { ...snapshot('selecting_device', 2, 3), environment: 'production' },
+      error: { code: 'ACCOUNT_SERVICE_UNAVAILABLE', message: '账号服务暂时无法完成请求。' } }
+    await Vue.nextTick()
+    assert.equal(f.ui.accountServiceUnavailable.value, true)
+    assert.equal(f.ui.showAuth.value, false)
+    assert.equal(f.controls.length, 0, 'a transient outage must not automatically sign out or retry')
+    assert.match(f.source, /v-else-if="!state\.devices\.length && accountServiceUnavailable"[^>]*data-testid="device-list-unavailable"/)
+    assert.match(f.source, /data-testid="retry-account-devices" @click="controller\.loadDevices\(\)"/)
+    assert.match(f.source, /data-testid="reauthenticate" @click="signOut"/)
+    f.ui.signOut()
+    assert.deepEqual(f.controls.at(-1), { operation: 'signOut', input: undefined })
+    assert.equal(f.ui.authMode.value, 'login')
+    f.viewState.value = { ...f.viewState.value, error: null }
+    assert.equal(f.ui.accountServiceUnavailable.value, false, 'a successful retry restores the normal list/empty state')
+  } finally { f.close() }
+})
+
+test('terminal session expiration immediately renders the login state without requiring manual sign-out', async () => {
+  const f = await connectionComponentFixture('SESSION_EXPIRED')
+  try {
+    f.viewState.value = { ...f.viewState.value,
+      snapshot: { ...snapshot('selecting_device', 2, 3), environment: 'production' } }
+    await Vue.nextTick()
+    assert.equal(f.ui.showAuth.value, false)
+    f.viewState.value = { ...f.viewState.value,
+      snapshot: { ...snapshot('failed', 3, 4), environment: 'production', subject: null },
+      error: { code: 'SESSION_EXPIRED', message: '登录已过期，请重新登录。' } }
+    await Vue.nextTick()
+    assert.equal(f.ui.showAuth.value, true)
+    assert.equal(f.ui.canSignIn.value, true)
+    assert.equal(f.ui.accountServiceUnavailable.value, false)
+    assert.equal(f.controls.length, 0, 'the renderer must not start a sign-out loop')
+  } finally { f.close() }
+})
 
 test('claim UI strictly validates Base32 codes without normalization and clears on success', async () => {
   const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
@@ -468,12 +507,39 @@ test('password reset uses an account-opaque narrow call and never authenticates 
   f.controller.dispose()
 })
 
+test('auth forms choose registration and password-reset SMS scenes independently', async () => {
+  for (const [mode, scene] of [['register', 'consumer_register'], ['reset', 'consumer_reset_password']]) {
+    const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
+    try {
+      f.ui.setAuthMode(mode)
+      f.ui.phone.value = '13800000000'
+      await f.ui.sendRegistrationCode()
+      assert.deepEqual(f.controls[0], { operation: 'sendRegistrationCode', input: '13800000000', scene })
+      assert.equal(f.ui.codeSeconds.value, 60)
+    } finally { f.close() }
+  }
+})
+
+test('controller forwards SMS scene without persisting it or changing legacy calls', async () => {
+  const f = fixture({ ...snapshot('signed_out', 0, 0), environment: 'production' })
+  await f.controller.start()
+  for (const scene of [undefined, 'consumer_login', 'consumer_register', 'consumer_reset_password']) {
+    const sending = f.controller.sendRegistrationCode('13800000000', scene)
+    const invocation = f.controls.at(-1)
+    assert.equal(invocation.deviceId, '13800000000')
+    assert.equal(invocation.scene, scene)
+    invocation.resolve(ok(0, { expiresIn: 300 }))
+    assert.equal(await sending, 300)
+  }
+  f.controller.dispose()
+})
+
 test('password reset UI reuses SMS countdown, clears secrets and returns to manual login', async () => {
   const f = await connectionComponentFixture('ACCOUNT_SERVICE_UNAVAILABLE')
   f.ui.setAuthMode('reset')
   f.ui.phone.value = '13800000000'
   await f.ui.sendRegistrationCode()
-  assert.deepEqual(f.controls[0], { operation: 'sendRegistrationCode', input: '13800000000' })
+  assert.deepEqual(f.controls[0], { operation: 'sendRegistrationCode', input: '13800000000', scene: 'consumer_reset_password' })
   assert.equal(f.ui.codeSeconds.value, 60)
   f.ui.registrationCode.value = '123456'
   f.ui.password.value = 'Synthetic-reset-password-2'

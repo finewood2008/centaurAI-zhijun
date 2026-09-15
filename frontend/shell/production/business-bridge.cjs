@@ -5,7 +5,7 @@ const { buildMaterialsRequest } = require('../runtime/materials.cjs');
 const APPLICATION = 'mindos-person-data-pc';
 const PRODUCT_APPLICATION = 'zhijun-desktop';
 const PRODUCT_CAPABILITIES = ['product.rpc', 'product.events', 'product.uploads', 'product.blobs'];
-const { validateWireRequest } = require('../runtime/product-policy.cjs');
+const { validateWireRequest, gatewayCapacityError } = require('../runtime/product-policy.cjs');
 const { createV2Scheduler } = require('../runtime/v2-request-scheduler.cjs');
 const CONTEXT_PATH = '/api/mindos/connectivity/context';
 const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value);
@@ -35,6 +35,7 @@ function contextResponse(response, subject, clock, product = false) {
   if (!record(response) || !(response.body instanceof Uint8Array)) fail('CONTRACT_MISMATCH');
   if (response.body.byteLength > 8192) fail('RESPONSE_TOO_LARGE');
   if (response.status !== 200) {
+    if (product && response.status === 429) throw gatewayCapacityError(response);
     const code = [404, 501, 503].includes(response.status) ? 'BUSINESS_BRIDGE_REQUIRED'
       : [401, 403].includes(response.status) ? 'ACCESS_DENIED'
       : response.status === 429 ? 'RESOURCE_EXHAUSTED' : 'REMOTE_ERROR';

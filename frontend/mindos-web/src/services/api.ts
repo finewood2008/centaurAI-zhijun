@@ -1837,7 +1837,7 @@ export interface DecisionDraft {
 
 export interface DecisionDraftEvent {
   // ready：演示模型同步整理好了；queued：真实模型下草稿是后台任务，fields 为空，前端轮询 GET /decision-draft
-  state?: 'ready' | 'queued'
+  state?: 'ready' | 'queued' | 'failed'
   jobId?: string | null
   draftId: string | null
   revision: number | null
@@ -2343,9 +2343,12 @@ export interface ProvenanceEvent {
 export type ExtractionSkipReason = 'too_short' | 'pure_question' | 'disabled' | (string & {})
 
 export interface ExtractionEvent {
-  state: 'queued' | 'skipped'
-  jobId?: string
+  state: 'queued' | 'skipped' | 'failed'
+  jobId?: string | null
   reason?: ExtractionSkipReason | null
+  code?: string
+  message?: string
+  taskKind?: string
 }
 
 export interface MessageDoneEvent {

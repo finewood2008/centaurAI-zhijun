@@ -2,9 +2,9 @@
 import { createProductSessionStorage, isDesktopProduct } from '@/shared/productScope'
 const productStorage = createProductSessionStorage()
 // 输入区：Enter 发送、Shift+Enter 换行（提示只出现一次）；「深入」「我在考虑…」是两枚开关 chip；
-// 麦克风在输入框里；字数只在快到上限时才出现。语音只填入输入框，永远不自动发送。
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { appendReply, mergeReplyDrafts, undoReply, type ReplyAssistanceInput, type ReplyInputDraft } from '@/shared/replyAssistance'
+// 麦克风在下方工具栏；字数只在快到上限时才出现。语音只填入输入框，永远不自动发送。
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { appendReply, replaceReply, mergeReplyDrafts, undoReply, type ReplyAssistanceInput, type ReplyInputDraft } from '@/shared/replyAssistance'
 import { replyNeedsRecovery } from '@/composables/useReplyRecovery'
 import { Mic, MicOff, Send, Square, Plus } from 'lucide-vue-next'
 import { DOC_EXTENSIONS, IMAGE_EXTENSIONS, AUDIO_EXTENSIONS } from '@/features/import/validation'
@@ -83,9 +83,14 @@ watch([text, expression, undo], () => {
 watch(text, value => { if (!value.trim()) { expression.value = undefined; undo.value = undefined } })
 function insertReply(extra: string, origin: ReplyAssistanceInput) {
   try {
-    if (recovery.value) throw new Error('请先撤销旧辅助句，再选择新的回答。已改写的文字会保留，不能自动移除其来源。')
-    const result = appendReply(text.value, extra, expression.value, origin)
-    undo.value = { inserted: result.inserted, offset: result.offset, origin: expression.value }
+    const replacing = origin.control === 'rephrase' || origin.control === 'pause'
+    if (!replacing && recovery.value) throw new Error('请先撤销旧辅助句，再选择新的回答。已改写的文字会保留，不能自动移除其来源。')
+    const result = replacing ? replaceReply(text.value, origin) : appendReply(text.value, extra, expression.value, origin)
+    if (replacing && text.value === result.text && JSON.stringify(expression.value) === JSON.stringify(result.origin)) {
+      textareaRef.value?.focus({ preventScroll: true })
+      return
+    }
+    undo.value = { inserted: result.inserted, offset: result.offset, ...(replacing ? { replaced: text.value } : {}), origin: expression.value }
     text.value = result.text; expression.value = result.origin
     textareaRef.value?.focus({ preventScroll: true })
   } catch (e) { toast({ type: 'info', message: e instanceof Error ? e.message : '原文未改变' }) }
@@ -122,6 +127,28 @@ function switchFailedDraft() {
 }
 const filesInput = ref<HTMLInputElement | null>(null)
 const addOpen = ref(false)
+const addRef = ref<HTMLElement | null>(null)
+function closeAddOutside(event: PointerEvent) {
+  if (addOpen.value && !event.composedPath().includes(addRef.value as EventTarget)) addOpen.value = false
+}
+function closeAddOnEscape(event: KeyboardEvent) {
+  if (event.key !== 'Escape' || !addOpen.value) return
+  const focusInMenu = addRef.value?.querySelector('.zj-composer__add-menu')?.contains(document.activeElement)
+  addOpen.value = false
+  if (focusInMenu) addRef.value?.querySelector<HTMLButtonElement>('.zj-composer__chip')?.focus({ preventScroll: true })
+}
+function closeAddOnBlur(event: FocusEvent) {
+  if (event.relatedTarget && !addRef.value?.contains(event.relatedTarget as Node)) addOpen.value = false
+}
+onMounted(() => {
+  document.addEventListener('pointerdown', closeAddOutside, true)
+  document.addEventListener('keydown', closeAddOnEscape)
+})
+onBeforeUnmount(() => {
+  if (typeof document === 'undefined') return
+  document.removeEventListener('pointerdown', closeAddOutside, true)
+  document.removeEventListener('keydown', closeAddOnEscape)
+})
 const audioInput = ref<HTMLInputElement | null>(null)
 const acceptFiles = [...DOC_EXTENSIONS, ...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS].join(',')
 function onFiles(e: Event) {
@@ -260,6 +287,16 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 defineExpose({
   insertReply,
   restoreSubmission,
+  adoptLandingDraft: (conversationId: string) => {
+    if (props.conversationId || !conversationId || storedDraft(conversationId)) return
+    applyDraft(conversationId, { text: text.value, origin: expression.value, undo: undo.value })
+  },
+  replaceText: (value: string) => {
+    text.value = value
+    expression.value = undefined
+    undo.value = undefined
+    textareaRef.value?.focus({ preventScroll: true })
+  },
   appendText: (value: string) => {
     text.value = text.value.trim() ? text.value + '\n\n' + value : value
     textareaRef.value?.focus()
@@ -300,7 +337,6 @@ defineExpose({
         ref="textareaRef"
         v-model="text"
         class="zj-composer__field"
-        :class="{ 'has-voice': voiceAvailable }"
         :placeholder="effectivePlaceholder"
         rows="2"
         :maxlength="MAX"
@@ -308,19 +344,6 @@ defineExpose({
         aria-label="输入消息"
         @keydown="onKeydown"
       />
-      <button
-        v-if="voiceAvailable"
-        type="button"
-        class="zj-composer__voice"
-        :class="{ 'is-on': listening }"
-        :aria-pressed="listening"
-        :aria-label="desktopAudioUpload ? listening ? '停止录音并由盒子转写' : '录音并由盒子转写' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
-        :disabled="streaming || blocked"
-        :title="desktopAudioUpload ? '盒子转写：最长 120 秒，只填入草稿，不自动发送' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
-        @click="toggleVoice"
-      >
-        <component :is="listening ? MicOff : Mic" :size="16" aria-hidden="true" />
-      </button>
     </div>
     <p v-if="desktopAudioUpload && voiceState !== 'idle'" class="zj-composer__voice-status" role="status">
       {{ voiceState === 'requesting' ? '正在请求麦克风权限…' : voiceState === 'recording' ? '正在录音，最长 120 秒。停止后由盒子转写，仅填入草稿。' : '正在由盒子转写…' }}
@@ -328,7 +351,7 @@ defineExpose({
       <button type="button" @click="boxVoice?.cancel()">取消</button>
     </p>
     <div class="zj-composer__bar">
-      <div class="zj-composer__add" @keydown.esc="addOpen = false">
+      <div ref="addRef" class="zj-composer__add" @pointerleave="addOpen = false" @focusout="closeAddOnBlur">
         <button type="button" class="zj-composer__chip" :aria-label="retrievalOnly ? '使用资料' : '添加文件'" :aria-expanded="addOpen" :disabled="disabled || uploading" @click="addOpen = !addOpen"><Plus :size="17" /></button>
         <div v-if="addOpen" class="zj-composer__add-menu">
           <template v-if="retrievalOnly">
@@ -370,12 +393,27 @@ defineExpose({
       </button>
       <span v-if="!hintSeen" class="zj-composer__tip">Enter 发送 · Shift+Enter 换行</span>
       <span v-if="text.length >= COUNT_FROM" class="zj-composer__count" aria-live="polite">{{ text.length }}/{{ MAX }}</span>
+      <div class="zj-composer__actions">
+      <button
+        v-if="voiceAvailable"
+        type="button"
+        class="zj-composer__voice"
+        :class="{ 'is-on': listening }"
+        :aria-pressed="listening"
+        :aria-label="desktopAudioUpload ? listening ? '停止录音并由盒子转写' : '录音并由盒子转写' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        :disabled="streaming || blocked"
+        :title="desktopAudioUpload ? '盒子转写：最长 120 秒，只填入草稿，不自动发送' : listening ? '停止语音输入' : '用说的（不会自动发送）'"
+        @click="toggleVoice"
+      >
+        <component :is="listening ? MicOff : Mic" :size="16" aria-hidden="true" />
+      </button>
       <BaseButton v-if="streaming" variant="secondary" size="sm" class="zj-composer__send" @click="emit('stop')">
         <Square :size="14" aria-hidden="true" />停止
       </BaseButton>
       <BaseButton v-else variant="primary" size="sm" class="zj-composer__send" :disabled="blocked || uploading || voiceState !== 'idle' || (!text.trim() && !hasAttachments)" @click="send">
         <Send :size="14" aria-hidden="true" />发送
       </BaseButton>
+      </div>
     </div>
   </div>
 </template>
@@ -385,7 +423,8 @@ defineExpose({
 .zj-composer__assisted button { border:0; background:transparent; color:var(--ws-primary-color,#a6452e); font:inherit; cursor:pointer; text-decoration:underline; }
 .zj-composer__recovery { margin:6px 0; font-size:12px; line-height:1.6; color:var(--ws-text-secondary-color,#686b66); overflow-wrap:anywhere; }
 .zj-composer__add { position: relative; }
-.zj-composer__add-menu { position: absolute; bottom: 38px; left: 0; width: 210px; z-index: 20; padding: 8px; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 9px; background: var(--ws-card-bg, #fff); box-shadow: 0 5px 22px rgb(0 0 0 / 10%); }
+.zj-composer__add-menu { position: absolute; bottom: calc(100% + 8px); left: 0; width: 210px; z-index: 20; padding: 8px; border: 1px solid var(--ws-border-color, #d8d3c8); border-radius: 9px; background: var(--ws-card-bg, #fff); box-shadow: 0 5px 22px rgb(0 0 0 / 10%); }
+.zj-composer__add-menu::after { content: ''; position: absolute; top: 100%; left: -1px; right: -1px; height: 9px; }
 .zj-composer__add-menu button { display: block; width: 100%; padding: 10px; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }
 .zj-composer__add-menu button:hover { background: var(--ws-surface-2, #fbf8f1); }
 .zj-composer__add-menu span { display: block; padding: 8px 10px; font-size: 11px; color: var(--ws-text-secondary-color, #686b66); }
@@ -451,9 +490,6 @@ defineExpose({
 }
 .zj-composer__voice-status { display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:12px; color:var(--ws-text-secondary-color); margin:8px 0; }
 .zj-composer__voice-status button { border:1px solid var(--ws-border-color); border-radius:6px; padding:4px 8px; background:transparent; color:inherit; cursor:pointer; }
-.zj-composer__field.has-voice {
-  padding-right: 40px;
-}
 .zj-composer__field:focus {
   outline: none;
 }
@@ -461,9 +497,7 @@ defineExpose({
   opacity: 0.55;
 }
 .zj-composer__voice {
-  position: absolute;
-  right: 0;
-  bottom: 6px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -522,7 +556,10 @@ defineExpose({
   font-size: 12px;
   color: var(--ws-text-placeholder-color, #a3a69f);
 }
-.zj-composer__send {
+.zj-composer__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
 }
 @media (max-width: 600px) {

@@ -534,7 +534,11 @@ var LOCAL_UI_ERRORS = /* @__PURE__ */ new Set([
   "PROVISIONING_SCAN_IN_PROGRESS",
   "PROVISIONING_PHYSICAL_CODE_INVALID",
   "PROVISIONING_NOT_STARTED",
+  "DISCOVERY_RUNTIME_FAILURE",
+  "PROVISIONING_SCAN_TIMEOUT",
+  "PROVISIONING_SCAN_CANCELLED",
   "NotFoundError",
+  "NotAllowedError",
   "SecurityError"
 ]);
 var flowId = process.argv.find((value) => value.startsWith(FLOW_ARGUMENT))?.slice(FLOW_ARGUMENT.length);
@@ -548,11 +552,18 @@ var candidateWaiters = /* @__PURE__ */ new Set();
 var operations = /* @__PURE__ */ new Map();
 var subscriptions = /* @__PURE__ */ new Map();
 var snapshotListeners = /* @__PURE__ */ new Set();
+var discoveryListeners = /* @__PURE__ */ new Set();
+var retiredDiscoverySessions = /* @__PURE__ */ new Set();
 var selectedCandidate;
 var requestDeviceFlight;
 var scanActive = false;
 var discoverySessionId;
 var discoverySequence = 0;
+var discoveryGeneration = 0;
+var discoveryTimer;
+var discoveryState = "idle";
+var discoveryErrorCode;
+var selecting = false;
 function uuid() {
   return crypto.randomUUID();
 }
@@ -590,15 +601,62 @@ function safeSnapshot(value) {
     ...typeof value.attentionCode === "string" && /^[A-Z][A-Z0-9_]{1,127}$/.test(value.attentionCode) ? { attentionCode: value.attentionCode } : {}
   });
 }
-function notifyCandidates() {
-  const snapshot = [...candidates.values()].map((candidate) => Object.freeze({ ...candidate }));
-  for (const resolve of [...candidateWaiters]) resolve(snapshot);
+function candidateSnapshot() {
+  return Object.freeze([...candidates.values()].map((candidate) => Object.freeze({ ...candidate })));
+}
+function discoverySnapshot() {
+  return Object.freeze({
+    state: discoveryState,
+    candidates: candidateSnapshot(),
+    ...discoveryErrorCode ? { errorCode: discoveryErrorCode } : {}
+  });
+}
+function notifyDiscovery() {
+  const snapshot = discoverySnapshot();
+  for (const listener of [...discoveryListeners]) {
+    try {
+      listener(snapshot);
+    } catch {
+    }
+  }
+}
+function notifyCandidates(error) {
+  const snapshot = candidateSnapshot();
+  for (const waiter of [...candidateWaiters]) {
+    if (error) waiter.reject(error);
+    else waiter.resolve(snapshot);
+  }
   candidateWaiters.clear();
+}
+function finishDiscovery(state, errorCode, cancelPicker = false) {
+  clearTimeout(discoveryTimer);
+  discoveryTimer = void 0;
+  scanActive = false;
+  selecting = false;
+  discoveryGeneration += 1;
+  const sessionId = discoverySessionId;
+  if (sessionId) retiredDiscoverySessions.add(sessionId);
+  discoverySessionId = void 0;
+  discoverySequence = 0;
+  discoveryState = state;
+  discoveryErrorCode = errorCode;
+  if (cancelPicker) {
+    selection.cancelSelection();
+    if (sessionId) import_electron.ipcRenderer.send(DISCOVERY_PICKER_CHANNELS.cancel, { sessionId });
+  }
+  notifyCandidates(errorCode ? failure(errorCode) : void 0);
+  notifyDiscovery();
 }
 import_electron.ipcRenderer.on(DISCOVERY_PICKER_CHANNELS.candidates, (_event, message) => {
   if (!message || typeof message !== "object" || !UUID_V4.test(message.sessionId || "") || !Number.isSafeInteger(message.sequence) || message.sequence < 1 || !Array.isArray(message.candidates)) return;
+  if (retiredDiscoverySessions.has(message.sessionId)) return;
+  if (!scanActive) {
+    retiredDiscoverySessions.add(message.sessionId);
+    import_electron.ipcRenderer.send(DISCOVERY_PICKER_CHANNELS.cancel, { sessionId: message.sessionId });
+    return;
+  }
   if (discoverySessionId !== message.sessionId) {
-    if (!scanActive) return;
+    if (discoverySessionId) return;
     discoverySessionId = message.sessionId;
     discoverySequence = 0;
     candidates.clear();
@@ -615,15 +673,12 @@ import_electron.ipcRenderer.on(DISCOVERY_PICKER_CHANNELS.candidates, (_event, me
     next.add(candidateId);
   }
   for (const id of [...candidates.keys()]) if (!next.has(id)) candidates.delete(id);
+  notifyDiscovery();
   if (candidates.size) notifyCandidates();
 });
 import_electron.ipcRenderer.on(DISCOVERY_PICKER_CHANNELS.settled, (_event, message) => {
   if (!message || message.sessionId !== discoverySessionId || message.cancelled !== true) return;
-  selection.cancelSelection();
-  requestDeviceFlight = void 0;
-  candidates.clear();
-  discoverySessionId = void 0;
-  discoverySequence = 0;
+  finishDiscovery("completed", candidates.size ? void 0 : "PROVISIONING_SCAN_TIMEOUT", true);
 });
 import_electron.ipcRenderer.on(CLAIM_SNAPSHOT_CHANNEL, (_event, message) => {
   if (!message || message.ipcVersion !== IPC_VERSION || message.flowId !== flowId) return;
@@ -755,41 +810,50 @@ var api = Object.freeze({
   async scan() {
     if (scanActive || requestDeviceFlight) throw failure("CLAIM_OPERATION_IN_PROGRESS");
     if (!navigator.userActivation?.isActive) throw failure("PROVISIONING_USER_GESTURE_REQUIRED");
+    if (!navigator.bluetooth?.requestDevice) throw failure("PROVISIONING_BLUETOOTH_UNAVAILABLE");
     scanActive = true;
     candidates.clear();
     selectedCandidate = void 0;
     discoverySessionId = void 0;
     discoverySequence = 0;
-    requestDeviceFlight = selection.requestDeviceFromUserGesture();
-    requestDeviceFlight.catch(() => {
-    });
+    discoveryState = "scanning";
+    discoveryErrorCode = void 0;
+    const generation = ++discoveryGeneration;
+    const result = new Promise((resolve, reject) => candidateWaiters.add({ resolve, reject }));
     try {
-      return await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          candidateWaiters.delete(onCandidates);
-          if (candidates.size) resolve([...candidates.values()].map((value) => ({ ...value })));
-          else {
-            selection.cancelSelection();
-            if (discoverySessionId) import_electron.ipcRenderer.send(
-              DISCOVERY_PICKER_CHANNELS.cancel,
-              { sessionId: discoverySessionId }
-            );
-            reject(failure("NotFoundError"));
-          }
-        }, 8e3);
-        const onCandidates = (value) => {
-          clearTimeout(timer);
-          resolve(value);
-        };
-        candidateWaiters.add(onCandidates);
+      const pending = selection.requestDeviceFromUserGesture();
+      requestDeviceFlight = pending;
+      pending.then(() => {
+        if (requestDeviceFlight === pending) requestDeviceFlight = void 0;
+        if (generation !== discoveryGeneration) selection.cancelSelection();
+      }, (error) => {
+        if (requestDeviceFlight === pending) requestDeviceFlight = void 0;
+        if (generation !== discoveryGeneration) return;
+        const code = safeCode(error, "DISCOVERY_RUNTIME_FAILURE");
+        finishDiscovery(
+          code === "NotFoundError" ? "completed" : "error",
+          code === "NotFoundError" && candidates.size ? void 0 : code,
+          true
+        );
       });
-    } finally {
-      scanActive = false;
+      discoveryTimer = setTimeout(() => {
+        if (generation === discoveryGeneration) {
+          finishDiscovery("completed", candidates.size ? void 0 : "PROVISIONING_SCAN_TIMEOUT", true);
+        }
+      }, 8e3);
+      notifyDiscovery();
+    } catch (error) {
+      finishDiscovery("error", safeCode(error, "DISCOVERY_RUNTIME_FAILURE"), true);
     }
+    return result;
   },
   async select(candidateId) {
     const candidate = candidates.get(candidateId);
-    if (!candidate || !requestDeviceFlight || !discoverySessionId) throw failure("LOCAL_SELECTION_LEASE_INVALID");
+    if (!candidate || !scanActive || selecting || !requestDeviceFlight || !discoverySessionId) {
+      throw failure("LOCAL_SELECTION_LEASE_INVALID");
+    }
+    selecting = true;
+    const generation = discoveryGeneration;
     const pending = requestDeviceFlight;
     import_electron.ipcRenderer.send(
       DISCOVERY_PICKER_CHANNELS.select,
@@ -798,13 +862,12 @@ var api = Object.freeze({
     let bound;
     try {
       bound = await pending;
-    } finally {
-      requestDeviceFlight = void 0;
-      candidates.clear();
-      discoverySessionId = void 0;
-      discoverySequence = 0;
+    } catch (error) {
+      throw failure(safeCode(error, "DISCOVERY_RUNTIME_FAILURE"));
     }
+    if (generation !== discoveryGeneration) throw failure("LOCAL_SELECTION_LEASE_INVALID");
     selectedCandidate = bound;
+    finishDiscovery("selected");
     await claim("bindSelected", bound);
   },
   begin: () => claim("begin"),
@@ -829,7 +892,19 @@ var api = Object.freeze({
   },
   confirmOwnership: () => claim("confirmOwnership"),
   refresh: () => claim("refresh"),
-  cancel: () => claim("cancel"),
+  cancel: () => {
+    if (scanActive) finishDiscovery("cancelled", "PROVISIONING_SCAN_CANCELLED", true);
+    return claim("cancel");
+  },
+  cancelScan: () => {
+    if (scanActive) finishDiscovery("cancelled", "PROVISIONING_SCAN_CANCELLED", true);
+  },
+  onDiscoverySnapshot(listener) {
+    if (typeof listener !== "function") throw new TypeError("Expected a discovery listener");
+    discoveryListeners.add(listener);
+    listener(discoverySnapshot());
+    return () => discoveryListeners.delete(listener);
+  },
   onSnapshot(listener) {
     if (typeof listener !== "function") throw new TypeError("Expected a snapshot listener");
     snapshotListeners.add(listener);
@@ -845,15 +920,13 @@ var api = Object.freeze({
   }
 });
 addEventListener("beforeunload", () => {
-  selection.cancelSelection();
-  if (discoverySessionId) import_electron.ipcRenderer.send(
-    DISCOVERY_PICKER_CHANNELS.cancel,
-    { sessionId: discoverySessionId }
-  );
+  if (scanActive) finishDiscovery("cancelled", "PROVISIONING_SCAN_CANCELLED", true);
+  else selection.cancelSelection();
   for (const operation of operations.values()) operation.abort();
   operations.clear();
   subscriptions.clear();
   snapshotListeners.clear();
+  discoveryListeners.clear();
   void transport.closeAll();
 });
 import_electron.contextBridge.exposeInMainWorld("desktopProvisioning", api);

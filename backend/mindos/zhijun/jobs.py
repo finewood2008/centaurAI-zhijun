@@ -214,12 +214,19 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
         if not memory.extraction_allowed(store, conv_store, conversation_id, message["content"]):
             return {"state": "skipped", "reason": "memory_policy"}
         history = conv_store.list_messages(conversation_id)
+        source = extract.memory_source_message(history, message)
+        if source is None:
+            return {"state": "skipped", "reason": "memory_source_missing"}
+        source_origin = (source.get("meta") or {}).get("replyAssistance")
         prev_assistant = None
         for item in history:
-            if item["seq"] >= message["seq"]:
+            if item["seq"] >= source["seq"]:
                 break
             if item["role"] == "assistant":
                 prev_assistant = item["content"]
+        ok, reason = extract.should_extract(source["content"], prev_assistant)
+        if not ok:
+            return {"state": "skipped", "reason": reason}
         provider = choose_provider()
         channel = "external" if provider.external else "local"
         if not provider_gate.acquire(channel, timeout=30.0, background=True):
@@ -229,16 +236,28 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
                 provider=provider,
                 store=store,
                 conversation_id=conversation_id,
-                message_id=message_id,
-                user_text=message["content"],
+                message_id=source["id"],
+                user_text=source["content"],
                 prev_assistant=prev_assistant,
                 debug={"mode": conversation.get("mode")},
-                input_origin=input_origin,
+                input_origin=source_origin,
+                request_message_id=message_id if source["id"] != message_id else None,
             )
         finally:
             provider_gate.release(channel)
+        def enqueue_followup(kind, action):
+            from zhijun_worker.background import BackgroundEnqueueError
+            try:
+                return action()
+            except BackgroundEnqueueError as exc:
+                # The candidate is already durable. Keep the separately stored
+                # failed child task, without relabelling or replaying extraction.
+                result.setdefault("followupFailures", []).append(
+                    {"kind": kind, "jobId": exc.job_id, "code": exc.code})
+                return None
+
         if result.get("created") or result.get("promoted"):
-            enqueue_projection(store=store)
+            enqueue_followup("project", lambda: enqueue_projection(store=store))
             try:
                 from . import consolidate
 
@@ -253,10 +272,11 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
                 assistants = [m for m in conv_store.list_messages(conversation_id)
                               if m["role"] == "assistant" and m["status"] == "complete" and m["seq"] > message["seq"]]
                 if assistants:
-                    enqueue_alignment(conversation_id, assistants[0]["id"], message["content"], store=store)
+                    enqueue_followup("alignment", lambda: enqueue_alignment(
+                        conversation_id, assistants[0]["id"], message["content"], store=store))
         user_turns = conv_store.count_messages(conversation_id, role="user")
         if user_turns and user_turns % _SUMMARY_EVERY_TURNS == 0:
-            enqueue_summary(conversation_id, store=store)
+            enqueue_followup("summarize_conversation", lambda: enqueue_summary(conversation_id, store=store))
         return result
     if kind == "summarize_conversation":
         conversation_id = payload.get("conversationId")

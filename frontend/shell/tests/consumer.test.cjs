@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { createConsumerClient, validatePassword, validatePasswordReset, LOGIN_SESSION_MS } = require('../production/consumer-client.cjs');
 const { createDesktopRuntime } = require('../runtime/desktop-runtime.cjs');
+const { toPublicError } = require('../runtime/public-error.cjs');
 const config = { consumerBaseUrl: 'https://consumer.example.test/prod-api' };
 const credentials = { phone: '13800000000', password: 'Synthetic-pass-1' };
 const device = { deviceId: 'device-synthetic-1', deviceName: '合成盒子', ownershipStatus: 'active',
@@ -118,7 +119,7 @@ test('registration drops debug SMS data and claim binds one idempotency key into
   const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
     calls.push({ url, init });
     if (url.endsWith('/auth/sms/send')) {
-      assert.deepEqual(JSON.parse(init.body), { phone: credentials.phone });
+      assert.deepEqual(JSON.parse(init.body), { phone: credentials.phone, scene: 'consumer_login' });
       assert.equal(init.headers.authorization, undefined);
       return reply({ expiresIn: 300, debugCode: 'private-debug-code' });
     }
@@ -147,6 +148,88 @@ test('registration drops debug SMS data and claim binds one idempotency key into
     { deviceId: device.deviceId, displayName: device.deviceId, availability: 'unknown' });
   assert.equal(calls.length, 3);
   await client.dispose();
+});
+
+test('registration maps incorrect and expired SMS proofs to a safe actionable error with trace evidence', async t => {
+  // Admin deliberately uses SMS_CODE_INVALID for both an incorrect code and
+  // an expired/consumed proof. Cover its legacy envelope and HTTP error forms.
+  for (const [reason, status, resultCode, codeLocation] of [
+    ['incorrect', 200, 601, 'data'],
+    ['expired', 200, 601, 'data'],
+    ['incorrect', 400, 400, 'top'],
+    ['expired', 422, 422, 'data'],
+  ]) {
+    await t.test(`${reason}: HTTP ${status}, code ${resultCode}, ${codeLocation}`, async () => {
+      const store = memoryStore();
+      const traceId = '175dd7a6a6fa49d8961ff666f0e41774';
+      const privateMessage = `private-${reason}-${credentials.phone}-${credentials.password}-123456`;
+      let calls = 0;
+      const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+        ++calls;
+        assert.ok(url.endsWith('/auth/password/register'));
+        return new Response(JSON.stringify({ code: resultCode, success: false,
+          ...(codeLocation === 'top' ? { errorCode: 'SMS_CODE_INVALID' } : { data: { errorCode: 'SMS_CODE_INVALID' } }),
+          msg: privateMessage, requestId: traceId,
+        }), { status, headers: { 'content-type': 'application/json', 'x-request-id': traceId } });
+      } });
+      try {
+        await assert.rejects(client.register({ ...credentials, code: '123456' }), error => {
+          const projected = toPublicError(error);
+          assert.equal(projected.code, 'VERIFICATION_CODE_INVALID');
+          assert.equal(projected.message, '验证码错误或已过期，请重新获取后重试。');
+          assert.equal(projected.traceId, traceId);
+          assert.equal(projected.httpStatus, status);
+          assert.equal(projected.remoteCode, 'SMS_CODE_INVALID');
+          for (const secret of [privateMessage, credentials.phone, credentials.password, '123456']) {
+            assert.equal(JSON.stringify(projected).includes(secret), false);
+            assert.equal(String(error).includes(secret), false);
+          }
+          return true;
+        });
+        assert.equal(calls, 1, 'a rejected registration must not retry or log in');
+        assert.equal(await store.load(), undefined, 'a rejected proof must not establish a session');
+      } finally { await client.dispose(); }
+    });
+  }
+});
+
+test('registration does not mislabel other input failures as SMS errors or infer from remote prose', async () => {
+  for (const [status, resultCode, remoteCode, expectedCode] of [
+    [400, 400, undefined, 'INVALID_REQUEST'],
+    [422, 422, 'VALIDATION_ERROR', 'INVALID_REQUEST'],
+    [200, 601, 'PASSWORD_ALREADY_SET', 'INVALID_REQUEST'],
+    [200, 601, 'PASSWORD_INVALID', 'INVALID_REQUEST'],
+    [200, 601, 'UNKNOWN_ERROR', 'AUTHENTICATION_FAILED'],
+    [429, 429, 'SMS_RATE_LIMITED', 'RATE_LIMITED'],
+  ]) {
+    const client = await createConsumerClient({ config, store: memoryStore(), fetchImpl: async () =>
+      new Response(JSON.stringify({ code: resultCode, success: false,
+        data: { errorCode: remoteCode }, msg: '验证码错误或已过期',
+      }), { status, headers: { 'content-type': 'application/json' } }),
+    });
+    try {
+      await assert.rejects(client.register({ ...credentials, code: '123456' }), { code: expectedCode });
+    } finally { await client.dispose(); }
+  }
+});
+
+test('SMS requests select only supported templates and default to the legacy login scene', async t => {
+  const calls = [];
+  const client = await createConsumerClient({ config, store: memoryStore(), fetchImpl: async (url, init) => {
+    assert.ok(url.endsWith('/auth/sms/send'));
+    calls.push(JSON.parse(init.body));
+    return reply({ expiresIn: 300 });
+  } });
+  t.after(() => client.dispose());
+  for (const scene of [undefined, 'consumer_login', 'consumer_register', 'consumer_reset_password']) {
+    assert.deepEqual(await client.sendRegistrationCode(credentials.phone, scene), { expiresIn: 300 });
+  }
+  assert.deepEqual(calls.map(call => call.scene),
+    ['consumer_login', 'consumer_login', 'consumer_register', 'consumer_reset_password']);
+  for (const scene of [null, '', 'register', 'consumer_register ', {}, [], 1]) {
+    await assert.rejects(client.sendRegistrationCode(credentials.phone, scene), { code: 'INVALID_REQUEST' });
+  }
+  assert.equal(calls.length, 4, 'invalid scenes must not reach the account service');
 });
 
 test('password reset accepts an account-opaque response without data, clears the local session and never logs in', async () => {
@@ -494,7 +577,7 @@ test('bootstrap subject, current-client identity and account state fail closed',
     [{ ...active, currentClient: { ...active.currentClient, clientId: 'other-client' } }, 'CONTRACT_MISMATCH'],
     [{ ...active, currentClient: { ...active.currentClient, isCurrent: false } }, 'CONTRACT_MISMATCH'],
     [{ ...active, currentClient: { ...active.currentClient, clientStatus: 'revoked' } }, 'ACCESS_DENIED'],
-    [{ ...active, currentClient: { ...active.currentClient, hasActiveSession: false } }, 'ACCESS_DENIED'],
+    [{ ...active, currentClient: { ...active.currentClient, hasActiveSession: false } }, 'SESSION_EXPIRED'],
     ...['securityLocked', 'deletionPending', 'deleted'].map(accountStatus => [{ ...active, accountStatus }, 'ACCESS_DENIED']),
   ]) {
     const store = memoryStore();
@@ -773,4 +856,75 @@ test('credential rejection clears the public runtime subject so the user can sig
   assert.equal((await runtime.invoke('listDevices', [context('synthetic-list')], 1)).error.code, 'SESSION_EXPIRED');
   assert.equal(runtime.snapshot().subject, null); assert.equal(runtime.snapshot().phase, 'failed');
   assert.equal(await store.load(), undefined); await runtime.dispose();
+});
+
+for (const rejection of ['html401', 'AUTH_SESSION_EXPIRED', 'AUTH_REQUIRED', 'AUTHENTICATION_REQUIRED']) {
+  test(`restored login ${rejection} refreshes once, then returns to login on refresh rejection`, async () => {
+    const store = memoryStore(); let refreshes = 0, reads = 0;
+    const first = await createConsumerClient({ config, store, fetchImpl: async () => reply(token()) });
+    await first.signIn(credentials); await first.dispose();
+    const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+      if (url.endsWith('/refresh')) { refreshes++; return new Response('expired', { status:401 }); }
+      reads++;
+      return rejection === 'html401' ? new Response('<html>private</html>', { status:401 })
+        : new Response(JSON.stringify({ success:false, errorCode:rejection, requestId:'request-synthetic-0001',
+          serverTime:'2026-09-14T12:00:00Z' }), { headers:{ 'content-type':'application/json' } });
+    } });
+    const runtime = createDesktopRuntime({ mode:'production', adapter:client });
+    for (let i = 0; i < 20 && runtime.snapshot().phase === 'authenticating'; i++) await new Promise(r => setImmediate(r));
+    assert.ok(runtime.snapshot().subject, 'persisted identity initially restores');
+    const result = await runtime.invoke('listDevices', [{ callId:'restored-read', expectedGeneration:runtime.snapshot().generation }], 1);
+    assert.equal(result.error.code, 'SESSION_EXPIRED');
+    assert.equal(runtime.snapshot().subject, null);
+    assert.equal(await store.load(), undefined);
+    assert.equal(refreshes, 1); assert.equal(reads, 1);
+    await runtime.dispose();
+  });
+}
+
+test('HTML access-token rejection can refresh successfully without signing the user out', async () => {
+  const store=memoryStore(); let refreshes=0;
+  const client=await createConsumerClient({config,store,fetchImpl:async(url,init)=>{
+    if(url.endsWith('/login'))return reply(token());
+    if(url.endsWith('/refresh')){refreshes++;return reply(token(2));}
+    return init.headers.authorization==='Bearer access-1' ? new Response('',{status:401}) : bootstrapReply([device]);
+  }});
+  await client.signIn(credentials);
+  assert.equal((await client.listDevices()).length,1);assert.equal(refreshes,1);
+  assert.equal((await store.load()).accessToken,'access-2');await client.dispose();
+});
+
+test('revoked client and explicit inactive session require login, without retrying revoked credentials', async () => {
+  for(const kind of ['revoked','inactive']){
+    const store=memoryStore();let refreshes=0;
+    const client=await createConsumerClient({config,store,fetchImpl:async url=>{
+      if(url.endsWith('/login'))return reply(token());
+      if(url.endsWith('/refresh')){refreshes++;return reply(token(2));}
+      const account=bootstrapAccount();account.currentClient.hasActiveSession=false;
+      return kind==='revoked' ? modernReply(null,401,'CLIENT_REVOKED') : bootstrapReply([],account);
+    }});
+    await client.signIn(credentials);await assert.rejects(client.listDevices(),{code:'SESSION_EXPIRED'});
+    assert.equal(refreshes,0);assert.equal(await store.load(),undefined);await client.dispose();
+  }
+});
+
+test('service outages, throttling and ordinary forbidden responses preserve the saved login without refresh loops', async () => {
+  for (const kind of ['network', 'server', 'throttled', 'forbidden', 'missing-session-field']) {
+    const store = memoryStore(); let refreshes = 0;
+    const client = await createConsumerClient({ config, store, fetchImpl: async url => {
+      if (url.endsWith('/login')) return reply(token());
+      if (url.endsWith('/refresh')) { refreshes++; return reply(token(2)); }
+      if (kind === 'network') throw new TypeError('synthetic network failure');
+      if (kind === 'server') return modernReply(null, 503, 'AUTHENTICATION_REQUIRED');
+      if (kind === 'throttled') return modernReply(null, 429, 'RATE_LIMITED');
+      if (kind === 'forbidden') return modernReply(null, 403, 'ACCESS_DENIED');
+      const account = bootstrapAccount(); delete account.currentClient.hasActiveSession;
+      return bootstrapReply([], account);
+    } });
+    await client.signIn(credentials);
+    await assert.rejects(client.listDevices(), error => !['SESSION_EXPIRED', 'AUTHENTICATION_REQUIRED'].includes(error.code));
+    assert.equal((await store.load()).accessToken, 'access-1', kind);
+    assert.equal(refreshes, 0, kind);
+    await client.dispose();
+  }
 });

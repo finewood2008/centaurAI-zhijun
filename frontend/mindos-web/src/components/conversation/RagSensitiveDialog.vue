@@ -92,7 +92,7 @@ const deliveryLabel = computed(() => {
 const emptyMessage = computed(() => props.outcome === 'sensitive_content_blocked'
   ? '本次检索的资料受交付策略限制，没有可使用的片段。'
   : props.outcome === 'no_results'
-    ? '本次检索没有找到匹配的资料片段。'
+    ? '本次在当前授权且索引就绪的资料中没有找到匹配的片段，不代表文件不存在。请核对完整文件名或项目主题；若原材料已显示完成，请在原材料页检查索引状态及当前工作区。检索接口不能判定某份材料是否未索引或索引失败。'
     : '本次没有可供确认的资料片段。')
 
 watch([() => props.interactionId, () => props.status, () => props.items, () => props.deliveryMode], () => {
@@ -310,6 +310,7 @@ function cancel() {
             <input v-model="selectedPreviewIds" type="checkbox" :value="item.previewId" :disabled="busy" />
             <span>
               <strong>{{ item.title || '未命名资料' }}</strong>
+              <span class="rag-sensitive__location"> · 资料编号 {{ item.materialId }}</span>
               <span v-if="item.materialVersion" class="rag-sensitive__location"> · 版本 {{ item.materialVersion }}</span>
               <span class="rag-sensitive__material-status">{{ materialStatus(item) }}</span>
               <span v-if="materialLocation(item.locator)" class="rag-sensitive__location">{{ materialLocation(item.locator) }}</span>

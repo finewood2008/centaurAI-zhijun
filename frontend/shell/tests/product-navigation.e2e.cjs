@@ -81,7 +81,15 @@ test('Electron custom protocol renders an initially failed signed-in account and
     await page.reload({ waitUntil: 'domcontentloaded' })
     await expect(navigation).toBeVisible({ timeout: 10000 })
     await expect(page.getByTestId('workspace-unavailable')).toBeVisible()
-    await expect(page.getByTestId('account')).toContainText('synthetic-electron-account')
+    // The secure-connection card intentionally replaces the old account banner
+    // on failure. Verify retained identity through the actual preload snapshot,
+    // and keep the visible failed-state/recovery assertions below.
+    const restored = await page.evaluate(() => window.zhijunDesktop.getSnapshot())
+    assert.equal(restored.ok, true)
+    assert.equal(restored.data.subject.accountId, 'synthetic-electron-account')
+    assert.equal(restored.data.phase, 'failed')
+    await expect(page.getByTestId('secure-connection-progress')).toContainText('连接暂未就绪')
+    await expect(page.getByTestId('password-login')).toHaveCount(0)
     const stats = await app.evaluate(() => globalThis.__navigationFixture)
     assert.equal(stats.business, 0)
     assert.ok(stats.reads >= 2, 'reload obtains the existing main-process snapshot')
@@ -89,6 +97,7 @@ test('Electron custom protocol renders an initially failed signed-in account and
     assert.deepEqual(diagnostics(), { errors: [], consoleErrors: [], toasts: [], network: [] })
     await page.getByTestId('disconnect').click()
     await expect(page.getByTestId('refresh-devices')).toBeVisible()
+    await expect(page.getByTestId('account')).toContainText('synthetic-electron-account')
     await expect(navigation).toBeVisible()
   } catch (error) {
     t.diagnostic(JSON.stringify({ ...diagnostics(), body: await page.locator('body').innerText().catch(() => 'unavailable') }))

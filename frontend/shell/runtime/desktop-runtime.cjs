@@ -5,7 +5,7 @@ const { normalizeMaterialsQuery, buildMaterialsRequest, projectMaterialsResponse
 const { createReadScheduler } = require('./read-scheduler.cjs');
 const { createSimulationAdapter } = require('./adapters.cjs');
 const { createProductSession, productMethods } = require('./product-session.cjs');
-const { validatePassword, validateRegistration, validatePasswordReset, validatePhone } = require('../production/consumer-client.cjs');
+const { validatePassword, validateRegistration, validatePasswordReset, validatePhone, validateSmsScene } = require('../production/consumer-client.cjs');
 
 const ARG_COUNTS = { getSnapshot: 0, getRememberedLogin: 1, signInWithPassword: 2, signInWithSavedPassword: 2,
   sendRegistrationCode: 2, resetPassword: 2, registerWithPassword: 2, beginSignIn: 1, listDevices: 1, claimDevice: 2, connect: 2,
@@ -270,8 +270,9 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
       assert(mode === 'production' && auth && typeof auth.sendRegistrationCode === 'function', 'OPERATION_NOT_ALLOWED');
       assert(!accountId && ['signed_out', 'failed'].includes(phase), 'OPERATION_NOT_ALLOWED');
       const phone = validatePhone(input);
+      const scene = validateSmsScene(args[2]);
       const gen = generation;
-      const value = await bounded(callAdapter(() => auth.sendRegistrationCode(phone)), gen);
+      const value = await bounded(callAdapter(() => auth.sendRegistrationCode(phone, scene)), gen);
       ensureCurrent(gen);
       assert(plain(value) && exact(value, ['expiresIn']) && Number.isInteger(value.expiresIn)
         && value.expiresIn >= 1 && value.expiresIn <= 3600, 'CONTRACT_MISMATCH');
@@ -435,7 +436,8 @@ function createDesktopRuntime({ mode = 'unconfigured', adapter, timeoutMs = 1500
     try {
       assert(!disposed, 'OPERATION_NOT_ALLOWED');
       assert(typeof operation === 'string' && Object.hasOwn(ARG_COUNTS, operation)
-        && Array.isArray(args) && args.length === ARG_COUNTS[operation]);
+        && Array.isArray(args) && (args.length === ARG_COUNTS[operation]
+          || (operation === 'sendRegistrationCode' && args.length === 3)));
       assert(typeof senderId === 'number' && Number.isSafeInteger(senderId) && senderId >= 0);
       if (operation !== 'getSnapshot') {
         const context = args[0];

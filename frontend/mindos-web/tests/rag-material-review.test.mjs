@@ -107,6 +107,9 @@ test('truncated previews disclose full-fragment authorization without preselecti
 test('empty results distinguish policy blocking and let the user continue without materials', () => {
   const h = mount({ items: [], outcome: 'no_results' })
   assert.match(h.ui.emptyMessage.value, /没有找到匹配/)
+  assert.match(h.ui.emptyMessage.value, /当前授权且索引就绪/)
+  assert.match(h.ui.emptyMessage.value, /不代表文件不存在/)
+  assert.match(h.ui.emptyMessage.value, /不能判定.*未索引或索引失败/)
   h.ui.useSelected()
   assert.deepEqual(h.events, [])
   h.props.outcome = 'sensitive_content_blocked'
@@ -117,6 +120,18 @@ test('empty results distinguish policy blocking and let the user continue withou
   }
   assert.deepEqual(h.events, Array.from({ length: 3 }, () => [['without-materials'], ['cancel']]).flat())
   assert.doesNotMatch(source, /v-html|localStorage|sessionStorage/)
+  h.close()
+})
+
+test('same-name material versions remain individually selectable and identified', () => {
+  const h = mount({ items: [item('v1', { materialId: 'material-1', materialVersion: 1 }),
+    item('v2', { materialId: 'material-2', materialVersion: 2 })] })
+  assert.equal(h.ui.materialItems.value.length, 2)
+  h.ui.selectedPreviewIds.value = ['v2']
+  h.ui.useSelected()
+  assert.deepEqual(h.events, [['use-selected', ['v2']]])
+  assert.match(source, /资料编号 \{\{ item.materialId \}\}/)
+  assert.match(source, /版本 \{\{ item.materialVersion \}\}/)
   h.close()
 })
 

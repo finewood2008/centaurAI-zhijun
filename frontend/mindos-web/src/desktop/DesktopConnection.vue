@@ -36,6 +36,10 @@ const showAuth = computed(() => !!phase.value && ['signed_out', 'failed'].includ
 const canSignIn = computed(() => showAuth.value && !state.value.controlPending)
 const canSignOut = computed(() => !!phase.value && phase.value !== 'signed_out'
   && state.value.pendingOperation !== 'signOut')
+// A temporary account-service outage is not proof that the saved session has
+// expired, nor proof that the account has no devices. Keep retry user-driven.
+const accountServiceUnavailable = computed(() => phase.value === 'selecting_device'
+  && state.value.error?.code === 'ACCOUNT_SERVICE_UNAVAILABLE')
 const canDisconnect = computed(() => !!phase.value && ['ready', 'failed'].includes(phase.value)
   && !!state.value.snapshot?.subject && !state.value.controlPending)
 const showConnectionProgress = computed(() => !!state.value.snapshot?.subject && !!phase.value
@@ -93,7 +97,9 @@ function setAuthMode(mode: 'login' | 'register' | 'reset'): void {
 async function sendRegistrationCode(): Promise<void> {
   formError.value = ''
   if (!/^1\d{10}$/.test(phone.value)) { formError.value = '请输入正确的 11 位手机号。'; return }
-  const expiresIn = await controller.sendRegistrationCode(phone.value)
+  const scene = authMode.value === 'register' ? 'consumer_register'
+    : authMode.value === 'reset' ? 'consumer_reset_password' : 'consumer_login'
+  const expiresIn = await controller.sendRegistrationCode(phone.value, scene)
   if (!expiresIn) return
   codeSeconds.value = Math.min(60, expiresIn)
   if (codeTimer) clearInterval(codeTimer)
@@ -279,6 +285,10 @@ onBeforeUnmount(() => {
         <section v-if="state.error" class="error-card" role="alert" data-testid="error">
           <strong>暂时无法完成操作</strong><p>{{ state.error.message }}</p>
           <small>{{ state.error.code }}<template v-if="connectionDiagnostic"> · {{ connectionDiagnostic }}</template><template v-if="state.error.traceId"> · 关联编号 {{ state.error.traceId }}</template></small>
+          <div v-if="accountServiceUnavailable" class="connection-recovery-actions" data-testid="account-service-recovery">
+            <button type="button" :disabled="state.devicesLoading || state.controlPending" data-testid="retry-account-devices" @click="controller.loadDevices()">重新获取盒子</button>
+            <button type="button" :disabled="state.controlPending" data-testid="reauthenticate" @click="signOut">重新登录</button>
+          </div>
         </section>
         <p v-if="state.notice" class="notice" role="status">{{ state.notice }}</p>
 
@@ -291,6 +301,7 @@ onBeforeUnmount(() => {
           <p v-if="formError" class="form-error" role="alert">{{ formError }}</p>
           <div class="section-heading"><h2 id="devices-title">已绑定的盒子</h2><button :disabled="state.devicesLoading || state.controlPending" data-testid="refresh-devices" @click="controller.loadDevices()">刷新设备</button></div>
           <p v-if="state.devicesLoading" role="status" class="empty-state">正在获取盒子列表…</p>
+          <p v-else-if="!state.devices.length && accountServiceUnavailable" class="empty-state" data-testid="device-list-unavailable">暂时未能读取盒子列表，不能确认当前绑定状态。请重新获取盒子，或重新登录。</p>
           <p v-else-if="!state.devices.length" class="empty-state">暂无已完成授权的盒子。若刚提交认领，请保持盒子联网，稍后刷新设备。</p>
           <ul v-else class="device-grid">
             <li v-for="device in state.devices" :key="device.deviceId" class="device-card">

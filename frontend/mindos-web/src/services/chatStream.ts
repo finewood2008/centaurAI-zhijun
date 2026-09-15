@@ -18,21 +18,25 @@ export async function streamChat(
 ): Promise<boolean> {
   let request = body
   let received = false
+  let terminalReceived = false
   const ragState: { terminal: (Record<string, unknown> & { userMessageId?: string }) | null } = { terminal: null }
-  const guardedHandlers = Object.fromEntries(Object.entries(handlers).map(([event, handler]) => [event, (data: unknown) => {
+  const guardedHandlers = Object.fromEntries([...new Set([...Object.keys(handlers), ...CHAT_TERMINAL_EVENTS])].map(event => [event, (data: unknown) => {
     received = true
+    if ((CHAT_TERMINAL_EVENTS as readonly string[]).includes(event)) terminalReceived = true
     if (event === 'error' && ragPromptOf(data)) {
       ragState.terminal = data as Record<string, unknown> & { userMessageId?: string }
       return
     }
-    handler(data)
+    handlers[event]?.(data)
   }]))
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
+      terminalReceived = false
       signal?.throwIfAborted()
       await streamPost(`/mindos/conversations/${encodeURIComponent(conversationId)}/messages`, request, guardedHandlers, signal, {
         terminalEvents: CHAT_TERMINAL_EVENTS,
       })
+      if (!terminalReceived) throw new ApiError('回复连接提前结束，请核对已保存的回复。', 502, 'CHAT_STREAM_INCOMPLETE')
       if (ragState.terminal) {
         const terminal = ragState.terminal
         ragState.terminal = null

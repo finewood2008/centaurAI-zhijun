@@ -292,3 +292,59 @@ def test_one_expired_selected_ref_invalidates_entire_review_not_just_material():
     client.evidence_resolve = partially_expired
     assert rag.reviewed_material("conversation-a", "material-a", 1, interaction_id=INTERACTION) is None
     assert INTERACTION not in rag._entries
+
+
+def test_raw_material_search_needs_no_local_registration_or_knowledge_cards():
+    from mindos.zhijun.retrieval_tools import execute_search, plan_search
+    name = "大模型自我认知微调项目复现新版.docx"
+    first = {**item(), "title": name}
+    second = {**item("erv2_" + "b" * 32), "title": name, "materialId": "material-b", "materialVersion": 2}
+    client = FakeClient(search_result([first, second]))
+    client.delivered = [first, second]
+    rag.reset_for_tests(client)
+    plan = plan_search("请阅读" + name)
+    with pytest.raises(HTTPException) as caught:
+        execute_search(plan, INTERACTION)
+    prompt = caught.value.detail["ragV2"]
+    assert client.calls[0][2]["material_ids"] == []
+    assert [(value["materialId"], value["materialVersion"]) for value in prompt["items"]] == [
+        ("material-a", 1), ("material-b", 2)]
+    assert client.calls == [client.calls[0]], "no card, original-file or evidence read before selection"
+    rag.decide(prompt["interactionId"], "use-selected", [prompt["items"][1]["previewId"]])
+    assert execute_search(plan, INTERACTION) == [second]
+
+
+@pytest.mark.parametrize("code,status", [("CAPABILITY_DENIED", 403), ("AUTHENTICATION_REQUIRED", 401),
+                                        ("SENSITIVE_CHECK_UNAVAILABLE", 503)])
+def test_search_errors_never_become_no_results_or_create_review(code, status):
+    from zhijun_worker.data_agent_rag_v2 import DataAgentRagV2Error
+
+    class FailedSearch(FakeClient):
+        def search(self, query, **kwargs):
+            raise DataAgentRagV2Error(code, status=status)
+
+    rag.reset_for_tests(FailedSearch({}))
+    with pytest.raises(HTTPException) as caught:
+        rag.search("项目复现", [], INTERACTION, require_review=True)
+    assert caught.value.status_code == status
+    assert caught.value.detail["code"] == code
+    assert "ragV2" not in caught.value.detail
+    assert INTERACTION not in rag._entries
+
+
+def test_withheld_hits_cannot_be_misreported_as_no_results():
+    notice = {"code": "SENSITIVE_CHECK_INCOMPLETE", "message": "暂不可用",
+              "retrievedCount": 1, "checkedCount": 0, "withheldCount": 1, "retryable": True}
+    rag.reset_for_tests(FakeClient(search_result(status="no_results", notice=notice)))
+    with pytest.raises(HTTPException) as caught:
+        rag.search("项目复现", [], INTERACTION, require_review=True)
+    assert caught.value.detail["code"] == "RAG_V2_CONTRACT_INVALID"
+    assert INTERACTION not in rag._entries
+
+
+def test_sensitive_review_keeps_query_and_scope_without_exposing_tokens():
+    rag.reset_for_tests(FakeClient(sensitive()))
+    prompt = pending(review_context={"scopeLabel": "当前授权资料库"})["ragV2"]
+    assert prompt["query"] == "验收要求"
+    assert prompt["scopeLabel"] == "当前授权资料库"
+    assert "confirmToken" not in str(prompt)

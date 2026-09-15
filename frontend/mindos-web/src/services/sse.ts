@@ -6,6 +6,7 @@ import { transportRequest } from './transport'
 // buildHeaders / throwApiError，保证与普通请求完全一致的鉴权行为。
 import { API_BASE, ApiError, buildHeaders, throwApiError } from './api'
 import { parseSseChunk, type SseFrame } from '@/shared/sse-parser'
+import { COMPLETED_SSE_STREAM } from '../shared/streamCompletion.ts'
 
 export { parseSseChunk }
 export type { SseFrame }
@@ -46,6 +47,7 @@ export async function streamPost(
   let buffer = ''
   let terminalReached = false
   let reachedEof = false
+  let streamFailed = false
   const dispatch = (frame: SseFrame) => {
     if (terminalReached) return
     const terminal = terminalEvents.has(frame.event)
@@ -60,11 +62,8 @@ export async function streamPost(
     } catch {
       // 非 JSON 数据原样透传
     }
-    try {
-      handler(payload)
-    } finally {
-      terminalReached = terminal
-    }
+    handler(payload)
+    terminalReached = terminal
   }
   try {
     while (!terminalReached) {
@@ -81,10 +80,15 @@ export async function streamPost(
       // 流结束时若尾部还有未以空行收尾的完整帧，补一个分隔符再解析一次
       if (buffer.trim()) parseSseChunk(`${buffer}\n\n`, dispatch)
     }
+  } catch (error) {
+    streamFailed = true
+    throw error
   } finally {
-    if (terminalReached && !reachedEof) {
+    if ((terminalReached || streamFailed) && !reachedEof) {
       try {
-        await reader.cancel()
+        // Release the read side without revoking the completed command's
+        // registered background work in the desktop adapter.
+        await reader.cancel(terminalReached && !streamFailed ? COMPLETED_SSE_STREAM : undefined)
       } catch {
         // 业务终态已经送达；底层流可能已同时因断连或取消而关闭。
       }
