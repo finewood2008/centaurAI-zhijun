@@ -44,12 +44,18 @@ class CharterPolicyTests(unittest.TestCase):
                 guarded, preview = task_provider(router, purpose, request, [])
                 guarded.complete_json(request)
                 actual = self.local.requests[-1]
-                self.assertIn(charter_policy.POLICY_MARKER, actual.system)
-                self.assertIn(charter["clauses"][0]["text"], actual.system)
-                self.assertEqual(actual.system.count(charter_policy.POLICY_MARKER), 1)
+                if purpose == "extract_turn":
+                    self.assertNotIn(charter_policy.POLICY_MARKER, actual.system)
+                    self.assertNotIn(charter["clauses"][0]["text"], actual.system)
+                    self.assertEqual(preview["charterBasis"]["clauseIds"], [])
+                    self.assertFalse(any(s["kind"].startswith("charter") for s in guarded.last_preview["sources"]))
+                else:
+                    self.assertIn(charter_policy.POLICY_MARKER, actual.system)
+                    self.assertIn(charter["clauses"][0]["text"], actual.system)
+                    self.assertEqual(actual.system.count(charter_policy.POLICY_MARKER), 1)
+                    self.assertEqual(preview["charterBasis"]["clauseIds"], ["guidance"])
+                    self.assertTrue(any(s["kind"] == "charter_clause" for s in guarded.last_preview["sources"]))
                 self.assertEqual(guarded.charter_basis["version"], charter["version"])
-                self.assertEqual(preview["charterBasis"]["clauseIds"], ["guidance"])
-                self.assertTrue(any(s["kind"] == "charter_clause" for s in guarded.last_preview["sources"]))
                 self.assertEqual(request.system, "本体只作参考，不覆盖明确规则", "frozen caller request stays unchanged")
                 guarded.assert_current()
 

@@ -4,6 +4,7 @@ import { resolveProductOperation, type ProductOperation } from '../services/prod
 import { onProductScopeReset, workspaceRequestSignal } from '../shared/productScope.ts'
 import { reportUploadProgress, type ProductRequestInit } from '../services/transport.ts'
 import { createPollPacing, waitForPoll } from './pollPacing.ts'
+import { COMPLETED_SSE_STREAM } from '../shared/streamCompletion.ts'
 
 interface Binding { generation: number; workspaceId: string }
 class ProductFailure extends Error {
@@ -108,6 +109,7 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
     const uploads: string[] = []
     let job: ProductStart | undefined
     let finished = false
+    let domainCompleted = false
     let cancelSent = false
     let mutation: Binding | undefined
     let outcomeUnknown = false
@@ -198,14 +200,28 @@ export function createDesktopProductClient(product: ProductDesktop, binding: () 
               finished = true
               controller.close()
             } catch (error) {
-              rememberUncertainty(error)
-              cancelJob()
-              rejectHeaders(error)
-              try { controller.error(error) } catch { /* Reader already cancelled. */ }
+              // A late poll failure cannot turn a delivered domain terminal
+              // event into an unknown mutation or revoke its background work.
+              if (!domainCompleted) {
+                rememberUncertainty(error)
+                cancelJob()
+                rejectHeaders(error)
+                try { controller.error(error) } catch { /* Reader already cancelled. */ }
+              }
             } finally { finished = true; cleanup() }
           })()
         },
-        cancel() { cancelJob(); lifetime.abort(); finished = true; cleanup() },
+        cancel(reason) {
+          // SSE message_done/error can precede the Gateway end event. Closing
+          // that local reader must not revoke already registered extraction.
+          // Set finished before abort: abort synchronously invokes cancelJob.
+          if (operation.response === 'sse' && reason === COMPLETED_SSE_STREAM) {
+            domainCompleted = true
+            finished = true
+          }
+          else cancelJob()
+          lifetime.abort(); finished = true; cleanup()
+        },
       })
       const head = await headersReady
       return new Response(head.status === 204 || head.status === 205 || head.status === 304 ? null : stream, head)

@@ -49,6 +49,8 @@ import {
   type ZhijunStatus,
 } from '@/services/api'
 import { streamChat } from '@/services/chatStream'
+import { reconcileReply } from '@/shared/replyReconciliation'
+import { productScopeEpoch } from '@/shared/productScope'
 import { useToast } from '@/composables/useToast'
 import { useChatImports } from '@/composables/useChatImports'
 import ChatFilesPanel from '@/components/conversation/ChatFilesPanel.vue'
@@ -96,6 +98,8 @@ interface UiMessage extends Message {
   // 抽取被跳过 / 还在整理时，这条回复下方的一行灰字
   extractionNote?: string
   backgroundFailures?: string[]
+  replySyncFailed?: boolean
+  replySyncing?: boolean
 }
 
 const route = useRoute()
@@ -1119,6 +1123,7 @@ async function finishLightOnboarding() {
 }
 
 async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat', origin?: ReplyAssistanceInput) {
+  const ownerEpoch = productScopeEpoch()
   abortController = new AbortController()
   const signal = abortController.signal
   let sendBody: Record<string, unknown> | null
@@ -1298,6 +1303,9 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
       assistant.status = 'aborted'
       if (assistant.id.startsWith('local-')) rollback()
     } else {
+      if (await recoverSavedReply(assistant, conv.id, ownerEpoch, signal)) return
+      if (!alive || currentId.value !== conv.id || ownerEpoch !== productScopeEpoch()) return
+      if (signal.aborted) { assistant.status = 'aborted'; return }
       assistant.status = 'error'
       if (alive) {
         if (assistant.id.startsWith('local-')) rollback()
@@ -1307,6 +1315,10 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           return
         }
         if (err instanceof ApiError && err.code === 'ATTACHMENT_CONSENT_REQUIRED') void imports.showConsent()
+        if (!assistant.id.startsWith('local-')) {
+          assistant.replySyncFailed = true
+          assistant.content ||= '回复同步中断，暂未核对到完整结果。原消息已保留，请先核对回复，不要重复发送。'
+        }
         toast({ type: 'error', message: friendlyError(err, '生成失败') })
       }
     }
@@ -1322,26 +1334,57 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
   }
 }
 
+async function recoverSavedReply(message: UiMessage, cid: string, ownerEpoch: number, signal?: AbortSignal, manual = false): Promise<boolean> {
+  const identity = { conversationId: cid, messageId: message.id,
+    userMessageId: typeof message.meta?.replyTo === 'string' ? message.meta.replyTo : '',
+    requestId: typeof message.meta?.requestId === 'string' ? message.meta.requestId : '' }
+  const valid = () => alive && currentId.value === cid && current.value?.id === cid &&
+    ownerEpoch === productScopeEpoch() && message.id === identity.messageId &&
+    message.meta?.requestId === identity.requestId && (!manual || !streaming.value)
+  if (!valid() || signal?.aborted || !identity.userMessageId || !identity.requestId || identity.messageId.startsWith('local-')) return false
+  message.replySyncing = true
+  try {
+    const saved = await reconcileReply(identity, getConversation, valid, signal, manual ? [0] : undefined)
+    if (!saved || !valid() || signal?.aborted) return false
+    Object.assign(message, saved, { replySyncFailed: false })
+    return true
+  } finally { message.replySyncing = false }
+}
+
+async function checkSavedReply(message: UiMessage) {
+  if (streaming.value || message.replySyncing || !current.value) return
+  const cid = current.value.id
+  const recovered = await recoverSavedReply(message, cid, productScopeEpoch(), undefined, true)
+  if (alive && currentId.value === cid && !recovered) toast({ type: 'info', message: '暂未核对到完整回复，原消息仍保留；没有重新发送。' })
+}
+
 async function retryMessage(message: UiMessage, localOnly: boolean) {
   if (!current.value || streaming.value) return
   const before = messages.value.slice(0, messages.value.findIndex(m => m.id === message.id))
   const user = messages.value.find(m => m.id === message.meta?.replyTo) || [...before].reverse().find(m => m.role === 'user')
   if (!user) return
+  const cid = current.value.id
+  const ownerEpoch = productScopeEpoch()
+  let retrySignal: AbortSignal | undefined
+  let receivedRetryMeta = false
+  let receivedBusinessError = false
   streaming.value = true
   try {
-    const cid = current.value.id
     abortController = new AbortController()
+    retrySignal = abortController.signal
     const body = await prepareChatRoute(cid, contextRetryBody(user, message, localOnly), abortController.signal)
     if (!body || !alive || currentId.value !== cid) return
     message.meta = { ...message.meta, requestId: body.requestId }
     message.streaming = true
+    message.replySyncFailed = false
     let started = false
     await streamChat(cid, body, {
-      meta: d => { const m = d as TurnMetaEvent; message.id = m.messageId; message.turnMeta = m; message.provider = m.provider; message.model = m.model; message.external = m.external; message.meta = { ...message.meta, replyTo: m.userMessageId, depth: m.depth, turnMode: m.turnMode || body.mode } },
+      meta: d => { const m = d as TurnMetaEvent; receivedRetryMeta = true; message.id = m.messageId; message.turnMeta = m; message.provider = m.provider; message.model = m.model; message.external = m.external; message.meta = { ...message.meta, replyTo: m.userMessageId, depth: m.depth, turnMode: m.turnMode || body.mode } },
       provenance: d => { message.provenance = d as ProvenanceEvent },
       token: d => { if (!started) { message.content = ''; started = true }; message.content += (d as { t: string }).t || '' },
       message_done: d => { const done = d as MessageDoneEvent; message.status = done.status; if (done.status === 'complete') message.meta = { ...message.meta, contextPending: undefined } },
       error: d => {
+        receivedBusinessError = true
         const e = d as StreamErrorEvent
         message.status = 'error'
         if (e.requestId) message.meta = { ...message.meta, requestId: e.requestId }
@@ -1351,12 +1394,20 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
         } else toast({ type: 'error', message: e.message })
       },
     }, abortController.signal, () => alive && currentId.value === cid)
-    if (alive && currentId.value === cid) await loadConversation(cid)
+    if (!receivedBusinessError && alive && currentId.value === cid && ownerEpoch === productScopeEpoch()) await loadConversation(cid)
   } catch (e) {
+    if (retrySignal?.aborted) { message.status = 'aborted'; return }
     if (e instanceof ApiError && isContextReviewError({ code: e.code || '', preview: e.preview })) {
       message.status = 'error'
       message.meta = { ...message.meta, contextStage: 'supplemented', contextPending: { code: e.code, stage: 'supplemented' } }
-    } else toast({ type: 'error', message: friendlyError(e, '重试失败，原消息仍然保留') })
+    } else if (!receivedRetryMeta || !await recoverSavedReply(message, cid, ownerEpoch, retrySignal)) {
+      if (!alive || currentId.value !== cid || ownerEpoch !== productScopeEpoch()) return
+      if (retrySignal?.aborted) { message.status = 'aborted'; return }
+      message.status = 'error'
+      message.replySyncFailed = receivedRetryMeta
+      message.content ||= '回复同步中断，暂未核对到完整结果。请先核对回复，原消息仍然保留。'
+      if (alive && currentId.value === cid) toast({ type: 'error', message: friendlyError(e, '重试失败，原消息仍然保留') })
+    }
   }
   finally { streaming.value = false; message.streaming = false; abortController = null }
 }
@@ -1711,12 +1762,14 @@ onBeforeUnmount(() => {
             <ReplyAssistance v-if="loadedConversationId && conversationAuxPhase >= 4 && m.id === replyTarget" :conversation-id="loadedConversationId" :message-id="m.id" :disabled="streaming"
               @insert="(text, origin) => composerRef?.insertReply(text, origin)" @write="composerRef?.focus()" />
             <div v-if="m.role === 'assistant' && !m.streaming && ['error', 'aborted'].includes(m.status)" class="zj-file-followups">
-              <span>{{ contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '消息已保留，未自动切换模型。' }}</span>
+              <span>{{ m.replySyncFailed ? '回复同步未完成，请先核对已保存结果；不会自动重新发送。' : contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '消息已保留，未自动切换模型。' }}</span>
               <div>
+              <button v-if="m.replySyncFailed" :disabled="streaming || m.replySyncing" @click="checkSavedReply(m)">{{ m.replySyncing ? '正在核对…' : '核对已保存回复' }}</button>
               <button :disabled="streaming" @click="retryMessage(m, false)">{{ contextNeedsReview(m) ? '核对补充资料并继续' : '重试当前模式' }}</button>
               <button :disabled="streaming" @click="retryMessage(m, true)">改用本地</button>
               </div>
             </div>
+            <p v-if="m.replySyncing && m.streaming" class="zj-turn__note" role="status">连接读取中断，正在核对盒子已保存的回复…</p>
             <AlignmentCard v-if="!charterAttention && !m.streaming && memoryPlacement?.kind === 'alignment' && memoryPlacement.messageId === m.id"
               :key="memoryPlacement.claim.id" :claim="memoryPlacement.claim" :conversation-id="currentId || undefined" :message-id="m.id"
               @updated="onAlignmentUpdated" @refreshed="c => onAlignmentUpdated(c, false)" />

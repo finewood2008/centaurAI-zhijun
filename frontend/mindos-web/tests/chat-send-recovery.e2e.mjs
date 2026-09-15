@@ -15,6 +15,7 @@ const dir = await mkdtemp(join(tmpdir(), 'zhijun-chat-send-e2e-'))
 const info = async () => (await context.request.get(base + '/__fixture')).json()
 const initial = await info(), cases = initial.cases
 const faults = new Map()
+const readFaults = new Set()
 page.on('pageerror', error => errors.push(error.message))
 page.on('response', async response => {
   if (response.status() >= 400 && response.url().endsWith('/routing/preview')) {
@@ -25,6 +26,10 @@ page.on('response', async response => {
 await context.route('**/*', async route => {
   const request = route.request(), url = new URL(request.url())
   if (url.origin !== base) { forbidden.push(url.origin); return route.abort() }
+  const readMatch = url.pathname.match(/^\/api\/mindos\/conversations\/([^/]+)$/)
+  if (request.method() === 'GET' && readMatch && readFaults.delete(readMatch[1])) {
+    return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: { code: 'SYNTHETIC_READ_UNAVAILABLE', detail: '合成结果读取暂不可用' } }) })
+  }
   if (request.method() === 'POST') {
     const match = url.pathname.match(/^\/api\/mindos\/conversations\/([^/]+)\/(routing\/preview|messages)$/)
     if (match) {
@@ -32,6 +37,18 @@ await context.route('**/*', async route => {
       const key = match[1] + ':' + match[2], fault = faults.get(key)
       if (fault) {
         faults.delete(key)
+        if (fault.stream) {
+          // Real disposable backend saves the answer; simulate loss of the
+          // response body after its real meta frame, not another POST/replay.
+          const response = await route.fetch()
+          assert.equal(response.status(), 200)
+          const body = await response.text()
+          const meta = body.split('\n\n').find(frame => frame.startsWith('event: meta\n'))
+          assert.ok(meta, 'fixture must produce a real persisted message identity')
+          if (fault.unavailableRead) readFaults.add(match[1])
+          const suffix = fault.stream === 'domain-error' ? 'event: error\ndata: {"code":"SYNTHETIC_DOMAIN_DENIED","message":"合成业务拒绝，不应自动核对成功"}\n\n' : ''
+          return route.fulfill({ status: 200, contentType: 'text/event-stream', body: meta + '\n\n' + suffix })
+        }
         return route.fulfill({ status: fault.status, contentType: 'application/json', body: JSON.stringify({ detail: { code: fault.code, detail: fault.message } }) })
       }
     }
@@ -122,6 +139,48 @@ try {
   assert.equal(subset(cases.failure, 'messages').length, 0)
   assert.equal((await messages(cases.failure)).length, 0)
 
+  // Meta delivered, backend complete, transport EOF before tokens/terminal.
+  faults.set(cases.failure + ':messages', { stream: 'truncated' })
+  await composer.fill('合成断流：后台保存完成后读取连接提前结束。')
+  await composer.press('Enter')
+  const recovered = await waitPair(cases.failure, 0, '合成断流：后台保存完成后读取连接提前结束。')
+  const recoveredBubble = page.locator('[data-message-id="' + recovered.at(-1).id + '"]')
+  assert.ok((await recoveredBubble.innerText()).includes('合成完整回复'), 'persisted body replaces blank transport error without navigation')
+  assert.ok(!(await recoveredBubble.innerText()).includes('出错了'))
+  assert.equal(subset(cases.failure, 'messages').length, 1, 'reconciliation does not replay POST')
+  assert.equal(subset(cases.failure, 'routing/preview').length, 2, 'reconciliation does not repeat preview')
+
+  faults.set(cases.failure + ':messages', { stream: 'truncated', unavailableRead: true })
+  await composer.fill('合成断流：第一次结果读取失败，手动核对不能重复发送。')
+  await composer.press('Enter')
+  const checkSaved = page.getByRole('button', { name: '核对已保存回复', exact: true })
+  await checkSaved.waitFor()
+  assert.ok((await page.locator('[data-message-id]').last().innerText()).includes('回复同步中断'), 'failed read keeps a nonempty actionable error')
+  await checkSaved.click()
+  // The button changes its name while reading; its old name disappearing
+  // does not prove reconciliation has completed.
+  await page.waitForFunction(() => [...document.querySelectorAll('[data-message-id]')].at(-1)?.textContent.includes('合成完整回复'))
+  assert.ok((await page.locator('[data-message-id]').last().innerText()).includes('合成完整回复'))
+  assert.equal(subset(cases.failure, 'messages').length, 2, 'manual check only reads')
+
+  // A business error is not a lost transport result, even if a saved response
+  // is present. It must remain visible rather than being silently overridden.
+  faults.set(cases.failure + ':messages', { stream: 'domain-error' })
+  await composer.fill('合成业务拒绝应保持错误，不做自动恢复。')
+  await composer.press('Enter')
+  await page.getByText('合成业务拒绝，不应自动核对成功', { exact: false }).first().waitFor()
+  await page.getByRole('button', { name: '停止', exact: true }).waitFor({ state: 'hidden' })
+  assert.equal(subset(cases.failure, 'messages').length, 3)
+  faults.set(cases.failure + ':messages', { stream: 'domain-error' })
+  await Promise.all([
+    page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/messages')),
+    page.getByRole('button', { name: '重试当前模式', exact: true }).last().click(),
+  ])
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].some(button => button.textContent.trim() === '重试当前模式' && !button.disabled))
+  await page.getByRole('button', { name: '重试当前模式', exact: true }).last().waitFor()
+  assert.ok((await page.locator('[data-message-id]').last().innerText()).includes('出错了'), 'retry business error is not overwritten by loading a saved success')
+  assert.equal(subset(cases.failure, 'messages').length, 4)
+
   await enter(cases.source)
   const sourceBefore = (await messages(cases.source)).length
   await composer.fill('我已经写下的合成原文。')
@@ -139,8 +198,9 @@ try {
   assert.ok(failures.some(item => item.url.includes(cases.source) && item.code === 'SOURCE_CHANGED'), 'real changed ancestor—not a mocked error—must block sending')
   await page.setViewportSize({ width: 390, height: 844 })
   const closeNavigation = page.getByRole('button', { name: '关闭导航', exact: true })
-  if (!(await closeNavigation.isVisible())) await page.getByRole('button', { name: '打开导航菜单', exact: true }).click()
-  await closeNavigation.click()
+  // Resize may itself close navigation; do not race its media-query watcher
+  // by opening it solely in order to close it again.
+  if (await closeNavigation.isVisible()) await closeNavigation.click()
   await page.waitForFunction(() => document.querySelector('.ws-sidebar').getBoundingClientRect().right <= 1)
   await page.waitForFunction(() => !document.querySelector('.ws-toast'), undefined, { timeout: 10000 })
   const narrow = await page.locator('.zj-composer').evaluate(element => {
@@ -169,7 +229,7 @@ try {
   assert.deepEqual(errors, [])
   assert.deepEqual(forbidden, [])
   await page.screenshot({ path: join(dir, 'source-change-retained-input.png'), fullPage: true })
-  console.log('Chat send E2E passed: empty starter; old summary null; cited short reply; edited assisted reply; bounded ROUTE_CHANGED recovery; 500 and SOURCE_CHANGED preserve text/provenance; undo restores original; no live transport. ' + dir)
+  console.log('Chat send E2E passed: starter; short/assisted replies; bounded preview recovery; truncated-meta response reconciles saved body without POST replay; send/retry domain errors remain errors; source failure and undo; no live transport. ' + dir)
 } catch (error) {
   await page.screenshot({ path: join(dir, 'failure.png'), fullPage: true })
   console.error('Synthetic chat-send failure screenshot: ' + dir)

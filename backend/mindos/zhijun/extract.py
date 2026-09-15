@@ -4,7 +4,7 @@
 - quote 必须是用户消息的精确子串，否则整条丢弃——「用户说了」≠「模型转述对了」。
 - content ≤ 120 字；observed 不允许来自对话；aspirational / hypothesis 永远 working。
 - self_declared 需要 quote 含第一人称，或紧接着助手的提问；当前整理流程只产生待确认候选。
-- 校验保留旧接口上限 4 条；自动整理另做价值筛选，最多 1 条长期候选、2 条情境摘要片段。
+- 校验保留旧接口上限 4 条；通常最多 1 条长期候选，明确并列身份最多 2 条；另最多 2 条情境摘要片段。
 - 去重：哈希或词面近似命中活跃理解 → 追加证据 + 刷新重申时间；旧 working 遇到用户再次亲口陈述 → 晋升 confirmed。
 - 墓碑抑制：命中被撤回 / 被替代的理解 → 丢弃；用户本人再次陈述例外（新理解 supersedes 墓碑）。
 抽取是独立用途；沿用统一路由逐次核对来源和外发授权。旧 persist 工具函数保留历史兼容行为。
@@ -101,7 +101,9 @@ _EXTRACT_SYSTEM = """你是知君的记忆整理助手。任务：从「用户�
 - 每条理解：subject 用 "me" 表示用户本人，或写出具体人名 / 项目名；content 是一句 ≤ 60 字的原子陈述，用第一人称；quote 必须是用户原话里的一段精确文本（一字不改）。
 - section 只能是：who（我是谁）、people（我的人）、matters（我的事）、principles（我的原则）、ways（我的做法）、direction（我的方向）。
 - predicate 按分区选：who: is/has_trait/background/role；people: knows/works_with/relationship/attitude_toward；matters: working_on/committed_to/happened/owns；principles: holds_principle/boundary；ways: prefers/tends_to/decides_by；direction: wants_to/goal/avoids。
-- 长期候选最多 1 条，情境片段最多 2 条。没有明确后续用途就返回空数组，不为填满数量而抽取。
+- 抽取阶段最多 4 条原子候选，情境片段最多 2 条，由本地程序去重后限制准入数量。并列说出的不同身份必须分别提取，不能只留下第一个身份；不要把新增身份合并到另一个职业身份。
+- 本地准入通常为长期候选最多 1 条，明确并列身份最多 2 条；该限制在去重后执行，不要在模型抽取阶段抢先丢弃第二个身份。
+- 例如用户说「我不仅是一个程序员，还是一个大四的学生」，应分别提取程序员和大四学生两条 who/self_declared/long_term；两条 quote 都可以使用这句完整原话，或使用各自精确分句。content 可以补主语，quote 不能补字：不能把「还是一个大四的学生」改写成「我是一个大四的学生」。持续的学生阶段不等于当天临时活动。没有明确后续用途仍返回空数组，不为填满数量而抽取。
 - scope_hint=long_term 只用于用户明确说出的持续身份、重要关系、原则边界、长期目标或持续承担的项目；不能只因语气肯定或置信度高就认定长期有效。
 - 问句中已经明确陈述的事实前提可以独立提取，例如「我负责研发，你建议怎么安排？」；不要把「我是不是适合负责研发？」当事实。每周、每个周末等重复安排不同于本周末、明天等一次安排。明确问题后的简短岗位、关系或原则答案可以结合上一问理解，quote 仍只引用用户原话；「好的／不知道／跳过」不是答案事实。
 - 一次活动的目的、当天安排、临时筛选办法、对当前问题的补充，以及未说明有效范围的内容，用 context_only。它们只进入这段对话的可选摘要，不成为独立的长期记忆候选。例如「明天去黑客松找人才」「先看背景」「明天再看看作品」是同一件事的片段，不是三个稳定偏好。
@@ -230,6 +232,44 @@ _DIRECT_QUESTION_RE = re.compile(r"^\s*(?:那|所以|请问)?(?:我|我们|自�
 _EMPTY_ANSWER_RE = re.compile(r"^(?:嗯+|哦+|啊+|好的?|是的?|对的?|不是|不对|可以|没错|谢谢|不用|都行|随便|不知道|不确定|没有|暂时没有|想不出|还不清楚|没想好|还没想好|跳过|先跳过|先不说|不想说|yes|no|ok)$", re.I)
 
 
+def _compound_identity_parts(user_text: str) -> tuple[str, str] | None:
+    """Recognize only a complete, unquoted additive self-identity assertion.
+
+    This supplies a missing subject, never repairs a quote or invents a claim.
+    Reject nested speakers/conditions and temporary roles rather than guessing.
+    """
+    text = (user_text or "").strip()
+    if (_HYPOTHETICAL_RE.search(text) or _QUESTION_RE.search(text)
+            or _EPISODIC_RE.search(text)
+            or re.search(r'["\'“”‘’「」『』：:]', text)):
+        return None
+    match = re.fullmatch(
+        r"我(?:不仅|不但|既)?是(?P<first>[^，,。！？!?；;\n]{2,30})[，,]\s*"
+        r"(?:我)?(?:还|也|又|同时也|同时)是(?P<second>[^，,。！？!?；;\n]{2,30})[。！!]?", text)
+    if not match:
+        return None
+    parts = (match.group("first").strip(), match.group("second").strip())
+    if any(re.search(r"我|你|他|她|它|是|不|没|想|希望|假|扮演|扮作|装作|冒充|自称|说|认为|觉得|曾经|以前|过去|未来|将来", part)
+           for part in parts):
+        return None
+    return parts
+
+
+def _compound_identity_quote(user_text: str, quote: str) -> bool:
+    parts = _compound_identity_parts(user_text)
+    return bool(parts and _quote_ok(quote, user_text)
+                and any(normalize_text(part) in normalize_text(quote) for part in parts))
+
+
+def _identity_key(content: str) -> str | None:
+    # Only a single affirmative role statement; never equate a longer narrative
+    # or negative/historical assertion with a current identity.
+    match = re.fullmatch(r"我是(?:一[个名位]|[个名位])?([^，,。！？!?；;\n]{2,30})[。！!]?", content.strip())
+    if not match or re.search(r"不|没|以前|曾经|现在|希望|想|说|认为", match[1]):
+        return None
+    return normalize_text(match[1]).replace("的", "")
+
+
 def _answer_section(prev_assistant: str | None) -> str | None:
     """Only an explicit final question supplies a slot; not arbitrary chat context."""
     text = (prev_assistant or "").strip()
@@ -279,7 +319,9 @@ def _durable_expression(claim: ValidatedClaim, user_text: str, prev_assistant: s
             and not _EMPTY_ANSWER_RE.fullmatch(normalize_text(user_text))):
         return True
     if claim.section == "who":
-        return bool(_IDENTITY_RE.search(clause) or _STABLE_EXPRESSION_RE.search(clause))
+        return bool(_IDENTITY_RE.search(clause) or _STABLE_EXPRESSION_RE.search(clause)
+                    or (claim.subject in ("me", "我", "本人", "我自己", "用户")
+                        and _compound_identity_quote(user_text, claim.quote)))
     if claim.section == "people":
         return bool(_RELATIONSHIP_RE.search(clause))
     if claim.section == "matters":
@@ -312,7 +354,9 @@ def admission(
         seen.add(key)
         durable = claim.scope == "long_term" and not input_origin and _durable_expression(claim, user_text, prev_assistant)
         if durable:
-            if not long_term:
+            identity_pair = (_compound_identity_quote(user_text, claim.quote) and claim.section == "who"
+                             and all(c.section == "who" and _compound_identity_quote(user_text, c.quote) for c in long_term))
+            if len(long_term) < (2 if identity_pair else 1):
                 long_term.append(claim)
         elif len(context) < 2:
             context.append(replace(claim, scope="context_only"))
@@ -416,25 +460,37 @@ def filter_entities(entities: list, *, user_text: str) -> list:
     return kept
 
 
-def validate(raw: dict, *, user_text: str, prev_assistant: str | None, existing_ids: set[str] | None = None) -> list[ValidatedClaim]:
+def validate(raw: dict, *, user_text: str, prev_assistant: str | None, existing_ids: set[str] | None = None,
+             diagnostics: dict | None = None) -> list[ValidatedClaim]:
+    def rejected(reason):
+        if diagnostics is not None:
+            diagnostics[reason] = diagnostics.get(reason, 0) + 1
+
     items = raw.get("claims") if isinstance(raw, dict) else None
     if not isinstance(items, list):
+        rejected("invalidClaimsShape")
         return []
+    if diagnostics is not None:
+        diagnostics["modelCandidates"] = len(items)
     prev_asked = bool(prev_assistant and prev_assistant.rstrip().endswith(("？", "?")))
     existing_ids = existing_ids or set()
     valid: list[ValidatedClaim] = []
     for item in items:
         if not isinstance(item, dict):
+            rejected("invalidItem")
             continue
         section = item.get("section")
         layer = item.get("layer")
         if section not in SECTIONS or layer not in LAYERS:
+            rejected("invalidClassification")
             continue
         if layer == "observed":
+            rejected("observedNotAllowed")
             continue  # 对话不产生资料观察
         content = str(item.get("content") or "").strip().replace("\n", " ")
         quote = str(item.get("quote") or "").strip()
         if not content or not _quote_ok(quote, user_text):
+            rejected("missingContent" if not content else "invalidQuote")
             continue
         if len(content) > 120:
             content = content[:120]
@@ -449,7 +505,18 @@ def validate(raw: dict, *, user_text: str, prev_assistant: str | None, existing_
             predicate = DEFAULT_PREDICATE[section]
             confidence = max(0.0, confidence - 0.1)
             downgraded = True
-        if layer == "self_declared" and not (_FIRST_PERSON_RE.search(quote) or prev_asked):
+        compound_self = (section == "who" and item.get("subject", "me") in ("me", "我", "本人", "我自己", "用户")
+                         and _compound_identity_quote(user_text, quote))
+        if compound_self and layer == "self_declared":
+            # Keep only the role actually stated; do not persist model additions
+            # such as "正在毕业/求职" as a fact inferred from being a student.
+            parts = _compound_identity_parts(user_text) or ()
+            matched = [part for part in parts if _identity_key("我是" + part)
+                       and _identity_key("我是" + part) in normalize_text(content).replace("的", "")
+                       and normalize_text(part) in normalize_text(quote)]
+            if len(matched) == 1 and _identity_key(content) is None:
+                content = "我是" + matched[0]
+        if layer == "self_declared" and not (_FIRST_PERSON_RE.search(quote) or prev_asked or compound_self):
             layer = "hypothesis"
             downgraded = True
         if layer == "aspirational" and not _ASPIRATION_RE.search(_sentence_around(user_text, quote)):
@@ -484,6 +551,9 @@ def validate(raw: dict, *, user_text: str, prev_assistant: str | None, existing_
             )
         )
     valid.sort(key=lambda c: c.confidence, reverse=True)
+    if len(valid) > MAX_CLAIMS_PER_TURN:
+        if diagnostics is not None:
+            diagnostics["validationBudget"] = len(valid) - MAX_CLAIMS_PER_TURN
     return valid[:MAX_CLAIMS_PER_TURN]
 
 
@@ -513,6 +583,37 @@ def _entity_id(store: OntologyStore, name: str, entity_types: dict[str, str], de
     except OntologyError:
         return None
     return entity["id"]
+
+
+def existing_candidate(store, claim, subject_id, conversations, device_scope, *, guarded=True):
+    """Read-only duplicate lookup shared by admission and persistence."""
+    from .alignment import visible
+    existing = store.get_claim(claim.merge_into) if claim.merge_into else None
+    if existing is not None and (existing["trustState"] not in ("working", "confirmed")
+            or existing.get("deviceScope", "global") != device_scope
+            or (guarded and existing.get("subjectEntityId") != subject_id)
+            or (guarded and not visible(existing, conversations, device_scope))
+            # A model-proposed identity merge cannot swallow a different role.
+            or (guarded and claim.section == "who"
+                and normalize_text(existing["content"]) != normalize_text(claim.content))):
+        existing = None
+    if existing is None:
+        key = _identity_key(claim.content) if guarded and claim.section == "who" else None
+        if key:
+            for candidate in store.list_claims(section="who", trust_states=("working", "confirmed"),
+                                               limit=2000, device_scope=device_scope):
+                if (candidate.get("subjectEntityId") == subject_id
+                        and _identity_key(candidate["content"]) == key
+                        and visible(candidate, conversations, device_scope)):
+                    existing = candidate
+                    break
+    if existing is None:
+        existing = store.find_active_by_hash(subject_id, claim.predicate, claim.content, device_scope=device_scope) or store.find_similar_active(
+            claim.content, threshold=SIMILAR_THRESHOLD, section=claim.section, device_scope=device_scope)
+    if existing is not None and guarded and (not visible(existing, conversations, device_scope)
+                                            or existing.get("subjectEntityId") != subject_id):
+        return None
+    return existing
 
 
 def persist(
@@ -561,19 +662,8 @@ def persist(
         if input_origin:
             evidence[0].setdefault("locator", {})["replyAssistance"] = input_origin
 
-        existing = None
-        if claim.merge_into:
-            existing = store.get_claim(claim.merge_into)
-            if existing is not None and (existing["trustState"] not in ("working", "confirmed")
-                    or (routing_sources is not None and not visible(existing, conversations, device_scope))
-                    or existing.get("deviceScope", "global") != device_scope):
-                existing = None
-        if existing is None:
-            existing = store.find_active_by_hash(subject_id, claim.predicate, claim.content, device_scope=device_scope) or store.find_similar_active(
-                claim.content, threshold=SIMILAR_THRESHOLD, section=claim.section, device_scope=device_scope
-            )
-        if existing is not None and routing_sources is not None and not visible(existing, conversations, device_scope):
-            existing = None
+        existing = existing_candidate(store, claim, subject_id, conversations, device_scope,
+                                      guarded=routing_sources is not None)
         if existing is not None:
             if routing_sources is not None or input_origin:
                 # An interpretation never rewrites a formal record or its lineage.
@@ -652,6 +742,12 @@ def run_extraction(
     if input_origin and input_origin.get("kind") == "control":
         return {"state": "skipped", "reason": "conversation_control", "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}
     prev_assistant = strip_citation_markers(prev_assistant).strip()[-300:] if prev_assistant else None
+    # Self-contained statements need no assistant reconstruction (whose source
+    # ancestry may include a charter or other unapproved material). Only an
+    # answer to an explicit slot question needs this context. Drop both text and
+    # its ref together; dependent answers still undergo the full source guard.
+    if _FIRST_PERSON_RE.search(user_text) or not _answer_section(prev_assistant):
+        prev_assistant = None
     ok, reason = should_extract(user_text, prev_assistant)
     if not ok:
         return {"state": "skipped", "reason": reason, "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}
@@ -674,7 +770,9 @@ def run_extraction(
     if input_origin:
         request = replace(request, system=request.system + "\n这段用户文字是 AI 候选辅助起草后发送，可能经用户修改。只能提出待核对的理解，不推断稳定人格或深层动机；不把选择候选当作独立自发证据。")
     raw = provider.complete_json(request)  # ProviderError 由 worker 分类
-    valid = validate(raw, user_text=user_text, prev_assistant=prev_assistant, existing_ids={c["id"] for c in existing})
+    diagnostics = {}
+    valid = validate(raw, user_text=user_text, prev_assistant=prev_assistant,
+                     existing_ids={c["id"] for c in existing}, diagnostics=diagnostics)
     entities = filter_entities(raw.get("entities") or [], user_text=user_text)
     sources = [s["ref"] for s in provider.last_preview["sources"]] if guarded else None
     from .memory import process_candidates
@@ -682,6 +780,7 @@ def run_extraction(
         provider.assert_current()
     summary = process_candidates(valid, entities, store=store, conversation_id=conversation_id, message_id=message_id, user_text=user_text, routing_sources=sources, input_origin=input_origin, prev_assistant=prev_assistant, request_message_id=request_message_id)
     summary.update({"state": "done", "reason": "ok", "candidates": len(valid), "provider": provider.name})
+    summary["validationCounts"] = diagnostics  # Counts only; never retain raw model output or user text.
     return summary
 
 

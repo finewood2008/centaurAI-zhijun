@@ -245,8 +245,19 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
             )
         finally:
             provider_gate.release(channel)
+        def enqueue_followup(kind, action):
+            from zhijun_worker.background import BackgroundEnqueueError
+            try:
+                return action()
+            except BackgroundEnqueueError as exc:
+                # The candidate is already durable. Keep the separately stored
+                # failed child task, without relabelling or replaying extraction.
+                result.setdefault("followupFailures", []).append(
+                    {"kind": kind, "jobId": exc.job_id, "code": exc.code})
+                return None
+
         if result.get("created") or result.get("promoted"):
-            enqueue_projection(store=store)
+            enqueue_followup("project", lambda: enqueue_projection(store=store))
             try:
                 from . import consolidate
 
@@ -261,10 +272,11 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
                 assistants = [m for m in conv_store.list_messages(conversation_id)
                               if m["role"] == "assistant" and m["status"] == "complete" and m["seq"] > message["seq"]]
                 if assistants:
-                    enqueue_alignment(conversation_id, assistants[0]["id"], message["content"], store=store)
+                    enqueue_followup("alignment", lambda: enqueue_alignment(
+                        conversation_id, assistants[0]["id"], message["content"], store=store))
         user_turns = conv_store.count_messages(conversation_id, role="user")
         if user_turns and user_turns % _SUMMARY_EVERY_TURNS == 0:
-            enqueue_summary(conversation_id, store=store)
+            enqueue_followup("summarize_conversation", lambda: enqueue_summary(conversation_id, store=store))
         return result
     if kind == "summarize_conversation":
         conversation_id = payload.get("conversationId")

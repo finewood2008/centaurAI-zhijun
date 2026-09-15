@@ -31,7 +31,7 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     // page's concurrent reads are not blocked by completed jobs kept for lookup.
     for (const [id, job] of jobs) if (TERMINAL.includes(job.state) && jobs.size + pendingStarts >= LIMITS.jobs) jobs.delete(id);
   }
-  async function wire(request, mutation = false, reservation) {
+  async function wire(request, mutation = false, reservation, responseLimit = LIMITS.page) {
     const managed = session.managesRequestQueue === true;
     const control = request.method === 'DELETE' || request.path.endsWith('/cancel');
     current(); assert(active.size < (managed && control ? 9 : 8), 'RESOURCE_EXHAUSTED');
@@ -48,7 +48,7 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
         // on dispatch. Unmanaged fixtures/v1 retain the original local deadline.
         if (!managed) timer = setTimeout(() => reject(new DesktopError('REQUEST_TIMEOUT')), timeoutMs);
       })]);
-      current(); return P.decodeJson(response);
+      current(); return P.decodeJson(response, responseLimit);
     } catch (error) {
       if (mutation && error instanceof DesktopError && !error.definitelyNotSent
           && UNCERTAIN_WRITE_ERRORS.includes(error.code)) {
@@ -71,13 +71,6 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
       && (value.sha256 === undefined || SHA.test(value.sha256)), 'CONTRACT_MISMATCH');
     if (value.state === 'complete') assert(value.received === value.size && SHA.test(value.sha256), 'CONTRACT_MISMATCH');
     return { ...value };
-  }
-  function rememberBlob(value) {
-    const blob = P.blobDescriptor(value);
-    const previous = blobs.get(blob.id);
-    assert(!previous || JSON.stringify(previous) === JSON.stringify(blob), 'CONTRACT_MISMATCH');
-    assert(previous || blobs.size < 64, 'RESOURCE_EXHAUSTED');
-    blobs.set(blob.id, blob); return { ...blob };
   }
   function jobInput(value, required) {
     assert(exact(value, required) && typeof value.id === 'string' && ID.test(value.id));
@@ -106,14 +99,18 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     assert(integer(input.after, 0, 1000000) && integer(input.waitMs, 0, LIMITS.wait));
     assert(!job.polling, 'OPERATION_NOT_ALLOWED'); job.polling = true;
     try {
-      const value = await wire(P.request('GET', `/operations/${input.id}?after=${input.after}&waitMs=${input.waitMs}`), false, job.reservation);
+      // The Gateway budgets the entire encoded JSON page, not decoded chunks.
+      const value = await wire(P.request('GET', `/operations/${input.id}?after=${input.after}&waitMs=${input.waitMs}`), false, job.reservation, LIMITS.eventPage);
       assert(exact(value, ['id', 'state', 'cursor', 'events', 'hasMore']) && value.id === input.id
         && STATES.includes(value.state) && integer(value.cursor, input.after, 1000000)
         && typeof value.hasMore === 'boolean' && Array.isArray(value.events) && value.events.length <= 32, 'CONTRACT_MISMATCH');
+      // A rejected page was never delivered. Do not advance accounting, stream
+      // state or blob authority until every event and the final cursor validate.
+      const next = { ...job }, pendingBlobs = new Map();
       let last = input.after, pageBytes = 0;
       const events = value.events.map(event => {
-        assert(P.plain(event) && integer(event.seq, last + 1, 1000000), 'CONTRACT_MISMATCH'); last = event.seq;
-        const fresh = event.seq > job.lastSeq;
+        assert(P.plain(event) && integer(event.seq, last + 1, last + 1), 'CONTRACT_MISMATCH'); last = event.seq;
+        const fresh = event.seq > next.lastSeq;
         let result;
         if (event.kind === 'headers') {
           assert(exact(event, ['seq', 'kind', 'status', 'headers']) && integer(event.status, 100, 599)
@@ -123,34 +120,39 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
             assert(['content-type', 'content-disposition', 'content-length', 'cache-control', 'etag', 'last-modified', 'retry-after', 'x-request-id'].includes(key)
               && P.text(item, 2048), 'CONTRACT_MISMATCH'); headers[key] = item;
           }
-          if (fresh) { assert(!job.headers && !job.ended, 'CONTRACT_MISMATCH'); job.headers = true; }
+          if (fresh) { assert(!next.headers && !next.ended, 'CONTRACT_MISMATCH'); next.headers = true; }
           result = { seq: event.seq, kind: 'headers', status: event.status, headers };
         } else if (event.kind === 'chunk') {
           assert(exact(event, ['seq', 'kind', 'data']), 'CONTRACT_MISMATCH');
           const bytes = P.base64(event.data, LIMITS.eventPage); pageBytes += bytes.length;
-          if (fresh) { assert(job.headers && !job.ended, 'CONTRACT_MISMATCH'); job.bytes += bytes.length; }
+          if (fresh) { assert(next.headers && !next.ended, 'CONTRACT_MISMATCH'); next.bytes += bytes.length; }
           result = { seq: event.seq, kind: 'chunk', data: new Uint8Array(bytes) };
         } else if (event.kind === 'blob') {
           assert(exact(event, ['seq', 'kind', 'blob']), 'CONTRACT_MISMATCH');
           const blob = P.blobDescriptor(event.blob);
-          if (fresh) { assert(job.headers && !job.ended, 'CONTRACT_MISMATCH'); job.bytes += blob.size; }
-          result = { seq: event.seq, kind: 'blob', blob: rememberBlob(blob) };
+          const previous = pendingBlobs.get(blob.id) || blobs.get(blob.id);
+          assert(!previous || JSON.stringify(previous) === JSON.stringify(blob), 'CONTRACT_MISMATCH');
+          assert(previous || blobs.size + pendingBlobs.size < 64, 'RESOURCE_EXHAUSTED');
+          if (!blobs.has(blob.id)) pendingBlobs.set(blob.id, blob);
+          if (fresh) { assert(next.headers && !next.ended, 'CONTRACT_MISMATCH'); next.bytes += blob.size; }
+          result = { seq: event.seq, kind: 'blob', blob: { ...blob } };
         } else if (event.kind === 'end') {
           assert(exact(event, ['seq', 'kind']), 'CONTRACT_MISMATCH');
-          if (fresh) { assert(job.headers && !job.ended, 'CONTRACT_MISMATCH'); job.ended = true; }
+          if (fresh) { assert(next.headers && !next.ended, 'CONTRACT_MISMATCH'); next.ended = true; }
           result = { seq: event.seq, kind: 'end' };
         } else {
           assert(exact(event, ['seq', 'kind', 'code', 'message']) && event.kind === 'error'
             && typeof event.code === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,99}$/.test(event.code) && P.text(event.message, 512), 'CONTRACT_MISMATCH');
-          if (fresh) job.ended = true;
+          if (fresh) next.ended = true;
           // Error envelopes are infrastructure failures, not domain HTTP bodies.
           result = { seq: event.seq, kind: 'error', code: event.code, message: '盒端任务未能完成。' };
         }
-        assert(pageBytes <= LIMITS.eventPage && job.bytes <= job.operation.maxResponseBytes, 'RESPONSE_TOO_LARGE');
-        if (fresh) job.lastSeq = event.seq; return result;
+        assert(pageBytes <= LIMITS.eventPage && next.bytes <= job.operation.maxResponseBytes, 'RESPONSE_TOO_LARGE');
+        if (fresh) next.lastSeq = event.seq; return result;
       });
       assert(value.cursor === last && (!value.hasMore || events.length > 0), 'CONTRACT_MISMATCH');
-      job.state = value.state;
+      Object.assign(job, { state: value.state, bytes: next.bytes, lastSeq: next.lastSeq, headers: next.headers, ended: next.ended });
+      for (const [blobId, blob] of pendingBlobs) blobs.set(blobId, blob);
       return { id: input.id, state: value.state, cursor: value.cursor, hasMore: value.hasMore, events };
     } finally { job.polling = false; }
   }

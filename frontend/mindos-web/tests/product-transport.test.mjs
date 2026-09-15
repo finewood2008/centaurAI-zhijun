@@ -244,17 +244,20 @@ test('all three original product network entries use installed transport, preser
   } finally { globalThis.fetch = originalFetch; client.dispose() }
 })
 
-test('chat domain terminal events finish without HTTP EOF and cancel the remote operation', { timeout: 2000 }, async () => {
+test('chat domain terminal events finish without HTTP EOF without cancelling registered background work', { timeout: 10000 }, async () => {
   for (const terminalEvent of ['message_done', 'error']) {
     const { product, calls } = host('{}')
     let polls = 0
+    let failLatePoll
     product.poll = async () => {
       polls++
       if (polls === 1) return ok({ id: 'a'.repeat(32), state: 'running', cursor: 2, hasMore: false, events: [
         { seq: 1, kind: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } },
         { seq: 2, kind: 'chunk', data: bytes(`event: ${terminalEvent}\ndata: {"status":"complete"}\n\n`) },
       ] })
-      return new Promise(() => {})
+      return new Promise(resolve => { failLatePoll = () => resolve({ ok: false, generation: 7,
+        error: { code: 'TRANSPORT_UNAVAILABLE', message: 'synthetic late poll failure' },
+      }) })
     }
     const { load, client } = desktop(product)
     const seen = []
@@ -262,10 +265,67 @@ test('chat domain terminal events finish without HTTP EOF and cancel the remote 
       [terminalEvent]: value => seen.push(value),
     }, undefined, { terminalEvents: ['message_done', 'error'] })
     assert.deepEqual(seen, [{ status: 'complete' }])
-    assert.equal(calls.filter(call => call[0] === 'cancel').length, 1)
+    assert.equal(calls.filter(call => call[0] === 'cancel').length, 0)
+    assert.equal(client.hasPendingMutations({ generation: 7, workspaceId: 'synthetic-workspace' }), false)
     assert.ok(polls <= 2)
+    if (failLatePoll) failLatePoll()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(calls.filter(call => call[0] === 'cancel').length, 0)
+    assert.equal(client.hasPendingMutations({ generation: 7, workspaceId: 'synthetic-workspace' }), false,
+      'a late failed poll cannot make the completed domain mutation uncertain')
     client.dispose()
   }
+})
+
+test('ordinary reader cancellation and forged completion reasons still cancel chat jobs', async () => {
+  for (const reason of [undefined, 'completed-sse-stream', Symbol('completed-sse-stream'), { completed: true }]) {
+    const { product, calls } = host('{}')
+    let polls = 0
+    product.poll = async () => ++polls === 1 ? ok({ id: 'a'.repeat(32), state: 'running', cursor: 1, hasMore: false,
+      events: [{ seq: 1, kind: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } }],
+    }) : new Promise(() => {})
+    const { load, client } = desktop(product)
+    const response = await load('services/transport.ts').transportRequest('/api/mindos/conversations/c_test/messages', {
+      method: 'POST', body: JSON.stringify({ content: '合成文本' }),
+    })
+    await response.body.cancel(reason)
+    assert.equal(calls.filter(call => call[0] === 'cancel').length, 1)
+    client.dispose()
+  }
+})
+
+test('a terminal handler exception is not treated as successful stream completion', async () => {
+  const { product, calls } = host('{}')
+  let polls = 0
+  product.poll = async () => ++polls === 1 ? ok({ id: 'a'.repeat(32), state: 'running', cursor: 2, hasMore: false,
+    events: [
+      { seq: 1, kind: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } },
+      { seq: 2, kind: 'chunk', data: bytes('event: message_done\ndata: {"status":"complete"}\n\n') },
+    ],
+  }) : new Promise(() => {})
+  const { load, client } = desktop(product)
+  await assert.rejects(load('services/sse.ts').streamPost('/mindos/conversations/c_test/messages', { content: '合成文本' }, {
+    message_done: () => { throw Error('synthetic handler failure') },
+  }, undefined, { terminalEvents: ['message_done', 'error'] }), /synthetic handler failure/)
+  assert.equal(calls.filter(call => call[0] === 'cancel').length, 1)
+  client.dispose()
+})
+
+test('manual abort of an in-progress chat still revokes the remote operation exactly once', async () => {
+  const { product, calls } = host('{}')
+  let polls = 0
+  product.poll = async () => ++polls === 1 ? ok({ id: 'a'.repeat(32), state: 'running', cursor: 1, hasMore: false,
+    events: [{ seq: 1, kind: 'headers', status: 200, headers: { 'content-type': 'text/event-stream' } }],
+  }) : new Promise(() => {})
+  const { load, client } = desktop(product)
+  const abort = new AbortController()
+  const pending = load('services/sse.ts').streamPost('/mindos/conversations/c_test/messages', { content: '合成文本' },
+    {}, abort.signal, { terminalEvents: ['message_done', 'error'] })
+  await new Promise(resolve => setImmediate(resolve))
+  abort.abort()
+  await assert.rejects(pending, error => error.name === 'AbortError')
+  assert.equal(calls.filter(call => call[0] === 'cancel').length, 1)
+  client.dispose()
 })
 
 test('preview and final message keep the domain action id but use distinct Gateway job ids', async () => {
