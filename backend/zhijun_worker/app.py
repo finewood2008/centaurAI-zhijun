@@ -73,6 +73,27 @@ def _check_environment(workspace):
     if (runtime_paths.DATA_ROOT != workspace.data_root
             or runtime_paths.SECRET_STORE_DIR != secret_root):
         raise ValueError("WORKER_PATH_ALREADY_IMPORTED")
+    settings_path = workspace.data_root / "db" / "runtime_settings.db"
+    secret_path = secret_root / "model-secrets.db"
+    for path in (settings_path, secret_path):
+        if any(part.is_symlink() for part in (path, *path.parents)):
+            raise ValueError("WORKER_MODEL_PATH_NOT_ISOLATED")
+    if runtime_paths.RUNTIME_SETTINGS_DB_PATH != settings_path:
+        raise ValueError("WORKER_PATH_ALREADY_IMPORTED")
+
+
+def _check_model_runtime(workspace):
+    # Instantiate stores only after WorkspaceLock has assigned/verified the
+    # root. Before that even creating an empty DB invalidates a fresh root.
+    from mindos import model_runtime
+    provider = model_runtime.get_runtime_provider()
+    from mindos.secret_store import UnavailableSecretStore
+    settings_path = workspace.data_root / "db" / "runtime_settings.db"
+    secret_path = Path(os.environ["CENTAUR_SECRET_STORE_DIR"]) / "model-secrets.db"
+    if (not provider.workspace_scoped or provider.store._db_path != settings_path
+            or (not isinstance(provider._secret_store, UnavailableSecretStore)
+                and getattr(provider._secret_store, "_db_path", None) != secret_path)):
+        raise ValueError("WORKER_MODEL_PATH_ALREADY_IMPORTED")
 
 
 def create_app(workspace, capabilities=None):
@@ -86,6 +107,7 @@ def create_app(workspace, capabilities=None):
         threads_stopped = True
         try:
             ports.bind(workspace, capabilities)
+            _check_model_runtime(workspace)
             from mindos.stores.ontology_store import OntologyStore
             from mindos.stores.conversation_store import ConversationStore
             from mindos.stores.growth_store import GrowthStore
@@ -135,6 +157,12 @@ def create_app(workspace, capabilities=None):
         router = module.build_router(require_workspace)
         registered.extend(router.routes)
         domain.include_router(router, dependencies=[Depends(require_workspace)])
+
+    from mindos import model_runtime
+    model_router = model_runtime.build_workspace_router(require_workspace)
+    registered.extend(model_router.routes)
+    domain.include_router(model_router, dependencies=[Depends(require_workspace)])
+    model_runtime.install_error_handlers(domain)
 
     @domain.exception_handler(ports.CapabilityError)
     async def capability_error(request, exc):

@@ -316,7 +316,7 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
           <p class="routing-fine">此开关减少同一服务和用途下的资料来源授权询问。设备安全通道仍可能要求核对每次在线发送的输入、系统提示和完整来源范围。</p>
           <p v-if="policy?.active">已开启 · {{ policy.serviceName }} · {{ policy.includeFiles ? '包括引用的文件提取文字' : '文件文字仍单独询问' }} · {{ policy.includeCharter ? '包括人生章程与草稿' : '章程与草稿仍单独询问' }} <button class="routing-link" @click="editDefault">修改范围</button></p>
           <div v-if="policy?.active" class="routing-setting-title"><h3>符合范围时不再逐次确认</h3><button class="routing-switch" role="switch" aria-label="符合范围时不再逐次确认" :aria-checked="!!policy?.autoEgress" :disabled="busy" @click="toggleAutoEgress"><span /></button></div>
-          <p v-if="policy?.active" class="routing-fine">{{ policy.autoEgress ? '已开启。盒端仍为每次请求签发短期凭据，并在发送前复核服务、配置、用途和资料范围。' : '未开启。当前仍会在每次向在线模型发送前显示完整范围。' }}</p>
+          <p v-if="policy?.active" class="routing-fine">{{ policy.autoEgress ? '已开启。知君会在每次发送前复核服务、配置、用途和资料范围；范围变化时仍需重新核对。' : '未开启。当前仍会在每次向在线模型发送前显示完整范围。' }}</p>
           <p v-if="policy?.serviceChanged" class="routing-warning">服务已变化。之前对 {{ policy.serviceName }} 的默认授权不适用于当前服务，请重新确认。</p>
           <div v-if="configureDefault" class="routing-consent-form">
             <p><strong>授权给 {{ state.service?.name }}</strong></p>
@@ -345,7 +345,17 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
         </section>
         <section v-if="state?.pending?.length" class="routing-group">
           <h3>尚未完成的整理 · {{ state.pending.length }} 类</h3><p>聊天仍可继续。这里区分处理失败与等待授权；恢复时重新核验来源，不会把普通回复当成已经记入本体。</p>
-          <div v-for="task in state.pending" :key="task.task_key" class="routing-task"><div><strong>{{ taskLabel(task.task_key) }}</strong><span v-if="taskCount(task)"> · {{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span><p v-if="task.detail" class="routing-fine">{{ task.detail }}</p><p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p></div><button :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button></div>
+          <div v-for="task in state.pending" :key="task.task_key" class="routing-task">
+            <div class="routing-task__content">
+              <div class="routing-task__title">
+                <strong>{{ taskLabel(task.task_key) }}</strong>
+                <span v-if="taskCount(task)" class="routing-task__count">{{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span>
+              </div>
+              <p v-if="task.detail" class="routing-fine">{{ task.detail }}</p>
+              <p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p>
+            </div>
+            <button type="button" class="routing-task__action" :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button>
+          </div>
         </section>
         <details v-if="state" class="routing-group"><summary>撤销已批准的授权</summary><p>停止本设备后续使用资料，关闭默认授权。日常在线消息仍按对话处理方式发送；已经发送的内容无法收回。</p><button :disabled="busy" @click="revoke">撤销本设备资料用途授权</button></details>
         <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="state?.error || (error && onlineAvailable)" class="routing-warning" role="alert">{{ state?.error || error }}</p>
@@ -365,6 +375,12 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
 .routing-settings button { font:inherit; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:8px; background:transparent; color:inherit; padding:7px 12px; cursor:pointer; }.routing-settings button.routing-primary { color:#fff; background:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-settings button.routing-link { border:0; text-decoration:underline; padding:0 5px; color:var(--ws-primary-color,#a6452e); }button:disabled { opacity:.45; cursor:not-allowed; }
 .routing-settings-link { display:inline-flex; align-items:center; min-height:34px; box-sizing:border-box; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:8px; padding:7px 12px; color:var(--ws-primary-color,#a6452e); text-decoration:none; }
 .routing-setting-title { display:flex; align-items:center; justify-content:space-between; gap:12px; }.routing-setting-title h3 { margin:0; }.routing-settings .routing-switch { width:40px; height:24px; padding:2px; border:0; border-radius:14px; background:#c8c3b9; flex-shrink:0; }.routing-switch span { display:block; width:20px; height:20px; background:#fff; border-radius:50%; }.routing-switch[aria-checked=true] { background:var(--ws-primary-color,#a6452e); }.routing-switch[aria-checked=true] span { transform:translateX(16px); }
-.routing-consent-form { padding:14px; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }.routing-fine { font-size:12px; color:var(--ws-text-secondary-color,#686b66); }.routing-actions { display:flex; flex-wrap:wrap; gap:8px; }.routing-task { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:10px 0; }.routing-warning { color:var(--ws-primary-color,#a6452e); }.routing-action-error { padding:10px 12px; border-radius:8px; background:var(--ws-primary-soft,#fbf1eb); }.routing-notice { padding:12px; background:#4a7c5910; border-radius:8px; }.routing-group summary { cursor:pointer; }
-@media(max-width:600px) { .routing-panel,.routing-mode { width:100%; }.routing-mode__label { display:none; }.routing-mode__choice { flex:1; justify-content:center; }.routing-mode__choice small,.routing-default { display:none; }.routing-task { flex-wrap:wrap; }.routing-task>div { min-width:0; overflow-wrap:anywhere; } }
+.routing-consent-form { padding:14px; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }.routing-fine { font-size:12px; color:var(--ws-text-secondary-color,#686b66); }.routing-actions { display:flex; flex-wrap:wrap; gap:8px; }.routing-warning { color:var(--ws-primary-color,#a6452e); }.routing-action-error { padding:10px 12px; border-radius:8px; background:var(--ws-primary-soft,#fbf1eb); }.routing-notice { padding:12px; background:#4a7c5910; border-radius:8px; }.routing-group summary { cursor:pointer; }
+.routing-task { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px 16px; margin:14px 0; padding:14px; border:1px solid var(--ws-border-color-3,#ebe7de); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }
+.routing-task__content { flex:1 1 16rem; min-width:0; overflow-wrap:anywhere; }
+.routing-task__title { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; color:var(--ws-text-primary-color,#1d211f); }
+.routing-task__count { font-size:12px; color:var(--ws-text-secondary-color,#686b66); white-space:nowrap; }
+.routing-task__content .routing-fine { margin:8px 0 0; }
+.routing-settings .routing-task__action { flex:0 0 auto; align-self:flex-start; white-space:nowrap; min-height:40px; line-height:1.5; }
+@media(max-width:600px) { .routing-panel,.routing-mode { width:100%; }.routing-mode__label { display:none; }.routing-mode__choice { flex:1; justify-content:center; }.routing-mode__choice small,.routing-default { display:none; } }
 </style>

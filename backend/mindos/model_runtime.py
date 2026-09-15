@@ -393,7 +393,7 @@ def get_chat_provider() -> dict:
             and snap.model and snap.api_key_configured)
         else "ollama"
     )
-    return {
+    result = {
         "revision": status.get("revision", 0),
         "provider": snap.provider,
         "externalEnabled": snap.external_enabled,
@@ -408,6 +408,16 @@ def get_chat_provider() -> dict:
         "effectiveProvider": effective,
         "externalProviderId": snap.external_provider_id,
     }
+    if provider.workspace_scoped:
+        required = ((snap.provider == "openai" and not key)
+                    or (snap.provider == "ollama" and not (snap.local.base_url and snap.local.model)))
+        result.update(
+            apiKeyConfigured=bool(key),
+            apiKeyHint="••••" if key else None,
+            configurationRequired=required,
+            configurationMessage=("请在当前工作区的模型设置中重新填写并启用聊天服务；不会自动沿用数据引擎的 API Key。" if required else None),
+        )
+    return result
 
 
 def get_external_providers():
@@ -749,6 +759,24 @@ def cancel_model_job(job_id: str) -> dict:
     except ModelJobTerminalError as exc:
         raise HTTPException(status_code=409, detail={"code": "terminal", "message": "任务已进入终态，无法取消"}) from exc
     return _job_projection(job)
+
+
+def build_workspace_router(guard) -> APIRouter:
+    """Only product chat settings; never expose host model administration."""
+    scoped = APIRouter(prefix="/api/system/models", tags=["workspace-models"])
+    for path, function, methods in (
+        ("/chat-provider", get_chat_provider, ["GET"]),
+        ("/chat-provider", put_chat_provider, ["PUT"]),
+        ("/chat-provider/test", test_chat_provider, ["POST"]),
+        ("/external-providers", get_external_providers, ["GET"]),
+        ("/external-providers", create_external_provider, ["POST"]),
+        ("/external-providers/{provider_id}", update_external_provider, ["PUT"]),
+        ("/external-providers/{provider_id}", delete_external_provider, ["DELETE"]),
+        ("/external-providers/{provider_id}/models", discover_external_provider_models, ["POST"]),
+        ("/external-providers/{provider_id}/activate", activate_external_provider, ["POST"]),
+    ):
+        scoped.add_api_route(path, function, methods=methods, dependencies=[Depends(guard)])
+    return scoped
 
 
 def configure_guards(guard) -> None:

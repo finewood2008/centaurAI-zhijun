@@ -186,7 +186,9 @@ class SelectionTests(unittest.TestCase):
             self.assertEqual(actual.model, "chosen-model")
             self.assertEqual(actual.task_model, "chosen-model")
             self.assertEqual(actual._api_key, "saved-secret")
-            self.assertEqual(actual.configuration_revision, ("provider_saved", "saved-ref"))
+            self.assertRegex(actual.configuration_revision, r"^[a-f0-9]{64}$")
+            self.assertNotIn("saved-ref", actual.configuration_revision)
+        self.assertEqual(first.configuration_revision, second.configuration_revision)
 
     def test_saved_default_missing_secret_never_borrows_environment_key(self) -> None:
         snap = SimpleNamespace(provider="openai", external_enabled=True,

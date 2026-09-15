@@ -140,6 +140,7 @@ const mAvailableModels = ref<string[]>([])
 // ---- 对话问答（外部 LLM）----
 const cRevision = ref<number | null>(null)
 const cSource = ref<ChatProviderConfig['source']>('defaults')
+const cConfigurationMessage = ref('')
 const cProvider = ref<'ollama' | 'openai'>('ollama')
 const cExternal = ref(false)
 const cBaseUrl = ref('')
@@ -208,6 +209,7 @@ function applyMaterial(cfg: MaterialRuntimeConfig) {
 function applyChat(cfg: ChatProviderConfig, preserveTiming = false) {
   cRevision.value = cfg.revision
   cSource.value = cfg.source
+  cConfigurationMessage.value = cfg.configurationRequired ? (cfg.configurationMessage || '请先配置当前工作区的聊天模型。') : ''
   cProvider.value = cfg.provider
   cExternal.value = cfg.externalEnabled
   cBaseUrl.value = cfg.baseUrl ?? ''
@@ -754,6 +756,7 @@ onUnmounted(() => {
             </div>
             <RoutingPanel ref="routingPanel" :activate-online-channel="activateOnlineChannelFromRouting" />
           </div>
+          <p v-if="cConfigurationMessage" class="rt-note" role="status" data-testid="workspace-model-configuration-notice">{{ cConfigurationMessage }}</p>
           <p v-if="cSource === 'admin-managed'" class="rt-note" data-testid="managed-cloud-model-notice">云模型由平台统一配置，盒端安全获取，您无需填写 API Key。仍可选择本地模型或自行配置在线服务；资料出域仍需按“模型与授权”中的选择确认。</p>
           <ExternalProvidersPanel ref="externalProvidersPanel" :chat-revision="cRevision" :external-enabled="cExternal" :disabled="cSaving || cTesting" @activated="handleProviderActivated" @busy="cProviderBusy = $event" />
           <p class="rt-note">{{ cExternal ? '在线通道已启用；只有选择“在线模型”的对话才会使用。' : '在线通道已暂停；新对话请选择上方“本地模型”，已打开的对话可在对话顶部切换。' }}<button v-if="cExternal" type="button" class="rt-link" :disabled="cSaving || cProviderBusy" @click="disableExternalChatImmediately">暂停在线通道，新对话改用本地</button></p>

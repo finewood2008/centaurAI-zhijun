@@ -531,21 +531,23 @@ class Router:
         service = service_info(provider)
         items = list(sources.values())
         policy = self.store.policy(self.scope)
+        configuration_revision = getattr(provider, "configuration_revision", "")
+        policy_configuration_matches = not policy.get("autoEgress") or policy.get("configurationRevision") == configuration_revision
+        permission_policy = policy if policy_configuration_matches else {**policy, "enabled": False}
         for s in items:
-            s["authorization"] = self.permission(s, service["id"], purpose, policy) if provider.external else {"kind": "local"}
+            s["authorization"] = self.permission(s, service["id"], purpose, permission_policy) if provider.external else {"kind": "local"}
         missing = [s["key"] for s in items if provider.external and not s["authorization"]]
         handling = self.store.handling(self.scope)
         skipped = sum(bool(x.get("restricted")) for x in excluded or [])
         handling_notice = (request.debug or {}).get("handlingNotice", "")
         if not handling_notice and skipped:
             handling_notice = f"有 {skipped} 项受限或暂不可用资料，本轮未引用；需要时请补充"
-        configuration_revision = getattr(provider, "configuration_revision", "")
         policy_active = policy["enabled"] and policy["service"] == service["id"] and purpose in policy["purposes"]
-        policy_configuration_matches = not policy.get("autoEgress") or policy.get("configurationRevision") == configuration_revision
         policy_applies = bool(policy_active and policy.get("autoEgress", False) and not missing
                               and policy_configuration_matches and not any(s["blocked"] for s in items) and not charter_conflict)
         payload = {"conversationId": self.cid, "purpose": purpose, "purposeLabel": PURPOSES[purpose],
-                   "service": service, "mode": self.store.mode(self.mode_owner), "sources": items,
+                   "service": service, "configurationRevision": configuration_revision,
+                   "mode": self.store.mode(self.mode_owner), "sources": items,
                    "defaultAuthorization": {"enabled": policy_active, "revision": policy["revision"],
                                             "includeFiles": policy["includeFiles"], "includeCharter": policy.get("includeCharter", False),
                                             "autoEgress": bool(policy_active and policy.get("autoEgress", False)), "applies": policy_applies},
@@ -555,23 +557,10 @@ class Router:
                    "charterUnresolved": charter["unresolved"],
                    "excluded": excluded or [], "request": asdict(request),
                    "reason": "按任务与来源授权；没有本地意图分类调用" if provider.external else "本地处理；复杂理解能力可能有限"}
-        import os
-        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-            from zhijun_worker.consent import receipt
-            from zhijun_worker.capabilities import CapabilityError
-            payload["deConsentRequired"] = False
-            if provider.external:
-                try:
-                    receipt(payload, provider)
-                except CapabilityError as exc:
-                    if exc.code != "MODEL_EGRESS_CONSENT_REQUIRED":
-                        raise
-                    payload["deConsentRequired"] = True
-        result = self.store.preview(payload)
-        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-            from zhijun_worker.capabilities import require
-            require().call("domain.preview.register", {"preview": result, "configurationRevision": provider.configuration_revision})
-        return result
+        # Model requests and their authorization stay in the Zhijun workspace.
+        # Data Engine only receives material/retrieval operations, never this
+        # conversation's full model prompt or a second model-consent preview.
+        return self.store.preview(payload)
 
     @_rag_boundary(fresh=True)
     def authorize(self, preview, keys):
@@ -587,12 +576,9 @@ class Router:
                 fail("SOURCE_CHANGED", "来源已变化或不可恢复，请重新预览")
         service = preview["service"]["id"]
         provider = self.provider()
-        if service_info(provider)["id"] != service:
+        if (service_info(provider)["id"] != service
+                or preview.get("configurationRevision", "") != getattr(provider, "configuration_revision", "")):
             fail("ONLINE_SERVICE_CHANGED", "接收服务已变化")
-        import os
-        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-            from zhijun_worker.consent import issue
-            issue(preview, keys, provider)
         files = [s["materialRef"] for s in selected if s["kind"] == "material" and not s.get("ragReviewed")]
         if files:
             ChatImportStore(self.convs).grant(files, service)
@@ -600,7 +586,7 @@ class Router:
 
     @_rag_boundary(fresh=True)
     def authorize_default(self, preview, policy_revision):
-        """Issue one exact DE receipt from an explicitly enabled standing policy.
+        """Validate this exact request against an explicitly enabled standing policy.
 
         This path never converts policy-covered sources into durable per-source
         grants, so narrowing or disabling the policy takes effect immediately.
@@ -626,11 +612,6 @@ class Router:
             if (not current or current["blocked"] or current["version"] != old["version"]
                     or not self.permission(current, service, preview["purpose"], policy)):
                 fail("SOURCE_CHANGED", "来源已变化或超出默认授权范围，请重新核对")
-        import os
-        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-            from zhijun_worker.consent import issue
-            issue(preview, [source["key"] for source in preview["sources"]], provider,
-                  default_policy_revision=policy_revision)
 
 
 @dataclass
@@ -1042,15 +1023,6 @@ class GuardedProvider:
             if self.background:
                 self.router.store.pending(self.router.cid, self.purpose, preview["revision"], "后台任务与当前人生章程冲突，已暂停")
             fail("CHARTER_POLICY_CONFLICT", preview["charterConflict"]["detail"], preview)
-        if self.background and self.external and preview.get("deConsentRequired"):
-            # Source permission is not the exact DE egress receipt. A background
-            # worker cannot mint user consent: expose this payload for the active
-            # client to authorize (explicitly or under its still-valid policy).
-            # Pause before the model adapter turns a missing receipt into a
-            # terminal ProviderError, retaining the preview for safe recovery.
-            self.router.store.pending(self.router.cid, self.purpose, preview["revision"],
-                                      "个人理解等后台整理需要核对本次外发授权，原对话仍保留")
-            fail("ROUTE_CONSENT_REQUIRED", "后台整理等待本次模型外发授权；请核对后继续", preview)
         if self.background and not preview["missing"]:
             self.revision = preview["revision"]
         if self.external and (preview["missing"] or not self.revision or preview["revision"] != self.revision):

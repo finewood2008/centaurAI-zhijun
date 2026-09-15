@@ -18,7 +18,7 @@
 
 路由预览失效或配置修订变化时，可以在仍未收到流事件的前提下有界地重新预览；流已经开始、网络状态不明、用户取消或来源变化后不自动重播写请求。
 
-正式 worker 使用 DE CapabilityProvider，由 DE 模型能力服务执行实际本地/在线请求并管理云端凭据；RAG 使用独立的 App REST 鉴权链，不经过反向模型能力接口。Remote Agent 只承载连接与受控转发，不决定模型路由。Direct/Relay 是电脑连接盒子的路径，与本地/在线模型选择无关。完整链路见 [产品架构](architecture.md)。
+正式 worker 与 Web 复用知君 `OpenAICompatibleProvider` / `OllamaProvider`，由知君执行实际本地/在线请求、来源授权和流式解析。工作区配置及云端凭据由知君独立保存，不继承 DE/Web 部署默认密钥。RAG 使用独立的 App REST 鉴权链；DE 不代理知君聊天和本体模型调用。Remote Agent 只承载连接与受控转发，不决定模型路由。Direct/Relay 是电脑连接盒子的路径，与本地/在线模型选择无关。完整链路见 [产品架构](architecture.md)；升级配置见 [工作区模型配置](../workspace-model-configuration.md)。
 
 ## 来源与授权
 
