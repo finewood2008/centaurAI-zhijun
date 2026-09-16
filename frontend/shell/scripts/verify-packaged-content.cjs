@@ -19,7 +19,7 @@ function verifyPackagedContent(filename, shell = path.resolve(__dirname, '..')) 
   const metadata = JSON.parse(fs.readFileSync(path.join(shell, 'package.json')));
   const files = ['app-icon.cjs', 'assets/centaur.png', 'main.js', 'preload.cjs', 'security.cjs',
     'provisioning-window.cjs', 'provisioning-broker.cjs', 'provisioning/preload.cjs',
-    'provisioning/renderer.js', 'provisioning/setup.css', 'provisioning/setup.html'];
+    'provisioning/renderer.js', 'provisioning/picker.cjs', 'provisioning/setup.css', 'provisioning/setup.html'];
   for (const dir of ['production', 'runtime']) {
     files.push(...fs.readdirSync(path.join(shell, dir)).filter(name => name.endsWith('.cjs')).map(name => `${dir}/${name}`));
   }

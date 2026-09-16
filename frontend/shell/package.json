@@ -1,6 +1,6 @@
 {
   "name": "zhijun-shell",
-  "version": "0.1.29",
+  "version": "0.1.32",
   "private": true,
   "description": "知君桌面宿主：完整产品界面、受控 IPC 与盒端工作区连接",
   "author": "Zhuhai Qeeshu Technology Co., Ltd.",
@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@nexusaos/connectivity-contracts": "file:vendor/nexusaos-connectivity-contracts-1.1.0.tgz",
-    "@nexusaos/connectivity-electron": "file:vendor/nexusaos-connectivity-electron-1.3.0.tgz",
+    "@nexusaos/connectivity-electron": "file:vendor/nexusaos-connectivity-electron-1.3.1.tgz",
     "@nexusaos/consumer-contracts": "file:vendor/nexusaos-consumer-contracts-1.0.0.tgz",
     "@nexusaos/device-discovery-contracts": "file:vendor/nexusaos-device-discovery-contracts-1.0.0.tgz",
     "@nexusaos/device-discovery-electron": "file:vendor/nexusaos-device-discovery-electron-1.0.0.tgz",

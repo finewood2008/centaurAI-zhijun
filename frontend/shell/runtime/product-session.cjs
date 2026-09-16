@@ -31,12 +31,12 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     // page's concurrent reads are not blocked by completed jobs kept for lookup.
     for (const [id, job] of jobs) if (TERMINAL.includes(job.state) && jobs.size + pendingStarts >= LIMITS.jobs) jobs.delete(id);
   }
-  async function wire(request, mutation = false, reservation, responseLimit = LIMITS.page) {
+  async function wire(request, mutation = false, reservation, responseLimit = LIMITS.page, foregroundRead = false) {
     const managed = session.managesRequestQueue === true;
     const control = request.method === 'DELETE' || request.path.endsWith('/cancel');
     current(); assert(active.size < (managed && control ? 9 : 8), 'RESOURCE_EXHAUSTED');
     const controller = new AbortController(); requestControllers.add(controller);
-    const task = Promise.resolve().then(() => { current(); return session.request(request, { signal: controller.signal, reservation,
+    const task = Promise.resolve().then(() => { current(); return session.request(request, { signal: controller.signal, reservation, foregroundRead,
       onWork(work) { if (managed) { active.add(work); active.delete(task); work.then(() => active.delete(work), () => active.delete(work)); } },
     }); });
     active.add(task); task.then(() => active.delete(task), () => active.delete(task));
@@ -86,7 +86,9 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     assert(!prior || prior.digest === digest);
     pendingStarts++;
     let result;
-    try { result = validateStart(await wire(P.request('POST', '/operations', normalized.value), normalized.operation.mutating, reservation)); }
+    // Derive priority from the validated catalog, never from renderer input.
+    const foregroundRead = normalized.operation.id === 'get_api_mindos_conversations_conversation_id';
+    try { result = validateStart(await wire(P.request('POST', '/operations', normalized.value), normalized.operation.mutating, reservation, LIMITS.page, foregroundRead)); }
     finally { pendingStarts--; }
     const existing = jobs.get(result.id);
     assert(!existing || existing.digest === digest, 'CONTRACT_MISMATCH');
@@ -100,7 +102,8 @@ function createProductSession({ session, isCurrent, host = {}, timeoutMs = 12000
     assert(!job.polling, 'OPERATION_NOT_ALLOWED'); job.polling = true;
     try {
       // The Gateway budgets the entire encoded JSON page, not decoded chunks.
-      const value = await wire(P.request('GET', `/operations/${input.id}?after=${input.after}&waitMs=${input.waitMs}`), false, job.reservation, LIMITS.eventPage);
+      const value = await wire(P.request('GET', `/operations/${input.id}?after=${input.after}&waitMs=${input.waitMs}`), false, job.reservation, LIMITS.eventPage,
+        job.operation.id === 'get_api_mindos_conversations_conversation_id');
       assert(exact(value, ['id', 'state', 'cursor', 'events', 'hasMore']) && value.id === input.id
         && STATES.includes(value.state) && integer(value.cursor, input.after, 1000000)
         && typeof value.hasMore === 'boolean' && Array.isArray(value.events) && value.events.length <= 32, 'CONTRACT_MISMATCH');

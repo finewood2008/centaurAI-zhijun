@@ -286,10 +286,9 @@ def _provenance_from_receipt(receipt: dict | None, claims_by_id: dict[str, dict]
 
 def get_conversation(conversation_id: str, request: Request = None):
     store = _store()
-    from .chat_imports import require_conversation
-    from .domain_scope import _device_scope_of
-    require_conversation(conversation_id, _device_scope_of(request))
-    conversation = store.get_conversation(conversation_id)
+    # Detail reads do not need attachment-store schema initialization or its
+    # writer lock. Check scope before loading messages in the metadata query.
+    conversation = store.get_conversation(conversation_id, device_scope=_device_scope_of(request))
     if conversation is None:
         raise _error(404, "CONVERSATION_NOT_FOUND", "会话不存在")
     messages = store.list_messages(conversation_id)

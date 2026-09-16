@@ -169,6 +169,58 @@ function request(operationId, body = null, params = {}) {
   return { version: 1, requestId: crypto.randomUUID(), operationId, params, query: {}, body };
 }
 
+test('conversation detail start and result overtake queued auxiliary reads without spending the control reserve', async t => {
+  const f = await stack();
+  try {
+    // Exhaust only the ordinary burst at the same instant (context + 5 reads).
+    for (let n = 0; n < 5; n++) {
+      const job = await f.clock.run(f.session.invoke('start', request('get_api_mindos_zhijun_home')));
+      await f.clock.run(f.session.invoke('poll', { id: job.id, after: 0, waitMs: 0 }));
+    }
+    assert.equal(f.clock.now(), 0);
+    const before = f.peer.calls.length;
+    const background = Array.from({ length: 3 }, () => f.session.invoke('start', request('get_api_mindos_zhijun_home')));
+    const detail = (async () => {
+      const job = await f.session.invoke('start', request('get_api_mindos_conversations_conversation_id', null, { conversationId: 'synthetic-conversation' }));
+      await f.session.invoke('poll', { id: job.id, after: 0, waitMs: 8000 });
+      return job;
+    })();
+    const job = await f.clock.run(detail);
+    const calls = f.peer.calls.slice(before);
+    assert.equal(calls.length, 2, 'only the foreground start and result precede auxiliary work');
+    assert.equal(JSON.parse(calls[0].body).operationId, 'get_api_mindos_conversations_conversation_id');
+    assert.ok(calls[1].path.includes(`/operations/${job.id}?`));
+    assert.deepEqual(calls.map(call => call.at), [600, 1200], 'both still wait for ordinary business tokens');
+    t.diagnostic('Saturated ordinary burst + 3 queued auxiliary submissions: detail completed at 1200 virtual ms. This excludes network/box execution time.');
+    await f.clock.run(Promise.all(background));
+    assert.deepEqual(f.failures, []);
+  } finally { await f.close(); }
+});
+
+test('legacy FIFO baseline for the same saturated-burst conversation workload is 3000 ms', async () => {
+  const f = await stack();
+  // Only remove the new trusted scheduling hint, preserving the entire real
+  // adapter/bridge/scheduler stack and the identical native peer/clock.
+  const legacy = createProductSession({ isCurrent: () => true, session: {
+    managesRequestQueue: true,
+    request: (req, { foregroundRead: _foreground, ...options }) => f.connected.request(req, options),
+  } });
+  try {
+    for (let n = 0; n < 5; n++) {
+      const job = await f.clock.run(legacy.invoke('start', request('get_api_mindos_zhijun_home')));
+      await f.clock.run(legacy.invoke('poll', { id: job.id, after: 0, waitMs: 0 }));
+    }
+    const background = Array.from({ length: 3 }, () => legacy.invoke('start', request('get_api_mindos_zhijun_home')));
+    const detail = (async () => {
+      const job = await legacy.invoke('start', request('get_api_mindos_conversations_conversation_id', null, { conversationId: 'synthetic-conversation' }));
+      await legacy.invoke('poll', { id: job.id, after: 0, waitMs: 8000 });
+    })();
+    await f.clock.run(detail);
+    assert.equal(f.clock.now(), 3000);
+    await f.clock.run(Promise.all(background));
+  } finally { legacy.close(); await f.close(); }
+});
+
 function renderer(fixture) {
   const src = path.resolve(__dirname, '../../mindos-web/src');
   const ts = createRequire(path.join(src, 'review.cjs'))('typescript'), cache = new Map();

@@ -840,7 +840,7 @@ var api = Object.freeze({
         if (generation === discoveryGeneration) {
           finishDiscovery("completed", candidates.size ? void 0 : "PROVISIONING_SCAN_TIMEOUT", true);
         }
-      }, 8e3);
+      }, 9e4);
       notifyDiscovery();
     } catch (error) {
       finishDiscovery("error", safeCode(error, "DISCOVERY_RUNTIME_FAILURE"), true);

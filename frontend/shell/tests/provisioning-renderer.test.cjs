@@ -221,6 +221,36 @@ test('formal snapshots and rejected operations never render raw reasons or unkno
   assert.doesNotMatch(f.elements.result.textContent, /RAW_ERROR_MESSAGE|UNRECOGNIZED_RAW_CODE|RAW_REASON/)
 })
 
+for (const [code, expected] of [
+  ['LOCAL_DEVICE_INCOMPATIBLE', /旧版配网协议.*V2/],
+  ['LOCAL_DEVICE_INFO_INVALID', /设备信息无效或不完整/],
+  ['PROTOCOL_CHANGED', /不符合当前安全协议/],
+]) {
+  test(`formal begin failure ${code} explains cause and stops suggesting an in-session retry`, async () => {
+    let discovery
+    const f = fixture({ testBuild: false, legacyAllowed: false,
+      onDiscoverySnapshot(listener) { discovery = listener },
+      select: async () => discovery({ state: 'selected', candidates: [] }),
+      begin: async () => {
+        f.emitSnapshot({ state: 'terminalError', attentionCode: code })
+        throw new Error(code) // Cross-isolated-world errors may retain only message.
+      },
+    })
+    discovery({ state: 'scanning', candidates: [{ candidateId: 'opaque-1', name: 'CentaurOS-Setup-E2334B' }] })
+    f.elements.candidates.children[0].children[0].click()
+    await flush(); await flush()
+    assert.match(f.elements.result.textContent, expected)
+    assert.match(f.elements['v2-guidance'].textContent, /关闭此窗口/)
+    assert.match(f.elements['scan-status'].textContent, /本次连接未完成/)
+    assert.doesNotMatch(f.elements['scan-status'].textContent, /正在建立/)
+    assert.equal(f.elements.scan.disabled, true)
+    assert.equal(f.elements.disconnect.disabled, true)
+    assert.equal(f.elements['refresh-state'].disabled, true)
+    assert.equal(f.elements['wifi-panel'].hidden, true)
+    assert.equal(f.elements['ownership-panel'].hidden, true)
+  })
+}
+
 test('formal refresh consumes only the safe snapshot state and attention code', async () => {
   let refreshed = 0
   const f = fixture({
@@ -253,6 +283,7 @@ test('formal cancel preempts a pending coordinator begin without leaking its lat
       cancelled++
       beginning.reject(Object.assign(new Error('RAW_LATE_BEGIN_FAILURE'), { code: 'UNKNOWN_LATE_CODE' }))
       await beginning.promise.catch(() => {})
+      f.emitSnapshot({ state: 'cancelled' })
     },
   })
   f.elements.scan.click()
@@ -265,7 +296,9 @@ test('formal cancel preempts a pending coordinator begin without leaking its lat
   assert.equal(cancelled, 1)
   assert.equal(f.elements.result.textContent, '已取消本次配网。')
   assert.doesNotMatch(f.elements.result.textContent, /RAW_LATE_BEGIN_FAILURE|UNKNOWN_LATE_CODE/)
-  assert.equal(f.elements['v2-state'].textContent, '准备开始')
+  assert.equal(f.elements['v2-state'].textContent, '已取消本次配网')
+  assert.equal(f.elements.scan.disabled, true)
+  assert.match(f.elements['v2-guidance'].textContent, /关闭此窗口/)
 })
 
 test('legacy status and provisioning failures do not expose device reasons', async () => {

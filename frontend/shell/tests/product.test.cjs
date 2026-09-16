@@ -20,6 +20,24 @@ const jobPage = (events, extra = {}) => ({ id, state: 'succeeded', events, curso
 const bytesEvent = (bytes, seq = 2) => ({ seq, kind: 'chunk', data: Buffer.from(bytes).toString('base64') });
 const headerEvent = (status = 200, type = 'application/json') => ({ seq: 1, kind: 'headers', status, headers: { 'content-type': type } });
 
+test('foreground priority is derived from validated detail operation and retained for its result only', async () => {
+  for (const detail of [true, false]) {
+    const calls = [];
+    const manager = createProductSession({ isCurrent: () => true, session: { async request(req, options) {
+      calls.push({ req, options });
+      return response(req.method === 'POST' ? started : jobPage([headerEvent(), bytesEvent('{}'), { seq: 3, kind: 'end' }]));
+    } } });
+    try {
+      const input = detail ? request('get_api_mindos_conversations_conversation_id', { params: { conversationId: 'synthetic' } }) : request();
+      await assert.rejects(manager.invoke('start', { ...input, foregroundRead: true }), { code: 'INVALID_REQUEST' });
+      assert.equal(calls.length, 0);
+      await manager.invoke('start', input);
+      await manager.invoke('poll', { id, after: 0, waitMs: 8000 });
+      assert.deepEqual(calls.map(call => call.options.foregroundRead), [detail, detail]);
+    } finally { manager.close(); }
+  }
+});
+
 test('catalog policy rejects forged route/header keys, unknown operation/query, traversal and invalid multipart', () => {
   const good = request(); assert.equal(P.operationRequest(good).operation.method, 'GET');
   for (const value of [ { ...good, path: '/etc/passwd' }, { ...good, headers: {} }, { ...good, operationId: 'shell.exec' },

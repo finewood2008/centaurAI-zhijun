@@ -14,7 +14,7 @@ async function fixture(t) {
   const write = async (base, name, data) => { await fs.mkdir(path.dirname(path.join(base, name)), { recursive: true }); await fs.writeFile(path.join(base, name), data); };
   const files = ['app-icon.cjs', 'assets/centaur.png', 'main.js', 'preload.cjs', 'security.cjs',
     'provisioning-window.cjs', 'provisioning-broker.cjs', 'provisioning/preload.cjs', 'provisioning/renderer.js',
-    'provisioning/setup.css', 'provisioning/setup.html', 'production/config.cjs', 'runtime/desktop-runtime.cjs'];
+    'provisioning/picker.cjs', 'provisioning/setup.css', 'provisioning/setup.html', 'production/config.cjs', 'runtime/desktop-runtime.cjs'];
   for (const name of files) await write(shell, name, 'synthetic source');
   const metadata = { name: 'synthetic-shell', version: '1.2.3', main: 'main.js' };
   await write(shell, 'package.json', JSON.stringify(metadata));

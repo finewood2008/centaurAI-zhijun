@@ -1584,12 +1584,20 @@ async function askAboutFiles(message: UiMessage, prompt: string) {
   await send(prompt, 'brief')
 }
 
+async function loadPageSupportingData() {
+  // Ontology statistics only gate the blank/onboarding landing. Opening an
+  // existing conversation must not spend another start/poll pair on them.
+  const reads = [loadStatus()]
+  if (!currentId.value) reads.push(loadStats())
+  await Promise.allSettled(reads)
+}
+
 onMounted(async () => {
   mounted = true
   // Load visible navigation first, then cap non-critical startup reads at two.
   await loadConversations()
   if (!alive) return
-  await Promise.allSettled([loadStatus(), loadStats()])
+  await loadPageSupportingData()
 })
 
 onBeforeUnmount(() => {

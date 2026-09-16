@@ -266,11 +266,14 @@ const api = Object.freeze({
         finishDiscovery(code === 'NotFoundError' ? 'completed' : 'error',
           code === 'NotFoundError' && candidates.size ? undefined : code, true)
       })
+      // Main owns the discovery/selection deadlines (30s + up to 30s). This
+      // watchdog only bounds startup before Chromium creates a picker; it must
+      // not cancel a device just discovered near the end of the scan window.
       discoveryTimer = setTimeout(() => {
         if (generation === discoveryGeneration) {
           finishDiscovery('completed', candidates.size ? undefined : 'PROVISIONING_SCAN_TIMEOUT', true)
         }
-      }, 8000)
+      }, 90000)
       notifyDiscovery()
     } catch (error) {
       finishDiscovery('error', safeCode(error, 'DISCOVERY_RUNTIME_FAILURE'), true)
