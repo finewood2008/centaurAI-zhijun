@@ -139,8 +139,11 @@ async function createProvisioningWindow({ BrowserWindow, session, dialog, parent
           : '@nexusaos/device-discovery-electron/main'))
       if (window.isDestroyed()) throw new Error('PROVISIONING_WINDOW_CLOSED')
       if (typeof imported.installElectronBluetoothPicker !== 'function') throw new Error('PROVISIONING_SDK_UNAVAILABLE')
-      const installedPicker = imported.installElectronBluetoothPicker({ webContents: window.webContents,
+      const installPicker = testBuild || importPicker ? imported.installElectronBluetoothPicker
+        : require('./provisioning/picker.cjs').installElectronBluetoothPicker
+      const installedPicker = installPicker({ webContents: window.webContents,
         documentUrl: PROVISIONING_URL, ipcMain: ipc,
+        channels: imported.DISCOVERY_PICKER_CHANNELS,
         clock: Object.freeze({ monotonicMs: () => performance.now() }),
         timeoutMs: 30000, scanTimeoutMs: 8000 })
       picker = typeof installedPicker === 'function' ? { dispose: installedPicker } : installedPicker

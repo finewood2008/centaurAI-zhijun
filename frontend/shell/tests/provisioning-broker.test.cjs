@@ -118,3 +118,79 @@ test('transport proxy matches operation IDs and rejects cross-window results', a
       connectionId, bytes: new Uint8Array([123, 10]).buffer })
   assert.deepEqual(await reading, new Uint8Array([123, 10]))
 })
+
+// Exercise the installed coordinator, not fixture.begin's simulated success.
+async function realBeginFixture(t, payload, failureCode) {
+  const core = await import('@nexusaos/local-provisioning-core')
+  const f = fixture()
+  let cloudCalls = 0
+  const noCloud = new Proxy({}, { get: () => () => { cloudCalls++; throw new Error('unexpected external call') } })
+  const validInfo = {
+    schema_version: 2, device_id: 'centauros-test123', display_name: 'CentaurAI Box', model: 'C100',
+    serial_suffix: '334B', verification_code: '123456', verification_code_source: 'label',
+    provisioning_protocol_version: 2, security_profile: 'NEXUSAOS_LOCAL_AEAD_V2',
+    identity_public_key_sha256: 'a'.repeat(64), pairing_mode_remaining_seconds: 300,
+    network_state: 'connected', cloud_enrollment_status: 'ready', max_message_bytes: 2048,
+  }
+  const wire = payload === undefined ? core.stableJson(validInfo) : payload
+  const connectionId = randomUUID()
+  f.contents.send = (channel, message) => {
+    f.contents.sent.push({ channel, message })
+    if (channel !== TRANSPORT_COMMAND_CHANNEL) return
+    const reply = { ipcVersion: 1, flowId: message.flowId, operationId: message.operationId, connectionId }
+    if (message.kind === 'transport.connect') reply.kind = 'transport.connected'
+    else if (message.kind === 'transport.readDeviceInfo') {
+      if (failureCode) Object.assign(reply, { kind: 'transport.failure', code: failureCode, retryable: false })
+      else Object.assign(reply, { kind: 'transport.deviceInfo', bytes: new TextEncoder().encode(wire).buffer })
+    } else if (message.kind === 'transport.close') reply.kind = 'transport.closed'
+    else throw new Error(`Unexpected GATT command: ${message.kind}`)
+    queueMicrotask(() => f.ipcMain.emit(TRANSPORT_RESULT_CHANNEL, f.event, reply))
+  }
+  const broker = createProvisioningBroker({ ipcMain: f.ipcMain, window: f.window,
+    provisioningConfig: f.provisioningConfig,
+    provisioningContext: { ...f.provisioningContext, consumerApi: noCloud, resumeStore: noCloud },
+    importCore: async () => ({ ...core, createNodeProvisioningCryptoProvider: () => ({
+      selfTest: async () => {}, randomBytes: async size => require('node:crypto').randomBytes(size),
+      zeroize: bytes => bytes.fill(0),
+    }) }) })
+  t.after(() => broker.dispose())
+  await broker.ready
+  const invoke = (kind, input) => f.handlers.get(CLAIM_INVOKE_CHANNEL)(f.event,
+    { ipcVersion: 1, flowId: broker.flowId, operationId: randomUUID(), kind: `claim.${kind}`,
+      ...(input === undefined ? {} : { input }) })
+  await invoke('bindSelected', { candidateId: randomUUID(), transport: 'ble-gatt', transportHandle: randomUUID(),
+    advertisedName: 'CentaurOS-Setup-E2334B', rssi: -40, firstSeenMonotonicMs: 1,
+    lastSeenMonotonicMs: 2, selectionLeaseId: randomUUID() })
+  return { f, invoke, cloudCalls: () => cloudCalls }
+}
+
+test('real coordinator reads canonical V2 preview without starting authentication or external writes', async t => {
+  const f = await realBeginFixture(t)
+  const result = await f.invoke('begin')
+  assert.equal(result.snapshot.state, 'authenticating')
+  assert.equal(result.preview.macSuffix, '334B')
+  assert.equal(f.cloudCalls(), 0)
+  assert.deepEqual(f.f.contents.sent.filter(v => v.channel === TRANSPORT_COMMAND_CHANNEL)
+    .map(v => v.message.kind), ['transport.connect', 'transport.readDeviceInfo'])
+})
+
+for (const [name, payload, wireFailure, code] of [
+  ['legacy V1', '{"schema_version":1,"ble_name":"CentaurOS-Setup-E2334B"}\n', undefined, 'LOCAL_DEVICE_INCOMPATIBLE'],
+  ['malformed JSON', '{not json}', undefined, 'PROTOCOL_CHANGED'],
+  ['incomplete V2', '{"schema_version":2}', undefined, 'PROTOCOL_CHANGED'],
+  ['transport error', undefined, 'LOCAL_DEVICE_INFO_INVALID', 'LOCAL_DEVICE_INFO_INVALID'],
+]) {
+  test(`real coordinator rejects ${name}, preserves reason and closes without external writes`, async t => {
+    const f = await realBeginFixture(t, payload, wireFailure)
+    await assert.rejects(f.invoke('begin'), { code })
+    const snapshot = await f.invoke('snapshot')
+    assert.equal(snapshot.state, 'terminalError')
+    assert.equal(snapshot.attentionCode, code)
+    assert.equal(f.cloudCalls(), 0)
+    assert.deepEqual(f.f.contents.sent.filter(v => v.channel === TRANSPORT_COMMAND_CHANNEL)
+      .map(v => v.message.kind), ['transport.connect', 'transport.readDeviceInfo', 'transport.close'])
+    // This SDK intentionally cannot reuse a terminal flow. The UI must tell the
+    // user to reopen the window instead of advertising same-session retries.
+    await assert.rejects(f.invoke('begin'), { code: 'CLAIM_INVALID_STATE' })
+  })
+}

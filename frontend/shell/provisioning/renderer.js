@@ -14,6 +14,7 @@ let connected = false
 let operationEpoch = 0
 let formalState = 'idle'
 let formalSessionActive = false
+let formalRestartRequired = false
 let hasPreview = false
 let physicalConfirmed = false
 let discoveryState = 'idle'
@@ -33,6 +34,11 @@ const ERROR_MESSAGES = Object.freeze({
   LOCAL_SELECTION_LEASE_INVALID: '本次设备选择已过期，请重新扫描后选择盒子。',
   LOCAL_CONNECT_TIMEOUT: '连接盒子超时，请靠近盒子并确认它仍处于配网模式。',
   LOCAL_TRANSPORT_DISCONNECTED: '与盒子的蓝牙连接已断开，请重新扫描。',
+  LOCAL_DEVICE_INCOMPATIBLE: '盒子仍使用旧版配网协议，当前知君要求 V2 加密配网。请先升级盒端配网组件并核对交付配置；重复扫描无法解决。',
+  LOCAL_DEVICE_INFO_INVALID: '盒子的设备信息无效或不完整，无法安全确认设备。请检查盒端配网服务。',
+  PROTOCOL_CHANGED: '盒子返回的配网数据不符合当前安全协议，已停止连接。请核对盒端与知君的协议版本。',
+  CLAIM_INVALID_STATE: '本次配网会话已结束，请关闭“添加 AI 盒子”窗口后重新打开。',
+  CLAIM_UNKNOWN_ERROR: '建立配网会话时发生未识别的错误，请关闭“添加 AI 盒子”窗口后重试；若仍失败，请检查盒端日志。',
   GATT_SERVICE_NOT_FOUND: '盒子未提供所需配网服务，请确认配网模式或更新盒端程序。',
   GATT_CHARACTERISTIC_MISMATCH: '盒子的配网协议不匹配，请更新盒端程序。',
   DEVICE_NOT_ENROLLED: '盒子尚未完成设备证书登记，请联系管理员完成交付配置。',
@@ -67,6 +73,7 @@ const FORMAL_STATES = Object.freeze({
   waitingCloud: ['正在等待盒子上线', '盒子正在连接网络和服务，请保持通电。'],
   attentionRequired: ['需要处理后继续', '请根据安全提示检查盒子或网络，然后重试。'],
   completed: ['盒子已添加', '盒子已经联网并绑定，可以返回知君主窗口。'],
+  cancelled: ['已取消本次配网', '本次安全会话已结束。'],
 })
 
 function show(message, error = false) {
@@ -110,10 +117,11 @@ function renderPreview(preview) {
 
 function renderFormalSnapshot(snapshot) {
   if (!formalMode) return
+  if (['terminalError', 'restartRequired', 'cancelled'].includes(snapshot?.state)) formalRestartRequired = true
   const state = typeof snapshot?.state === 'string' && Object.hasOwn(FORMAL_STATES, snapshot.state)
     ? snapshot.state : 'attentionRequired'
   formalState = state
-  if (state === 'completed') formalSessionActive = false
+  if (['completed', 'cancelled'].includes(state)) formalSessionActive = false
   else if (state !== 'idle') formalSessionActive = true
   if (['awaitingWifi', 'awaitingOwnershipConfirmation', 'waitingCloud', 'completed'].includes(state)) {
     physicalConfirmed = true
@@ -122,6 +130,13 @@ function renderFormalSnapshot(snapshot) {
   element('v2-state').textContent = copy[0]
   element('v2-guidance').textContent = state === 'attentionRequired'
     ? safeAttention(snapshot?.attentionCode) : copy[1]
+  if (formalRestartRequired) element('v2-guidance').textContent += ' 处理后请关闭此窗口，再重新打开“添加 AI 盒子”。'
+  if (state === 'attentionRequired' && discoveryState === 'selected') {
+    element('scan-status').textContent = '已选择盒子，但本次连接未完成。请查看下方原因。'
+  } else if (hasPreview && discoveryState === 'selected') {
+    element('scan-status').textContent = state === 'authenticating' && !physicalConfirmed
+      ? '已读取设备信息，请继续核对盒身确认码。' : '已选择盒子，请查看下方配网进度。'
+  }
   element('v2-progress').hidden = false
   element('v2-progress').classList.toggle('attention', state === 'attentionRequired')
   element('v2-progress').classList.toggle('completed', state === 'completed')
@@ -134,15 +149,15 @@ function renderFormalSnapshot(snapshot) {
 function updateControls() {
   if (formalMode) {
     const inProgress = formalSessionActive && !['attentionRequired', 'completed'].includes(formalState)
-    element('scan').disabled = !available || busy || inProgress || scanning
+    element('scan').disabled = !available || busy || inProgress || scanning || formalRestartRequired
     element('cancel-scan').disabled = !scanning
-    element('disconnect').disabled = !formalSessionActive
+    element('disconnect').disabled = !formalSessionActive || formalRestartRequired
     element('read-status').disabled = true
     element('scan-networks').disabled = true
     element('confirm-physical').disabled = busy || !/^\d{6}$/.test(element('physical-code').value)
     element('submit-wifi').disabled = busy || formalState !== 'awaitingWifi'
     element('confirm-ownership').disabled = busy || formalState !== 'awaitingOwnershipConfirmation'
-    element('refresh-state').disabled = busy || !formalSessionActive
+    element('refresh-state').disabled = busy || !formalSessionActive || formalRestartRequired
     return
   }
   element('scan').disabled = !available || busy || scanning
@@ -292,7 +307,7 @@ function renderDiscovery(snapshot) {
   const status = element('scan-status')
   status.hidden = discoveryState === 'idle'
   if (scanning) {
-    status.textContent = count ? `正在扫描 · 已发现 ${count} 台盒子，列表持续更新，可直接选择。`
+    status.textContent = count ? `已发现 ${count} 台盒子，列表持续更新。首次发现后保留 30 秒，请点击选择。`
       : '正在扫描附近盒子… 暂未发现设备，请保持盒子处于配网模式。'
     show('扫描结果会实时更新，请选择眼前的盒子。')
   } else if (discoveryState === 'completed') {
@@ -411,7 +426,7 @@ function resetFormal() {
   element('password').value = ''
   element('physical-code').value = ''
   renderPreview(null)
-  renderFormalSnapshot({ state: 'idle' })
+  renderFormalSnapshot({ state: formalRestartRequired ? 'cancelled' : 'idle' })
 }
 
 element('disconnect').addEventListener('click', () => {

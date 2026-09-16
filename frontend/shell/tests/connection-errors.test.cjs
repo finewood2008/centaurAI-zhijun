@@ -118,6 +118,8 @@ test('native direct failures retain only fixed SDK diagnostics, separately from 
   const cases = [['SDK_DIRECT_UNAVAILABLE', 'ICE_FAILED', 'DIRECT_CONNECTION_UNAVAILABLE'],
     ['SDK_DIRECT_UNAVAILABLE', 'DIRECT_TIMEOUT', 'DIRECT_CONNECTION_UNAVAILABLE'],
     ['SDK_CONNECT_TIMEOUT', undefined, 'REQUEST_TIMEOUT'], ['IPC_SIDECAR_EXITED', undefined, 'TRANSPORT_UNAVAILABLE'],
+    ['TARGET_NOT_ALLOWED', undefined, 'ACCESS_DENIED', 'REQUEST_TARGET_NOT_ALLOWED'],
+    ['REQUEST_TARGET_NOT_ALLOWED', undefined, 'ACCESS_DENIED'],
     ['UNKNOWN_PRIVATE_SENTINEL', undefined, 'CONTRACT_MISMATCH', 'IPC_INVALID_MESSAGE']];
   for (const [sdkCode, detailCode, code, expectedSdkCode = sdkCode] of cases) {
     const f = await fixture(t, body => success(validTicket(body)), request => ({ protocol_version: 1, type: 'error',

@@ -3,12 +3,24 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { parse } from '@vue/compiler-sfc'
 import ts from 'typescript'
+import { createSessionGate } from '../src/composables/sessionGate.ts'
 const source = await readFile(new URL('../src/pages/ConversationPage.vue', import.meta.url), 'utf8')
 const script = parse(source).descriptor.scriptSetup.content
 const ast = ts.createSourceFile('conversation.ts', script, ts.ScriptTarget.Latest, true)
 const fn = name => ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name).getText(ast)
 const code = text => ts.transpileModule(text, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText
 const execute = (text, bindings = {}) => new Function(...Object.keys(bindings), code(text))(...Object.values(bindings))
+{
+  const currentId = { value: 'selected-conversation' }, calls = []
+  const load = execute(`${fn('loadPageSupportingData')}\nreturn loadPageSupportingData`, {
+    currentId, loadStatus: async () => calls.push('status'), loadStats: async () => calls.push('stats'),
+  })
+  await load()
+  assert.deepEqual(calls, ['status'], 'opening a conversation does not submit landing-only ontology statistics')
+  currentId.value = null; calls.length = 0
+  await load()
+  assert.deepEqual(calls, ['status', 'stats'], 'the blank page still loads its required statistics')
+}
 const starterStatement = ast.statements.find(n => ts.isVariableStatement(n) && n.declarationList.declarations.some(d => d.name.getText(ast) === 'STARTERS')).getText(ast)
 {
   let input = '手写草稿', deliberate = false, focus = 0, replacements = 0
@@ -22,6 +34,31 @@ const starterStatement = ast.statements.find(n => ts.isVariableStatement(n) && n
   assert.equal(focus, 8); assert.equal(replacements, 8)
 }
 const defer = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
+{
+  const pending = new Map(), requests = [], auxiliary = []
+  const state = Object.fromEntries(['messagesLoading', 'messagesError', 'current', 'messages', 'draft', 'decision',
+    'turnOutcomes', 'mapClaims', 'routingMode', 'alignmentLocalOnly', 'draftChanged', 'draftError', 'draftPending',
+    'draftTimedOut', 'outcomeError', 'reviewSaveError', 'closingStreaming', 'onboardingStep'].map(key => [key, { value: null }]))
+  const load = execute(`let conversationDetailAbort = null; ${fn('loadConversation')}\nreturn loadConversation`, {
+    ...state, loadGate: createSessionGate(), draftPollGate: createSessionGate(),
+    clearConversationAuxiliary() {}, clearMemoryAttention() {},
+    getConversation(id, signal) { const work = defer(); pending.set(id, work); requests.push({ id, signal }); return work.promise },
+    rememberConversationMetadata: value => value, toUi: value => value,
+    route: { query: {} }, scrollToBottom: async () => {},
+    scheduleConversationAuxiliary: id => auxiliary.push(id),
+  })
+  const first = load('A'), second = load('B')
+  assert.equal(requests[0].signal.aborted, true, 'switching aborts the old detail request')
+  pending.get('B').resolve({ conversation: { id: 'B', mode: 'chat' }, messages: [{ id: 'B-message' }] })
+  await second
+  pending.get('A').resolve({ conversation: { id: 'A', mode: 'chat' }, messages: [{ id: 'A-message' }] })
+  await first
+  assert.equal(state.current.value.id, 'B')
+  assert.deepEqual(state.messages.value, [{ id: 'B-message' }])
+  assert.deepEqual(auxiliary, ['B'], 'a late result never launches old auxiliary reads')
+  assert.equal(state.messagesLoading.value, false)
+  assert.deepEqual(requests.map(req => req.id), ['A', 'B'], 'no speculative prefetch or duplicate detail reads')
+}
 function creationHarness() {
   const pending = defer(), calls = [], current = { value:null }, currentId = { value:null }, conversations = { value:[] }
   const router = { async replace(path) { calls.push(['route', path]); currentId.value = decodeURIComponent(path.split('/').at(-1)) } }

@@ -289,10 +289,15 @@ class ConversationStore:
             row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             return self._conversation(row)  # type: ignore[return-value]
 
-    def get_conversation(self, conversation_id: str) -> dict | None:
+    def get_conversation(self, conversation_id: str, *, device_scope: str | None = None) -> dict | None:
+        """Read metadata, optionally checking ownership in the same query."""
         with self._connect() as conn:
             return self._conversation(
-                conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+                conn.execute(
+                    "SELECT * FROM conversations WHERE id = ?" +
+                    (" AND device_scope = ?" if device_scope is not None else ""),
+                    (conversation_id, device_scope) if device_scope is not None else (conversation_id,),
+                ).fetchone()
             )
 
     def list_conversations(self, *, limit: int = 50, status: str = "active", device_scope: str | None = None, mode: str | None = None) -> list[dict]:

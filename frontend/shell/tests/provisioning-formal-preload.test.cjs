@@ -248,16 +248,17 @@ test('formal discovery requires a click and cancellation cannot bind a late sele
   assert.equal(h.invoked.length, 0)
 })
 
-test('formal discovery consumes the installed SDK picker snapshots and selection end to end', async t => {
-  const { installElectronBluetoothPicker, DISCOVERY_PICKER_CHANNELS } = await import(pathToFileURL(path.join(
+test('formal discovery uses product picker with SDK selection endpoint across native callback updates', async t => {
+  const { DISCOVERY_PICKER_CHANNELS } = await import(pathToFileURL(path.join(
     __dirname, '..', 'node_modules', '@nexusaos', 'device-discovery-electron', 'dist', 'main.js')).href)
+  const { installElectronBluetoothPicker } = require('../provisioning/picker.cjs')
   const ipcMain = new EventEmitter(), webContents = new EventEmitter()
   const frame = { url: 'file:///trusted/setup.html' }
   webContents.mainFrame = frame
   let callback, h
   webContents.send = (channel, payload) => h.emit(channel.split(':').at(-1), payload)
   const dispose = installElectronBluetoothPicker({ ipcMain, webContents, documentUrl: frame.url,
-    clock: { monotonicMs: () => 100 } })
+    clock: { monotonicMs: () => 100 }, channels: DISCOVERY_PICKER_CHANNELS })
   t.after(dispose)
   h = await preloadHarness({
     onRequestDevice(request) {
@@ -274,12 +275,12 @@ test('formal discovery consumes the installed SDK picker snapshots and selection
   const scan = h.api.scan()
   webContents.emit('select-bluetooth-device', { preventDefault() {} }, [
     { deviceId: 'private-provider-one', deviceName: 'CentaurOS-Setup-ABC123' },
-  ], callback)
+  ], id => callback(id))
   const first = plain(await scan)[0]
   webContents.emit('select-bluetooth-device', { preventDefault() {} }, [
     { deviceId: 'private-provider-one', deviceName: 'CentaurOS-Setup-ABC123' },
     { deviceId: 'private-provider-two', deviceName: 'CentaurOS-Setup-DEF456' },
-  ], callback)
+  ], id => callback(id))
   assert.equal(h.snapshots.at(-1).candidates.length, 2)
   assert.equal(h.snapshots.at(-1).candidates[0].candidateId, first.candidateId)
   await h.api.select(first.candidateId)

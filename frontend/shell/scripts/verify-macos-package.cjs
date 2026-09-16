@@ -20,7 +20,7 @@ const expectedTeam = 'GLHM545ZLS'
 const digest = filename => crypto.createHash('sha256').update(fs.readFileSync(filename)).digest('hex')
 const productionPackages = new Map([
   ['@nexusaos/connectivity-contracts', '1.1.0'],
-  ['@nexusaos/connectivity-electron', '1.3.0'],
+  ['@nexusaos/connectivity-electron', '1.3.1'],
   ['@nexusaos/consumer-contracts', '1.0.0'],
   ['@nexusaos/device-discovery-contracts', '1.0.0'],
   ['@nexusaos/device-discovery-electron', '1.0.0'],
@@ -60,7 +60,7 @@ const expectedAsarEntries = new Set([
   '/app-icon.cjs', '/assets', '/assets/centaur.png', '/main.js', '/package.json', '/preload.cjs',
   '/provisioning-window.cjs', '/provisioning-broker.cjs', '/provisioning', '/provisioning/preload.cjs',
   ...(testFlavor ? ['/provisioning/preload.mjs'] : []), '/provisioning/renderer.js',
-  '/provisioning/setup.css', '/provisioning/setup.html',
+  '/provisioning/picker.cjs', '/provisioning/setup.css', '/provisioning/setup.html',
   '/production', '/production/adapter.cjs', '/production/business-bridge.cjs', '/production/config.cjs',
   '/production/consumer-client.cjs', '/production/credential-store.cjs', '/production/sdk-runtime.cjs',
   '/production/connection-timing.cjs',

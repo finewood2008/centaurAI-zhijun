@@ -141,7 +141,11 @@ function createBusinessBridge({ clock = Date.now, heartbeatMs = 10000, heartbeat
           // Finish admitted page reads before starting more work. Polls keep
           // ordinary business quota (rank > 1); heartbeat/cancel reservations
           // and scheduler aging still apply, including during active streams.
-          const response = await send(normalized, { ...options, priority: isContext ? 0 : isCancel ? 1 : isPoll ? 2 : 3 });
+          // A visible conversation must not sit behind auxiliary reads. Rank
+          // 1.5 remains business traffic (>1): no extra tokens, concurrency,
+          // rolling quota or heartbeat/cancel reservations are granted.
+          const response = await send(normalized, { ...options,
+            priority: isContext ? 0 : isCancel ? 1 : options?.foregroundRead === true ? 1.5 : isPoll ? 2 : 3 });
           if (closed) fail('SESSION_NOT_READY');
           if (product && response?.status >= 200 && response.status < 300) lastActivity = activityClock();
           return response;

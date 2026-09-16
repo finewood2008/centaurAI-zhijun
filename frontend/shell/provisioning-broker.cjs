@@ -159,7 +159,14 @@ function createProvisioningBroker({ ipcMain, window, provisioningContext, provis
           const result = await callTransport('transport.readDeviceInfo', { connectionId, timeoutMs: 5000 },
             'transport.deviceInfo', readSignal, 5000)
           if (result.connectionId !== connectionId) throw new Error('LOCAL_TRANSPORT_DISCONNECTED')
-          return frameBytes(result.bytes)
+          const bytes = frameBytes(result.bytes)
+          // Discovery UUIDs are shared with the legacy service. This is only a
+          // rejection hint, never a compatibility decoder: all other payloads
+          // still pass through the SDK's canonical V2 validation unchanged.
+          let info
+          try { info = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) } catch {}
+          if (plain(info) && info.schema_version === 1) throw transportFailure('LOCAL_DEVICE_INCOMPATIBLE')
+          return bytes
         },
         async request(logicalFrame, match, requestSignal) {
           if (closed || !(logicalFrame instanceof Uint8Array) || logicalFrame.byteLength > 2048
