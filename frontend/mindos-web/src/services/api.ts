@@ -1891,6 +1891,7 @@ export interface ConversationMemoryDraft {
 }
 
 export interface ConversationMemoryAttention {
+  reflection?: Reflection | null
   topicId: string
   candidate: Claim | null
   alignment: Claim | null
@@ -2662,3 +2663,29 @@ export const suggestLearning = async (id: string, data: { claimId?: string; expe
 }
 export const proposeLearning = (id: string, data: LearningComparison & { expectedRevision: number }) => learningPost<LearningEpisode>(id, 'propose', data)
 export const resolveLearning = (id: string, data: { expectedRevision: number; action: 'apply' | 'keep' | 'defer'; content?: string; framing?: LearningFraming; exceptions?: string; note?: string }) => learningPost<LearningEpisode>(id, 'resolve', data)
+
+export type ReflectionFeedback = 'accepted' | 'contextual' | 'rejected' | 'observing' | 'retired'
+export interface Reflection {
+  id: string
+  type: 'pattern' | 'change'
+  title: string
+  observation: string
+  alternative: string
+  conversationId: string
+  messageId: string
+  status: 'candidate' | 'surfaced' | ReflectionFeedback
+  revision: number
+  createdAt: string
+  updatedAt: string
+  lastSurfacedAt: string | null
+  timeRange: { from: string; to: string }
+  evidence: Array<{ messageId: string; conversationId: string; date: string; quote: string }>
+  feedback: { action?: ReflectionFeedback; note?: string; at?: string }
+  history: Array<{ action: ReflectionFeedback; note: string; at: string }>
+}
+export function listReflections() {
+  return request<{ items: Reflection[] }>('/mindos/reflections')
+}
+export function reviewReflection(id: string, payload: { action: ReflectionFeedback; note: string; expectedRevision: number; requestId: string }) {
+  return postJson<Reflection>(`/mindos/reflections/${encodeURIComponent(id)}/feedback`, payload)
+}

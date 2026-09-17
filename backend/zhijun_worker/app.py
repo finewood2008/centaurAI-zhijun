@@ -153,7 +153,8 @@ def create_app(workspace, capabilities=None):
         domain.include_router(module.router, dependencies=[Depends(require_workspace)])
     from mindos import memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes
     from mindos.zhijun import charter
-    for module in (memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes, charter):
+    from mindos import reflection_routes
+    for module in (memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes, charter, reflection_routes):
         router = module.build_router(require_workspace)
         registered.extend(router.routes)
         domain.include_router(router, dependencies=[Depends(require_workspace)])

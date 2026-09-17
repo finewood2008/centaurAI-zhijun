@@ -182,13 +182,24 @@ def _attention(ontology, convs, cid):
                         alignment_seq[claim["id"]] = max((m["seq"] for m in user_messages if m["seq"] < message["seq"]), default=0)
     if selected and not selected["shown_user_turn"] and user_turn:
         selected = ledger.initialize_clock(cid, topic, message_seq=message_seq, user_turn=user_turn)
+    from ..stores.reflection_store import ReflectionStore
+    from .reflections import valid, public, automatic_allowed as reflection_allowed
+    from .routing import Router
+    reflection_store = ReflectionStore(ontology)
+    observations = [r for r in reflection_store.list(scope) if automatic and reflection_allowed(ontology, convs, cid)
+                    and r["conversationId"] == cid and r["status"] in ("candidate", "surfaced")
+                    and topic_for(convs, cid, r["messageId"]) == topic
+                    and valid(Router(ontology, convs, cid), r)]
     if selected is None:
-        if claims:
+        if observations:
+            selected = ledger.reserve(cid, topic, "reflection", observations[0]["id"], message_seq=message_seq, user_turn=user_turn)
+        elif claims:
             selected = ledger.reserve(cid, topic, "claim", claims[0]["id"], message_seq=message_seq, user_turn=user_turn)
         elif alignments:
             selected = ledger.reserve(cid, topic, "alignment", alignments[0]["id"], message_seq=message_seq, user_turn=user_turn)
     elif selected["consumed"] and user_turn - selected["shown_user_turn"] >= REMINDER_USER_TURN_GAP:
-        fresh = [("claim", c) for c in claims if source_seq.get(c["id"], 0) > selected["shown_message_seq"]]
+        fresh = [("reflection", r) for r in observations if (convs.get_message(r["messageId"]) or {}).get("seq", 0) > selected["shown_message_seq"]]
+        fresh += [("claim", c) for c in claims if source_seq.get(c["id"], 0) > selected["shown_message_seq"]]
         fresh += [("alignment", c) for c in alignments if alignment_seq.get(c["id"], 0) > selected["shown_message_seq"]]
         # A dismissed proposal itself is not fresh evidence, even if a later
         # assistant repeats it. Historical unseen items stay in the manual queue.
@@ -196,19 +207,25 @@ def _attention(ontology, convs, cid):
         if fresh:
             kind, item = fresh[0]
             selected = ledger.renew(cid, topic, selected, kind, item["id"], message_seq=message_seq, user_turn=user_turn)
-    candidate = alignment = None
+    candidate = alignment = reflection = None
     if selected and not selected["consumed"]:
-        choices = claims if selected["kind"] == "claim" else alignments
+        choices = observations if selected["kind"] == "reflection" else claims if selected["kind"] == "claim" else alignments
         found = next((c for c in choices if c["id"] == selected["target_id"]), None)
         if found:
-            if selected["kind"] == "claim":
+            if selected["kind"] == "reflection":
+                reflection = public(reflection_store.surface(found["id"]), reflection_store)
+            elif selected["kind"] == "claim":
                 candidate = found
             else:
                 alignment = found
         else:
             ledger.consume(cid, topic, selected["kind"], selected["target_id"])
+    if selected and selected["kind"] == "reflection" and selected["consumed"]:
+        reviewed = reflection_store.get(selected["target_id"])
+        if reviewed and reviewed["status"] not in ("candidate", "surfaced", "retired") and valid(Router(ontology, convs, cid), reviewed):
+            reflection = public(reviewed, reflection_store)
     draft = ledger.draft(cid, topic)
-    return {"topicId": topic, "policy": policy, "candidate": candidate, "alignment": alignment,
+    return {"topicId": topic, "policy": policy, "candidate": candidate, "alignment": alignment, "reflection": reflection,
             "draft": public_draft(draft), "pendingCount": pending(ontology, convs, cid)["total"]}
 
 

@@ -54,7 +54,7 @@ REVIEW_ACTIONS = (
     "create",
 )
 SURFACES = ("conversation", "ontology_page", "onboarding", "today", "decision_panel", "import", "system")
-JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft")
+JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft", "reflection")
 JOB_STATES = ("queued", "running", "done", "failed")
 
 # 受控谓词词表：抽取器只能在分区对应的词表内选，越界整条丢弃。
@@ -422,6 +422,8 @@ class OntologyStore:
                 conn.executescript(learning_schema)
                 from .alignment_store import SCHEMA as alignment_schema
                 conn.executescript(alignment_schema)
+                from .reflection_store import SCHEMA as reflection_schema
+                conn.executescript(reflection_schema)
                 if "current_token" not in {r[1] for r in conn.execute("PRAGMA table_info(alignment_grants)")}:
                     conn.execute("ALTER TABLE alignment_grants ADD COLUMN current_token TEXT NOT NULL DEFAULT ''")
                 conn.execute("UPDATE alignment_conversations SET status='paused', detail='服务已重启，自动提议暂停；可手动校准或重试' WHERE status='queued'")
@@ -1867,7 +1869,7 @@ class OntologyStore:
             }
             conn.execute("BEGIN IMMEDIATE")
             try:
-                for table in ("alignment_conversations", "claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
+                for table in ("reflection_reviews", "reflections", "alignment_conversations", "claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
                     conn.execute(f"DELETE FROM {table}")
                 conn.execute("DELETE FROM entity_aliases WHERE entity_id != ?", (ME_ENTITY_ID,))
                 conn.execute("DELETE FROM entities WHERE id != ?", (ME_ENTITY_ID,))

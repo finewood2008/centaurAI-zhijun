@@ -15,7 +15,7 @@ from ..stores.ontology_store import OntologyStore
 from . import context as context_module
 from . import deliberate, extract, jobs, memory
 from .gate import conversation_locks, provider_gate
-from .provider import ONBOARDING_QUESTIONS, ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
+from .provider import ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
 from .request_budget import normalize_request_budget
 
 logger = logging.getLogger(__name__)
@@ -341,6 +341,11 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
         preceding = [m for m in conv_store.list_messages(cid) if m["role"] == "assistant" and m["seq"] < conv_store.get_message(user_id)["seq"] and m["status"] == "complete"]
         extraction_ok, extraction_reason = extract.should_extract(content, preceding[-1]["content"] if preceding else None)
         if not current_refs and (not expression or expression["kind"] != "control") and jobs.extraction_enabled() and extraction_ok and memory_allowed:
+            if memory.automatic_allowed(ontology, conv_store, cid):
+                reflection_job = _enqueue_followup(lambda: ontology.enqueue_job("reflection", user_id,
+                    payload={"conversationId": cid, "messageId": user_id, "assistantId": assistant_id,
+                             "localOnly": not guarded.external}, priority=7))
+                yield "extraction", {**reflection_job, "taskKind": "reflection"}
             yield "extraction", _enqueue_followup(lambda: jobs.enqueue_extraction(cid, user_id, store=ontology))
         else:
             yield "extraction", {"state": "skipped", "reason": "file_discussion" if current_refs else "memory_policy" if not memory_allowed else extraction_reason if not extraction_ok else "disabled", "jobId": None}
@@ -558,12 +563,6 @@ def _run_locked(
         else:
             result = _enqueue_followup(lambda: jobs.enqueue_draft(conversation_id, assistant_id, store=ontology))
             yield ("decision_draft", {**result, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []})
-
-    if conversation.get("mode") == "onboarding" and (onboarding_turn or 0) > len(ONBOARDING_QUESTIONS) and memory.automatic_allowed(ontology, conv_store, conversation_id):
-        try:
-            jobs.enqueue_first_observation(conversation_id, assistant_id, store=ontology)
-        except Exception:  # noqa: BLE001
-            pass
 
     preceding = [m for m in conv_store.list_messages(conversation_id) if m["role"] == "assistant" and m["seq"] < user_message["seq"] and m["status"] == "complete"]
     ok, reason = extract.should_extract(content, preceding[-1]["content"] if preceding else None)

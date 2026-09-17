@@ -185,7 +185,7 @@ const blocked = computed(() => !!props.disabled || !!props.notice)
 
 const effectivePlaceholder = computed(() => {
   if (deliberate.value) return '说说你在纠结什么、有哪几个选项、你倾向哪个、把握有几成'
-  return props.placeholder || '跟知君说点什么…'
+  return props.placeholder || '最近有什么事，想一起想一想？'
 })
 
 function send() {

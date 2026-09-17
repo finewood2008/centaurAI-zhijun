@@ -7,6 +7,7 @@ export const productRoutes: RouteRecordRaw[] = [
   { path: '/', name: 'today', component: () => import('@/pages/TodayPage.vue'), meta: { title: '今日来信' } },
   { path: '/chat', name: 'conversation', component: () => import('@/pages/ConversationPage.vue'), meta: { title: '对话' } },
   { path: '/c/:conversationId', name: 'conversation-detail', component: () => import('@/pages/ConversationPage.vue'), meta: { title: '对话' } },
+  { path: '/reflections', name: 'reflections', component: () => import('@/pages/ReflectionsPage.vue'), meta: { title: '照见' } },
   { path: '/me', name: 'ontology', component: () => import('@/pages/OntologyPage.vue'), meta: { title: '我的本体' } },
   { path: '/me/charter', name: 'charter', component: () => import('@/pages/CharterPage.vue'), meta: { title: '我的本体 · 人生章程' } },
   { path: '/me/inbox', name: 'ontology-inbox', component: () => import('@/pages/OntologyPage.vue'), meta: { title: '我的本体' } },

@@ -1,8 +1,8 @@
 venv/
-.venv/
+.venv
 .env
 .lan_config.json
-node_modules/
+node_modules
 *.tsbuildinfo
 __pycache__/
 *.pyc

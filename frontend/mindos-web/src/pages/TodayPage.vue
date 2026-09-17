@@ -212,6 +212,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <RouterLink to="/reflections" class="zj-reflections-entry"><span>照见</span><span>回看我们一起核对过的理解</span><ArrowRight :size="16" aria-hidden="true" /></RouterLink>
       <RelationshipTimeline :items="overview.timeline" @open="openSource" />
 
       <p v-if="overview.state === 'first_meet'" class="zj-today__first-note">
@@ -222,6 +223,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.zj-reflections-entry { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 20px; border:1px solid #e0e4d9; border-radius:12px; color:#54654a; font-size:14px; text-decoration:none; }
+.zj-reflections-entry span:nth-child(2) { color:#858c7d; font-size:12px; flex:1; }
 .zj-today {
   display: grid;
   gap: 22px;

@@ -41,7 +41,7 @@ export function cloneClauses(clauses: CharterClause[]): CharterClause[] {
   return JSON.parse(JSON.stringify(clauses))
 }
 export function charterSourceLabel(kind: string): string {
-  return ({ charter: '已确认章程', charter_workspace: '章程工作稿', charter_draft: '章程草稿', message: '对话消息', material: '本机资料', claim: '本体理解', alignment: '自我校准', summary: '对话小结', decision: '历史判断', episode: '情境复盘' } as Record<string, string>)[kind] || kind
+  return ({ charter: '已确认章程', charter_workspace: '章程工作稿', charter_draft: '章程草稿', message: '对话消息', material: '本机资料', claim: '本体理解', alignment: '自我校准', summary: '对话小结', decision: '历史判断', episode: '情境复盘', reflection: '照见' } as Record<string, string>)[kind] || kind
 }
 export function newCharterClause(): CharterClause {
   return { id: crypto.randomUUID(), section: '我的约定', text: '', kind: 'principle', scope: 'global', control: null, sources: [], origin: 'manual' }

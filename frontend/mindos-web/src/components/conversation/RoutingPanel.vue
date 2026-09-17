@@ -33,7 +33,7 @@ const currentMode = computed<'online' | 'local' | null>(() => state.value?.mode?
 const onlineAvailable = computed(() => state.value?.service?.external === true)
 const localModelLabel = computed(() => state.value?.localService?.model || '本机模型')
 const onlineModelLabel = computed(() => onlineAvailable.value ? (state.value?.service?.model || state.value?.service?.name || '在线模型') : '未启用')
-const taskLabels: Record<string, string> = { alignment: '自我校准', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
+const taskLabels: Record<string, string> = { reflection: '照见整理', alignment: '自我校准与照见', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
 const taskLabel = (key: string) => taskLabels[key] || (key.startsWith('file_reply:') ? '文件反馈' : '后台整理')
 const taskCount = (task: any) => Number.isInteger(task.count) && task.count > 0 ? task.count : null
 const pausedMemory = computed(() => state.value?.pending?.find((task: any) => task.task_key === 'extract_turn'))
@@ -320,7 +320,7 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
           <p v-if="policy?.serviceChanged" class="routing-warning">服务已变化。之前对 {{ policy.serviceName }} 的默认授权不适用于当前服务，请重新确认。</p>
           <div v-if="configureDefault" class="routing-consent-form">
             <p><strong>授权给 {{ state.service?.name }}</strong></p>
-            <p>用途：日常对话、回复辅助、判断草稿与候选、个人理解与校准、情境推演及复盘、摘要、今日来信和理解整理。此开关不授权上传原文件、通用导出或训练个人模型；外部服务的数据保留规则以该服务说明为准。</p>
+            <p>用途：日常对话、回复辅助、判断草稿与候选、个人理解与校准、跨时间照见、情境推演及复盘、摘要、今日来信和理解整理。此开关不授权上传原文件、通用导出或训练个人模型；外部服务的数据保留规则以该服务说明为准。</p>
             <label><input v-model="includeFiles" type="checkbox" /> 也默认允许引用的文件提取文字及其派生内容（包括今后新增或更新的文件）</label>
             <label><input v-model="includeCharter" type="checkbox" /> 也默认允许人生章程与章程草稿（含必要的历史版本），用于上述对话和理解任务</label>
             <label><input v-model="autoEgress" type="checkbox" /> 符合上述服务、用途和资料范围时，不再逐次显示在线发送确认</label>

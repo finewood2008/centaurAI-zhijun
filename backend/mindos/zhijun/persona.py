@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-from .provider import ONBOARDING_QUESTIONS
 
 LABEL_TOLD = "【你告诉我的】"
 LABEL_MATERIAL = "【资料里看到的】"
@@ -91,27 +90,14 @@ def onboarding_answer_count(messages: list[dict]) -> int:
 
 
 def onboarding_instruction(user_turns: int) -> str:
-    """建档模式：一次只问一个问题；user_turns 为用户已发出的消息数（含本轮）。"""
-    total = len(ONBOARDING_QUESTIONS)
-    listing = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(ONBOARDING_QUESTIONS))
-    if user_turns <= total:
-        progress = (
-            f"用户已回答了 {user_turns - 1} 个问题；本轮先用一句话确认你听到了什么"
-            f"（用{LABEL_TOLD}复述要点），然后只问第 {user_turns} 个问题。"
-            if user_turns > 1
-            else "这是第一轮，先用一两句话说明你会怎么认识对方，然后只问第 1 个问题。"
-        )
-    else:
-        progress = (
-            "七个问题都问完了：先用要点总结你记住的内容（每条带来源标签）；然后给出恰好一条「第一次观察」——"
-            f"用{LABEL_GUESS}开头，把他说过的至少两件事连起来推测一个做事模式（写明依据），以「——对吗？」结尾，并说明这只是印象、他点头才算数；"
-            "最后邀请他去「我的本体」核对与修改。不要再提新问题。"
-        )
-    return f"""这是与用户的第一次对话（建档）。按顺序、一次只问一个问题；不要一次问多个；已问过的不要重复。
-问题列表：
-{listing}
-{progress}"""
-
+    """Keep the legacy caller signature; first-meeting behavior is not turn-count driven."""
+    return (
+        "这是与用户的第一次认识。先从他最近在意的事情开始，认真回应眼前的问题。"
+        "不按固定问题逐题建档，不要求完整画像；最多问一个与当前事情有关的问题。"
+        "用户可以随时换话题或结束。有依据时准确接上之前的经历，没有依据就承认还不了解。"
+        "不要因达到对话轮数就推测人格或生成照见；观察需要跨时间的独立证据。"
+        "理解可以由用户补充和修正，认可也不等于客观事实确认。"
+    )
 
 def charter_block(charter: dict | None, budget: int) -> str:
     if not charter:

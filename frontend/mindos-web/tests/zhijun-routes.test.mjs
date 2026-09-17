@@ -118,8 +118,8 @@ for (const gone of ["'/qa'", "'/generate'", "'/governance'", "'/corrections'", '
   assert.ok(!router.includes(gone), `router 不应再引用 ${gone}`)
 }
 
-// 侧栏：单组五项，今日在最上
-for (const label of ["label: '今日来信'", "label: '对话'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
+// 侧栏：单组六项，今日在最上
+for (const label of ["label: '今日来信'", "label: '对话'", "label: '照见'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
   assert.ok(sidebar.includes(label), `sidebar 缺少 ${label}`)
 }
 assert.doesNotMatch(sidebar, /问知君|本体治理|logo\.jpg/)

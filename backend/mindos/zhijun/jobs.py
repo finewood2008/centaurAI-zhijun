@@ -181,6 +181,9 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     from . import alignment, memory
     if kind in ("alignment", "first_observation") and not memory.automatic_allowed(store, conv_store, payload.get("conversationId")):
         return {"state": "skipped", "reason": "memory_policy"}
+    if kind == "reflection":
+        from .reflections import run_job as run_reflection
+        return run_reflection(payload, store, conv_store)
     if kind == "alignment":
         return alignment.run_job(payload, store, conv_store)
     if not managed and payload.get("conversationId") and alignment.protected(payload["conversationId"], conv_store, store):
