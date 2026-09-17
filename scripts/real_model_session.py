@@ -68,6 +68,73 @@ def _sse(client: httpx.Client, url: str, payload: dict) -> tuple[list[tuple[str,
     return events, reply
 
 
+def _go_online(client: httpx.Client, base: str, cid: str) -> None:
+    """新路由层默认走本机模型；真实模型评测要把会话切到在线模式并开启默认授权（与桌面端流程一致）。"""
+    st = client.get(f"{base}/api/mindos/conversations/{cid}/routing", headers=HEADERS).json()
+    sid = (st.get("service") or {}).get("id", "")
+    r = client.put(f"{base}/api/mindos/conversations/{cid}/routing", headers=HEADERS,
+                   json={"mode": "online", "acknowledge": True, "freshContext": True, "expectedRevision": 0, "serviceId": sid})
+    if r.status_code != 200:
+        print(f"[warn] set online mode -> {r.status_code}: {r.text[:160]}", file=sys.stderr)
+    da = st.get("defaultAuthorization") or {}
+    r = client.put(f"{base}/api/mindos/conversations/{cid}/routing/default-consent", headers=HEADERS,
+                   json={"enabled": True, "includeFiles": True, "includeCharter": True, "autoEgress": True,
+                         "acknowledge": True, "serviceId": sid, "expectedRevision": int(da.get("revision") or 0)})
+    if r.status_code != 200:
+        print(f"[warn] default consent -> {r.status_code}: {r.text[:160]}", file=sys.stderr)
+
+
+def _send_once(client: httpx.Client, base: str, cid: str, payload: dict) -> tuple[list[tuple[str, dict]], str]:
+    """在线模式：先路由预览，需要时授权来源，再带预览修订号发送。"""
+    import uuid
+    request_id = "eval-" + uuid.uuid4().hex[:20]
+    body = {"content": payload["content"], "requestId": request_id}
+    if payload.get("mode"):
+        body["mode"] = payload["mode"]
+    body_preview = dict(body)
+    pv = client.post(f"{base}/api/mindos/conversations/{cid}/routing/preview", headers=HEADERS, json=body_preview, timeout=120)
+    revision = None
+    if pv.status_code == 200:
+        preview = pv.json()
+        revision = preview.get("revision")
+        # 预览里 authorization 为空且未被阻断的来源需要本轮授权（同桌面端「本次资料使用确认」）。
+        keys = [x.get("key") for x in (preview.get("sources") or [])
+                if isinstance(x, dict) and x.get("key") and not x.get("authorization") and not x.get("blocked")]
+        keys = list(dict.fromkeys(keys))
+        if keys and revision:
+            body = {"revision": revision, "keys": keys}  # 只授权显式来源键；默认策略修订由服务端自行套用
+            g = client.post(f"{base}/api/mindos/conversations/{cid}/routing/grant", headers=HEADERS, json=body)
+            if g.status_code != 200:
+                print(f"[warn] grant -> {g.status_code}: {g.text[:160]}", file=sys.stderr)
+            else:
+                # 授权后预览修订号会变化，必须重新预览并用新的修订号发送。
+                pv2 = client.post(f"{base}/api/mindos/conversations/{cid}/routing/preview", headers=HEADERS, json=body_preview, timeout=120)
+                if pv2.status_code == 200:
+                    revision = pv2.json().get("revision") or revision
+    else:
+        print(f"[warn] preview -> {pv.status_code}: {pv.text[:160]}", file=sys.stderr)
+    send = dict(payload)
+    send["requestId"] = request_id
+    if revision:
+        send["routeRevision"] = revision
+    return _sse(client, f"{base}/api/mindos/conversations/{cid}/messages", send)
+
+
+def _send(client: httpx.Client, base: str, cid: str, payload: dict) -> tuple[list[tuple[str, dict]], str]:
+    """后台抽取可能在预览与发送之间落下新理解，让路由要求重新核对（桌面端会弹授权后重试）；这里最多重试三次。"""
+    last: Exception | None = None
+    for _ in range(3):
+        try:
+            return _send_once(client, base, cid, payload)
+        except RuntimeError as exc:
+            if "ROUTE_CONSENT_REQUIRED" in str(exc) or "ROUTE_CHANGED" in str(exc) or "PREVIEW_EXPIRED" in str(exc):
+                last = exc
+                time.sleep(1.5)
+                continue
+            raise
+    raise last  # type: ignore[misc]
+
+
 def _wait_health(base: str, timeout: float) -> None:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -128,9 +195,10 @@ def main() -> int:
             # ---- 建档
             report.append("## 一、建档对话（7 问）")
             conv = client.post(f"{base}/api/mindos/conversations", json={"mode": "onboarding"}, headers=HEADERS).json()
+            _go_online(client, base, conv["id"])
             for i, answer in enumerate(ONBOARDING_ANSWERS, start=1):
                 t0 = time.time()
-                events, reply = _sse(client, f"{base}/api/mindos/conversations/{conv['id']}/messages", {"content": answer})
+                events, reply = _send(client, base, conv["id"], {"content": answer})
                 timings.append(time.time() - t0)
                 report.append(f"**用户 {i}：** {answer}")
                 report.append(f"**知君：** {reply.strip()}")
@@ -147,10 +215,14 @@ def main() -> int:
             # ---- 商量
             report.append("## 二、商量（判断草稿）")
             dconv = client.post(f"{base}/api/mindos/conversations", json={"mode": "chat", "title": "商量：测试外包"}, headers=HEADERS).json()
+            _go_online(client, base, dconv["id"])
+            if dconv.get("opening"):
+                report.append(f"**知君（开场）：** {dconv['opening'].get('content', '')}")
+                report.append("")
             draft = None
             for turn in DELIBERATE_TURNS:
                 t0 = time.time()
-                events, reply = _sse(client, f"{base}/api/mindos/conversations/{dconv['id']}/messages", {"content": turn, "mode": "deliberate"})
+                events, reply = _send(client, base, dconv["id"], {"content": turn, "mode": "deliberate"})
                 timings.append(time.time() - t0)
                 draft = next((d for n, d in events if n == "decision_draft"), draft)
                 report.append(f"**用户：** {turn}")
@@ -169,9 +241,13 @@ def main() -> int:
             # ---- 闲聊（看是否引用本体、标签是否规范）
             report.append("## 三、日常对话（看引用与标签）")
             cconv = client.post(f"{base}/api/mindos/conversations", json={"mode": "chat"}, headers=HEADERS).json()
+            _go_online(client, base, cconv["id"])
+            if cconv.get("opening"):
+                report.append(f"**知君（开场）：** {cconv['opening'].get('content', '')}")
+                report.append("")
             for turn in CHAT_TURNS:
                 t0 = time.time()
-                events, reply = _sse(client, f"{base}/api/mindos/conversations/{cconv['id']}/messages", {"content": turn})
+                events, reply = _send(client, base, cconv["id"], {"content": turn})
                 timings.append(time.time() - t0)
                 prov = next((d for n, d in events if n == "provenance"), {})
                 report.append(f"**用户：** {turn}")
