@@ -1891,6 +1891,58 @@
       "mutating": false
     },
     {
+      "id": "get_api_mindos_settings_sensitive_rules_capabilities",
+      "method": "GET",
+      "path": "/api/mindos/settings/sensitive-rules/capabilities",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_settings_sensitive_rules_rollout_status",
+      "method": "GET",
+      "path": "/api/mindos/settings/sensitive-rules/rollout/status",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_settings_sensitive_rules_rollout_start",
+      "method": "POST",
+      "path": "/api/mindos/settings/sensitive-rules/rollout/start",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_settings_sensitive_rules_rollout_retry",
+      "method": "POST",
+      "path": "/api/mindos/settings/sensitive-rules/rollout/retry",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
       "id": "get_api_mindos_settings_sensitive_rules_rule_id",
       "method": "GET",
       "path": "/api/mindos/settings/sensitive-rules/{ruleId}",
@@ -1937,6 +1989,36 @@
       "id": "delete_api_mindos_settings_sensitive_rules_custom_rule_id",
       "method": "DELETE",
       "path": "/api/mindos/settings/sensitive-rules/custom/{ruleId}",
+      "pathParams": [
+        "ruleId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "put_api_mindos_settings_sensitive_rules_built_in_rule_id",
+      "method": "PUT",
+      "path": "/api/mindos/settings/sensitive-rules/built-in/{ruleId}",
+      "pathParams": [
+        "ruleId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_settings_sensitive_rules_built_in_rule_id_reset",
+      "method": "POST",
+      "path": "/api/mindos/settings/sensitive-rules/built-in/{ruleId}/reset",
       "pathParams": [
         "ruleId"
       ],
@@ -2411,7 +2493,7 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": false
     },
     {
@@ -2424,7 +2506,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2437,7 +2519,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2450,7 +2532,7 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": false
     },
     {
@@ -2463,7 +2545,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2480,7 +2562,7 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2495,7 +2577,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2510,7 +2592,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2525,7 +2607,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {

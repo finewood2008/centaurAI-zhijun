@@ -50,6 +50,35 @@ test('external Agent management reaches the signed domain catalog without exposi
   assert.throws(() => resolveOperation('/api/mindos/settings/external-agents?accountId=other'))
 })
 
+test('online model settings use the DE authority and preserve managed provider revisions without a key', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('managed-models-test')
+  const resolveOperation = load('services/productCatalog.ts').resolveProductOperation
+  const policy = createRequire(import.meta.url)('../../shell/runtime/product-policy.cjs')
+  const calls = []
+  load('services/transport.ts').installProductTransport(async (path, init = {}) => {
+    const resolved = resolveOperation(path, init.method || 'GET')
+    const result = policy.operationRequest({ version: 1, requestId: 'managed-models-0001', operationId: resolved.operation.id,
+      params: resolved.params, query: resolved.query, body: init.body ? JSON.parse(init.body) : null })
+    assert.equal(result.operation.capability, 'models')
+    calls.push(result.value)
+    return Response.json({ providers: [], platformStatus: 'available' })
+  })
+  const api = load('services/api.ts').api
+  await api.getChatProvider()
+  await api.getExternalProviders()
+  await api.getExternalProviderModels('managed:platform', 2, undefined, 'a'.repeat(64))
+  await api.activateExternalProvider('managed:platform', { revision: 2, providerRevision: 'a'.repeat(64), model: 'approved-model', chatRevision: 3 })
+  await api.testChatProvider({})
+  assert.deepEqual(calls[2].params, { providerId: 'managed:platform' })
+  assert.deepEqual(calls[3].body, { revision: 2, providerRevision: 'a'.repeat(64), model: 'approved-model', chatRevision: 3 })
+  assert.ok(calls.every(call => !JSON.stringify(call).includes('apiKey')))
+  const catalog = JSON.parse(readFileSync(new URL('../../shared/product-operations.json', import.meta.url), 'utf8'))
+  const online = catalog.operations.filter(op => /^\/api\/system\/models\/(chat-provider|external-providers)(?:\/|$)/.test(op.path))
+  assert.equal(online.length, 9)
+  assert.ok(online.every(op => op.capability === 'models'))
+})
+
 test('material pagination traverses API, renderer catalog and actual shell policy without allowing identity query fields', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('materials-pagination')
@@ -102,9 +131,15 @@ test('sensitive rule API matches the trusted facade envelope', async () => {
   }
   await api.createSensitiveRule({ requestId: 'rule-create-0001', ...rule })
   await api.updateSensitiveRule('csr_rule_1', {
-    requestId: 'rule-update-0001', expectedRevision: 3, ...rule,
+    expectedEtag: '"3"', ...rule,
   })
-  await api.deleteSensitiveRule('csr_rule_1', 4)
+  await api.deleteSensitiveRule('csr_rule_1', '"4"')
+  await api.getSensitiveRuleCapabilities()
+  await api.updateBuiltInSensitiveRule('person_name', '"builtin:1:0"', { enabled: false })
+  await api.resetBuiltInSensitiveRule('person_name', '"builtin:1:1"', 'csr_nearby')
+  await api.getSensitiveRuleRolloutStatus()
+  await api.startSensitiveRuleRollout('rollout-start-1', 'sensitive-detector-v2:' + 'a'.repeat(24))
+  await api.retrySensitiveRuleRollout('rollout-retry-1', 'sensitive-detector-v2:' + 'a'.repeat(24))
 
   assert.deepEqual(calls[0], {
     path: '/api/mindos/settings/sensitive-rules/custom', method: 'POST',
@@ -112,11 +147,29 @@ test('sensitive rule API matches the trusted facade envelope', async () => {
   })
   assert.deepEqual(calls[1], {
     path: '/api/mindos/settings/sensitive-rules/custom/csr_rule_1', method: 'PUT',
-    body: { requestId: 'rule-update-0001', expectedRevision: 3, rule },
+    body: { expectedEtag: '"3"', rule },
   })
   assert.deepEqual(calls[2], {
     path: '/api/mindos/settings/sensitive-rules/custom/csr_rule_1', method: 'DELETE',
-    body: { expectedRevision: 4 },
+    body: { expectedEtag: '"4"' },
+  })
+  assert.equal(calls[3].path, '/api/mindos/settings/sensitive-rules/capabilities')
+  assert.deepEqual(calls[4], {
+    path: '/api/mindos/settings/sensitive-rules/built-in/person_name', method: 'PUT',
+    body: { expectedEtag: '"builtin:1:0"', rule: { enabled: false } },
+  })
+  assert.deepEqual(calls[5], {
+    path: '/api/mindos/settings/sensitive-rules/built-in/person_name/reset', method: 'POST',
+    body: { expectedEtag: '"builtin:1:1"', acknowledgeSimilarRuleId: 'csr_nearby' },
+  })
+  assert.equal(calls[6].path, '/api/mindos/settings/sensitive-rules/rollout/status')
+  assert.deepEqual(calls[7], {
+    path: '/api/mindos/settings/sensitive-rules/rollout/start', method: 'POST',
+    body: { requestId: 'rollout-start-1', expectedDetectorRevision: 'sensitive-detector-v2:' + 'a'.repeat(24), confirmHistoricalScan: true },
+  })
+  assert.deepEqual(calls[8], {
+    path: '/api/mindos/settings/sensitive-rules/rollout/retry', method: 'POST',
+    body: { requestId: 'rollout-retry-1', expectedDetectorRevision: 'sensitive-detector-v2:' + 'a'.repeat(24), confirmRetry: true },
   })
 })
 

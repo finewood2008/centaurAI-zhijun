@@ -1,10 +1,14 @@
 """Persist user execution provenance before a domain task can consume capabilities."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 import json
 import os
 import re
 
 from .capabilities import execution, require, CapabilityError
+
+
+active_task = ContextVar("zhijun_worker_background_task", default=None)
 
 
 class BackgroundEnqueueError(CapabilityError):
@@ -49,9 +53,11 @@ def activated(ident):
     if not row:
         raise CapabilityError("BACKGROUND_ORIGIN_REQUIRED", 403)
     token = execution.set(json.loads(row[0]))
+    task_token = active_task.set(ident)
     try:
         yield
     finally:
+        active_task.reset(task_token)
         execution.reset(token)
 
 

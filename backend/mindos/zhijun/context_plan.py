@@ -83,6 +83,9 @@ def render_context_plan(plan):
         blocks.append("最近的助手问题（是询问，不是用户事实）：\n" + focus["question"])
     if focus.get("omittedConditions"):
         blocks.append("部分更早的条件未纳入本轮；涉及这些条件时应先核对，不要声称已完整考虑。")
+    if not (plan.get("matterBinding") or {}).get("matterId") and any(i["kind"] == "matter" for i in plan["evidence"]):
+        blocks.append("以下事项是按本轮提问找到的有限记录，并非完整清单，也未关联到本对话。"
+                      "若有多条可能对应用户所说的事情，请列出这些候选并先核对具体指哪一件；不要擅自替用户选定。")
     refs = list(plan.get("focusRefs") or [])
     for index, item in enumerate([*plan["background"], *plan["evidence"]], 1):
         item["citationId"] = f"p{index}"
@@ -291,6 +294,8 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
         candidates.append(matter_candidate)
         if not matter_ready["missing"]:
             candidates.extend(context_sources.artifact_candidates(router, matter_candidate["ref"]["id"], search_queries))
+    elif not matter_binding.get("matterId"):
+        candidates.extend(context_sources.matter_candidates(router, content))
     explicit_materials = set() if workspace_rag else {r["materialId"] for r in material_refs or []}
     candidates = [c for c in candidates if not (c["ref"]["kind"] == "material" and c["ref"]["id"] in explicit_materials)]
     # User-selected Search results retain the service's order, not a second
@@ -331,6 +336,9 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
     limit = 12 if complex or queries else 8
     for ready in ordered:
         item = ready["item"]
+        if item["kind"] == "matter" and sum(i["kind"] == "matter" for i in result["evidence"]) >= 3:
+            excluded(ready["candidate"], "本轮最多提供三条事项候选，请进一步明确要讨论的事情")
+            continue
         if item["kind"] == "material" and sum(i["kind"] == "material" and i["id"] == item["id"] for i in result["evidence"]) >= 2:
             excluded(ready["candidate"], "同一份资料最多提供两个相关片段，不作为两个独立来源")
             continue
@@ -358,6 +366,9 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
     pending.sort(key=lambda ready: ready["item"]["id"] not in direct_needed)
     ask = None
     for ready in pending:
+        if ready["item"]["kind"] == "matter" and sum(i["kind"] == "matter" for i in result["evidence"]) >= 3:
+            excluded(ready["candidate"], "本轮已有三条事项候选，未增加尚未授权的事项", restricted=True)
+            continue
         if "ragInteractionId" in ready["candidate"]["ref"]:
             # Selecting a passage is not permission to send it to the cloud.
             # Include every selected source in the separate authorization

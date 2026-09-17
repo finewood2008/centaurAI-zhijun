@@ -1,4 +1,7 @@
-"""Explicit GPU-only workspace defaults, persisted conflicts and wire budgets."""
+"""Legacy GPU snapshot validation and direct adapter wire budgets.
+
+Product workspace execution now delegates to DE; these retained tests separately
+exercise the persisted snapshot validator and the standalone HTTP adapter."""
 import json
 import importlib.util
 import os
@@ -32,12 +35,20 @@ def make(deployment):
     return rcp.RuntimeConfigProvider(store=store, secret_store=secrets)
 
 
+def direct_snapshot_provider(snapshot):
+    # The old snapshot adapter remains available outside a domain worker.
+    # Production workspace entrypoints reject snapshots and use DE localOnly.
+    with patch.dict(os.environ, {"ZHIJUN_LOCAL_NUM_CTX": "4096"}):
+        os.environ.pop('ZHIJUN_WORKSPACE_ID', None)
+        return providers.build_provider(snapshot)
+
+
 def test_fresh_workspace_gpu_snapshot_and_native_budget(deployment):
     provider = make(deployment)
     local = provider.get_local_snapshot()
     assert (local.base_url, local.model, local.backend, local.context_window, local.max_output_tokens, local.num_thread,
             local.keep_alive, local.configuration_error) == ('http://127.0.0.1:11435', 'qwen3:1.7b', 'ollama_gpu', 4096, 512, 1, 300, None)
-    actual = providers.build_provider(provider.get_chat_snapshot())
+    actual = direct_snapshot_provider(provider.get_chat_snapshot())
     body = actual._body(providers.ChatRequest(system='test', messages=[{'role': 'user', 'content': 'hello'}], max_tokens=8192,
                                             json_schema={'type': 'object'}), stream=True)
     assert body['model'] == 'qwen3:1.7b' and body['think'] is False and body['keep_alive'] == 300
@@ -73,7 +84,7 @@ def test_persisted_cpu_setting_blocks_local_without_rewriting_database(deploymen
     assert provider.get_local_snapshot().configuration_error == 'LOCAL_GPU_DEPLOYMENT_CONFLICT'
     assert store.get_section(rcp.SECTION_MATERIAL)['payload'] == old
     with pytest.raises(providers.ProviderError, match='冲突'):
-        providers.build_provider(provider.get_chat_snapshot())
+        direct_snapshot_provider(provider.get_chat_snapshot())
     with pytest.raises(rcp.ValidationError):
         provider.candidate_chat_snapshot(provider='ollama')
     provider.save_material_runtime(base_url='http://127.0.0.1:11435', model='qwen3:1.7b', timeout_seconds=90, expected_revision=1)
@@ -101,13 +112,13 @@ def test_cloud_choice_survives_local_conflict_and_never_falls_back(deployment):
     snapshot = provider.get_chat_snapshot()
     assert snapshot.provider == 'openai' and snapshot.model == 'cloud-choice' and not snapshot.fallback_ollama
     with patch.object(providers, 'get_provider', return_value=provider):
-        actual = providers.build_provider(snapshot)
+        actual = direct_snapshot_provider(snapshot)
     assert actual.external and actual.model == 'cloud-choice'
 
 
 def test_gpu_error_never_tries_other_endpoint_or_cpu_model(deployment):
     provider = make(deployment)
-    actual = providers.build_provider(provider.get_chat_snapshot())
+    actual = direct_snapshot_provider(provider.get_chat_snapshot())
     request = providers.ChatRequest(system='test', messages=[{'role': 'user', 'content': 'hello'}])
     with patch.object(providers, '_open', side_effect=providers.ProviderError('GPU unavailable')) as opened:
         with pytest.raises(providers.ProviderError):
@@ -130,13 +141,13 @@ def test_npu_and_non_gpu_snapshots_keep_existing_semantics(deployment, monkeypat
 
 def test_actual_product_wire_is_accepted_by_manager_gpu_runtime(deployment):
     """Offline cross-repository contract, exercised in the release workspace."""
-    source = Path(__file__).resolve().parents[3] / 'nexusaos-centuarai-os/scripts/centauros_gpu_runtime.py'
+    source = Path(__file__).resolve().parents[3] / 'nexusaos-centuarai-os/scripts/python/centauros/centauros_gpu_runtime.py'
     if not source.is_file():
         pytest.skip('CentaurOS checkout required for release cross-contract test')
     spec = importlib.util.spec_from_file_location('qualified_gpu_wire_contract', source)
     runtime = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(runtime)
-    actual = providers.build_provider(make(deployment).get_chat_snapshot())
+    actual = direct_snapshot_provider(make(deployment).get_chat_snapshot())
     for stream in (True, False):
         for schema in (None, {'type': 'object', 'properties': {'answer': {'type': 'string'}}, 'required': ['answer']}):
             request = providers.ChatRequest(system='synthetic test', messages=[{'role': 'user', 'content': 'hello'}],

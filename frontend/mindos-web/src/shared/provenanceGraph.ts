@@ -3,6 +3,14 @@ import type { ContextItem, ContextPlan, ProvenanceEvent } from '@/services/api'
 
 export const MAX_SHOWN = 8
 
+/** Explain a recorded omission without exposing the excluded matter's contents. */
+export function matterPermissionNotice(raw: Partial<ProvenanceEvent> | null | undefined): string {
+  const plan = normalizeContextPlan(raw?.contextPlan)
+  if (plan?.delivery !== 'provided' || !plan.excluded.some(item => item.kind === 'matter'
+    && item.restricted === true && item.reason === '按默认方式跳过未授权资料，原记录保留')) return ''
+  return '本轮有事情记录因你的“跳过受限资料”设置，未提供给在线模型。记录仍然保留。可在“模型与授权”关闭固定处理方式，再次提问时核对本轮授权。'
+}
+
 /** Display only server-recorded IDs that resolve to one unambiguous, versioned item. */
 export function normalizeContextPlan(value: unknown): ContextPlan | undefined {
   if (!value || typeof value !== 'object') return undefined

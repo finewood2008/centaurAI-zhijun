@@ -25,7 +25,7 @@ def _input(**updates) -> dict:
 def _item(revision=1) -> dict:
     return {
         "ruleId": "csr_rule_1", "source": "custom", "immutable": False,
-        "revision": revision, **_input(),
+        "revision": revision, "etag": f'"{revision}"', **_input(),
         "acknowledgeSimilarRuleId": None,
         "masking": {"strategy": "fixed", "prefixCharacters": 0,
                     "suffixCharacters": 0, "replacement": "[项目代号已脱敏]"},
@@ -47,6 +47,24 @@ class FakeClient:
         return self._return({"items": [_item()], "total": 1, "builtinCount": 0,
                              "customCount": 1, "maxCustomRules": 30})
 
+    def get_sensitive_capabilities(self):
+        self.calls.append(("capabilities",))
+        return self._return({"policyWrite": True, "builtinWrite": True, "rolloutManage": True})
+
+    def get_sensitive_rollout_status(self):
+        self.calls.append(("rollout-status",))
+        return self._return({"state": "pending", "scanEnabled": True, "applying": False,
+                             "historicalScanRequired": True, "retryAvailable": False,
+                             "targetDetectorRevision": "sensitive-detector-v2:" + "a" * 24})
+
+    def start_sensitive_rollout(self, revision, *, idempotency_key):
+        self.calls.append(("rollout-start", revision, idempotency_key))
+        return self._return(self.get_sensitive_rollout_status())
+
+    def retry_sensitive_rollout(self, revision, *, idempotency_key):
+        self.calls.append(("rollout-retry", revision, idempotency_key))
+        return self._return(self.get_sensitive_rollout_status())
+
     def get_sensitive_rule(self, rule_id):
         self.calls.append(("get", rule_id))
         return self._return(_item())
@@ -55,13 +73,23 @@ class FakeClient:
         self.calls.append(("create", rule, idempotency_key))
         return self._return(_item())
 
-    def update_sensitive_rule(self, rule_id, rule, *, revision):
-        self.calls.append(("update", rule_id, rule, revision))
-        return self._return(_item(revision + 1))
+    def update_sensitive_rule(self, rule_id, rule, *, etag):
+        self.calls.append(("update", rule_id, rule, etag))
+        return self._return(_item(2))
 
-    def delete_sensitive_rule(self, rule_id, *, revision):
-        self.calls.append(("delete", rule_id, revision))
+    def delete_sensitive_rule(self, rule_id, *, etag):
+        self.calls.append(("delete", rule_id, etag))
         return self._return({"deleted": True})
+
+    def update_builtin_sensitive_rule(self, rule_id, rule, *, etag):
+        self.calls.append(("builtin-update", rule_id, rule, etag))
+        return self._return({**_item(2), "ruleId": rule_id, "source": "built_in",
+                             "immutable": True, "etag": '"builtin:1:1"'})
+
+    def reset_builtin_sensitive_rule(self, rule_id, *, etag, acknowledge_similar_rule_id=None):
+        self.calls.append(("builtin-reset", rule_id, etag, acknowledge_similar_rule_id))
+        return self._return({**_item(3), "ruleId": rule_id, "source": "built_in",
+                             "immutable": True, "etag": '"builtin:1:2"'})
 
 
 class SensitiveRuleRoutesTest(unittest.TestCase):
@@ -73,9 +101,9 @@ class SensitiveRuleRoutesTest(unittest.TestCase):
         app.include_router(routes.build_router())
         self.client = TestClient(app)
 
-    def test_list_get_and_crud_expose_revision_not_transport_headers(self):
+    def test_list_get_and_crud_preserve_opaque_etag_in_safe_body(self):
         self.assertEqual(self.client.get(PREFIX).status_code, 200)
-        self.assertEqual(self.client.get(PREFIX + "/csr_rule_1").json()["revision"], 1)
+        self.assertEqual(self.client.get(PREFIX + "/csr_rule_1").json()["etag"], '"1"')
 
         create_body = {"requestId": "rule-create-0001", "rule": _input()}
         created = self.client.post(PREFIX + "/custom", json=create_body)
@@ -84,26 +112,26 @@ class SensitiveRuleRoutesTest(unittest.TestCase):
         self.assertNotIn("ETag", created.headers)
 
         updated = self.client.put(PREFIX + "/custom/csr_rule_1", json={
-            "requestId": "rule-update-0001", "expectedRevision": 1, "rule": _input(),
+            "expectedEtag": '"1"', "rule": _input(),
         })
         self.assertEqual(updated.json()["revision"], 2)
         deleted = self.client.request(
-            "DELETE", PREFIX + "/custom/csr_rule_1", json={"expectedRevision": 2},
+            "DELETE", PREFIX + "/custom/csr_rule_1", json={"expectedEtag": '"2"'},
         )
         self.assertEqual(deleted.json(), {"deleted": True})
 
         create_call = next(call for call in self.fake.calls if call[0] == "create")
         self.assertEqual(create_call[2], "rule-create-0001")
         update_call = next(call for call in self.fake.calls if call[0] == "update")
-        self.assertEqual(update_call[3], 1)
+        self.assertEqual(update_call[3], '"1"')
 
     def test_renderer_input_is_strict_and_never_accepts_raw_if_match(self):
-        valid = {"requestId": "rule-update-0001", "expectedRevision": 1, "rule": _input()}
+        valid = {"expectedEtag": '"1"', "rule": _input()}
         self.assertEqual(self.client.put(PREFIX + "/custom/csr_rule_1", json={**valid, "extra": True}).status_code, 422)
-        self.assertEqual(self.client.put(PREFIX + "/custom/csr_rule_1", json={**valid, "expectedRevision": True}).status_code, 422)
+        self.assertEqual(self.client.put(PREFIX + "/custom/csr_rule_1", json={**valid, "expectedEtag": '1'}).status_code, 422)
         self.assertEqual(self.client.request(
             "DELETE", PREFIX + "/custom/csr_rule_1",
-            json={"expectedRevision": 1, "ifMatch": '"1"'}
+            json={"expectedEtag": '"1"', "ifMatch": '"1"'}
         ).status_code, 422)
         self.assertEqual(self.client.put(
             PREFIX + "/custom/bad%20id", json=valid,
@@ -141,6 +169,23 @@ class SensitiveRuleRoutesTest(unittest.TestCase):
         })
         self.assertNotIn("similarRuleId", unsafe.json()["detail"])
 
+    def test_documented_errors_use_fixed_safe_guidance(self):
+        cases = {
+            "CUSTOM_RULE_CATALOG_TOO_LARGE": (422, "检测提示容量不足"),
+            "BUILTIN_RULE_FIELD_IMMUTABLE": (422, "字段不可修改"),
+            "BUILTIN_RULE_PROTECTED": (422, "系统安全底线"),
+            "SENSITIVE_SCAN_DISABLED": (409, "历史扫描服务未启用"),
+        }
+        for code, (status, expected) in cases.items():
+            with self.subTest(code=code):
+                self.fake.error = DataAgentRagV2Error(
+                    code, status=status, message="secret private upstream detail",
+                )
+                response = self.client.get(PREFIX)
+                self.assertEqual(response.status_code, status)
+                self.assertIn(expected, response.json()["detail"]["detail"])
+                self.assertNotIn("secret private upstream detail", response.text)
+
     def test_write_guard_applies_only_to_mutations(self):
         def deny():
             raise HTTPException(403, "denied")
@@ -152,6 +197,40 @@ class SensitiveRuleRoutesTest(unittest.TestCase):
         self.assertEqual(guarded.post(
             PREFIX + "/custom", json={"requestId": "rule-create-0001", "rule": _input()}
         ).status_code, 403)
+        self.assertEqual(guarded.post(PREFIX + "/rollout/start", json={
+            "requestId": "rollout-0001", "expectedDetectorRevision": "sensitive-detector-v2:" + "a" * 24,
+            "confirmHistoricalScan": True,
+        }).status_code, 403)
+
+    def test_builtin_patch_reset_and_rollout_are_explicit_and_constrained(self):
+        self.assertEqual(self.client.get(PREFIX + "/capabilities").json()["builtinWrite"], True)
+        self.assertEqual(self.client.get(PREFIX + "/rollout/status").json()["state"], "pending")
+        updated = self.client.put(PREFIX + "/built-in/person_name", json={
+            "expectedEtag": '"builtin:1:0"', "rule": {"enabled": False},
+        })
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["etag"], '"builtin:1:1"')
+        self.assertIn(("builtin-update", "person_name", {"enabled": False}, '"builtin:1:0"'), self.fake.calls)
+        self.assertEqual(self.client.put(PREFIX + "/built-in/person_name", json={
+            "expectedEtag": '"builtin:1:0"', "rule": {"name": "非法字段"},
+        }).status_code, 422)
+        reset = self.client.post(PREFIX + "/built-in/person_name/reset", json={
+            "expectedEtag": '"builtin:1:1"', "acknowledgeSimilarRuleId": "csr_other",
+        })
+        self.assertEqual(reset.json()["etag"], '"builtin:1:2"')
+        self.assertIn(("builtin-reset", "person_name", '"builtin:1:1"', "csr_other"), self.fake.calls)
+
+        revision = "sensitive-detector-v2:" + "a" * 24
+        self.assertEqual(self.client.post(PREFIX + "/rollout/start", json={
+            "requestId": "rollout-0001", "expectedDetectorRevision": revision,
+            "confirmHistoricalScan": False,
+        }).status_code, 422)
+        started = self.client.post(PREFIX + "/rollout/start", json={
+            "requestId": "rollout-0001", "expectedDetectorRevision": revision,
+            "confirmHistoricalScan": True,
+        })
+        self.assertEqual(started.status_code, 202)
+        self.assertIn(("rollout-start", revision, "rollout-0001"), self.fake.calls)
 
 
 if __name__ == "__main__":

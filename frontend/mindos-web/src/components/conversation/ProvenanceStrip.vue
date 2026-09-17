@@ -8,7 +8,7 @@ import { formatDay, sectionLabel } from '@/shared/ontology'
 import { ALIGNMENT_LEVELS } from '@/shared/alignment'
 import { channelShort } from '@/shared/model'
 import { conversationNotice } from '@/shared/conversationPresentation'
-import { normalizeProvenance, provenanceCharterSummary, provenanceMemorySummary } from '@/shared/provenanceGraph'
+import { matterPermissionNotice, normalizeProvenance, provenanceCharterSummary, provenanceMemorySummary } from '@/shared/provenanceGraph'
 import ProvenanceGraph from '@/components/conversation/ProvenanceGraph.vue'
 
 const props = defineProps<{
@@ -24,6 +24,7 @@ const pastDecisions = computed(() => safeProvenance.value.pastDecisions ?? [])
 const charterSummary = computed(() => provenanceCharterSummary(safeProvenance.value))
 
 const summary = computed(() => provenanceMemorySummary(safeProvenance.value))
+const matterNotice = computed(() => matterPermissionNotice(props.provenance))
 const lookupNotice = computed(() => safeProvenance.value.contextPlan?.stage === 'lookup_unavailable' ? safeProvenance.value.contextPlan.lookupNotice : '')
 const channelTag = computed(() => channelShort(props.meta))
 // 打底带上的原则与做法（旧后端没有这个字段）：内容从 confirmedClaims 里按 id 找，找不到就只写数量
@@ -46,6 +47,7 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
       <span v-if="!conversation && channelTag" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ channelTag }}</span>
       <component :is="open ? ChevronUp : ChevronDown" :size="14" aria-hidden="true" />
     </button>
+    <p v-if="matterNotice" class="zj-prov__line" data-testid="matter-permission-notice">{{ matterNotice }} <RouterLink to="/settings">前往设置</RouterLink></p>
     <p v-if="lookupNotice" class="zj-prov__line zj-prov__lookup-notice" data-testid="context-lookup-notice">{{ conversation ? conversationNotice(lookupNotice, '部分资料暂时无法读取，本次回答可能不完整。') : lookupNotice }}</p>
     <p v-if="provenance.routing?.handlingNotice" class="zj-prov__line" data-testid="routing-handling-notice">{{ conversation ? conversationNotice(provenance.routing.handlingNotice, '本次按已有资料使用约定处理。') : provenance.routing.handlingNotice }}</p>
     <div v-if="open" class="zj-prov__body">

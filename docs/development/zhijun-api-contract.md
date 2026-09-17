@@ -433,11 +433,16 @@ interface MatterBinding { matter: Matter | null; bindingRevision: number }
 | 方法与路径 | 请求 | 响应 / 语义 |
 | --- | --- | --- |
 | `GET /api/mindos/settings/sensitive-rules` | — | 规则列表、内置/自定义/启用计数、服务端动态容量、检测提示词预算、epoch 和 detectorRevision |
-| `GET /api/mindos/settings/sensitive-rules/{ruleId}` | — | 单条规则；只暴露整数 revision，不暴露原始 ETag |
+| `GET /api/mindos/settings/sensitive-rules/capabilities` | — | 按实际 App 授权返回 policyWrite、builtinWrite、rolloutManage 布尔值 |
+| `GET /api/mindos/settings/sensitive-rules/{ruleId}` | — | 单条规则及经过严格验证的不透明 ETag；修改前先读取 |
 | `POST /api/mindos/settings/sensitive-rules/custom` | requestId、`rule:{规则字段}` | 创建自定义规则；同一未知结果重试复用 requestId |
-| `PUT /api/mindos/settings/sensitive-rules/custom/{ruleId}` | requestId、expectedRevision、`rule:{规则字段}` | 编辑或启停；后端把 expectedRevision 转换为精确 If-Match |
-| `DELETE /api/mindos/settings/sensitive-rules/custom/{ruleId}` | expectedRevision | 删除自定义规则；内置规则不可变 |
+| `PUT /api/mindos/settings/sensitive-rules/custom/{ruleId}` | expectedEtag、`rule:{规则字段}` | 编辑或启停；后端将 ETag 原样放入 If-Match |
+| `DELETE /api/mindos/settings/sensitive-rules/custom/{ruleId}` | expectedEtag | 逻辑删除自定义规则 |
+| `PUT /api/mindos/settings/sensitive-rules/built-in/{ruleId}` | expectedEtag、`rule:{可编辑字段}` | 在服务端允许的字段内覆盖内置规则 |
+| `POST /api/mindos/settings/sensitive-rules/built-in/{ruleId}/reset` | expectedEtag、可选 acknowledgeSimilarRuleId | 恢复内置默认；可能重新启用规则 |
+| `GET /api/mindos/settings/sensitive-rules/rollout/status` | — | 有权时读取待扫描、应用中、失败及目标修订 |
+| `POST /api/mindos/settings/sensitive-rules/rollout/start` 和 `/retry` | requestId、expectedDetectorRevision、明确确认字段 | 用户确认后启动或重试历史扫描；成功 HTTP 202 |
 
-规则写入字段为 `name`、`description`、`examples`、`counterExamples`、`enabled`、`deliveryMode` 和 `allowOriginalAfterConfirm`；`masking` 由服务端生成，仅随读取结果返回，不能由 Renderer 编辑或回传。`deliveryMode` 为 `confirm | always_mask | block`，只有 confirm 可以允许确认后原文。
+自定义规则写入字段为 `name`、`description`、`examples`、`counterExamples`、`enabled`、`deliveryMode` 和 `allowOriginalAfterConfirm`；其 `masking` 由服务端生成。内置规则只有在 App 获得额外能力且响应的 `editableFields` 允许时，才可提交 `masking` 等局部覆盖；页面按 `systemConstraints` 限制安全底线。`deliveryMode` 为 `confirm | always_mask | block`，只有 confirm 可以允许确认后原文。
 
-`CUSTOM_RULE_SIMILAR` 只向 Renderer 转发经校验的 `similarRuleId`。界面读取并展示该规则后，用户选择“仍要保存”才以新的 requestId 和 `acknowledgeSimilarRuleId` 重提；该确认请求自身结果不确定时复用确认阶段的 requestId。所有写操作都通过盒端 App 凭据和 `mindos.sensitive.policy.write` 能力完成，App Secret、If-Match、ETag 和 Data Agent 鉴权头不得进入 Renderer。
+`CUSTOM_RULE_SIMILAR` 只向 Renderer 转发经校验的 `similarRuleId`。界面读取并展示该规则后，用户选择“仍要保存”才携带 `acknowledgeSimilarRuleId` 重提；创建须使用新 requestId，其确认请求结果不确定时复用该键。内置恢复默认则通过服务端请求头转交相似确认 ID。所有写操作都通过盒端长期 App 凭据完成，内置规则与历史扫描分别要求独立管理能力。App Secret 和 Data Agent 鉴权头不得进入 Renderer；经格式验证的 ETag 作为并发控制令牌进入知君设置页，不是授权凭据，服务端收到后才设置 If-Match。

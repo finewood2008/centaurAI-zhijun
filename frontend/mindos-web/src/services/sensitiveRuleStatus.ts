@@ -1,21 +1,54 @@
 import { ApiError, buildHeaders, throwApiError } from './api'
 import { transportRequest } from './transport.ts'
 
-export interface SensitiveRuleStatus { state: 'active' | 'applying'; applying: boolean }
+export interface SensitiveRuleStatus {
+  state: 'disabled' | 'active' | 'pending' | 'applying' | 'failed'
+  applying: boolean
+  scanEnabled?: boolean
+  historicalScanRequired?: boolean
+  retryAvailable?: boolean
+  targetDetectorRevision?: string | null
+  rolloutManage?: boolean
+}
 
-export async function getSensitiveRuleStatus(signal?: AbortSignal): Promise<SensitiveRuleStatus> {
-  const response = await transportRequest('/api/mindos/settings/sensitive-rules/status', {
+export async function getSensitiveRuleStatus(signal?: AbortSignal, rolloutManage = false): Promise<SensitiveRuleStatus> {
+  const response = await transportRequest(rolloutManage
+    ? '/api/mindos/settings/sensitive-rules/rollout/status'
+    : '/api/mindos/settings/sensitive-rules/status', {
     headers: buildHeaders(), cache: 'no-store', signal,
   })
   if (!response.ok) await throwApiError(response)
-  const value: unknown = await response.json()
-  if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).length !== 2 || !('state' in value) || !('applying' in value)
-      || typeof value.state !== 'string' || !['active', 'applying'].includes(value.state)
-      || typeof value.applying !== 'boolean' || value.applying !== (value.state === 'applying')) {
+  const raw: unknown = await response.json()
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new ApiError('规则应用状态暂时无法读取', 502, 'INVALID_SENSITIVE_RULE_STATUS_RESPONSE')
   }
-  return { state: value.state as SensitiveRuleStatus['state'], applying: value.applying }
+  const value = raw as Record<string, unknown>
+  if (typeof value.state !== 'string' || typeof value.applying !== 'boolean') {
+    throw new ApiError('规则应用状态暂时无法读取', 502, 'INVALID_SENSITIVE_RULE_STATUS_RESPONSE')
+  }
+  if (!rolloutManage) {
+    if (!Object.keys(value).every(key => ['state', 'applying', 'historicalScanRequired'].includes(key))
+        || (value.historicalScanRequired !== undefined && typeof value.historicalScanRequired !== 'boolean')
+        || !['active', 'applying'].includes(value.state)
+        || value.applying !== (value.state === 'applying')) {
+      throw new ApiError('规则应用状态暂时无法读取', 502, 'INVALID_SENSITIVE_RULE_STATUS_RESPONSE')
+    }
+    return { state: value.state as SensitiveRuleStatus['state'], applying: value.applying,
+      ...(typeof value.historicalScanRequired === 'boolean' ? { historicalScanRequired: value.historicalScanRequired } : {}),
+      rolloutManage: false }
+  }
+  if (!['disabled', 'active', 'pending', 'applying', 'failed'].includes(value.state)
+      || typeof value.scanEnabled !== 'boolean'
+      || typeof value.historicalScanRequired !== 'boolean'
+      || typeof value.retryAvailable !== 'boolean'
+      || !(typeof value.targetDetectorRevision === 'string' || value.targetDetectorRevision === null)
+      || value.applying !== (value.state === 'applying')) {
+    throw new ApiError('规则应用状态暂时无法读取', 502, 'INVALID_SENSITIVE_RULE_STATUS_RESPONSE')
+  }
+  return { state: value.state as SensitiveRuleStatus['state'], applying: value.applying,
+    scanEnabled: value.scanEnabled, historicalScanRequired: value.historicalScanRequired,
+    retryAvailable: value.retryAvailable, targetDetectorRevision: value.targetDetectorRevision,
+    rolloutManage: true }
 }
 
 const POLL_INTERVAL_MS = 30_000
@@ -76,7 +109,7 @@ export function createSensitiveRuleStatusPoller(options: {
         if (!enabled || disposed || current.signal.aborted || ticket !== generation) return
         options.apply(result)
         options.onError(null)
-        if (result.applying) schedule(POLL_INTERVAL_MS)
+        if (result.state === 'applying') schedule(POLL_INTERVAL_MS)
       } catch (error) {
         if (!enabled || disposed || current.signal.aborted || ticket !== generation) return
         options.onError(error)
@@ -111,8 +144,9 @@ export function createSensitiveRuleStatusPoller(options: {
         else void run()
       }
     },
-    refresh() {
-      if (disposed || authorizationDenied) return
+    refresh(retryAuthorization = false) {
+      if (disposed || (authorizationDenied && !retryAuthorization)) return
+      if (retryAuthorization) authorizationDenied = false
       automaticPollingPaused = false
       nextAutomaticReadAt = 0
       generation++
