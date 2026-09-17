@@ -417,7 +417,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(audit["state"], "complete")
         self.assertEqual(audit["usage"]["input_tokens"], 12)
 
-    def test_extraction_uses_only_tracked_turn_and_never_auto_confirms(self):
+    def test_extraction_uses_only_tracked_turn_and_keeps_sources_when_remembering_directly(self):
         from mindos.zhijun import extract
         from mindos.zhijun.provider import fake_extract
         secret = self.claim()
@@ -432,9 +432,11 @@ class RoutingTests(unittest.TestCase):
             message_id=m["id"], user_text=text, prev_assistant=None)
         self.assertTrue(result["created"])
         self.assertNotIn(secret["content"], json.dumps(self.online.requests[-1].messages, ensure_ascii=False))
+        # V3（拍板 4）：「我是一名设计师」是亲口说的原话 → 直接记住（可撤回）；来源链与校准状态照旧如实记录。
+        self.assertEqual(result["autoConfirmed"], result["created"])
         for cid in result["created"]:
             c = self.onto.get_claim(cid)
-            self.assertEqual(c["trustState"], "working")
+            self.assertEqual((c["trustState"], c["trustOrigin"]), ("confirmed", "utterance"))
             self.assertIsNone(c["selfAlignment"]["level"])
             self.assertTrue(c["evidence"][0]["locator"]["routingSources"])
 

@@ -616,6 +616,20 @@ def existing_candidate(store, claim, subject_id, conversations, device_scope, *,
     return existing
 
 
+def auto_confirmable(claim: ValidatedClaim, user_text: str | None, *, input_origin: dict | None = None, allowed: bool = False) -> bool:
+    """拍板 4（V3 M2）：用户亲口说的、原话可精确引用、第一人称、高置信的事实直接记住（可撤回）。
+
+    六重守卫：本轮策略允许（important 模式且章程允许；「仅在我要求时整理」仍只出 working）、非辅助表达、
+    自述层（self_declared）、置信 ≥ 0.8、未降级、长期范围；且引用含第一人称、原话精确出现在用户这句话里。
+    """
+    quote = str(claim.quote or "")
+    return bool(
+        allowed and not input_origin and claim.layer == "self_declared" and claim.confidence >= AUTO_CONFIRM_CONFIDENCE
+        and not claim.downgraded and claim.scope == "long_term" and quote and _FIRST_PERSON_RE.search(quote)
+        and user_text and quote in user_text
+    )
+
+
 def persist(
     valid: list[ValidatedClaim],
     entities: list[dict],
@@ -625,6 +639,8 @@ def persist(
     message_id: str,
     routing_sources: list[dict] | None = None,
     input_origin: dict | None = None,
+    user_text: str | None = None,
+    auto_confirm_allowed: bool = False,
 ) -> dict:
     from ..stores.conversation_store import ConversationStore
     from .alignment import scope_for, visible
@@ -647,6 +663,7 @@ def persist(
     created: list[str] = []
     reaffirmed: list[str] = []
     promoted: list[str] = []
+    auto_confirmed: list[str] = []
     suppressed = 0
     for claim in valid:
         subject_id = _entity_id(store, claim.subject, entity_types, device_scope)
@@ -655,7 +672,7 @@ def persist(
         object_id = _entity_id(store, claim.object, entity_types, device_scope) if claim.object else None
         if object_id == subject_id:
             object_id = None
-        auto_confirm = not input_origin and routing_sources is None and claim.layer == "self_declared" and claim.confidence >= AUTO_CONFIRM_CONFIDENCE and not claim.downgraded
+        auto_confirm = auto_confirmable(claim, user_text, input_origin=input_origin, allowed=auto_confirm_allowed)
         evidence = [{"kind": "conversation_turn", "conversation_id": conversation_id, "message_id": message_id, "quote": claim.quote}]
         if routing_sources is not None:
             evidence[0]["locator"] = {"routingSources": routing_sources, "localOnly": True}
@@ -665,9 +682,9 @@ def persist(
         existing = existing_candidate(store, claim, subject_id, conversations, device_scope,
                                       guarded=routing_sources is not None)
         if existing is not None:
-            if routing_sources is not None or input_origin:
-                # An interpretation never rewrites a formal record or its lineage.
-                # The original user message remains available for explicit review.
+            # V3：重复说到已有理解 → 追加证据并刷新重申（原记录与来源链不改写）；同一消息只记一次证据。
+            # 辅助表达（AI 候选起草）不是独立证据，仍只抑制。待确认理解被本人再次亲口说到即确认。
+            if input_origin or any(e.get("messageId") == message_id for e in existing.get("evidence", [])):
                 suppressed += 1
                 continue
             store.add_evidence(existing["id"], evidence, reaffirm=True)
@@ -683,6 +700,7 @@ def persist(
                         note="用户再次亲口说到，视为确认",
                     )
                     promoted.append(existing["id"])
+                    auto_confirmed.append(existing["id"])
                 except OntologyConflictError:
                     pass
             continue
@@ -705,6 +723,7 @@ def persist(
             "context_ref": conversation_id if claim.scope == "context_only" else None,
             "privacy_level": claim.privacy_level,
             "valid_to": claim.valid_to,
+            "why_it_matters": (claim.why_it_matters or "").strip()[:120] or None,
         }
         try:
             result = store.create_claim(
@@ -724,7 +743,10 @@ def persist(
             logger.debug("候选理解写入被拒：%s", exc)
             continue
         created.append(result["id"])
-    return {"created": created, "reaffirmed": reaffirmed, "promoted": promoted, "suppressed": suppressed}
+        if auto_confirm:
+            auto_confirmed.append(result["id"])
+    return {"created": created, "reaffirmed": reaffirmed, "promoted": promoted, "suppressed": suppressed,
+            "autoConfirmed": auto_confirmed}
 
 
 def run_extraction(
@@ -740,7 +762,7 @@ def run_extraction(
     request_message_id: str | None = None,
 ) -> dict:
     if input_origin and input_origin.get("kind") == "control":
-        return {"state": "skipped", "reason": "conversation_control", "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}
+        return {"state": "skipped", "reason": "conversation_control", "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0, "autoConfirmed": []}
     prev_assistant = strip_citation_markers(prev_assistant).strip()[-300:] if prev_assistant else None
     # Self-contained statements need no assistant reconstruction (whose source
     # ancestry may include a charter or other unapproved material). Only an
@@ -750,7 +772,7 @@ def run_extraction(
         prev_assistant = None
     ok, reason = should_extract(user_text, prev_assistant)
     if not ok:
-        return {"state": "skipped", "reason": reason, "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0}
+        return {"state": "skipped", "reason": reason, "created": [], "reaffirmed": [], "promoted": [], "suppressed": 0, "autoConfirmed": []}
     known = store.entity_names_for_conversation(conversation_id)
     existing = store.list_claims(trust_states=("confirmed", "working"), limit=20)
     from .routing import GuardedProvider
@@ -790,6 +812,7 @@ __all__ = [
     "ProviderError",
     "ValidatedClaim",
     "admission",
+    "auto_confirmable",
     "build_request",
     "constrain_onboarding",
     "explicit_memory_request",

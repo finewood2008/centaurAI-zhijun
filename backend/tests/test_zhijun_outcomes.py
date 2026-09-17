@@ -75,7 +75,11 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(out["conversationId"], conv["id"])
         self.assertEqual([c["id"] for c in out["confirmedClaims"]], [first["id"]])
         self.assertEqual([c["id"] for c in out["workingClaims"]], [second["id"]])
-        self.assertEqual(set(out["confirmedClaims"][0]), {"id", "content", "section", "layer"})
+        self.assertEqual(set(out["confirmedClaims"][0]), {"id", "content", "section", "layer", "trustOrigin", "createdAt", "undoable"})
+        # 经点头确认的理解来源是 user_confirm，不是「亲口说的直接记下」→ 不提供一键撤回
+        self.assertEqual((out["confirmedClaims"][0]["trustOrigin"], out["confirmedClaims"][0]["undoable"]), ("user_confirm", False))
+        self.assertEqual(out["confirmedClaims"][0]["createdAt"], self.onto.get_claim(first["id"])["createdAt"])
+        self.assertEqual((out["workingClaims"][0]["trustOrigin"], out["workingClaims"][0]["undoable"]), ("model", False))
         self.assertIsNone(out["decision"])
         self.assertEqual(out["commitments"], [])
         self.assertEqual(out["pendingJobs"], 0)
@@ -105,6 +109,8 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(out["decision"]["title"], "测试要不要外包")
         self.assertEqual(out["commitments"], [{"claimId": commit["id"], "content": "我承诺三个月内把团队招齐", "validTo": commit["validTo"]}])
         self.assertEqual(len(out["confirmedClaims"]), 2)
+        # 亲口说的（utterance）且证据来自本会话 → undoable；另一会话看同一条则不可从那里撤回
+        self.assertEqual({c["id"]: c["undoable"] for c in out["confirmedClaims"]}, {first["id"]: False, commit["id"]: True})
         self.assertEqual(self._list_item(conv["id"])["outcomes"], {"confirmed": 2, "working": 1, "decision": True, "commitments": 1})
 
         # 撤回后不再计入已确认，retracted 计数加一

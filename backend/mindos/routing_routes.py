@@ -220,7 +220,9 @@ def set_mode(conversation_id: str, req: Mode, request: Request):
         service = service_info(p)["id"]
         if not p.external or not req.acknowledge or req.serviceId != service:
             fail("ONLINE_OPT_IN_REQUIRED", "请明确确认当前在线服务；不能自动启用")
-        if r.mode["mode"] in ("legacy", "local") and r.convs.count_messages(conversation_id) and not req.freshContext:
+        # V3：知君先开口的模板消息不是受保护的旧历史；只有模板开场的新会话可直接转在线。
+        from .zhijun.routing import has_conversation_history
+        if r.mode["mode"] in ("legacy", "local") and has_conversation_history(r.convs, conversation_id) and not req.freshContext:
             fail("FRESH_CONTEXT_REQUIRED", "旧会话保留本地保护；请明确开启不携带旧历史的在线上下文")
         if req.freshContext:
             messages = r.convs.list_messages(conversation_id)

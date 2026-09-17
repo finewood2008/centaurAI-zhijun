@@ -11,7 +11,7 @@ import {
   type ZhijunHomeOverview,
 } from '@/services/api'
 import { useToast } from '@/composables/useToast'
-import { greetingLine } from '@/shared/labels'
+import { greetingLine, initiatedKindLabel } from '@/shared/labels'
 import RelationshipMap from '@/components/today/RelationshipMap.vue'
 import RelationshipTimeline from '@/components/today/RelationshipTimeline.vue'
 import HomeNodePanel from '@/components/today/HomeNodePanel.vue'
@@ -34,6 +34,8 @@ let pollCount = 0
 
 const dateLine = computed(() => greetingLine(''))
 const selectedNode = computed(() => overview.value?.map.nodes.find((node) => node.id === selectedId.value) ?? null)
+// 记忆 V3 · M8：知君主动发起、你还没回的会话；只读 overview，不另发请求；空则整段不显示
+const initiatedRows = computed(() => (overview.value?.initiated ?? []).slice(0, 3))
 
 function clearPoll() {
   if (pollTimer) clearTimeout(pollTimer)
@@ -124,6 +126,7 @@ async function runPrimaryAction() {
     }
     return
   }
+  // chat / nudge / commitment / inquiry（求知引擎的一句问句）都带着话头去对话页。
   // System-generated prompts may quote protected decisions, summaries or claims.
   router.push({ path: '/chat', query: action.say ? { say: action.say, localOnly: '1' } : undefined })
 }
@@ -162,6 +165,7 @@ onBeforeUnmount(() => {
 
     <template v-else>
       <div class="zj-today__grid">
+        <div class="zj-today__letter-col">
         <article class="zj-letter" aria-label="知君写给你的今日来信">
           <header class="zj-letter__identity">
             <span class="zj-letter__seal" aria-hidden="true">知</span>
@@ -191,12 +195,28 @@ onBeforeUnmount(() => {
 
           <button class="zj-letter__action" type="button" :disabled="actionBusy" @click="runPrimaryAction">
             <span>
-              <small>读完这封信，可以从这里继续</small>
+              <small>{{ overview.nextAction.kind === 'inquiry' ? '读完这封信，知君还想问你一句' : '读完这封信，可以从这里继续' }}</small>
               <strong>{{ overview.nextAction.title }}</strong>
             </span>
             <ArrowRight :size="18" aria-hidden="true" />
           </button>
         </article>
+
+        <section v-if="initiatedRows.length" class="zj-initiated" aria-label="知君想和你聊" data-testid="initiated-section">
+          <p class="zj-initiated__title">知君想和你聊</p>
+          <ul>
+            <li v-for="item in initiatedRows" :key="item.conversationId">
+              <RouterLink :to="`/c/${encodeURIComponent(item.conversationId)}`" class="zj-initiated__row">
+                <span class="zj-seal zj-seal--muted">{{ initiatedKindLabel(item.kind) }}</span>
+                <span class="zj-initiated__text">
+                  <strong>{{ item.title || '知君想和你聊聊' }}</strong>
+                  <small v-if="item.whyNow">{{ item.whyNow }}</small>
+                </span>
+              </RouterLink>
+            </li>
+          </ul>
+        </section>
+        </div>
 
         <RelationshipMap
           class="zj-today__map"
@@ -267,8 +287,14 @@ onBeforeUnmount(() => {
 .zj-today__grid > *, .zj-today__matters { min-width: 0; max-width: 100%; }
 .zj-today__map { grid-area: map; }
 .zj-today__panel { grid-area: panel; }
-.zj-letter {
+.zj-today__letter-col {
   grid-area: letter;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+.zj-letter {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
@@ -409,6 +435,45 @@ onBeforeUnmount(() => {
 .zj-letter__action strong { font-size: 14px; font-weight: 600; }
 .zj-letter__action:hover:not(:disabled) { filter: brightness(.94); }
 .zj-letter__action:focus-visible { outline: 3px solid rgba(166, 69, 46, .2); outline-offset: 3px; }
+/* 知君想和你聊：安静的一段，只在有未回的主动会话时出现 */
+.zj-initiated {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 18px 10px;
+  border: 1px solid var(--ws-border-color-3, #e8e2d7);
+  border-radius: 14px;
+}
+.zj-initiated__title {
+  margin: 0;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .08em;
+}
+.zj-initiated ul { list-style: none; margin: 0; padding: 0; display: grid; }
+.zj-initiated__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 0;
+  border-top: 1px solid var(--ws-border-color-3, #e8e2d7);
+  color: inherit;
+  text-decoration: none;
+}
+.zj-initiated li:first-child .zj-initiated__row { border-top: 0; }
+.zj-initiated__row .zj-seal { flex: none; margin-top: 2px; }
+.zj-initiated__text { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.zj-initiated__text strong {
+  color: var(--ws-text-primary-color, #1d211f);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.zj-initiated__text small { color: var(--ws-text-secondary-color, #686b66); font-size: 12px; line-height: 1.6; }
+.zj-initiated__row:hover strong, .zj-initiated__row:focus-visible strong { color: var(--ws-primary-color, #a6452e); }
+.zj-initiated__row:focus-visible { outline: none; }
 .zj-today__first-note {
   margin: -6px 0 0;
   text-align: center;

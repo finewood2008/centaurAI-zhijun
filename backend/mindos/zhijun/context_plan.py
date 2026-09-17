@@ -73,6 +73,15 @@ def _needs_implicit_material_search(content, allowed_history, focus, *, queries=
     return bool(focus.get("continuation") and any(_has_material_ancestry(message) for message in allowed_history[-12:]))
 
 
+IN_PROFILE_NOTE = "（已在核心画像）"
+ANCHOR_SECTIONS = ("people", "principles")
+
+
+def _short(title, limit=24):
+    text = " ".join(str(title or "").split())
+    return text if len(text) <= limit else text[: max(1, limit - 1)].rstrip() + "…"
+
+
 def render_context_plan(plan):
     """Rebuild only from final visible items; privacy parents never become text."""
     focus = plan.get("focus") or {}
@@ -90,6 +99,10 @@ def render_context_plan(plan):
     for index, item in enumerate([*plan["background"], *plan["evidence"]], 1):
         item["citationId"] = f"p{index}"
         refs.append(item["ref"])
+        if item.get("inProfile"):
+            # V3：这条已由核心画像常驻提供；仍是本轮真实读取（计数 / 回执如实），只是不再重复原文。
+            blocks.append(f"[{item['citationId']}] {_short(item['title'])} · {item['category']}\n{IN_PROFILE_NOTE}")
+            continue
         risk = ("【未经验证原文：敏感检测未完成，可能包含敏感信息；用户放行不表示检测通过。】\n"
                 if (item.get("material") or {}).get("verificationStatus") == "unverified" else "")
         blocks.append(f"[{item['citationId']}] {item['title']} · {item['category']}\n{risk}{item['text']}")
@@ -118,7 +131,11 @@ def fit_context_plan(plan, max_bytes):
 
 def build_context_plan(router, content, allowed_history, *, provider, purpose="chat",
                        intent="conversation", omit=False, queries=None, complex=False, material_refs=None,
-                       rag_interaction_id=None):
+                       rag_interaction_id=None, profile_ids=None, anchors=False):
+    """``profile_ids``：已由核心画像常驻提供的理解。它们照旧参与背景 / 候选 / previous-direct 的挑选、
+    计数与回执（本轮确实读取了），只在渲染时标 ``inProfile`` 并以「（已在核心画像）」代替原文，避免提示词重复。
+    ``anchors``（商量 / 深入）：people / principles 分区放宽到 .08 闸门、每区最多 1 条（reason=anchor）。"""
+    profile_ids = set(profile_ids or ())
     from .memory_context import build_focus, matter_control, explicit_matter_review
     from .memory_retrieval import confirmed_background, retrieve_claims
     matter_binding, matter_candidate = context_sources.bound_matter(router, include_inactive=explicit_matter_review(content))
@@ -181,13 +198,17 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
         node = closure[0]
         item = {"kind": node["kind"], "id": node["id"], "version": node["version"],
                 "title": candidate.get("title", node["title"]), "text": candidate.get("text", node["text"]),
-                "ref": node["ref"], "category": candidate["category"], "relevanceScore": candidate.get("score", 0)}
+                "ref": node["ref"], "category": candidate["category"],
+                # Ranking uses the maturity-boosted score; thresholds (authorization asks, drops) use pure relevance.
+                "relevanceScore": candidate.get("relevance", candidate.get("score", 0))}
         # Record evidence family separately from provided text. This does not
         # turn authorization ancestors into passages the model supposedly read.
         item["supportSourceIds"] = sorted({s["key"] for s in closure if s["kind"] in ("message", "material")})
         for key in ("claim", "material", "decision"):
             if key in candidate:
                 item[key] = candidate[key]
+        if candidate.get("inProfile"):
+            item["inProfile"] = True
         missing = provider.external and any(not router.allowed(s, service, purpose) for s in closure)
         return {"item": item, "missing": missing, "score": candidate.get("score", 0), "candidate": candidate}
 
@@ -205,7 +226,8 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
     background = confirmed_background(router.onto, conversations=router.convs, scope=router.scope, limit=32, budget=4800)
     seen, used_chars = set(), 0
     for claim in background:
-        candidate = {"ref": context_sources.claim_ref(router, claim), "category": "background", "claim": claim, "text": context_sources.claim_text(claim)}
+        candidate = {"ref": context_sources.claim_ref(router, claim), "category": "background", "claim": claim,
+                     "text": context_sources.claim_text(claim), "inProfile": claim["id"] in profile_ids}
         ready = resolve(candidate)
         if not ready:
             continue
@@ -222,7 +244,8 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
             break
 
     claims = retrieve_claims(router.onto, content, allowed_history, intent=intent, limit=120,
-        conversations=router.convs, scope=router.scope, queries=queries, focus=focus)
+        conversations=router.convs, scope=router.scope, queries=queries, focus=focus,
+        anchor_sections=ANCHOR_SECTIONS if anchors else ())
     if focus.get("continuation"):
         # Reread the latest reply's direct records, never every ancestor in its
         # privacy closure. This preserves continuity even without matching words.
@@ -240,7 +263,9 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
                         claims.append({**claim, "score": .20, "retrievalReason": "previous-direct"})
     candidates = [{"ref": context_sources.claim_ref(router, c),
                    "category": "historical" if c["trustState"] not in ("confirmed", "working") else "ontology", "claim": c,
-                   "text": context_sources.claim_text(c), "score": c.get("score", 0)} for c in claims]
+                   "text": context_sources.claim_text(c), "score": c.get("score", 0),
+                   "relevance": c.get("relevance", c.get("score", 0)),
+                   "inProfile": c["id"] in profile_ids} for c in claims]
     adapters = [context_sources.history_candidates, context_sources.summary_candidates,
                 context_sources.decision_candidates]
     workspace_rag = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
@@ -375,7 +400,7 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
             # preview, even when the public search score is low.
             result["evidence"].append(ready["item"])
             continue
-        high = ready["score"] >= .45
+        high = ready["item"]["relevanceScore"] >= .45
         lookup_text = (ready["item"].get("claim") or {}).get("content", ready["item"]["text"])
         lookup_match = bool(queries) and context_sources.relevance(queries, lookup_text) >= .45
         if (ready["item"].get("claim") or {}).get("trustState") == "working" and working:

@@ -1,11 +1,16 @@
 <script setup lang="ts">
 // 「这段对话留下的」：一轮聊完后消息流底部的一张安静小卡。不是弹层，不阻断离开，没有按钮催人。
 // 数据来自 GET /conversations/{id}/outcomes；全零时由父组件不渲染。
-import { computed } from 'vue'
-import type { ConversationOutcomes } from '@/services/api'
+// 唯一的动作：你亲口说的、被直接记下的理解（undoable）可以一键撤回；撤回后父组件重新读取成果。
+import { computed, reactive } from 'vue'
+import { reviewClaim, type ConversationOutcomes, type OutcomeClaimBrief } from '@/services/api'
 import { formatDay } from '@/shared/ontology'
+import { useToast } from '@/composables/useToast'
 
-const props = defineProps<{ outcomes: ConversationOutcomes }>()
+const props = defineProps<{ outcomes: ConversationOutcomes; conversationId?: string }>()
+const emit = defineEmits<{ (e: 'refresh'): void }>()
+const toast = useToast()
+const busy = reactive<Record<string, boolean>>({})
 
 const MAX_SHOWN = 3
 const confirmed = computed(() => props.outcomes.confirmedClaims ?? [])
@@ -23,6 +28,20 @@ function dueText(iso: string | null | undefined): string {
   if (d.valueOf() > Date.now()) return `${d.getMonth() + 1}月${d.getDate()}日`
   return formatDay(iso)
 }
+
+async function undo(claim: OutcomeClaimBrief) {
+  if (busy[claim.id]) return
+  busy[claim.id] = true
+  try {
+    await reviewClaim(claim.id, { action: 'retract', surface: 'conversation', conversationId: props.conversationId })
+    toast({ type: 'success', message: '已撤回，知君不会再当作对你的认识' })
+    emit('refresh')
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error && err.message ? err.message : '撤回未完成，请重试' })
+  } finally {
+    delete busy[claim.id]
+  }
+}
 </script>
 
 <template>
@@ -34,6 +53,7 @@ function dueText(iso: string | null | undefined): string {
         <ul class="zj-outcomes__claims">
           <li v-for="c in shownConfirmed" :key="c.id">
             <RouterLink :to="{ path: '/me', query: { section: c.section, claim: c.id } }">{{ c.content }}</RouterLink>
+            <span v-if="c.undoable" class="zj-outcomes__undo" data-testid="outcome-undo">你亲口说的，已直接记下 · <button type="button" class="zj-outcomes__undo-btn" :disabled="!!busy[c.id]" @click="undo(c)">撤回</button></span>
           </li>
           <li v-if="moreConfirmed > 0" class="zj-outcomes__more">
             <RouterLink to="/me">还有 {{ moreConfirmed }} 条</RouterLink>
@@ -113,5 +133,32 @@ function dueText(iso: string | null | undefined): string {
 }
 .zj-outcomes__muted {
   color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-outcomes__undo {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  white-space: nowrap;
+}
+.zj-outcomes__undo-btn {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted currentColor;
+  background: transparent;
+  font: inherit;
+  color: var(--ws-text-secondary-color, #686b66);
+  cursor: pointer;
+}
+.zj-outcomes__undo-btn:hover {
+  color: var(--ws-primary-color, #a6452e);
+}
+.zj-outcomes__undo-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.zj-outcomes__undo-btn:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 </style>

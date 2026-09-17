@@ -39,11 +39,13 @@ class MemoryPolicyTests(unittest.TestCase):
                                 json=body, headers={"x-test-device": device} if device else {})
 
     def ingest(self, text, *, cid=None, content=None, section="matters", scope="context_only",
-               predicate="happened", layer="self_declared", sources=None, input_origin=None):
+               predicate="happened", layer="self_declared", sources=None, input_origin=None, confidence=.7):
+        # 默认置信 .7（< 0.8）：这些用例测的是待确认候选（提醒卡 / 队列）的机制。
+        # V3 拍板 4 下，第一人称、原话精确引用、置信 ≥ .8 的长期自述会直接记为已确认；那些用例显式传 confidence=.95。
         cid = cid or self.cid
         message = self.convs.append_message(cid, "user", text, meta={"routingSources": sources or []})
         value = extract.ValidatedClaim(section=section, layer=layer, predicate=predicate, subject="me", object=None,
-            content=content or text, quote=content or text, confidence=.95, scope=scope, privacy_level="private",
+            content=content or text, quote=content or text, confidence=confidence, scope=scope, privacy_level="private",
             why_it_matters="帮助安排这次行动的时间与参与者，并在后续核对具体约束")
         result = memory.process_candidates([value], [], store=self.onto, conversation_id=cid,
             message_id=message["id"], user_text=text, routing_sources=sources, input_origin=input_origin)
@@ -176,7 +178,9 @@ class MemoryPolicyTests(unittest.TestCase):
         self.assertEqual(len(result["created"]), 1)
         candidate = self.onto.get_claim(result["created"][0])
         self.assertEqual(candidate["section"], "principles")
-        self.assertEqual(candidate["trustState"], "working")
+        # V3（拍板 4）：底线是亲口说的、原话精确引用的自述 → 直接记住（可撤回），不再等点头。
+        self.assertEqual((candidate["trustState"], candidate["trustOrigin"]), ("confirmed", "utterance"))
+        self.assertEqual(result["autoConfirmed"], result["created"])
         self.assertIsNone(candidate["selfAlignment"]["level"])
 
     def test_policy_persists_idempotently_with_conflicts_and_device_isolation(self):
@@ -207,6 +211,87 @@ class MemoryPolicyTests(unittest.TestCase):
         self.assertEqual(claim["trustState"], "working")
         self.assertIsNone(claim["selfAlignment"]["level"])
         self.assertEqual(self.attention()["candidate"]["id"], claim["id"])
+
+    def test_first_person_exact_quote_is_remembered_directly_and_undoable(self):
+        # 拍板 4：亲口说的、原话可精确引用、第一人称、高置信的事实直接记住（可撤回）；推测与资料观察仍需点头。
+        text = "我在一家合成制造企业任总经理"
+        result, message = self.ingest(text, scope="long_term", section="who", predicate="role", confidence=.95)
+        self.assertEqual(len(result["created"]), 1)
+        self.assertEqual(result["autoConfirmed"], result["created"])
+        claim = self.onto.get_claim(result["created"][0])
+        self.assertEqual((claim["trustState"], claim["trustOrigin"]), ("confirmed", "utterance"))
+        self.assertEqual(claim["evidence"][0]["messageId"], message["id"])
+        self.assertIsNone(self.attention()["candidate"], "直接记住的理解不再需要点头")
+        self.assertEqual(self.pending().json()["total"], 0)
+        outcomes = self.client.get(f"/api/mindos/conversations/{self.cid}/outcomes").json()
+        self.assertEqual([(c["id"], c["trustOrigin"], c["undoable"]) for c in outcomes["confirmedClaims"]], [(claim["id"], "utterance", True)])
+        self.assertEqual(outcomes["confirmedClaims"][0]["createdAt"], claim["createdAt"])
+        # 一键撤回 → 墓碑：模型的重复抽取不再回流；只有本人再次亲口陈述（规则成立）才替代墓碑。
+        self.onto.transition(claim["id"], "retract", surface="conversation", conversation_id=self.cid)
+        repeat, _ = self.ingest(text, scope="long_term", section="who", predicate="role", confidence=.7)
+        self.assertEqual(repeat["created"], [])
+        self.assertEqual(repeat["filterReasons"]["retracted"], 1)
+        self.assertEqual(self.onto.get_claim(claim["id"])["trustState"], "retracted")
+        self.assertEqual(self.client.get(f"/api/mindos/conversations/{self.cid}/outcomes").json()["retracted"], 1)
+        restated, _ = self.ingest(text, scope="long_term", section="who", predicate="role", confidence=.95)
+        self.assertEqual(len(restated["created"]), 1)
+        replacement = self.onto.get_claim(restated["created"][0])
+        self.assertEqual((replacement["trustState"], replacement["supersedesId"]), ("confirmed", claim["id"]))
+
+    def test_manual_mode_keeps_first_person_fact_working(self):
+        self.ledger.set_policy("global", "manual", 0)
+        content = "我长期负责合成项目研发"
+        result, _ = self.ingest("请记住：" + content, content=content, scope="long_term", predicate="working_on", confidence=.95)
+        self.assertEqual(len(result["created"]), 1)
+        self.assertEqual(result["autoConfirmed"], [])
+        claim = self.onto.get_claim(result["created"][0])
+        self.assertEqual((claim["trustState"], claim["trustOrigin"]), ("working", "model"))
+        self.assertEqual(self.attention()["candidate"]["id"], claim["id"])
+
+    def test_assisted_expression_is_never_remembered_directly(self):
+        text = "我长期负责合成项目研发"
+        message = self.convs.append_message(self.cid, "user", text, meta={"routingSources": [], "replyAssistance": {"kind": "assisted"}})
+        value = extract.ValidatedClaim(section="matters", layer="self_declared", predicate="working_on", subject="me", object=None,
+            content=text, quote=text, confidence=.95, scope="long_term", privacy_level="private",
+            why_it_matters="讨论工作安排时需要知道用户长期负责的方向")
+        result = extract.persist([value], [], store=self.onto, conversation_id=self.cid, message_id=message["id"],
+                                 routing_sources=[], input_origin={"kind": "assisted"}, user_text=text, auto_confirm_allowed=True)
+        self.assertEqual(len(result["created"]), 1)
+        self.assertEqual(result["autoConfirmed"], [])
+        self.assertEqual(self.onto.get_claim(result["created"][0])["trustState"], "working")
+        # 辅助表达再次命中已有理解：不算独立证据，只抑制
+        again = extract.persist([value], [], store=self.onto, conversation_id=self.cid, message_id=message["id"],
+                                routing_sources=[], input_origin={"kind": "assisted"}, user_text=text, auto_confirm_allowed=True)
+        self.assertEqual((again["created"], again["reaffirmed"], again["suppressed"]), ([], [], 1))
+
+    def test_repeat_adds_evidence_once_and_own_restatement_confirms_working(self):
+        text = "我在一家合成制造企业任总经理"
+        first, m1 = self.ingest(text, scope="long_term", section="who", predicate="role", confidence=.7)
+        claim = self.onto.get_claim(first["created"][0])
+        self.assertEqual(claim["trustState"], "working")
+        # 同一条消息重放（模型换了措辞）：不重复加证据、不重申
+        value = extract.ValidatedClaim(section="who", layer="self_declared", predicate="role", subject="me", object=None,
+            content=text, quote=text, confidence=.95, scope="long_term", privacy_level="private", why_it_matters="职业建议需要结合用户的岗位职责")
+        replay = memory.process_candidates([value], [], store=self.onto, conversation_id=self.cid, message_id=m1["id"], user_text=text, routing_sources=[])
+        self.assertEqual((replay["created"], replay["reaffirmed"], replay["promoted"]), ([], [], []))
+        self.assertEqual(replay["filterReasons"]["existing"], 1)
+        self.assertEqual(len(self.onto.get_claim(claim["id"])["evidence"]), 1)
+        # 换一条消息再次亲口说到：追加证据、刷新重申；待确认理解即确认
+        second, m2 = self.ingest(text, scope="long_term", section="who", predicate="role", confidence=.95)
+        self.assertEqual(second["created"], [])
+        self.assertEqual((second["reaffirmed"], second["promoted"], second["autoConfirmed"]), ([claim["id"]], [claim["id"]], [claim["id"]]))
+        refreshed = self.onto.get_claim(claim["id"])
+        self.assertEqual(refreshed["trustState"], "confirmed")
+        self.assertEqual([e["messageId"] for e in refreshed["evidence"]], [m1["id"], m2["id"]])
+        self.assertGreaterEqual(refreshed["lastReaffirmed"], claim["lastReaffirmed"])
+        # 已确认的再说一次：只追加证据并重申，不再「晋升」
+        third, m3 = self.ingest(text, scope="long_term", section="who", predicate="role", confidence=.95)
+        self.assertEqual((third["created"], third["reaffirmed"], third["promoted"]), ([], [claim["id"]], []))
+        self.assertEqual([e["messageId"] for e in self.onto.get_claim(claim["id"])["evidence"]], [m1["id"], m2["id"], m3["id"]])
+        # 疑问句 / 假设里切出来的片段不算重申
+        asked, _ = self.ingest("如果" + text + "，你会怎么建议？", content=text, scope="long_term", section="who", predicate="role", confidence=.95)
+        self.assertEqual((asked["created"], asked["reaffirmed"]), ([], []))
+        self.assertEqual(len(self.onto.get_claim(claim["id"])["evidence"]), 3)
 
     def test_context_fragments_merge_into_one_durable_draft_without_claims(self):
         first, m1 = self.ingest("我明天去合成活动了解参与者的背景")

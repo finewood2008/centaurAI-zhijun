@@ -15,10 +15,28 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class QuietHoursUpdate(_StrictModel):
+    start: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class ProactiveUpdate(_StrictModel):
+    """知君主动发起对话的节律（V3 M8）；只更新传入的字段，null 表示清除。"""
+    enabled: bool | None = Field(default=None, strict=True)
+    maxPerDay: int | None = Field(default=None, ge=0, le=5)
+    minGapHours: int | None = Field(default=None, ge=1, le=24)
+    quietHours: QuietHoursUpdate | None = None
+    snoozeUntil: str | None = Field(default=None, max_length=40)
+    greetAfterDays: int | None = Field(default=None, ge=0, le=365)
+    # 只读：由节律引擎写（连续没回应时退避）；客户端把读回的整个对象原样 PUT 也不报错，但这个值不采纳。
+    backoffUntil: str | None = Field(default=None, max_length=40)
+
+
 class PolicyUpdate(_StrictModel):
     enabled: bool | None = None
     maxPerDay: int | None = Field(default=None, ge=1, le=10)
     silencedRefs: list[str] | None = Field(default=None, max_length=200)
+    proactive: ProactiveUpdate | None = None
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
@@ -55,9 +73,16 @@ def get_policy():
 
 
 def put_policy(req: PolicyUpdate):
+    proactive = None
+    if req.proactive is not None:
+        # 只带用户真的传了的字段：snoozeUntil: null 是「清除」，不传是「保留」。
+        proactive = req.proactive.model_dump(exclude_unset=True)
+        proactive.pop("backoffUntil", None)  # 服务端维护，忽略客户端的值
+        if req.proactive.quietHours is not None:
+            proactive["quietHours"] = req.proactive.quietHours.model_dump(exclude_unset=True, exclude_none=True)
     try:
         return ConversationStore.instance().save_nudge_policy(
-            enabled=req.enabled, max_per_day=req.maxPerDay, silenced_refs=req.silencedRefs
+            enabled=req.enabled, max_per_day=req.maxPerDay, silenced_refs=req.silencedRefs, proactive=proactive
         )
     except ConversationError as exc:
         raise _error(400, "BAD_REQUEST", str(exc)) from None

@@ -31,6 +31,8 @@ PERSONA_CORE = f"""你是知君，一位有记忆边界、可核对、不会替�
 - 用户从 AI 候选起草后发送的内容，只作为此刻交流线索；不是独立自述或长期画像确认，不重复拿候选、你的总结当作新的认识证据。
 - 普通对话里的理解、复述和回复不会自动成为正式记录。除非系统明确提供本轮写入成功的结果，不得声称已永久记住、已更新本体、已保存或已作废；否则只能说会在当前对话中参考，正式理解仍待用户核对。
 - 先推进已经明确的事情：结合当前事件、已说清的条件和相关依据给出有用回应，不把他这一句原样复述一遍。只有确实影响回答的信息缺失时才问最多一个具体问题；不是每轮必须提问，已经回答过的条件不重复索取。非关键缺口可以明确标为假设或待补充，同时先完成不依赖该信息的部分。来源标签只用于之前记下的理解，不给用户刚说的话贴标签。普通闲聊默认 150 字以内。
+- 把对话往深处带时按阶梯走：接住（先回应他说的与他的感受）→ 具体化（一个例子、一个数字、一个场景）→ 连过去（和他说过的、做过的判断连起来）→ 一个好问题 → 看法 → 留白。每轮只推一两步，不跳级；他在倾诉时停在前两步。
+- 核心画像是你对他的稳定认识：相关时自然地说「上次你说……」并带来源标签，不整段复述、不列清单、不为了显示记得而硬提；画像与本轮所说冲突时以本轮为准，并轻声核对一句。
 - 用户要求深入、比较方案或完整文稿时，先给简短结论，再按任务需要展开，不受普通闲聊的字数上限或固定五段限制。谈话提纲、会前准备、决策备忘录和行动小结应可直接阅读使用；未知人物、时间、数据与未作出的决定明确留待确认，不能为完整而编造。只有确有必要才提出后续问题。
 - 用户只是倾诉、疲惫或表示暂不行动时，先倾听，不强迫形成判断、文稿、承诺或待办。不把一次状态推为长期人格。提供帮助时可提出用户未提及的新选项，但标明是知君的建议，不能当作用户已经表达或认可。
 - 敢挑战，按章程里「允许的挑战方式」来（没有章程时：先问一个反向问题，再给一个可逆的小建议）。挑战只能基于已确认的理解和他自己记下的判断，不用未确认的印象挑战他。
@@ -74,6 +76,35 @@ def review_instruction(decision: dict | None, outcome_recorded: bool) -> str:
     )
 
 
+NEUTRAL_OPENING = "从你眼下在意的事聊起吧。可以一起想清楚一件事，也可以只是说说，不必马上作决定。"
+
+
+def chat_opening(profile_lines: list[dict] | None, target: dict | None, *, proactive: bool = True) -> tuple[str, list[dict]]:
+    """普通对话的开场白：模板生成、不调模型。返回 (文本, 引用的来源 ref 列表)。
+
+    有近期脉络 + 目标 →「上次我们聊到「主题」。问句」；只有目标 → 问句；无画像或不允许主动 → 最轻的一句。
+    只引用画像里的近期脉络与目标本身（画像已排除 restricted；求知目标不取 sensitive），引用 ≤ 40 字。
+    """
+    lines = [line for line in (profile_lines or []) if isinstance(line, dict)]
+    if not proactive or not lines:
+        return NEUTRAL_OPENING, []
+    theme = next((line for line in lines if line.get("section") == "recent" and line.get("kind") == "theme" and line.get("content")), None)
+    topic = str(theme["content"]).split("；")[0].strip() if theme else ""
+    topic = topic if len(topic) <= 24 else topic[:23].rstrip() + "…"
+    question = str((target or {}).get("question") or "").strip()[:80]
+    sources: list[dict] = []
+    if theme and topic and question:
+        sources.append(dict(theme["ref"]))
+        sources.extend(dict(ref) for ref in (target.get("refs") or []) if isinstance(ref, dict))
+        return f"上次我们聊到「{topic}」。{question}", sources
+    if question:
+        sources.extend(dict(ref) for ref in (target.get("refs") or []) if isinstance(ref, dict))
+        return question, sources
+    if theme and topic:
+        return f"上次我们聊到「{topic}」。今天从哪里开始都可以。", [dict(theme["ref"])]
+    return NEUTRAL_OPENING, []
+
+
 def review_opening(decision: dict | None) -> str:
     """回访会话的开场白：模板生成、不调模型；先问感受，不催结果。"""
     if not decision:
@@ -82,6 +113,78 @@ def review_opening(decision: dict | None) -> str:
     choice = str(decision.get("choice") or "").strip()
     expected = str(decision.get("expectedOutcome") or "").strip()[:80]
     return f"「{title}」到了回访的时候。当时你选了「{choice}」，预期是「{expected}」。先别急着说结果，这段时间你感觉怎么样？"
+
+
+# ---------------------------------------------------------------- 知君发起的对话（V3 M8）
+PROACTIVE_GREETING = "好几天没聊了。最近有什么在忙的事？不想聊也没关系。"
+
+
+def _short(value, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: max(1, limit - 1)].rstrip() + "…"
+
+
+def proactive_opening(kind: str, payload: dict | None = None) -> str:
+    """知君主动开口的第一句：模板生成、不调模型；第一人称，一句说清「为何现在」，最多一个轻问句或不问。
+
+    不假装有情绪或自己的生活；不催、不哄；用户不回也可以。
+    """
+    data = payload or {}
+    if kind == "review_due":
+        return f"「{_short(data.get('title') or '那件事', 40)}」到了你当时定的回访日。先不用急着说结果，这段时间感觉怎么样？"
+    if kind == "commitment_due":
+        date = str(data.get("date") or "").strip()
+        when = f"期限是{date}" if date else "期限到了"
+        return f"你说过「{_short(data.get('content'), 40)}」，{when}。进展怎么样？不想聊也可以先放着。"
+    if kind == "principle_tension":
+        a, b = data.get("a"), data.get("b")
+        if a and b:
+            return f"「{_short(a, 40)}」是你确认过的原则，而最近「{_short(b, 40)}」。是原则变了，还是这次情况特殊？"
+        return f"{_short(data.get('message') or '有两条理解放在一起有点张力', 120)} 我不急着下结论，只是想听你怎么看。"
+    if kind == "weekly_review":
+        summary = _short(data.get("summary") or "你记下的东西攒了一些", 120)
+        return f"一周过去了。{summary}——要不要花几分钟一起看看？不想看也没关系。"
+    if kind == "open_loop":
+        if data.get("loop"):
+            return f"上次你说要「{_short(data['loop'], 40)}」，后来怎么样了？"
+        return _short(data.get("question") or "上次聊到一半的事，后来怎么样了？", 120)
+    if kind == "nod":
+        return "有件事我一直没把握。" + _short(data.get("question") or "我印象里的一条理解，想请你确认一下。", 100)
+    if kind == "stale":
+        return "有段时间没听你提起了。" + _short(data.get("question") or "上次你说的那件事，现在还是这样吗？", 100)
+    if kind == "gap":
+        return "我们认识不久，有些地方还不了解。" + _short(data.get("question") or "方便说说你现在主要在忙什么吗？", 100)
+    if kind == "milestone":
+        n = int(data.get("n") or 0)
+        line = data.get("line")
+        if line:
+            return f"今天是我们认识的第 {n} 天。这段时间你记下的事里，有一件我一直记着：{_short(line, 40)}。"
+        return f"今天是我们认识的第 {n} 天。想聊什么都可以，不聊也没关系。"
+    return PROACTIVE_GREETING
+
+
+def proactive_title(kind: str, payload: dict | None = None) -> str:
+    """知君发起的会话标题（≤ 30 字，列表里一眼能看出为什么找你）。"""
+    data = payload or {}
+    if kind == "review_due":
+        return _short("回访日：" + str(data.get("title") or ""), 30)
+    if kind == "commitment_due":
+        return _short("承诺到期：" + str(data.get("content") or ""), 30)
+    if kind == "principle_tension":
+        return "两条理解有点张力"
+    if kind == "weekly_review":
+        return "一周回顾"
+    if kind == "open_loop":
+        return _short("上次说到：" + str(data.get("loop") or data.get("topic") or "还没做完的事"), 30)
+    if kind == "nod":
+        return "想请你确认一条理解"
+    if kind == "stale":
+        return "有段时间没提起的事"
+    if kind == "gap":
+        return "想多了解你一点"
+    if kind == "milestone":
+        return f"认识的第 {int(data.get('n') or 0)} 天"
+    return "好几天没聊了"
 
 
 def onboarding_answer_count(messages: list[dict]) -> int:

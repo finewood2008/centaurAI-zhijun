@@ -6,11 +6,11 @@ No provider calls, model loading, downloads, storage writes or alignment updates
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import re
 
-from ..stores.ontology_store import SECTIONS, lexical_similarity, tokenize
+from ..stores.ontology_store import SECTIONS, lexical_similarity, normalize_text, tokenize
 from .memory_index import CACHE as _CACHE, scores as _index_scores
 
 
@@ -33,6 +33,7 @@ _OVERVIEW = re.compile(
     r"我的本体(?:上|里)?(?:有哪些|有什么|是什么)|"
     r"你(?:目前)?对我(?:有什么|有哪些)(?:了解|理解)|"
     r"你(?:目前)?对我的(?:理解|认识|了解)|"
+    r"你(?:还)?记得我(?:什么|哪些|多少)?|你记住了我(?:什么|哪些)?|你对我有什么记忆|"
     r"关于我的理解(?:有哪些|有什么))(?=$|[，。？！?])"
 )
 
@@ -74,6 +75,60 @@ def _date(value):
         return result.replace(tzinfo=timezone.utc) if result.tzinfo is None else result
     except (TypeError, ValueError):
         return None
+
+
+GATE = .12            # 唯一的相关性闸门：词面 / 主题 / 已加载 embedding 的分数须先过这里
+ANCHOR_GATE = .08     # 商量 / 深入时，people / principles 分区放宽到这里（每区最多 1 条，reason=anchor）
+MAX_BOOST = .12       # V3：成熟度加成总和上限；只作用于已过闸门的候选，永不制造相关性
+CORRECTION_SIMILARITY = .35
+
+
+def _source_count(claim):
+    """独立来源数，纯内存计算（与 ``OntologyStore.evidence_source_count`` 同一口径，不逐条查库）。"""
+    sources = set()
+    for e in claim.get("evidence") or []:
+        if e.get("materialId"):
+            sources.add("m:" + str(e["materialId"]))
+        elif e.get("decisionId"):
+            sources.add("d:" + str(e["decisionId"]))
+        elif e.get("conversationId"):
+            sources.add("c:" + str(e["conversationId"]))
+        else:
+            sources.add("k:" + str(e.get("kind") or ""))
+    return len(sources)
+
+
+def maturity_boost(claim, now=None):
+    """V3 M1：有界的成熟度加成（∈ [-.03, .12]）。
+
+    来源数 +.03×min(3, n-1)；promotionReady +.04；有「为何重要」+.03；
+    30 天内重申 +.05 / 90 天内 +.02；超过 365 天未重申且单来源 -.03。
+    只在 0.12 闸门之后使用：加成改变已相关候选的先后，不让不相关的进来。
+    """
+    current = now or datetime.now(timezone.utc)
+    sources = _source_count(claim)
+    boost = .03 * min(3, max(0, sources - 1))
+    if claim.get("promotionReady"):
+        boost += .04
+    if str(claim.get("whyItMatters") or "").strip():
+        boost += .03
+    seen = _date(claim.get("lastReaffirmed")) or _date(claim.get("firstSeen"))
+    if seen is not None:
+        age = current - seen
+        if age <= timedelta(days=30):
+            boost += .05
+        elif age <= timedelta(days=90):
+            boost += .02
+        elif age > timedelta(days=365) and sources <= 1:
+            boost -= .03
+    return max(-.03, min(MAX_BOOST, boost))
+
+
+def _alignment_boost(claim):
+    a = claim.get("selfAlignment") or {}
+    if claim.get("trustState") == "confirmed" and a.get("framing") == "long_term":
+        return min(.05, max(0, a.get("level") or 0) * .01)
+    return 0.0
 
 
 def _eligible(ontology, conversations=None, scope=None, retrospective=False):
@@ -190,12 +245,15 @@ def confirmed_background(ontology, *, conversations=None, scope=None, limit=4, b
 
 
 def retrieve_claims(ontology, content: str, recent_messages: list[dict], intent: str = "conversation", limit: int = 4,
-                    *, conversations=None, scope=None, queries=None, focus=None, retrospective=False) -> list[dict]:
+                    *, conversations=None, scope=None, queries=None, focus=None, retrospective=False,
+                    anchor_sections=()) -> list[dict]:
     """Return copied original Claims plus score/retrievalReason/retrievalMethod.
 
     Explicit self-overviews cover confirmed sections. Ordinary recall also admits
-    working hypotheses (still labelled working). Alignment only nudges already
-    relevant candidates, never grants relevance; repetition is not scored.
+    working hypotheses (still labelled working). Alignment and maturity only
+    nudge already relevant candidates (bounded, after the gate), never grant
+    relevance. ``anchor_sections`` (deliberate / deep turns): at most one claim
+    per listed section may pass at the lower ``ANCHOR_GATE`` as ``anchor``.
     """
     limit = max(0, min(int(limit), 120))
     if not limit:
@@ -248,19 +306,64 @@ def retrieve_claims(ontology, content: str, recent_messages: list[dict], intent:
     semantic = _index_scores(namespace, query,
         {c["id"]: "\n".join(v for v in fields[c["id"]].values() if v)[:1800] for c in candidates},
         {c["id"]: json.dumps({k: c.get(k) for k in ("trustState", "scope", "contextRef", "evidence", "selfAlignment", "privacyLevel", "updatedAt")}, ensure_ascii=False, sort_keys=True) for c in candidates})
-    result = []
+    result, anchors = [], {}
+    now = datetime.now(timezone.utc)
+    anchor_sections = tuple(anchor_sections or ())
     for score, reason, claim, matched in ranked:
         embedding = semantic.get(claim["id"], 0)
         method = "lexical-topic"
         if embedding >= .70 and embedding * .5 > score:
             score, method = embedding * .5, "loaded-embedding"
             reason = "continuation" if query != current else "current"
-        if score < .12:
+        if score < GATE:
+            section = claim.get("section")
+            if section in anchor_sections and score >= ANCHOR_GATE:
+                relevance = round(score + _alignment_boost(claim), 5)
+                boosted = round(relevance + maturity_boost(claim, now), 5)
+                if section not in anchors or boosted > anchors[section]["score"]:
+                    anchors[section] = {**claim, "score": boosted, "relevance": relevance, "retrievalReason": "anchor",
+                                        "retrievalMethod": method, "matchedFields": matched}
             continue
-        a = claim.get("selfAlignment") or {}
-        if claim.get("trustState") == "confirmed" and a.get("framing") == "long_term":
-            score += min(.05, max(0, a.get("level") or 0) * .01)
-        result.append({**claim, "score": round(score, 5), "retrievalReason": reason, "retrievalMethod": method,
-                       "matchedFields": matched})
+        # Boosts are bounded and applied only after the gate: they reorder
+        # relevant records by alignment/maturity, never admit irrelevant ones.
+        # ``relevance`` keeps the pre-maturity value for threshold decisions
+        # (e.g. whether an unauthorized source is worth an authorization ask).
+        relevance = round(score + _alignment_boost(claim), 5)
+        score = relevance + maturity_boost(claim, now)
+        result.append({**claim, "score": round(score, 5), "relevance": relevance, "retrievalReason": reason,
+                       "retrievalMethod": method, "matchedFields": matched})
+    result.extend(anchors.values())
     result.sort(key=lambda c: (-c["score"], c["id"]))
     return result[:limit]
+
+
+def corrections(ontology, focus_query, *, conversations, scope, limit=5):
+    """V3 M1：与当前话题词面相近、用户已纠正 / 已替代的旧理解（提示词里标为不得再复述）。
+
+    只读。取 retracted / superseded 且本设备可见者，词面相似度 ≥ .35；不含系统衰减撤回的候选
+    （``decayed_contradicted``：从未被用户核实，不算「用户纠正」）；被本人再次亲口陈述而复活
+    （已有同内容的活跃理解）的旧记录也不算纠正。来源授权由调用方逐条核对。
+    """
+    from .alignment import visible
+    limit = max(0, min(int(limit), 20))
+    query_tokens = _tokens(str(focus_query or "")[:3525])
+    if not limit or not query_tokens:
+        return []
+    rows = ontology.list_claims(trust_states=("retracted", "superseded"), include_hidden=True, limit=-1)
+    scored = []
+    for c in rows:
+        if c.get("retractionReason") == "decayed_contradicted" or not visible(c, conversations, scope):
+            continue
+        similarity = lexical_similarity(query_tokens, _tokens(str(c.get("content") or "")))
+        if similarity >= CORRECTION_SIMILARITY:
+            scored.append((similarity, c))
+    scored.sort(key=lambda pair: (-pair[0], pair[1]["id"]))
+    result = []
+    for similarity, c in scored:
+        revived = ontology.find_active_by_hash(c["subjectEntityId"], c["predicate"], c["content"], device_scope=c.get("deviceScope", "global"))
+        if revived is not None and normalize_text(revived["content"]) == normalize_text(c["content"]):
+            continue
+        result.append({**c, "score": round(similarity, 5), "retrievalReason": "correction", "retrievalMethod": "lexical-topic"})
+        if len(result) >= limit:
+            break
+    return result

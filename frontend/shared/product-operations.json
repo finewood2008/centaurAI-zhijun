@@ -2057,6 +2057,62 @@
       "mutating": true
     },
     {
+      "id": "get_api_mindos_nudges_today",
+      "method": "GET",
+      "path": "/api/mindos/nudges/today",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_nudges_scan",
+      "method": "POST",
+      "path": "/api/mindos/nudges/scan",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_nudges_nudge_id_dismiss",
+      "method": "POST",
+      "path": "/api/mindos/nudges/{nudgeId}/dismiss",
+      "pathParams": [
+        "nudgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "post_api_mindos_nudges_nudge_id_silence",
+      "method": "POST",
+      "path": "/api/mindos/nudges/{nudgeId}/silence",
+      "pathParams": [
+        "nudgeId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
       "id": "get_api_mindos_ontology_alignment_conversations_conversation_id",
       "method": "GET",
       "path": "/api/mindos/ontology/alignment/conversations/{conversationId}",
@@ -2229,6 +2285,19 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 16777216,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_ontology_core_profile",
+      "method": "GET",
+      "path": "/api/mindos/ontology/core-profile",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
       "capability": "domain",
       "mutating": false
     },

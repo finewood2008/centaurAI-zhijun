@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // 单条消息：user 为纯文本气泡；assistant 用 markdown-it（html:false）渲染后再把
 // 认识论标记替换成文字徽章；system 为居中的系统备注（如「你确认了：…」）。
+// 记忆 V3 · M8：知君主动发起的那条（meta.kind=zhijun_initiated）在气泡下方说明为何现在，并可让它先别找你三天。
 import { computed, ref } from 'vue'
 import MarkdownIt from 'markdown-it'
-import type { MessageRole, MessageStatus } from '@/services/api'
-import { decorateLabels, stripContextCitations } from '@/shared/labels'
+import { snoozeProactive, type MessageRole, type MessageStatus } from '@/services/api'
+import { useToast } from '@/composables/useToast'
+import { decorateLabels, initiatedCaption, stripContextCitations } from '@/shared/labels'
 
 const props = defineProps<{
   role: MessageRole
@@ -13,14 +15,32 @@ const props = defineProps<{
   streaming?: boolean
   pendingLabel?: string
   allowSave?: boolean
+  // 知君主动找你的那条消息：whyNow 为空时只写「知君主动找你」
+  initiated?: { whyNow?: string | null } | null
 }>()
 
 const emit = defineEmits<{ (e: 'cite', index: number): void; (e: 'save'): void }>()
+const toast = useToast()
 const body = ref<HTMLElement | null>(null)
 const copyNotice = ref('')
 async function copy() {
   try { await navigator.clipboard.writeText(body.value?.innerText || props.content); copyNotice.value = '已复制' }
   catch { copyNotice.value = '复制未完成，请选中正文复制' }
+}
+
+const caption = computed(() => (props.role === 'assistant' && props.initiated ? initiatedCaption(props.initiated.whyNow) : ''))
+const snoozing = ref(false)
+async function snooze() {
+  if (snoozing.value) return
+  snoozing.value = true
+  try {
+    await snoozeProactive(3)
+    toast({ type: 'success', message: '好，三天内我不会主动找你' })
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error ? err.message : '没有记下，请稍后再试' })
+  } finally {
+    snoozing.value = false
+  }
 }
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: true })
@@ -61,6 +81,10 @@ function onClick(e: MouseEvent) {
     <div v-if="role === 'assistant' && status === 'complete' && !streaming && allowSave" class="zj-msg__actions">
       <button type="button" @click="copy">复制</button><button type="button" @click="emit('save')">留下文稿</button><span role="status">{{ copyNotice }}</span>
     </div>
+    <p v-if="caption" class="zj-msg__initiated" data-testid="initiated-caption">
+      <span>{{ caption }}</span>
+      <button type="button" class="zj-msg__initiated-snooze" :disabled="snoozing" @click="snooze">先别找我三天</button>
+    </p>
   </div>
 </template>
 
@@ -124,6 +148,27 @@ function onClick(e: MouseEvent) {
 .zj-msg__body--plain {
   white-space: pre-wrap;
 }
+.zj-msg__initiated {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-msg__initiated-snooze {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted currentColor;
+  background: transparent;
+  font: inherit;
+  color: var(--ws-text-secondary-color, #686b66);
+  cursor: pointer;
+}
+.zj-msg__initiated-snooze:hover { color: var(--ws-primary-color, #a6452e); }
+.zj-msg__initiated-snooze:disabled { opacity: .6; cursor: default; }
 .zj-msg__cursor {
   display: inline-block;
   width: 8px;

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -20,6 +21,18 @@ MODES = ("chat", "onboarding", "deliberate", "review")
 ROLES = ("user", "assistant", "system")
 MESSAGE_STATUSES = ("complete", "aborted", "error")
 
+# 知君主动发起对话的节律（V3 M8）；并入提醒策略行，旧客户端不传就用默认。
+PROACTIVE_DEFAULTS = {
+    "enabled": True,
+    "maxPerDay": 2,
+    "minGapHours": 4,
+    "quietHours": {"start": "22:00", "end": "08:00"},
+    "snoozeUntil": None,
+    "greetAfterDays": 7,
+    "backoffUntil": None,
+}
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
@@ -32,7 +45,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at TEXT NOT NULL,
     last_message_at TEXT,
     pinned_at TEXT,
-    metadata_revision INTEGER NOT NULL DEFAULT 0
+    metadata_revision INTEGER NOT NULL DEFAULT 0,
+    initiated_json TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_conversations_recent ON conversations(status, last_message_at DESC);
 
@@ -82,7 +96,8 @@ CREATE TABLE IF NOT EXISTS nudge_policies (
     enabled INTEGER NOT NULL DEFAULT 1,
     max_per_day INTEGER NOT NULL DEFAULT 3,
     silenced_refs_json TEXT NOT NULL DEFAULT '[]',
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    proactive_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS nudge_events (
@@ -192,6 +207,12 @@ class ConversationStore:
                     conn.execute("ALTER TABLE conversations ADD COLUMN pinned_at TEXT")
                 if "metadata_revision" not in columns:
                     conn.execute("ALTER TABLE conversations ADD COLUMN metadata_revision INTEGER NOT NULL DEFAULT 0")
+                # V3 M8：知君发起的会话带 initiated 元数据（旧库补列）。
+                if "initiated_json" not in columns:
+                    conn.execute("ALTER TABLE conversations ADD COLUMN initiated_json TEXT")
+                policy_columns = {row[1] for row in conn.execute("PRAGMA table_info(nudge_policies)")}
+                if "proactive_json" not in policy_columns:
+                    conn.execute("ALTER TABLE nudge_policies ADD COLUMN proactive_json TEXT")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_conversations_management ON conversations(status, pinned_at DESC, last_message_at DESC)")
                 # P3：提醒类型增加 principle_tension（P2 建的库 CHECK 不含它，需重建表）。
                 ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nudge_events'").fetchone()
@@ -250,6 +271,7 @@ class ConversationStore:
             "lastMessageAt": row["last_message_at"],
             "pinnedAt": row["pinned_at"] if "pinned_at" in keys else None,
             "metadataRevision": int(row["metadata_revision"]) if "metadata_revision" in keys else 0,
+            "initiated": _load(row["initiated_json"], None) if "initiated_json" in keys else None,
         }
 
     @staticmethod
@@ -273,18 +295,22 @@ class ConversationStore:
 
     # ------------------------------------------------------------------ 会话
     def create_conversation(
-        self, *, mode: str = "chat", title: str = "", device_scope: str = "global", decision_id: str | None = None
+        self, *, mode: str = "chat", title: str = "", device_scope: str = "global", decision_id: str | None = None,
+        initiated: dict | None = None,
     ) -> dict:
+        """``initiated``：知君发起的会话元数据 ``{by, kind, whyNow, createdAt, answeredAt}``；用户第一次开口时补 answeredAt。"""
         if mode not in MODES:
             raise ConversationError(f"mode 不合法：{mode}")
+        if initiated is not None and not isinstance(initiated, dict):
+            raise ConversationError("initiated 必须是对象")
         title = (title or "").strip()[:80]
         conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
         now = utc_now()
         with self._lock, self._connect() as conn:
             conn.execute(
-                "INSERT INTO conversations (id, title, mode, status, device_scope, message_count, created_at, updated_at, decision_id) "
-                "VALUES (?, ?, ?, 'active', ?, 0, ?, ?, ?)",
-                (conversation_id, title, mode, device_scope, now, now, decision_id),
+                "INSERT INTO conversations (id, title, mode, status, device_scope, message_count, created_at, updated_at, decision_id, initiated_json) "
+                "VALUES (?, ?, ?, 'active', ?, 0, ?, ?, ?, ?)",
+                (conversation_id, title, mode, device_scope, now, now, decision_id, _json(initiated) if initiated is not None else None),
             )
             row = conn.execute("SELECT * FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
             return self._conversation(row)  # type: ignore[return-value]
@@ -343,6 +369,40 @@ class ConversationStore:
                 params,
             ).fetchone()
         return self._conversation(row)
+
+    def list_initiated(self, *, device_scope: str | None = None, status: str = "all", unanswered_only: bool = False,
+                       limit: int = 20) -> list[dict]:
+        """知君发起的会话，最近在前（按创建时间）。"""
+        if status not in ("active", "archived", "all"):
+            raise ConversationError("status 不合法")
+        where, params = ["initiated_json IS NOT NULL"], []
+        if status != "all":
+            where.append("status = ?")
+            params.append(status)
+        if device_scope is not None:
+            where.append("device_scope = ?")
+            params.append(device_scope)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM conversations WHERE " + " AND ".join(where) + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*params, int(limit)),
+            ).fetchall()
+        items = [self._conversation(r) for r in rows]
+        if unanswered_only:
+            items = [c for c in items if c and not (c.get("initiated") or {}).get("answeredAt")]
+        return [c for c in items if c]
+
+    def last_user_message_at(self, *, device_scope: str | None = None) -> str | None:
+        """用户最近一次开口的时间（任何会话），没有就 None。"""
+        with self._connect() as conn:
+            if device_scope is None:
+                row = conn.execute("SELECT MAX(created_at) AS t FROM messages WHERE role = 'user'").fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT MAX(m.created_at) AS t FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+                    "WHERE m.role = 'user' AND c.device_scope = ?", (device_scope,),
+                ).fetchone()
+        return row["t"] if row and row["t"] else None
 
     def update_metadata(self, conversation_id: str, *, expected_revision: int, title: str | None = None,
                         status: str | None = None, pinned: bool | None = None, device_scope: str | None = None) -> dict:
@@ -520,6 +580,11 @@ class ConversationStore:
                     "status = CASE WHEN status = 'archived' AND ? THEN 'active' ELSE status END WHERE id = ?",
                     (now, now, title, role == "user" and status == "complete", role == "user" and status == "complete", conversation_id),
                 )
+                # 知君发起的会话：用户第一次开口即视为已回应（节律的退避判断以此为准）。
+                initiated = _load(conv["initiated_json"], None) if "initiated_json" in conv.keys() else None
+                if role == "user" and status == "complete" and isinstance(initiated, dict) and not initiated.get("answeredAt"):
+                    initiated["answeredAt"] = now
+                    conn.execute("UPDATE conversations SET initiated_json = ? WHERE id = ?", (_json(initiated), conversation_id))
                 conn.execute("COMMIT")
             except Exception:
                 conn.execute("ROLLBACK")
@@ -879,28 +944,76 @@ class ConversationStore:
             "createdAt": row["created_at"],
         }
 
+    @staticmethod
+    def _proactive(raw: str | None) -> dict:
+        """缺字段 → 默认值；旧库没有这一列也能读。"""
+        stored = _load(raw, {})
+        stored = stored if isinstance(stored, dict) else {}
+        merged = {**PROACTIVE_DEFAULTS, **{k: v for k, v in stored.items() if k in PROACTIVE_DEFAULTS}}
+        quiet = stored.get("quietHours") if isinstance(stored.get("quietHours"), dict) else {}
+        merged["quietHours"] = {**PROACTIVE_DEFAULTS["quietHours"], **{k: v for k, v in quiet.items() if k in ("start", "end")}}
+        return merged
+
+    @staticmethod
+    def _validate_proactive(current: dict, patch: dict) -> dict:
+        if not isinstance(patch, dict):
+            raise ConversationError("proactive 必须是对象")
+        unknown = set(patch) - set(PROACTIVE_DEFAULTS)
+        if unknown:
+            raise ConversationError("proactive 含未知字段：" + "、".join(sorted(unknown)))
+        merged = {**current, **patch}
+        if type(merged["enabled"]) is not bool:
+            raise ConversationError("proactive.enabled 必须是布尔值")
+        for key, low, high in (("maxPerDay", 0, 5), ("minGapHours", 1, 24), ("greetAfterDays", 0, 365)):
+            value = merged[key]
+            if type(value) is not int or not low <= value <= high:
+                raise ConversationError(f"proactive.{key} 须为 {low} 到 {high} 的整数")
+        quiet = merged["quietHours"]
+        if not isinstance(quiet, dict) or set(quiet) - {"start", "end"}:
+            raise ConversationError("proactive.quietHours 须为 {start, end}")
+        quiet = {**current["quietHours"], **quiet}
+        for key in ("start", "end"):
+            if not isinstance(quiet[key], str) or not _HHMM.match(quiet[key]):
+                raise ConversationError(f"proactive.quietHours.{key} 须为 HH:MM")
+        merged["quietHours"] = quiet
+        for key in ("snoozeUntil", "backoffUntil"):
+            value = merged[key]
+            if value is None:
+                continue
+            try:
+                datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except (TypeError, ValueError):
+                raise ConversationError(f"proactive.{key} 须为 ISO 时间或 null") from None
+            merged[key] = str(value)
+        return merged
+
     def nudge_policy(self) -> dict:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM nudge_policies WHERE key = 'default'").fetchone()
         if row is None:
-            return {"enabled": True, "maxPerDay": 3, "silencedRefs": []}
+            return {"enabled": True, "maxPerDay": 3, "silencedRefs": [], "proactive": self._proactive(None)}
+        keys = set(row.keys())
         return {
             "enabled": bool(row["enabled"]),
             "maxPerDay": int(row["max_per_day"]),
             "silencedRefs": _load(row["silenced_refs_json"], []),
+            "proactive": self._proactive(row["proactive_json"] if "proactive_json" in keys else None),
         }
 
-    def save_nudge_policy(self, *, enabled: bool | None = None, max_per_day: int | None = None, silenced_refs: list[str] | None = None) -> dict:
+    def save_nudge_policy(self, *, enabled: bool | None = None, max_per_day: int | None = None, silenced_refs: list[str] | None = None,
+                          proactive: dict | None = None) -> dict:
+        """``proactive`` 是局部更新：只改传入的字段，其余保留；范围不合法抛 ConversationError。"""
         current = self.nudge_policy()
         enabled = current["enabled"] if enabled is None else bool(enabled)
         max_per_day = current["maxPerDay"] if max_per_day is None else max(1, min(10, int(max_per_day)))
         silenced = current["silencedRefs"] if silenced_refs is None else sorted({str(s) for s in silenced_refs if str(s).strip()})
+        proactive_policy = current["proactive"] if proactive is None else self._validate_proactive(current["proactive"], proactive)
         with self._lock, self._connect() as conn:
             conn.execute(
-                "INSERT INTO nudge_policies (key, enabled, max_per_day, silenced_refs_json, updated_at) VALUES ('default', ?, ?, ?, ?) "
+                "INSERT INTO nudge_policies (key, enabled, max_per_day, silenced_refs_json, updated_at, proactive_json) VALUES ('default', ?, ?, ?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET enabled = excluded.enabled, max_per_day = excluded.max_per_day, "
-                "silenced_refs_json = excluded.silenced_refs_json, updated_at = excluded.updated_at",
-                (1 if enabled else 0, max_per_day, _json(silenced), utc_now()),
+                "silenced_refs_json = excluded.silenced_refs_json, updated_at = excluded.updated_at, proactive_json = excluded.proactive_json",
+                (1 if enabled else 0, max_per_day, _json(silenced), utc_now(), _json(proactive_policy)),
             )
         return self.nudge_policy()
 

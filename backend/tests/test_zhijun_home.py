@@ -135,6 +135,22 @@ class ZhijunHomeTests(unittest.TestCase):
         self.assertEqual(action([], [])["kind"], "nudge")
         self.convs.set_nudge_status(nudge["id"], "dismissed")
         self.assertEqual(action([], [])["kind"], "chat")
+        # V3：提醒之后、兜底之前是求知引擎的一问；判断目标改走回访。
+        gap = {"kind": "gap", "key": "gap:people", "question": "对你来说，最重要的人是谁？", "why": "还不了解谁对你重要", "targetType": "section", "targetId": "people"}
+        asked = zhijun_home._next_action("established", None, [], [], self.convs, self.now, inquiry=gap)
+        self.assertEqual((asked["kind"], asked["say"], asked["targetId"]), ("inquiry", gap["question"], "people"))
+        due = {"kind": "open_loop", "key": "due:" + due_decision["id"], "question": "「到期判断」到了回访的时候，结果怎么样了？", "why": "到了约好核对结果的时候", "targetType": "decision", "targetId": due_decision["id"]}
+        routed = zhijun_home._next_action("established", None, [], [], self.convs, self.now, inquiry=due)
+        self.assertEqual((routed["kind"], routed["targetId"]), ("review", due_decision["id"]))
+        self.assertEqual(zhijun_home._next_action("established", None, [outcome_node], [], self.convs, self.now, inquiry=gap)["kind"], "reflect")
+
+    def test_established_overview_falls_back_to_inquiry_target(self) -> None:
+        for index in range(3):
+            self._claim(f"我确认过的原则 {index}")
+        overview = self._home()
+        self.assertEqual(overview["state"], "established")
+        self.assertEqual(overview["nextAction"]["kind"], "inquiry")
+        self.assertTrue(overview["nextAction"]["say"].endswith("？"))
 
     def test_external_generation_excludes_sensitive_claims(self) -> None:
         private = self._claim("我重视长期主义", privacy="private")

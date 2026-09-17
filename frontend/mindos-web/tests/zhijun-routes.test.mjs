@@ -93,6 +93,22 @@ assert.match(conversationList, /allowRemove\?: boolean/)
 assert.match(conversationList, /conversationActions\(c, allowRemove\)/)
 assert.match(conversation, /\/onboarding\/c\/\$\{encodeURIComponent\(conv\.id\)\}/)
 assert.doesNotMatch(conversation, /streamTurn\(conv, '你好，我们开始吧'/)
+// 记忆 V3：知君先开口。普通对话的开场白随 POST /conversations 的 opening 字段带回，只进消息流，不拉详情、不自动发送；
+// 会话里只有开场（chat_open）时起手卡仍在
+assert.match(api, /opening\?: Message/)
+assert.match(conversation, /if \(conv\.opening\) messages\.value = \[toUi\(conv\.opening\)\]/)
+assert.match(conversation, /m\.meta\?\.kind === 'chat_open'/)
+assert.match(conversation, /openingOnly\.value && !messagesLoading\.value/)
+const createChat = conversation.slice(conversation.indexOf('async function createCurrentConversation'), conversation.indexOf('async function send('))
+assert.match(createChat, /if \(conv\.opening\)/)
+assert.doesNotMatch(createChat, /streamTurn\(|getConversation\(conv\.id/, '开场白只从创建响应取，不另拉详情、不替用户发送')
+// 今日来信：求知引擎的 inquiry 与 chat 一样带着话头去对话页，且只在本机模型上说
+assert.match(today, /nextAction\.kind === 'inquiry'/)
+// 记忆 V3 · M8：今日页「知君想和你聊」只读 overview.initiated（最多三条），在来信之后、地图之前；空则不显示
+assert.match(today, /overview\.value\?\.initiated \?\? \[\]/)
+assert.match(today, /v-if="initiatedRows\.length" class="zj-initiated" aria-label="知君想和你聊"/)
+assert.ok(today.indexOf('class="zj-initiated"') > today.indexOf('class="zj-letter"') && today.indexOf('class="zj-initiated"') < today.indexOf('<RelationshipMap'), '「知君想和你聊」在来信之后、地图之前')
+assert.match(api, /'chat' \| 'inquiry'/)
 assert.doesNotMatch(conversation, /import (NudgeStrip|NextStepsPanel) from/)
 assert.doesNotMatch(conversation, /router\.(push|replace)\('\/'\)/)
 // 成果回执能跨页面重开；本体边界说明移出图内，避免顶端碰撞。

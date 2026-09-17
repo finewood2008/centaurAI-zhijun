@@ -45,11 +45,17 @@ class MemoryCharterExtractionTests(unittest.TestCase):
             "conversationId": self.cid, "messageId": message["id"]}},
             store=self.onto, conv_store=self.convs)
 
-    def assert_candidate(self, result):
+    def assert_candidate(self, result, trust_state="confirmed"):
         self.assertEqual(result["state"], "done", result)
         self.assertEqual(len(result["created"]), 1, result)
-        self.assertEqual(len(self.onto.list_claims(trust_states=("working",))), 1)
-        self.assertEqual(self.onto.list_claims(trust_states=("confirmed",)), [])
+        # V3（拍板 4）：「我是程序员」是亲口说的、原话精确引用的自述 → 直接记为已确认（可撤回），不再进待确认队列；
+        # 原话没有第一人称（「程序员」）或章程只允许手动整理时仍是 working。
+        other = "working" if trust_state == "confirmed" else "confirmed"
+        self.assertEqual(self.onto.list_claims(trust_states=(other,)), [])
+        claims = self.onto.list_claims(trust_states=(trust_state,))
+        self.assertEqual([c["id"] for c in claims], result["created"])
+        self.assertEqual(claims[0]["trustOrigin"], "utterance" if trust_state == "confirmed" else "model")
+        self.assertEqual(result["autoConfirmed"], result["created"] if trust_state == "confirmed" else [])
         self.assertEqual(self.store.policy("global"), self.policy, "background must not widen consent")
 
     def test_independent_statement_does_not_send_unapproved_charter(self):
@@ -68,7 +74,7 @@ class MemoryCharterExtractionTests(unittest.TestCase):
         self.assert_candidate(result)
         sent = self.online.requests[0]
         self.assertNotIn(previous["content"], str(sent.messages))
-        claim = self.onto.list_claims(trust_states=("working",))[0]
+        claim = self.onto.list_claims(trust_states=("confirmed",))[0]
         sources = claim["evidence"][0]["locator"]["routingSources"]
         self.assertFalse(any(r["kind"].startswith("charter") or r["id"] == previous["id"] for r in sources))
 
@@ -85,7 +91,7 @@ class MemoryCharterExtractionTests(unittest.TestCase):
         self.assertTrue(any(s["kind"].startswith("charter") and s["key"] in preview["missing"] for s in preview["sources"]))
         self.assertEqual(self.onto.list_claims(trust_states=("working", "confirmed")), [])
         Router(self.onto, self.convs, self.cid).authorize(preview, preview["missing"])
-        self.assert_candidate(self.run_extract(message))
+        self.assert_candidate(self.run_extract(message), trust_state="working")  # 「程序员」不含第一人称
         self.assertIn(previous["content"], str(self.online.requests[0].messages))
 
     def test_long_slot_answer_still_preserves_previous_question_permission(self):
@@ -102,7 +108,7 @@ class MemoryCharterExtractionTests(unittest.TestCase):
         result = self.run_extract(self.add_user())
         self.assertEqual(result, {"state": "skipped", "reason": "memory_policy"})
         self.assertEqual(self.online.requests, [])
-        self.assert_candidate(self.run_extract(self.add_user("请记住：我是程序员")))
+        self.assert_candidate(self.run_extract(self.add_user("请记住：我是程序员")), trust_state="working")  # 章程手动整理：不自动确认
 
     def test_local_only_charter_still_blocks_external_extraction(self):
         self.setup_online([self.clause(control="local_only", kind="boundary", text="仅在本地处理")])

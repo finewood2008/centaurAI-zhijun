@@ -329,6 +329,13 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
                             "options": ["retry_online", "use_local"]}
             return
         yield "provenance", plan.assembled.provenance
+        if plan.assembled.provenance.get("inquiry"):
+            # 只有真正送出并答完的一轮才算「问过」（预览 / 重试不消耗目标）。
+            try:
+                from . import inquiry as inquiry_engine
+                inquiry_engine.mark_asked(ontology, router.scope, plan.assembled.provenance["inquiry"].get("key"))
+            except Exception:  # noqa: BLE001
+                pass
         if mode == "deliberate":
             result = _enqueue_followup(lambda: jobs.enqueue_draft(cid, assistant_id, store=ontology))
             yield "decision_draft", {**result, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []}

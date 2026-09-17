@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 会话列表：新建 + 按最近活动排序的会话项；当前项高亮并标注 aria-current。
 // 每条带模式方印（建档 / 商量 / 回访 / 对话），下面一行灰字是这段对话留下了什么（全零不显示）。
+// 记忆 V3 · M8：知君主动发起、你还没回的会话，方印改写「知君发起」；回过之后仍按模式标。
 import { Pin, Plus, Search, X } from 'lucide-vue-next'
 import type { Conversation } from '@/services/api'
 import MoreMenu from '@/components/ui/MoreMenu.vue'
@@ -9,6 +10,7 @@ import { formatDate } from '@/shared/format'
 import { conversationModeLabel, outcomesLine, stripLabels } from '@/shared/labels'
 
 function sealText(c: Conversation): string {
+  if (c.initiated?.by === 'zhijun' && !c.initiated.answeredAt) return '知君发起'
   return conversationModeLabel(c.mode, !!c.outcomes?.decision)
 }
 

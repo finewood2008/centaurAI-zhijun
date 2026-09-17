@@ -1,4 +1,4 @@
-"""知君对话竖切（演示模型）：SSE 事件顺序、并发 409、通道不可用、抽取 → inbox → 确认 → 下一轮引用 → 撤回不回流。"""
+"""知君对话竖切（演示模型）：SSE 事件顺序、并发 409、通道不可用、抽取 → 亲口自述直接记住 → 下一轮引用 → 撤回不回流。"""
 from __future__ import annotations
 
 import json
@@ -84,8 +84,11 @@ class TurnSseTests(unittest.TestCase):
 
         detail = self.client.get(f"/api/mindos/conversations/{conv['id']}").json()
         roles = [m["role"] for m in detail["messages"]]
-        self.assertEqual(roles, ["user", "assistant"])
-        assistant = detail["messages"][1]
+        # V3：每段新对话由知君先开口（模板开场，不调模型），之后才是用户与回复。
+        self.assertEqual(roles, ["assistant", "user", "assistant"])
+        self.assertEqual(detail["messages"][0]["meta"]["kind"], "chat_open")
+        self.assertEqual(conv["opening"]["id"], detail["messages"][0]["id"])
+        assistant = detail["messages"][2]
         self.assertEqual(assistant["id"], meta["messageId"])
         self.assertEqual(assistant["status"], "complete")
         self.assertEqual("".join(d["t"] for n, d in events if n == "token"), assistant["content"])
@@ -96,26 +99,20 @@ class TurnSseTests(unittest.TestCase):
         processed = jobs.drain(store=self.onto, conv_store=self.convs)
         self.assertGreaterEqual(processed, 1)
         stats = self.client.get("/api/mindos/ontology/stats").json()
-        self.assertFalse(stats["hasOntology"])
-        self.assertEqual(stats["claims"]["confirmed"], 0)
-        self.assertEqual(stats["inbox"], 1)
-        inbox = self.client.get("/api/mindos/ontology/inbox").json()["items"]
-        told_id = next(c["id"] for c in inbox if c["layer"] == "self_declared")
-        # One durable candidate per turn; the extra aspiration must not silently
-        # become a second candidate or a confirmed profile entry.
-        self.assertEqual(inbox[0]["trustState"], "working")
-        accepted = self.client.post(f"/api/mindos/ontology/claims/{told_id}/review",
-            json={"action": "confirm", "surface": "conversation", "conversationId": conv["id"], "messageId": meta["messageId"]})
-        self.assertEqual(accepted.status_code, 200)
-        self.assertEqual(accepted.json()["claim"]["trustState"], "confirmed")
+        # V3（拍板 4）：「我在做远川项目，压力很大」是亲口说的、原话精确引用的自述 → 直接记为已确认（可撤回），
+        # 不再进 inbox 等点头。本轮多出来的愿望仍不会悄悄变成第二条候选或已确认画像。
+        self.assertTrue(stats["hasOntology"])
+        self.assertEqual(stats["claims"]["confirmed"], 1)
+        self.assertEqual(stats["inbox"], 0)
         confirmed = self.client.get("/api/mindos/ontology/claims", params={"trust": "confirmed"}).json()["items"]
         self.assertEqual(len(confirmed), 1)
-        self.assertEqual(confirmed[0]["trustState"], "confirmed")
-        detail = self.client.get(f"/api/mindos/conversations/{conv['id']}").json()
-        note = detail["messages"][-1]
-        self.assertEqual(note["role"], "system")
-        self.assertEqual(note["meta"]["kind"], "review")
-        self.assertTrue(note["content"].startswith("你确认了："))
+        told_id = confirmed[0]["id"]
+        self.assertEqual(confirmed[0]["layer"], "self_declared")
+        self.assertEqual(confirmed[0]["trustOrigin"], "utterance")
+        outcomes = self.client.get(f"/api/mindos/conversations/{conv['id']}/outcomes").json()
+        self.assertEqual([c["id"] for c in outcomes["confirmedClaims"]], [told_id])
+        self.assertTrue(outcomes["confirmedClaims"][0]["undoable"])
+        self.assertEqual(outcomes["workingClaims"], [])
 
         events = self._send(conv["id"], "远川项目最近推进得怎么样")
         provenance = next(d for n, d in events if n == "provenance")

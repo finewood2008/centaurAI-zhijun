@@ -4,14 +4,16 @@ export interface OntologyLoadPlan {
   readonly claims: boolean
   readonly overview: boolean
   readonly stats: boolean
+  // 摘要视图读后端核心画像（知君实际带着的那一页）；overview 仍要读，画像读不到时回退到前端分组
+  readonly profile: boolean
 }
 
 /** Load only data rendered by the active ontology view. */
 export function ontologyLoadPlan(view: OntologyView, surface: string): OntologyLoadPlan {
-  if (surface === 'inbox' || surface === 'proposals') return { claims: true, overview: false, stats: true }
-  if (view === 'summary') return { claims: false, overview: true, stats: false }
-  if (view === 'map') return { claims: false, overview: true, stats: true }
-  return { claims: true, overview: false, stats: true }
+  if (surface === 'inbox' || surface === 'proposals') return { claims: true, overview: false, stats: true, profile: false }
+  if (view === 'summary') return { claims: false, overview: true, stats: false, profile: true }
+  if (view === 'map') return { claims: false, overview: true, stats: true, profile: false }
+  return { claims: true, overview: false, stats: true, profile: false }
 }
 
 /** Deduplicate slow stats reads, discard stale values and stop retries after unmount. */

@@ -54,7 +54,7 @@ REVIEW_ACTIONS = (
     "create",
 )
 SURFACES = ("conversation", "ontology_page", "onboarding", "today", "decision_panel", "import", "system")
-JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft", "reflection")
+JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft", "reflection", "core_profile", "proactive_scan")
 JOB_STATES = ("queued", "running", "done", "failed")
 
 # 受控谓词词表：抽取器只能在分区对应的词表内选，越界整条丢弃。
@@ -63,7 +63,7 @@ PREDICATES: dict[str, tuple[str, ...]] = {
     "people": ("knows", "works_with", "relationship", "attitude_toward"),
     "matters": ("working_on", "committed_to", "happened", "owns"),
     "principles": ("holds_principle", "boundary"),
-    "ways": ("prefers", "tends_to", "decides_by"),
+    "ways": ("prefers", "tends_to", "decides_by", "wants_zhijun_to"),
     "direction": ("wants_to", "goal", "avoids"),
 }
 DEFAULT_PREDICATE = {
@@ -418,6 +418,11 @@ class OntologyStore:
                     conn.execute("ALTER TABLE claims ADD COLUMN self_alignment_json TEXT")
                 if "context_json" not in columns:
                     conn.execute("ALTER TABLE claims ADD COLUMN context_json TEXT")
+                # V3：为何重要 / 如何应用（旧库补列；核心画像与相处方式记忆用）。
+                if "why_it_matters" not in columns:
+                    conn.execute("ALTER TABLE claims ADD COLUMN why_it_matters TEXT")
+                if "how_to_apply" not in columns:
+                    conn.execute("ALTER TABLE claims ADD COLUMN how_to_apply TEXT")
                 from .learning_store import SCHEMA as learning_schema
                 conn.executescript(learning_schema)
                 from .alignment_store import SCHEMA as alignment_schema
@@ -747,6 +752,8 @@ class OntologyStore:
             "updatedAt": row["updated_at"],
             "evidence": evidence or [],
             "contextual": _load(row["context_json"], None) if "context_json" in keys else None,
+            "whyItMatters": (row["why_it_matters"] or None) if "why_it_matters" in keys else None,
+            "howToApply": (row["how_to_apply"] or None) if "how_to_apply" in keys else None,
         }
         from .alignment_store import view
         claim["selfAlignment"] = view(claim, _load(row["self_alignment_json"], None) if "self_alignment_json" in keys else None)
@@ -813,6 +820,12 @@ class OntologyStore:
         except (TypeError, ValueError) as exc:
             raise OntologyError("confidence 必须是数字") from exc
         confidence = max(0.0, min(1.0, confidence))
+        why = (payload.get("why_it_matters") or payload.get("whyItMatters") or "").strip() or None
+        how = (payload.get("how_to_apply") or payload.get("howToApply") or "").strip() or None
+        if why is not None and len(why) > 120:
+            raise OntologyError("why_it_matters 不能超过 120 字")
+        if how is not None and len(how) > 120:
+            raise OntologyError("how_to_apply 不能超过 120 字")
         return {
             "subject_entity_id": payload.get("subject_entity_id") or ME_ENTITY_ID,
             "predicate": predicate,
@@ -828,6 +841,8 @@ class OntologyStore:
             "valid_from": payload.get("valid_from"),
             "valid_to": payload.get("valid_to"),
             "device_scope": payload.get("device_scope") or "global",
+            "why_it_matters": why,
+            "how_to_apply": how,
         }
 
     @staticmethod
@@ -966,8 +981,9 @@ class OntologyStore:
                             (id, subject_entity_id, predicate, object_entity_id, content, section,
                              self_model_layer, trust_state, trust_origin, confidence, scope, context_ref,
                              privacy_level, export_allowed, valid_from, valid_to, first_seen, last_reaffirmed,
-                             supersedes_id, content_hash, device_scope, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             supersedes_id, content_hash, device_scope, created_at, updated_at,
+                             why_it_matters, how_to_apply)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             claim_id,
@@ -993,6 +1009,8 @@ class OntologyStore:
                             fields["device_scope"],
                             now,
                             now,
+                            fields["why_it_matters"],
+                            fields["how_to_apply"],
                         ),
                     )
                 except sqlite3.IntegrityError as exc:
@@ -1251,8 +1269,9 @@ class OntologyStore:
                                 (id, subject_entity_id, predicate, object_entity_id, content, section,
                                  self_model_layer, trust_state, trust_origin, confidence, scope, context_ref,
                                  privacy_level, export_allowed, valid_from, valid_to, first_seen, last_reaffirmed,
-                                 supersedes_id, content_hash, device_scope, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 'user_edit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 supersedes_id, content_hash, device_scope, created_at, updated_at,
+                                 why_it_matters, how_to_apply)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', 'user_edit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 replaced_id,
@@ -1276,6 +1295,8 @@ class OntologyStore:
                                 row["device_scope"],
                                 now,
                                 now,
+                                row["why_it_matters"] if "why_it_matters" in row.keys() else None,
+                                row["how_to_apply"] if "how_to_apply" in row.keys() else None,
                             ),
                         )
                     except sqlite3.IntegrityError as exc:

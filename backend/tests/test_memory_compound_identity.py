@@ -133,52 +133,79 @@ class CompoundIdentityPersistenceTests(unittest.TestCase):
             [{"kind": "user_edit", "quote": PROGRAMMER}], trust_state=trust_state,
             trust_origin="user_created" if trust_state == "confirmed" else "model")
 
-    def assert_student_candidate(self, result, message):
+    def assert_student_candidate(self, result, message, *, reaffirmed=(), promoted=()):
+        # 「还是一个大四的学生」这段原话没有第一人称，不满足直接记住的守卫（V3 拍板 4），仍是待确认候选。
         self.assertEqual(len(result["created"]), 1, result)
         student = self.onto.get_claim(result["created"][0])
         self.assertEqual(student["content"], STUDENT)
-        self.assertEqual(student["trustState"], "working")
+        self.assertEqual((student["trustState"], student["trustOrigin"]), ("working", "model"))
         self.assertEqual(student["scope"], "long_term")
         self.assertEqual(student["evidence"][0]["messageId"], message["id"])
         self.assertIn(student["evidence"][0]["quote"], message["content"])
-        self.assertEqual(result["promoted"], [])
-        self.assertEqual(result["reaffirmed"], [])
+        self.assertEqual(result["promoted"], list(promoted))
+        self.assertEqual(result["reaffirmed"], list(reaffirmed))
+        self.assertEqual(result["autoConfirmed"], list(promoted))
         self.assertEqual(memory.pending(self.onto, self.convs, self.cid)["total"], 1)
+
+    def assert_student_confirmed(self, result, message, *, reaffirmed=()):
+        # 原话本身是第一人称、精确引用、高置信的自述 → 直接记住（trustOrigin=utterance，可撤回）。
+        self.assertEqual(len(result["created"]), 1, result)
+        student = self.onto.get_claim(result["created"][0])
+        self.assertEqual(student["content"], STUDENT)
+        self.assertEqual((student["trustState"], student["trustOrigin"]), ("confirmed", "utterance"))
+        self.assertEqual(student["evidence"][0]["messageId"], message["id"])
+        self.assertIn(student["evidence"][0]["quote"], message["content"])
+        self.assertEqual(result["autoConfirmed"], result["created"])
+        self.assertEqual(result["promoted"], [])
+        self.assertEqual(result["reaffirmed"], list(reaffirmed))
+        self.assertEqual(memory.pending(self.onto, self.convs, self.cid)["total"], 0)
+
+    def assert_reaffirmed(self, existing, message, *, trust_state):
+        refreshed = self.onto.get_claim(existing["id"])
+        self.assertEqual(refreshed["trustState"], trust_state)
+        self.assertEqual(len(refreshed["evidence"]), len(existing["evidence"]) + 1)
+        self.assertEqual(refreshed["evidence"][-1]["messageId"], message["id"])
+        self.assertGreaterEqual(refreshed["lastReaffirmed"], existing["lastReaffirmed"])
+        self.assertEqual({k: v for k, v in refreshed.items() if k not in ("evidence", "lastReaffirmed", "updatedAt", "trustState", "trustOrigin", "selfAlignment")},
+                         {k: v for k, v in existing.items() if k not in ("evidence", "lastReaffirmed", "updatedAt", "trustState", "trustOrigin", "selfAlignment")})
 
     def test_known_confirmed_programmer_does_not_swallow_new_student(self):
         existing = self.seed_programmer("confirmed")
         result, message = self.process(COMPOUND,
             raw_claim(PROGRAMMER, COMPOUND, .99), raw_claim(STUDENT, COMPOUND, .95))
-        self.assert_student_candidate(result, message)
-        self.assertEqual(self.onto.get_claim(existing["id"]), existing)
+        # 整句原话是第一人称的精确引用 → 学生身份直接记住；已确认的程序员身份只追加证据并重申，不改写记录。
+        self.assert_student_confirmed(result, message, reaffirmed=[existing["id"]])
+        self.assert_reaffirmed(existing, message, trust_state="confirmed")
 
-    def test_known_working_programmer_is_not_confirmed_by_repetition(self):
+    def test_known_working_programmer_is_confirmed_by_own_restatement(self):
         existing = self.seed_programmer("working")
         result, message = self.process(COMPOUND,
             raw_claim(PROGRAMMER, "我不仅是一个程序员", .99),
             raw_claim(STUDENT, "还是一个大四的学生", .95))
-        self.assert_student_candidate(result, message)
-        self.assertEqual(self.onto.get_claim(existing["id"]), existing)
-        self.assertEqual(self.onto.list_claims(trust_states=("confirmed",)), [])
+        # 待确认的程序员身份被本人再次亲口说到（第一人称片段）→ 确认；学生片段没有第一人称 → 仍待确认。
+        self.assert_student_candidate(result, message, reaffirmed=[existing["id"]], promoted=[existing["id"]])
+        self.assert_reaffirmed(existing, message, trust_state="confirmed")
+        self.assertEqual([c["id"] for c in self.onto.list_claims(trust_states=("confirmed",))], [existing["id"]])
 
     def test_duplicate_is_filtered_before_ordinary_one_candidate_budget(self):
         existing = self.seed_programmer("confirmed")
         text = "我是一名程序员。我是一名大四学生"
         result, message = self.process(text,
             raw_claim(PROGRAMMER, PROGRAMMER, .99), raw_claim(STUDENT, STUDENT, .95))
-        self.assert_student_candidate(result, message)
-        self.assertEqual(self.onto.get_claim(existing["id"]), existing)
+        self.assert_student_confirmed(result, message, reaffirmed=[existing["id"]])
+        self.assert_reaffirmed(existing, message, trust_state="confirmed")
 
-    def test_two_new_identities_are_working_never_automatically_confirmed(self):
+    def test_compound_identity_confirms_only_the_first_person_clause(self):
         result, message = self.process(COMPOUND,
             raw_claim(PROGRAMMER, "我不仅是一个程序员", .99),
             raw_claim(STUDENT, "还是一个大四的学生", .95))
         self.assertEqual(len(result["created"]), 2, result)
-        values = self.onto.list_claims(trust_states=("working",))
-        self.assertEqual({v["content"] for v in values}, {PROGRAMMER, STUDENT})
-        self.assertEqual(self.onto.list_claims(trust_states=("confirmed",)), [])
-        self.assertEqual(memory.pending(self.onto, self.convs, self.cid)["total"], 2)
-        for value in values:
+        by_content = {c["content"]: c for c in self.onto.list_claims(trust_states=("working", "confirmed"))}
+        self.assertEqual((by_content[PROGRAMMER]["trustState"], by_content[PROGRAMMER]["trustOrigin"]), ("confirmed", "utterance"))
+        self.assertEqual((by_content[STUDENT]["trustState"], by_content[STUDENT]["trustOrigin"]), ("working", "model"))
+        self.assertEqual(result["autoConfirmed"], [by_content[PROGRAMMER]["id"]])
+        self.assertEqual(memory.pending(self.onto, self.convs, self.cid)["total"], 1)
+        for value in by_content.values():
             self.assertEqual(value["evidence"][0]["messageId"], message["id"])
 
     def test_model_expansion_and_role_measure_words_do_not_duplicate_student(self):
@@ -186,18 +213,20 @@ class CompoundIdentityPersistenceTests(unittest.TestCase):
             "layer": "self_declared", "predicate": "role", "content": STUDENT,
             "confidence": .95, "scope": "long_term"},
             [{"kind": "user_edit", "quote": STUDENT}], trust_state="working", trust_origin="model")
-        result, _ = self.process(COMPOUND,
+        result, message = self.process(COMPOUND,
             raw_claim("我是大四学生，正处在毕业阶段", "还是一个大四的学生"))
         self.assertEqual(result["created"], [])
         self.assertEqual(result["filterReasons"]["existing"], 1)
-        self.assertEqual(self.onto.get_claim(existing["id"]), existing)
+        # 重复命中：追加本条消息为证据并重申；片段没有第一人称，待确认理解不因此确认。
+        self.assertEqual((result["reaffirmed"], result["promoted"]), ([existing["id"]], []))
+        self.assert_reaffirmed(existing, message, trust_state="working")
 
     def test_wrong_model_merge_target_cannot_swallow_different_identity(self):
         existing = self.seed_programmer("confirmed")
         result, message = self.process(COMPOUND,
             raw_claim(STUDENT, COMPOUND, merge_into=existing["id"]),
             existing_ids={existing["id"]})
-        self.assert_student_candidate(result, message)
+        self.assert_student_confirmed(result, message)
         self.assertEqual(self.onto.get_claim(existing["id"]), existing)
 
     def test_other_device_scope_does_not_suppress_this_device_identity(self):
@@ -207,7 +236,7 @@ class CompoundIdentityPersistenceTests(unittest.TestCase):
             [{"kind": "user_edit", "quote": STUDENT}], trust_state="confirmed", trust_origin="user_created")
         result, message = self.process(STUDENT,
             raw_claim(STUDENT, STUDENT, merge_into=existing["id"]), existing_ids={existing["id"]})
-        self.assert_student_candidate(result, message)
+        self.assert_student_confirmed(result, message)
         self.assertEqual(self.onto.get_claim(existing["id"]), existing)
 
     def test_invisible_source_cannot_consume_candidate_budget(self):
@@ -223,7 +252,7 @@ class CompoundIdentityPersistenceTests(unittest.TestCase):
             trust_state="confirmed", trust_origin="user_created")
         result, message = self.process(STUDENT,
             raw_claim(STUDENT, STUDENT, merge_into=existing["id"]), existing_ids={existing["id"]})
-        self.assert_student_candidate(result, message)
+        self.assert_student_confirmed(result, message)
         self.assertEqual(self.onto.get_claim(existing["id"]), existing)
 
     def test_same_content_for_other_subject_cannot_swallow_self_identity(self):
@@ -234,7 +263,7 @@ class CompoundIdentityPersistenceTests(unittest.TestCase):
             [{"kind": "user_edit", "quote": STUDENT}], trust_state="confirmed", trust_origin="user_created")
         result, message = self.process(STUDENT,
             raw_claim(STUDENT, STUDENT, merge_into=existing["id"]), existing_ids={existing["id"]})
-        self.assert_student_candidate(result, message)
+        self.assert_student_confirmed(result, message)
         self.assertEqual(self.onto.get_claim(existing["id"]), existing)
 
 

@@ -6,11 +6,14 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   ApiError,
   createClaim,
+  getClaim,
+  getCoreProfile,
   getInbox,
   getOntologyStats,
   listClaims,
   reviewClaim,
   type Claim,
+  type CoreProfile,
   type Layer,
   type OntologyStats,
   type ReviewAction,
@@ -64,6 +67,11 @@ const mapItems = ref<Claim[]>([])
 const mapLoading = ref(false)
 const mapLoaded = ref(false)
 const mapError = ref('')
+// 摘要视图：后端核心画像（知君每次回答都带着的那一页）。读不到就保持 null，PersonalSummary 回退到前端分组
+const profile = ref<CoreProfile | null>(null)
+const profileLoading = ref(false)
+const profileLoaded = ref(false)
+const profileGate = createSessionGate()
 const selected = ref<Claim | null>(null)
 const layerFilter = ref<Set<Layer> | null>(null)
 const focusSection = ref<Section | null>(null)
@@ -160,6 +168,51 @@ async function loadMap() {
   }
 }
 
+async function loadProfile() {
+  const session = profileGate.next()
+  profileLoading.value = true
+  try {
+    const res = await getCoreProfile()
+    if (!profileGate.isCurrent(session)) return
+    profile.value = res
+  } catch {
+    // 旧盒端没有这个接口，或画像暂时读不到：静默回退到前端分组
+    if (!profileGate.isCurrent(session)) return
+    profile.value = null
+  } finally {
+    if (profileGate.isCurrent(session)) {
+      profileLoading.value = false
+      profileLoaded.value = true
+    }
+  }
+}
+
+// 理解有变（确认 / 重申 / 撤回 / 新记）后画像会重建；只在摘要视图上重新读取
+function invalidateProfile() {
+  profileLoaded.value = false
+  if (ontologyLoadPlan(view.value, current.value).profile) void loadProfile()
+}
+
+// 画像行只带 claimId：优先在已读的全景里找，找不到再单独读一条
+async function selectClaimId(claimId: string) {
+  const found = mapItems.value.find((c) => c.id === claimId)
+  if (found) {
+    selected.value = found
+    return
+  }
+  try {
+    selected.value = await getClaim(claimId)
+  } catch (err) {
+    toast({ type: 'error', message: friendlyError(err, '这条理解暂时打不开') })
+  }
+}
+
+function onProfileChanged(claim: Claim, action: ReviewAction) {
+  applyReviewResult(claim, action, claim)
+  invalidateStats()
+  invalidateProfile()
+}
+
 async function select(key: NavKey) {
   if (key === 'inbox') await router.push('/me/inbox')
   else await router.push({ path: '/me', query: { section: key } })
@@ -192,6 +245,7 @@ function loadVisibleView() {
   if (plan.claims) void load()
   if (plan.overview && !mapLoaded.value && !mapLoading.value) void loadMap()
   if (plan.stats && !stats.value) void statsLoader.load()
+  if (plan.profile && !profileLoaded.value && !profileLoading.value) void loadProfile()
 }
 
 watch([current, view], () => {
@@ -235,6 +289,7 @@ async function onReview(claim: Claim, action: ReviewAction, editedContent?: stri
     }
     toast({ type: 'success', message: label[action] })
     invalidateStats()
+    invalidateProfile()
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '操作失败') })
   } finally {
@@ -256,6 +311,7 @@ async function submitCreate() {
     showCreate.value = false
     toast({ type: 'success', message: newSection.value ? `已记入「${sectionLabel(created.section)}」` : `知君把它归到了「${sectionLabel(created.section)}」` })
     invalidateStats()
+    invalidateProfile()
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '保存失败') })
   } finally {
@@ -305,6 +361,7 @@ onBeforeUnmount(() => {
   statsLoader.dispose()
   gate.invalidate()
   mapGate.invalidate()
+  profileGate.invalidate()
 })
 </script>
 
@@ -360,8 +417,8 @@ onBeforeUnmount(() => {
 
         <div v-if="showSummary">
           <ErrorState v-if="mapError" :message="mapError" @retry="loadMap" />
-          <div v-else-if="mapLoading && !mapItems.length" class="loading-state">正在读取…</div>
-          <PersonalSummary v-else :claims="mapItems" @select="selected = $event" @browse="select" />
+          <div v-else-if="mapLoading && !mapItems.length && !profile" class="loading-state">正在读取…</div>
+          <PersonalSummary v-else :claims="mapItems" :profile="profile" @select="selected = $event" @select-claim="selectClaimId" @browse="select" @changed="onProfileChanged" />
           <SideDrawer :open="!!selected" title="这条理解与依据" @close="selected = null">
             <ClaimCard v-if="selected" :claim="selected" :busy="!!busy[selected.id]" show-section @review="(action, edited) => onReview(selected!, action, edited)" @updated="c => applyReviewResult(selected!, 'reaffirm', c)" />
           </SideDrawer>

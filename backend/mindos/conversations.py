@@ -146,7 +146,49 @@ def create_conversation(req: ConversationCreate, request: Request = None):
         )
         conversation = store.get_conversation(conversation["id"])
         conversation["reused"] = False
+    elif req.mode == "chat" and not req.taskContext:
+        # 知君先开口（模板生成，不调模型）：近期脉络 + 一个求知目标；无线索时用最轻的一句。
+        opening = _chat_opening(conversation["id"], _device_scope_of(request), store)
+        conversation = store.get_conversation(conversation["id"])
+        conversation["reused"] = False
+        conversation["opening"] = opening
     return conversation
+
+
+_NEUTRAL_OPENING_META = {"kind": "chat_open", "routingOrigin": {"service": "", "external": False}, "routingSources": [], "inquiry": None}
+
+
+def _chat_opening(conversation_id: str, scope: str, store: ConversationStore) -> dict:
+    """写入开场白消息并返回它。任何取材失败都退回中性开场，不影响会话创建。"""
+    from .zhijun import core_profile, inquiry
+    from .zhijun.charter_policy import scope_policy, check_action
+    onto = _ontology_store()
+    growth = _growth_store()
+    text, meta, target = persona.NEUTRAL_OPENING, dict(_NEUTRAL_OPENING_META), None
+    try:
+        policy = scope_policy(scope, growth=growth)
+        proactive = check_action(policy, "proactive")["allowed"]
+        page = core_profile.cached(onto, store, growth, scope)
+        target = inquiry.pick(onto, store, growth, scope) if proactive else None
+        candidate, sources = persona.chat_opening(page["lines"], target, proactive=proactive)
+        if sources:
+            # 引用的来源必须此刻可核实；有一条不可用就退回中性开场，不把不可追溯的引用写进历史。
+            from .zhijun.routing import Router
+            router = Router(onto, store, conversation_id)
+            resolved = [router.resolve(ref) for ref in sources]
+            if any(node["blocked"] for closure in resolved for node in closure):
+                candidate, sources, target = persona.NEUTRAL_OPENING, [], None
+            else:
+                sources = [closure[0]["ref"] for closure in resolved]
+        text = candidate
+        used = target if (target and target["question"] in candidate) else None
+        meta = {**_NEUTRAL_OPENING_META, "routingSources": sources,
+                "inquiry": {"kind": used["kind"], "key": used["key"], "targetId": used.get("targetId"), "targetType": used.get("targetType")} if used else None}
+        if used:
+            inquiry.mark_asked(onto, scope, used["key"])
+    except Exception:  # noqa: BLE001 - 开场白是附加物，不阻塞创建
+        text, meta = persona.NEUTRAL_OPENING, dict(_NEUTRAL_OPENING_META)
+    return store.append_message(conversation_id, "assistant", text, provider="template", model="template", meta=meta)
 
 
 # ---------------------------------------------------------------- 对话产出
@@ -171,8 +213,14 @@ def _outcome_decision_id(store: ConversationStore, conversation: dict, confirmed
     return store.confirmed_decision_id(conversation["id"])
 
 
-def _claim_brief(claim: dict) -> dict:
-    return {"id": claim["id"], "content": claim["content"], "section": claim["section"], "layer": claim["layer"]}
+def _claim_brief(claim: dict, conversation_id: str) -> dict:
+    """产出卡条目。V3：``undoable`` = 已确认 ∧ 来源为亲口陈述（utterance）∧ 证据来自本会话 → 「你亲口说的，已直接记下 · 撤回」。"""
+    return {
+        "id": claim["id"], "content": claim["content"], "section": claim["section"], "layer": claim["layer"],
+        "trustOrigin": claim.get("trustOrigin"), "createdAt": claim.get("createdAt"),
+        "undoable": bool(claim.get("trustState") == "confirmed" and claim.get("trustOrigin") == "utterance"
+                         and any(e.get("conversationId") == conversation_id for e in claim.get("evidence") or [])),
+    }
 
 
 def get_outcomes(conversation_id: str):
@@ -201,8 +249,8 @@ def get_outcomes(conversation_id: str):
     counts = onto.conversation_outcome_counts([conversation_id]).get(conversation_id) or {}
     return {
         "conversationId": conversation_id,
-        "confirmedClaims": [_claim_brief(c) for c in confirmed],
-        "workingClaims": [_claim_brief(c) for c in working],
+        "confirmedClaims": [_claim_brief(c, conversation_id) for c in confirmed],
+        "workingClaims": [_claim_brief(c, conversation_id) for c in working],
         "decision": decision,
         "commitments": commitments,
         "pendingJobs": int(pending),
@@ -460,6 +508,9 @@ def record_outcome(conversation_id: str, req: OutcomeBody):
     from .zhijun.nudges import trigger_key_for
 
     acted = store.act_nudges(trigger_key_for(decision_id))
+    from .zhijun.alignment import scope_for
+    from .zhijun.jobs import enqueue_core_profile_quietly
+    enqueue_core_profile_quietly(scope_for(conversation_id, store), store=_ontology_store(), conv_store=store)
     return {"decision": decision, "nudgesActed": acted}
 
 

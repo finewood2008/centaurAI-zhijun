@@ -50,6 +50,38 @@ export function nudgeKindLabel(kind: string): string {
   return NUDGE_KIND_LABELS[kind] ?? '提醒'
 }
 
+/** 知君主动发起的会话：原因种类的方印文字（会话列表、今日页「知君想和你聊」）。未知种类只写「知君发起」。 */
+export const INITIATED_KIND_LABELS: Readonly<Record<string, string>> = {
+  review_due: '回访',
+  commitment_due: '承诺',
+  principle_tension: '原则与做法',
+  weekly_review: '每周回顾',
+  open_loop: '上次的事',
+  nod: '想核对',
+  stale: '好久没提',
+  gap: '还不了解',
+  milestone: '纪念日',
+  greeting: '问候',
+}
+
+export function initiatedKindLabel(kind: string | null | undefined): string {
+  return (kind && INITIATED_KIND_LABELS[kind]) || '知君发起'
+}
+
+/** 知君消息下那行灰字：「知君主动找你 · 为何现在」；没有理由时只写前半句。 */
+export function initiatedCaption(whyNow: string | null | undefined): string {
+  const why = (whyNow ?? '').trim()
+  return why ? `知君主动找你 · ${why}` : '知君主动找你'
+}
+
+/** 设置页那行灰字：「已请知君到 9月20日 前别找你」；snoozeUntil 不在未来时返回空串。 */
+export function proactiveSnoozeLine(snoozeUntil: string | null | undefined, now: Date = new Date()): string {
+  if (!snoozeUntil) return ''
+  const d = new Date(snoozeUntil)
+  if (Number.isNaN(d.valueOf()) || d.valueOf() <= now.valueOf()) return ''
+  return `已请知君到 ${d.getMonth() + 1}月${d.getDate()}日 前别找你`
+}
+
 /** 会话模式的方印文字：建档 / 商量 / 回访 / 对话。chat 会话若已确认过判断，也当作「商量」。 */
 export function conversationModeLabel(mode: string | null | undefined, hasDecision = false): string {
   if (mode === 'onboarding') return '建档'

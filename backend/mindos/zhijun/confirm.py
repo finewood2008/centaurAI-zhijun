@@ -67,4 +67,8 @@ def review_claim(
         jobs.enqueue_projection(store=store)
     except Exception:  # noqa: BLE001
         pass
+    # 核心画像跟着理解变化重建（确认 / 修改 / 撤回 / 重申都会改变一页纸）。
+    from .core_profile import claim_scopes
+    for scope in claim_scopes(shown, conv_store):
+        jobs.enqueue_core_profile_quietly(scope, store=store, conv_store=conv_store)
     return result

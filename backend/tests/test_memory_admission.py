@@ -45,6 +45,27 @@ class MemoryRequestTests(unittest.TestCase):
         self.assertFalse(extract.memory_request_declined("请记住，我重视自主决定。"))
 
 
+class AutoConfirmRuleTests(unittest.TestCase):
+    """拍板 4 的六重守卫：策略允许、非辅助表达、自述层、置信 ≥ .8、未降级、长期范围，且原话含第一人称并精确出现在用户这句话里。"""
+
+    def test_guards(self):
+        text = "我主要负责产品研发，你建议我怎样安排精力？"
+        base = claim("我主要负责产品研发", section="matters", predicate="working_on")
+        self.assertTrue(extract.auto_confirmable(base, text, allowed=True))
+        self.assertFalse(extract.auto_confirmable(base, text, allowed=False), "manual 模式 / 章程不允许时仍只出 working")
+        self.assertFalse(extract.auto_confirmable(base, text, allowed=True, input_origin={"kind": "assisted"}))
+        self.assertFalse(extract.auto_confirmable(base, None, allowed=True))
+        for variant in (
+            replace(base, layer="hypothesis"), replace(base, layer="aspirational"), replace(base, layer="observed"),
+            replace(base, confidence=.79), replace(base, downgraded=True), replace(base, scope="context_only"),
+            replace(base, quote="主要负责产品研发"),  # 原话没有第一人称
+            replace(base, quote="我负责产品研发"),    # 不是精确引用
+        ):
+            with self.subTest(variant=variant):
+                self.assertFalse(extract.auto_confirmable(variant, text, allowed=True))
+        self.assertTrue(extract.auto_confirmable(replace(base, confidence=.8), text, allowed=True))
+
+
 class MemoryAdmissionTests(unittest.TestCase):
     def test_executive_factual_premise_in_a_question_is_preserved(self):
         for text, quote in (

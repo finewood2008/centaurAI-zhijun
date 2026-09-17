@@ -1,12 +1,17 @@
 """Synthetic read-only recall tests; never load models or touch user databases."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from mindos.stores import ontology_store
+from mindos.stores import conversation_store, ontology_store
 from mindos.zhijun import memory_retrieval as recall
+
+
+def _iso(value):
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class MemoryRetrievalTests(unittest.TestCase):
@@ -159,6 +164,68 @@ class MemoryRetrievalTests(unittest.TestCase):
         result = recall.retrieve_claims(self.onto, "星桥项目", [])
         self.assertEqual(result[0]["id"], claim["id"])
         self.loader.assert_not_called()
+
+    def test_maturity_boost_is_bounded_and_applied_only_after_the_gate(self):
+        now = datetime.now(timezone.utc)
+        rich = {"promotionReady": True, "whyItMatters": "以后安排工作时要考虑这一点", "lastReaffirmed": _iso(now),
+                "evidence": [{"kind": "conversation_turn", "conversationId": f"c{i}"} for i in range(4)] + [{"kind": "material", "materialId": "m1"}]}
+        self.assertEqual(recall.maturity_boost(rich, now), recall.MAX_BOOST)  # .09 + .04 + .03 + .05 → 上限 .12
+        self.assertEqual(recall.maturity_boost({}, now), 0.0)
+        self.assertAlmostEqual(recall.maturity_boost({"lastReaffirmed": _iso(now - timedelta(days=60)), "evidence": [{"kind": "user_edit"}]}, now), .02)
+        self.assertAlmostEqual(recall.maturity_boost({"lastReaffirmed": _iso(now - timedelta(days=400)), "evidence": [{"kind": "user_edit"}]}, now), -.03)
+        self.assertAlmostEqual(recall.maturity_boost({"lastReaffirmed": _iso(now - timedelta(days=400)),
+            "evidence": [{"kind": "conversation_turn", "conversationId": "a"}, {"kind": "conversation_turn", "conversationId": "b"}]}, now), .03)
+        # 加成只在 0.12 闸门之后：一条与问题无关但很「成熟」的理解仍不会被召回
+        claim = self.claim("我重视自主权", section="principles")
+        with patch.object(self.onto, "list_claims", return_value=[{**claim, **rich}]):
+            self.assertEqual(recall.retrieve_claims(self.onto, "明天天气如何？", []), [])
+            hit = recall.retrieve_claims(self.onto, "我想自己做主", [])
+        self.assertEqual(hit[0]["id"], claim["id"])
+        self.assertGreaterEqual(hit[0]["relevance"], recall.GATE)
+        self.assertAlmostEqual(hit[0]["score"] - hit[0]["relevance"], recall.MAX_BOOST, places=5)
+
+    def test_more_mature_record_ranks_first_among_equally_relevant(self):
+        claim = self.claim("星桥项目的产品方向", state="working")
+        rows = [{**claim, "id": "plain"},
+                {**claim, "id": "mature", "promotionReady": True, "whyItMatters": "讨论产品方向时要带上这条"}]
+        with patch.object(self.onto, "list_claims", return_value=rows):
+            result = recall.retrieve_claims(self.onto, "星桥项目", [])
+        self.assertEqual([c["id"] for c in result], ["mature", "plain"])
+        self.assertEqual(result[0]["relevance"], result[1]["relevance"])
+        self.assertAlmostEqual(result[0]["score"] - result[1]["score"], .07, places=5)
+
+    def test_anchor_sections_admit_one_weakly_related_claim_per_section(self):
+        query = "alpha beta gamma delta epsilon zeta eta theta 星桥"
+        weak = "星桥 one two three four five six seven eight"
+        raw = ontology_store.lexical_similarity(recall._tokens(query), recall._tokens(weak))
+        self.assertTrue(recall.ANCHOR_GATE <= raw < recall.GATE, raw)
+        principle = self.claim(weak, section="principles")
+        self.claim(weak + " nine", section="principles")
+        self.claim(weak + " ten", section="who")
+        self.assertEqual(recall.retrieve_claims(self.onto, query, []), [])
+        anchors = recall.retrieve_claims(self.onto, query, [], anchor_sections=("people", "principles"))
+        self.assertEqual([c["id"] for c in anchors], [principle["id"]])
+        self.assertEqual((anchors[0]["retrievalReason"], anchors[0]["section"]), ("anchor", "principles"))
+        self.assertLess(anchors[0]["relevance"], recall.GATE)
+        self.loader.assert_not_called()
+
+    def test_corrections_pick_retracted_similar_records_but_not_decayed_or_revived(self):
+        convs = conversation_store.reset_for_tests(Path(self.tmp.name) / "conversations.db")
+        corrected = self.claim("我负责星桥项目研发")
+        self.onto.transition(corrected["id"], "retract", surface="ontology_page")
+        unrelated = self.claim("我周末喜欢散步", section="ways")
+        self.onto.transition(unrelated["id"], "retract", surface="ontology_page")
+        decayed = self.claim("星桥项目让我纠结", state="working")
+        self.onto.system_retract(decayed["id"], "decayed_contradicted")
+        revived = self.claim("我负责星桥项目的测试")
+        self.onto.transition(revived["id"], "retract", surface="ontology_page")
+        self.claim("我负责星桥项目的测试")  # 本人再次亲口说到：同内容的活跃理解 → 旧墓碑不算纠正
+        found = recall.corrections(self.onto, "星桥项目研发", conversations=convs, scope="global")
+        self.assertEqual([c["id"] for c in found], [corrected["id"]])
+        self.assertEqual((found[0]["retrievalReason"], found[0]["trustState"]), ("correction", "retracted"))
+        self.assertEqual(recall.corrections(self.onto, "明天天气如何", conversations=convs, scope="global"), [])
+        self.assertEqual(recall.corrections(self.onto, "星桥项目研发", conversations=convs, scope="global", limit=0), [])
+        self.assertNotIn(corrected["id"], [c["id"] for c in recall.retrieve_claims(self.onto, "星桥项目研发", [])])
 
     def test_query_and_result_limits(self):
         query = recall.conversation_query("还有" + "字" * 10000, [{"role": "user", "content": "字" * 10000}] * 6)

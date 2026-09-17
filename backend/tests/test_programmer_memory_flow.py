@@ -17,6 +17,7 @@ from tests.test_zhijun_worker import CHILD
 
 TRANSPORT = r'''
 import io
+from unittest.mock import patch
 text=UTTERANCE
 def model_http(*args,**kwargs):
     from mindos.zhijun.routing import EGRESS_PERMIT
@@ -80,9 +81,12 @@ SCENARIO = r'''
     jobs.OntologyWorker.instance().process(job,'programmer-test-worker',store=onto,conv_store=convs)
     completed=onto.get_job(jid)
     assert completed['state']=='done' and len(completed['result']['created'])==1,completed
-    claims=onto.list_claims(trust_states=('working',))
+    # V3（拍板 4）：亲口说的、原话精确引用、第一人称、高置信的自述直接记为已确认（可撤回），不再等点头。
+    assert completed['result']['autoConfirmed']==completed['result']['created'],completed
+    claims=onto.list_claims(trust_states=('confirmed',))
     assert len(claims)==1 and claims[0]['section']=='who' and claims[0]['content']==text,claims
-    assert not onto.list_claims(trust_states=('confirmed',)),'a proposal is not user confirmation'
+    assert claims[0]['trustOrigin']=='utterance',claims
+    assert not onto.list_claims(trust_states=('working',)),'an exact first-person self-statement no longer waits in the inbox'
     evidence=claims[0]['evidence'][0]
     source=convs.get_message(evidence['messageId'])
     assert source['role']=='user' and source['content']==text and evidence['quote']==text
@@ -92,7 +96,7 @@ SCENARIO = r'''
 
 
 @pytest.mark.parametrize('utterance', ['我是程序员', '我是医生', '我是一个程序员'])
-def test_programmer_chat_creates_working_ontology_without_de_model_consent(tmp_path, utterance):
+def test_programmer_chat_remembers_self_statement_without_de_model_consent(tmp_path, utterance):
     backend = Path(__file__).resolve().parents[1]
     root = tmp_path / 'workspace'
     root.mkdir(mode=0o700)

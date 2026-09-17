@@ -132,7 +132,7 @@ def _render_history(messages: list[dict], budget: int) -> list[dict]:
         rendered.pop(0)
     if rendered and rendered[0]["role"] == "assistant":
         first_kind = str(((messages[0] if messages else {}).get("meta") or {}).get("kind") or "")
-        opener = "（回访由知君先开口）" if first_kind == "review_open" else "（此前的对话已省略）"
+        opener = "（回访由知君先开口）" if first_kind == "review_open" else "（知君先开口）" if first_kind in ("chat_open", "zhijun_initiated") else "（此前的对话已省略）"
         rendered.insert(0, {"role": "user", "content": opener})
     return rendered
 

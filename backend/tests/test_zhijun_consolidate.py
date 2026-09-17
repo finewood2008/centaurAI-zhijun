@@ -139,6 +139,32 @@ class ConsolidateTests(unittest.TestCase):
         self.assertTrue(inbox[0]["promotionReady"])
         self.assertNotIn(stale["id"], [c["id"] for c in inbox])
 
+    def test_promotion_and_defer_also_run_under_router_but_never_touch_confirmed(self) -> None:
+        # V3：整合器的晋升 / 衰减 / 推迟在 router（主路径）下同样生效；只作用于 working，已确认的理解不动。
+        from mindos.zhijun.routing import Router
+        conv = self.convs.create_conversation()
+        multi = self.onto.create_claim({"content": "我可能更信数据", "section": "ways", "layer": "hypothesis"}, _ev("c1"))
+        self.onto.add_evidence(multi["id"], _ev("c2"))
+        stale = self.onto.create_claim({"content": "我大概偏内向", "section": "who", "layer": "hypothesis"}, _ev("c3"))
+        settled = self.onto.create_claim({"content": "我坚持先看数据再拍板", "section": "principles", "layer": "self_declared"}, _ev("c4"), trust_state="confirmed", trust_origin="utterance")
+        challenged = self.onto.create_claim({"content": "我大概不喜欢开会", "section": "ways", "layer": "hypothesis"}, _ev("c5"))
+        self.onto.set_challenged(challenged["id"], "合成矛盾")
+        with self.onto._connect() as db:
+            db.execute("UPDATE claims SET updated_at=? WHERE id=?", ((self.now - timedelta(days=40)).isoformat().replace("+00:00", "Z"), challenged["id"]))
+        router = Router(self.onto, self.convs, conv["id"])
+        report = consolidate.run(store=self.onto, conv_store=self.convs, provider=None, now=self.now + timedelta(days=61), router=router)
+        self.assertTrue(report["managed"])
+        self.assertEqual(report["promoted"], 1)
+        self.assertGreaterEqual(report["deferred"], 1)
+        self.assertEqual(report["decayed"], 1)
+        self.assertTrue(self.onto.get_claim(multi["id"])["promotionReady"])
+        self.assertIsNotNone(self.onto.get_claim(stale["id"])["deferredUntil"])
+        self.assertEqual(self.onto.get_claim(challenged["id"])["trustState"], "retracted")
+        self.assertEqual(self.onto.get_claim(challenged["id"])["retractionReason"], "decayed_contradicted")
+        unchanged = self.onto.get_claim(settled["id"])
+        self.assertEqual((unchanged["trustState"], unchanged["promotionReady"], unchanged["deferredUntil"]), ("confirmed", False, None))
+        self.assertFalse(consolidate.run(store=self.onto, conv_store=self.convs, provider=None, now=self.now)["managed"])
+
     def test_should_run_daily_or_after_twenty_claims(self) -> None:
         self.assertTrue(consolidate.should_run(self.onto, now=self.now))
         consolidate.run(store=self.onto, conv_store=self.convs, provider=None, now=self.now)

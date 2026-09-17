@@ -112,7 +112,8 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
     store = store or OntologyStore.instance()
     conv_store = conv_store or ConversationStore.instance()
     current = (now or _now()).astimezone(timezone.utc)
-    report = {"mergeProposals": 0, "challenged": 0, "conflicts": 0, "merged": 0, "tensions": 0, "promoted": 0, "decayed": 0, "deferred": 0, "pairsJudged": 0}
+    report = {"mergeProposals": 0, "challenged": 0, "conflicts": 0, "merged": 0, "tensions": 0, "promoted": 0, "decayed": 0, "deferred": 0, "pairsJudged": 0,
+              "managed": bool(router)}
     from .charter_policy import scope_policy, check_action, assert_current
     charter = scope_policy(router.scope if router else "global")
     if not check_action(charter, "memory_auto")["allowed"]:
@@ -139,8 +140,8 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
 
     # 2/3. 矛盾与张力
     active = store.list_claims(trust_states=("working", "confirmed"), limit=5000, include_hidden=True)
+    from .alignment import visible
     if router:
-        from .alignment import visible
         active = [c for c in active if visible(c, conv_store, router.scope)]
     if provider and provider.external and not router:
         from .source_policy import SourcePolicy
@@ -220,10 +221,10 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
             store.set_challenged(b["id"], f"与另一条候选「{a['content'][:40]}」矛盾")
             report["challenged"] += 1
 
-    # 4/5. 晋升 / 衰减 / 推迟
+    # 4/5. 晋升 / 衰减 / 推迟（V3：router 下同样生效；只作用于 working，永不改动已确认的理解）
     for claim in store.list_claims(trust_states=("working",), limit=5000, include_hidden=True):
-        if router:
-            continue  # No automatic retraction/defer of managed interpretations.
+        if router and not visible(claim, conv_store, router.scope):
+            continue
         if claim["challenged"]:
             challenged_since = _parse(claim["updatedAt"]) or current
             if current - challenged_since >= timedelta(days=CHALLENGE_DECAY_DAYS):
@@ -241,6 +242,8 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
 
     store.meta_set("last_consolidate_at", _iso(current))
     store.meta_set("claims_at_last_consolidate", str(store.stats()["claims"]["working"] + store.stats()["claims"]["confirmed"]))
+    from .jobs import enqueue_core_profile_quietly
+    enqueue_core_profile_quietly(router.scope if router else "global", store=store, conv_store=conv_store)  # V3：整理后重建核心画像
     return report
 
 

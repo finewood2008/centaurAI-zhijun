@@ -1,7 +1,7 @@
 // 认识论标签 → 文字徽章回归：四种标记、引用 chip、无关文本不动、不放行原始 HTML。
 // 运行：node --experimental-strip-types tests/labels.test.mjs
 import assert from 'node:assert/strict'
-import { decorateLabels, stripContextCitations, stripLabels, LAYER_MARKERS } from '../src/shared/labels.ts'
+import { decorateLabels, initiatedKindLabel, stripContextCitations, stripLabels, LAYER_MARKERS } from '../src/shared/labels.ts'
 
 // 1) 四种标记都被替换成带文字的 span（不能只靠颜色）
 {
@@ -50,4 +50,19 @@ import { decorateLabels, stripContextCitations, stripLabels, LAYER_MARKERS } fro
   assert.equal(stripLabels('【资料里看到的】你去年换过城市 [m2] [p12]。'), '你去年换过城市。')
 }
 
-console.log('labels: 6 tests OK')
+// 7) 记忆 V3 · M8：知君主动发起的会话，原因种类的方印文字；未知种类只写「知君发起」
+{
+  assert.equal(initiatedKindLabel('review_due'), '回访')
+  assert.equal(initiatedKindLabel('commitment_due'), '承诺')
+  assert.equal(initiatedKindLabel('principle_tension'), '原则与做法')
+  assert.equal(initiatedKindLabel('weekly_review'), '每周回顾')
+  assert.equal(initiatedKindLabel('open_loop'), '上次的事')
+  assert.equal(initiatedKindLabel('nod'), '想核对')
+  assert.equal(initiatedKindLabel('stale'), '好久没提')
+  assert.equal(initiatedKindLabel('gap'), '还不了解')
+  assert.equal(initiatedKindLabel('milestone'), '纪念日')
+  assert.equal(initiatedKindLabel('greeting'), '问候')
+  assert.equal(initiatedKindLabel('unknown'), '知君发起')
+}
+
+console.log('labels: 7 tests OK')

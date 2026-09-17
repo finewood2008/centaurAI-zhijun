@@ -446,3 +446,46 @@ interface MatterBinding { matter: Matter | null; bindingRevision: number }
 自定义规则写入字段为 `name`、`description`、`examples`、`counterExamples`、`enabled`、`deliveryMode` 和 `allowOriginalAfterConfirm`；其 `masking` 由服务端生成。内置规则只有在 App 获得额外能力且响应的 `editableFields` 允许时，才可提交 `masking` 等局部覆盖；页面按 `systemConstraints` 限制安全底线。`deliveryMode` 为 `confirm | always_mask | block`，只有 confirm 可以允许确认后原文。
 
 `CUSTOM_RULE_SIMILAR` 只向 Renderer 转发经校验的 `similarRuleId`。界面读取并展示该规则后，用户选择“仍要保存”才携带 `acknowledgeSimilarRuleId` 重提；创建须使用新 requestId，其确认请求结果不确定时复用该键。内置恢复默认则通过服务端请求头转交相似确认 ID。所有写操作都通过盒端长期 App 凭据完成，内置规则与历史扫描分别要求独立管理能力。App Secret 和 Data Agent 鉴权头不得进入 Renderer；经格式验证的 ETag 作为并发控制令牌进入知君设置页，不是授权凭据，服务端收到后才设置 If-Match。
+
+## 23. 记忆系统 V3 · 版本 memory-v3-2026-09-17
+
+设计见 [知君记忆系统 V3](../product/ZHIJUN_MEMORY_V3.md)。本节接口在 Web 与盒端 worker 同源实现；目录项已同步加入 `frontend/shared/product-operations.json`（核心画像、提醒今日 / 扫描 / 划掉 / 静默）。
+
+### 23.1 核心画像 `GET /api/mindos/ontology/core-profile`
+
+```json
+{ "scope": "global", "sourceHash": "…", "generatedAt": "…Z",
+  "lines": [ { "section": "who|people|matters|principles|ways|direction|recent", "kind": "claim|matter|theme|loop|due",
+               "label": "你告诉我的", "date": "2026-09-17", "content": "我是产品负责人",
+               "text": "- [你告诉我的·2026-09-17] 我是产品负责人", "sourceType": "claim|matter|summary|decision",
+               "sourceId": "clm_…", "claimId": "clm_…", "ref": {"kind": "claim", "id": "clm_…"},
+               "externalOk": true, "derived": false } ],
+  "text": "## 核心画像（…）\n### 我是谁\n- …", "budget": {"external": 1200, "local": 600} }
+```
+
+- 确定性生成，不调模型；只含已确认、未被挑战、未推迟、非仅当时、未过期、非受限的理解，加活跃事项、按到期排序的承诺、最近三段对话的主题与待办、七天内到期的判断。
+- `text` 是本机视图（未按预算裁剪）；在线外发时另按 1200 字预算并去掉敏感与本地专用行；每行来源经路由核对，未授权行丢弃并记入 `excluded`，不阻塞对话。
+- 缓存在本体 meta（`zhijun_core_profile_v1[:scope]`），来源哈希不含当天日期；任务 `core_profile` 在抽取有新增 / 晋升 / 重申、摘要保存、用户核对、手写补一条、记结果、整合后重建。
+
+### 23.2 对话开场
+
+`POST /api/mindos/conversations`（`mode=chat` 且无 `taskContext`）响应新增 `opening`：一条 `role=assistant`、`provider=model="template"` 的消息，`meta.kind="chat_open"`，`meta.routingOrigin={"service":"","external":false}`，`meta.routingSources` 为被引用的理解 / 摘要 / 判断来源，`meta.inquiry` 为所用求知目标或 `null`。无画像、章程关闭主动或来源无法核对时为中性开场且不带问句。回访与建档会话不带 `opening`。
+
+### 23.3 出处与今日
+
+- `provenance` 新增 `coreProfile: {lineCount, claimIds, sourceHash, excludedCount}` 与 `inquiry: {kind, key, targetType, targetId} | null`；`retractedNotices` 为「已纠正、不得复述」块的条数。
+- `GET /api/mindos/zhijun/home` 的 `nextAction.kind` 新增 `inquiry`（`title` 为问句、`say` 预填对话）；判断类目标仍返回 `review`。
+- `GET /api/mindos/conversations/{id}/outcomes` 的理解条目新增 `trustOrigin`、`createdAt`、`undoable`（已确认 ∧ 来源为亲口陈述 ∧ 证据来自本会话）。
+
+### 23.4 求知与自动记住
+
+- 提示词在本轮证据之后可带「如果自然，可以问的一个问题」块（≤160 字，一轮最多一问；深入、商量、用户本句是问句时不带）；目标来源为缺口、过期、张力、未了结、待点头、建档话题；静默领域过滤，章程关闭主动时只留缺口与待点头，同一目标 7 天内不重复。
+- 亲口说的、原话精确引用、第一人称、置信 ≥ 0.8、长期范围、未降级、非辅助表达的自述直接记为 `confirmed`（`trustOrigin=utterance`）；「仅在我要求时整理」模式仍只出 `working`。重复说到已有理解追加证据并刷新重申；待确认理解被本人再次亲口说到即确认。理解新增字段 `whyItMatters`、`howToApply`；`ways` 分区新增谓词 `wants_zhijun_to`（第二阶段使用）。
+
+### 23.5 知君的主动性
+
+- 策略并入 `GET/PUT /api/mindos/nudges/policy`：`proactive: {enabled: true, maxPerDay: 2 (0..5), minGapHours: 4 (1..24), quietHours: {start:"22:00", end:"08:00"}（start==end 表示关闭）, snoozeUntil: null|ISO, greetAfterDays: 7 (0..365，0 关闭), backoffUntil: null|ISO（只读，服务端维护）}`。支持只提交 `{proactive: {...}}` 的部分更新；越界 422 / 400。
+- 任务 `proactive_scan`（优先级 0）与提醒扫描同调度（进程内每小时、盒端 `domain.tick`）。一次最多创建一段会话：候选优先级 回访到期 < 承诺到期 < 原则张力 < 每周回顾 < 未了结 < 纪念日 < 待点头 < 过期 < 缺口（仅认识前 14 天）< 问候；节律门：关闭、已请勿打扰、安静时段、每日上限、最小间隔、用户两小时内活跃、连续 3 次未回应后的 7 天退避、章程关闭主动、静默领域、同一目标（含引用的判断 / 理解）7 天内不重复。
+- 知君发起的会话：`mode=chat`，`conversation.initiated = {by:"zhijun", kind, whyNow, createdAt, answeredAt: null|ISO}`（用户第一条完整消息写入 `answeredAt`，并清除退避）；首条消息 `provider=model="template"`，`meta = {kind:"zhijun_initiated", reason, whyNow, routingOrigin:{service:"",external:false}, routingSources:[已核对的来源], nudgeId?}`；回访类会话绑定 `decisionId`，可直接记结果；来源无法核对的候选跳过，提醒类沿用回访开场的先例只写已核对的来源。
+- `GET /api/mindos/zhijun/home` 新增 `initiated: [{conversationId, title, whyNow, kind, createdAt}]`（最多 3 条未回应）。
+- 前端：会话列表方印「知君发起」（回应后恢复为模式方印）；首条消息下有「知君主动找你 · 为何现在」与「先别找我三天」（写 `proactive.snoozeUntil`）；今日页「知君想和你聊」；设置 → 关系设置 → 「知君主动找我」折叠项。桌面系统通知留待第二阶段（需动 Electron 壳）。

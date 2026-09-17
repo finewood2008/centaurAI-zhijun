@@ -113,12 +113,15 @@ class PersistTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def _run(self, text: str, message_id: str, prev: str | None = None) -> dict:
-        # These tests cover the preserved low-level legacy API. The live
-        # run_extraction path now applies sparse admission and never auto-confirms.
+        # These tests cover the preserved low-level persistence API with the V3
+        # auto-confirm rule enabled by the caller (the live path passes it from
+        # memory.process_candidates: important mode + charter allows). Without
+        # ``auto_confirm_allowed`` persist never confirms anything by itself.
         raw = fake_extract(text)
         valid = extract.validate(raw, user_text=text, prev_assistant=prev)
         result = extract.persist(valid, raw["entities"], store=self.store,
-                                 conversation_id="conv_1", message_id=message_id)
+                                 conversation_id="conv_1", message_id=message_id,
+                                 user_text=text, auto_confirm_allowed=True)
         return {**result, "state": "done"}
 
     def test_utterance_is_confirmed_and_aspiration_stays_working(self) -> None:
@@ -134,6 +137,15 @@ class PersistTests(unittest.TestCase):
         self.assertEqual(direction["trustState"], "working")
         self.assertEqual(direction["layer"], "aspirational")
         self.assertEqual(len(self.store.inbox()), 1)
+        self.assertEqual(result["autoConfirmed"], [matters["id"]])
+
+    def test_persist_without_permission_never_confirms(self) -> None:
+        raw = fake_extract(USER_TEXT)
+        valid = extract.validate(raw, user_text=USER_TEXT, prev_assistant=None)
+        result = extract.persist(valid, raw["entities"], store=self.store, conversation_id="conv_1", message_id="msg_1", user_text=USER_TEXT)
+        self.assertEqual(len(result["created"]), 2)
+        self.assertEqual(result["autoConfirmed"], [])
+        self.assertEqual(self.store.list_claims(trust_states=("confirmed",)), [])
 
     def test_restating_adds_evidence_and_promotes_working(self) -> None:
         working = self.store.create_claim(

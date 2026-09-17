@@ -2,7 +2,7 @@
 // P1（§4）：设置页「模型与运行时」。
 // 复用双通道划分：材料处理固定本地 Ollama；对话问答可显式配置并授权的外部 OpenAI 兼容 API。
 // 契约：/api/system/models/*（require_local + revision 乐观锁）；test 提交表单暂存值不持久化。
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { createVisiblePoller } from '@/composables/visiblePolling'
 import RoutingPanel from '@/components/conversation/RoutingPanel.vue'
 import ExternalProvidersPanel from '@/components/conversation/ExternalProvidersPanel.vue'
@@ -42,11 +42,13 @@ import {
   type ModelJobType,
   type MonitorResponse,
   type MemoryPolicy,
+  type ProactivePolicy,
   type RuntimeTestResult,
 } from '@/services/api'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import { useToast } from '@/composables/useToast'
+import { proactiveSnoozeLine } from '@/shared/labels'
 
 const toast = useToast()
 
@@ -61,6 +63,7 @@ async function loadNudgePolicy() {
     const policy = await getNudgePolicy()
     nudgeEnabled.value = policy.enabled
     nudgeMax.value = policy.maxPerDay
+    applyProactive(policy.proactive)
     nudgeLoaded.value = true
   } catch {
     nudgeLoaded.value = false
@@ -81,6 +84,78 @@ async function saveNudgePolicy() {
   } finally {
     nudgeSaving.value = false
   }
+}
+
+// ---- 记忆 V3 · M8：知君主动找我（policy.proactive）。折叠在关系设置里，即改即存；
+// 策略随上面的提醒开关一起在挂载时读过一次，这里不再另发请求；旧盒端没有 proactive 时按「关闭」显示，保存时整体写回。----
+const TIME_RE = /^\d{2}:\d{2}$/
+const proactive = reactive({
+  enabled: false,
+  maxPerDay: 1,
+  minGapHours: 4,
+  quietStart: '22:00',
+  quietEnd: '08:00',
+  snoozeUntil: null as string | null,
+  greetAfterDays: 0,
+  backoffUntil: null as string | null,
+})
+const proactiveOpen = ref(false)
+const proactiveSaving = ref(false)
+const snoozeLine = computed(() => proactiveSnoozeLine(proactive.snoozeUntil))
+// 下拉只列常用档；后端给了别的值时把它也列进去，不让选框变空
+const withCurrent = (options: number[], value: number) => (options.includes(value) ? options : [...options, value].sort((a, b) => a - b))
+const maxPerDayOptions = computed(() => withCurrent([0, 1, 2, 3], proactive.maxPerDay))
+const minGapOptions = computed(() => withCurrent([2, 4, 8, 12], proactive.minGapHours))
+const greetOptions = computed(() => withCurrent([0, 3, 7, 14], proactive.greetAfterDays))
+
+function applyProactive(p: ProactivePolicy | null | undefined) {
+  proactive.enabled = p?.enabled ?? false
+  proactive.maxPerDay = typeof p?.maxPerDay === 'number' ? p.maxPerDay : 1
+  proactive.minGapHours = typeof p?.minGapHours === 'number' ? p.minGapHours : 4
+  proactive.quietStart = p?.quietHours?.start ?? '22:00'
+  proactive.quietEnd = p?.quietHours?.end ?? '08:00'
+  proactive.snoozeUntil = p?.snoozeUntil ?? null
+  proactive.greetAfterDays = typeof p?.greetAfterDays === 'number' ? p.greetAfterDays : 0
+  proactive.backoffUntil = p?.backoffUntil ?? null
+}
+
+function proactivePayload(): ProactivePolicy {
+  return {
+    enabled: proactive.enabled,
+    maxPerDay: proactive.maxPerDay,
+    minGapHours: proactive.minGapHours,
+    quietHours: { start: proactive.quietStart, end: proactive.quietEnd },
+    snoozeUntil: proactive.snoozeUntil,
+    greetAfterDays: proactive.greetAfterDays,
+    backoffUntil: proactive.backoffUntil,
+  }
+}
+
+async function saveProactive() {
+  if (proactiveSaving.value) return
+  if (!TIME_RE.test(proactive.quietStart) || !TIME_RE.test(proactive.quietEnd)) return
+  proactiveSaving.value = true
+  try {
+    const policy = await putNudgePolicy({ proactive: proactivePayload() })
+    applyProactive(policy.proactive ?? proactivePayload())
+    toast({ type: 'success', message: '已记住' })
+  } catch (err) {
+    toast({ type: 'error', message: err instanceof Error ? err.message : '保存失败' })
+    await loadNudgePolicy()
+  } finally {
+    proactiveSaving.value = false
+  }
+}
+
+function cancelSnooze() {
+  proactive.snoozeUntil = null
+  void saveProactive()
+}
+
+function onProactiveToggle(event: Event) {
+  proactiveOpen.value = (event.target as HTMLDetailsElement | null)?.open ?? false
+  // 挂载时那次读取失败过才补读一次；平时展开不发请求
+  if (proactiveOpen.value && !nudgeLoaded.value) void loadNudgePolicy()
 }
 
 // 记忆整理偏好独立于主动回访和外发授权；只影响之后的新理解。
@@ -700,6 +775,53 @@ onUnmounted(() => {
             <option :value="5">5 条</option>
           </select>
         </label>
+        <details class="rt-more rt-proactive" data-testid="proactive-settings" @toggle="onProactiveToggle">
+          <summary>知君主动找我</summary>
+          <div v-if="proactiveOpen" class="rt-form rt-proactive__form">
+            <label class="rt-field is-switch">
+              <span class="rt-field__line">
+                <span>让知君主动发起对话</span>
+                <span class="rt-toggle">
+                  <input v-model="proactive.enabled" type="checkbox" role="switch" :disabled="proactiveSaving || !nudgeLoaded" @change="saveProactive" />
+                  <span class="rt-toggle__track" aria-hidden="true" />
+                </span>
+              </span>
+              <span class="rt-hint">只在有理由的时候：到期的回访、你说过要做的事、多处提到等你点头的理解、认识的纪念日。每次都会说明为何现在，你随时可以让它先别找你。</span>
+            </label>
+            <div class="rt-form__row rt-proactive__row">
+              <label class="rt-field is-narrow" :class="{ 'is-disabled': !proactive.enabled }">
+                每天最多几次
+                <select v-model.number="proactive.maxPerDay" :disabled="proactiveSaving || !nudgeLoaded || !proactive.enabled" @change="saveProactive">
+                  <option v-for="n in maxPerDayOptions" :key="n" :value="n">{{ n === 0 ? '不主动' : `${n} 次` }}</option>
+                </select>
+              </label>
+              <label class="rt-field is-narrow" :class="{ 'is-disabled': !proactive.enabled }">
+                两次之间至少
+                <select v-model.number="proactive.minGapHours" :disabled="proactiveSaving || !nudgeLoaded || !proactive.enabled" @change="saveProactive">
+                  <option v-for="n in minGapOptions" :key="n" :value="n">{{ n }} 小时</option>
+                </select>
+              </label>
+            </div>
+            <div class="rt-field" :class="{ 'is-disabled': !proactive.enabled }">
+              <span>安静时段</span>
+              <span class="rt-field__line rt-proactive__quiet">
+                <input v-model="proactive.quietStart" type="time" aria-label="安静时段开始" :disabled="proactiveSaving || !nudgeLoaded || !proactive.enabled" @change="saveProactive" />
+                <span>到</span>
+                <input v-model="proactive.quietEnd" type="time" aria-label="安静时段结束" :disabled="proactiveSaving || !nudgeLoaded || !proactive.enabled" @change="saveProactive" />
+              </span>
+              <span class="rt-hint">这段时间里知君不会主动开口。</span>
+            </div>
+            <label class="rt-field is-narrow" :class="{ 'is-disabled': !proactive.enabled }">
+              多久没聊主动问候
+              <select v-model.number="proactive.greetAfterDays" :disabled="proactiveSaving || !nudgeLoaded || !proactive.enabled" @change="saveProactive">
+                <option v-for="n in greetOptions" :key="n" :value="n">{{ n === 0 ? '关闭' : `${n} 天` }}</option>
+              </select>
+            </label>
+            <p v-if="snoozeLine" class="rt-note rt-proactive__snooze" data-testid="proactive-snooze">
+              <span>{{ snoozeLine }} · <button type="button" class="rt-proactive__cancel" :disabled="proactiveSaving" @click="cancelSnooze">取消</button></span>
+            </p>
+          </div>
+        </details>
         <p class="rt-note">哪些话题不想让知君主动提、AI 不该替你决定什么，写在<RouterLink to="/me/charter" class="rt-link">「人生章程」</RouterLink>里。</p>
       </div>
     </section>
@@ -1063,6 +1185,41 @@ onUnmounted(() => {
 .rt-link {
   color: var(--ws-primary-color, #a6452e);
 }
+.rt-proactive > summary {
+  font-size: 13px;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.rt-proactive[open] > summary {
+  margin-bottom: 12px;
+}
+.rt-proactive__form {
+  padding-left: 12px;
+  border-left: 2px solid var(--ws-border-color-3, #ebe7de);
+}
+.rt-proactive__row {
+  flex-wrap: wrap;
+}
+.rt-proactive__quiet {
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.rt-proactive__quiet input {
+  width: auto;
+  min-width: 0;
+}
+.rt-proactive__snooze {
+  margin-top: 0;
+}
+.rt-proactive__cancel {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px dotted currentColor;
+  background: transparent;
+  font: inherit;
+  color: var(--ws-text-secondary-color, #686b66);
+  cursor: pointer;
+}
+.rt-proactive__cancel:hover { color: var(--ws-primary-color, #a6452e); }
+.rt-proactive__cancel:disabled { opacity: .6; cursor: default; }
 
 .rt-section {
   margin-bottom: 16px;

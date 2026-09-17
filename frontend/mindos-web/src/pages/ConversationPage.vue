@@ -523,7 +523,9 @@ const showIntro = computed(
     landingReady.value &&
     (guidedOnboarding.value || forceOnboarding.value),
 )
-const showBlank = computed(() => !currentId.value && !messages.value.length && landingReady.value && !showIntro.value)
+// 会话里只有知君的开场（chat_open）时也算空白：起手卡仍在，只是不再重复那句引子
+const openingOnly = computed(() => messages.value.length > 0 && messages.value.every((m) => m.role === 'assistant' && m.meta?.kind === 'chat_open'))
+const showBlank = computed(() => ((!currentId.value && !messages.value.length) || (openingOnly.value && !messagesLoading.value)) && landingReady.value && !showIntro.value)
 // 没聊完的建档会话（用户轮数 < 8）：空白态给一张「继续建档」卡
 const pendingOnboarding = computed(() => {
   const conv = onboardingConversation.value
@@ -806,6 +808,12 @@ function toUi(m: Message): UiMessage {
   return reactive({ ...m, provenance: seeded, turnMeta: null, streaming: false }) as UiMessage
 }
 
+// 记忆 V3 · M8：知君主动发起的会话，第一条是 meta.kind=zhijun_initiated 的知君消息；气泡下方写明为何现在（chat_open 开场照旧）
+function initiatedMeta(m: UiMessage): { whyNow: string } | null {
+  if (m.role !== 'assistant' || m.meta?.kind !== 'zhijun_initiated') return null
+  return { whyNow: typeof m.meta?.whyNow === 'string' ? m.meta.whyNow : '' }
+}
+
 async function loadConversation(id: string) {
   conversationDetailAbort?.abort()
   clearConversationAuxiliary()
@@ -1028,6 +1036,8 @@ async function createCurrentConversation(mode: 'chat' | 'onboarding', check: () 
   // Composer's conversation watcher runs. Keep provenance and undo intact.
   composerRef.value?.adoptLandingDraft(conv.id)
   current.value = rememberConversationMetadata(conv)
+  // 知君先开口：模板开场随创建响应带回（meta.kind=chat_open），不另拉消息、不自动发送；旧盒端没有 opening 时静默无开场
+  if (conv.opening) messages.value = [toUi(conv.opening)]
   conversations.value = [conv, ...conversations.value]
   skipLoadFor = conv.id
   await router.replace(`/c/${encodeURIComponent(conv.id)}`)
@@ -1720,22 +1730,6 @@ onBeforeUnmount(() => {
           <p class="zj-intro__hint">也可以直接在下面打字，知君会从认识你开始。</p>
         </div>
 
-        <div v-else-if="showBlank" class="zj-blank">
-          <p class="zj-blank__lead">从你眼下在意的事聊起。可以一起想清楚、准备一份文稿，也可以只是说说，不必马上作决定。</p>
-          <button v-if="pendingOnboarding" type="button" class="zj-blank__resume" data-testid="resume-onboarding" @click="selectConversation(pendingOnboarding.id)">
-            <span class="zj-seal zj-seal--accent">建档</span>
-            <span class="zj-blank__resume-title">继续完善我的方向</span>
-            <span class="zj-blank__resume-desc">上次认识你的对话还没聊完，接着聊，本体图会继续亮起来。</span>
-          </button>
-          <div class="zj-blank__cards" role="group" aria-label="起个头">
-            <button v-for="s in STARTERS" :key="s.title" type="button" class="zj-blank__card" @click="useStarter(s)">
-              <span class="zj-blank__card-title">{{ s.title }}</span>
-              <span class="zj-blank__card-desc">{{ s.desc }}</span>
-            </button>
-          </div>
-          <p class="zj-blank__hint">回应基于你确认过的理解，会标出哪些是你说过的、哪些只是推测。</p>
-        </div>
-
         <div v-if="messagesLoading" class="loading-state">正在打开会话…</div>
         <ErrorState v-else-if="messagesError" :message="messagesError" retry-label="重试" @retry="currentId && loadConversation(currentId)" />
 
@@ -1748,6 +1742,7 @@ onBeforeUnmount(() => {
               :pending-label="contextNeedsReview(m) ? '等待核对' : undefined"
               :streaming="m.streaming"
               :allow-save="!!currentId && !guidedOnboarding && m.role === 'assistant'"
+              :initiated="initiatedMeta(m)"
               @cite="(n) => onCite(m, n)"
               @save="matterWorkspace?.saveFromReply(m)"
             />
@@ -1790,10 +1785,25 @@ onBeforeUnmount(() => {
               @dismiss="memoryPlacement && dismissMemory('claim', memoryPlacement.claim.id, true)" />
           </div>
         </template>
+        <div v-if="showBlank" class="zj-blank" :class="{ 'zj-blank--after-opening': openingOnly }">
+          <p v-if="!openingOnly" class="zj-blank__lead">从你眼下在意的事聊起。可以一起想清楚、准备一份文稿，也可以只是说说，不必马上作决定。</p>
+          <button v-if="pendingOnboarding && !openingOnly" type="button" class="zj-blank__resume" data-testid="resume-onboarding" @click="selectConversation(pendingOnboarding.id)">
+            <span class="zj-seal zj-seal--accent">建档</span>
+            <span class="zj-blank__resume-title">继续完善我的方向</span>
+            <span class="zj-blank__resume-desc">上次认识你的对话还没聊完，接着聊，本体图会继续亮起来。</span>
+          </button>
+          <div class="zj-blank__cards" role="group" aria-label="起个头">
+            <button v-for="s in STARTERS" :key="s.title" type="button" class="zj-blank__card" @click="useStarter(s)">
+              <span class="zj-blank__card-title">{{ s.title }}</span>
+              <span class="zj-blank__card-desc">{{ s.desc }}</span>
+            </button>
+          </div>
+          <p v-if="!openingOnly" class="zj-blank__hint">回应基于你确认过的理解，会标出哪些是你说过的、哪些只是推测。</p>
+        </div>
         <CharterConversation v-if="loadedConversationId && conversationAuxPhase >= 3" :key="loadedConversationId" :conversation-id="loadedConversationId" :onboarding="guidedOnboarding"
           :message-id="replyTarget" :disabled="streaming || messagesLoading" :claims="mapClaims" :requested="route.query.charter === '1'"
           @finished="finishLightOnboarding" @attention="charterAttention = $event" @topics="onboardingTopics = $event" @reviewed="loadMapClaims" />
-        <OutcomesCard v-if="showOutcomesCard && turnOutcomes" :outcomes="turnOutcomes" />
+        <OutcomesCard v-if="showOutcomesCard && turnOutcomes" :outcomes="turnOutcomes" :conversation-id="current?.id" @refresh="current && refreshOutcomes(current.id, true)" />
       </div>
 
       <div class="zj-page__composer">
@@ -2241,6 +2251,12 @@ onBeforeUnmount(() => {
   margin: 48px auto 0;
   max-width: 560px;
   text-align: center;
+}
+/* 知君已经开口时，起手卡跟在开场之后，不再占首屏留白 */
+.zj-blank--after-opening {
+  margin-top: 8px;
+  margin-left: 4px;
+  text-align: left;
 }
 .zj-blank__lead {
   margin: 0 0 8px;

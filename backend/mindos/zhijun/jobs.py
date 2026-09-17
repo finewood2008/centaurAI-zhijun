@@ -127,6 +127,25 @@ def enqueue_home_brief(source_hash: str, *, store: OntologyStore | None = None, 
     return store.enqueue_job("home_brief", "today" if scope == "global" else "today:" + scope, payload={"sourceHash": source_hash, "scope": scope}, priority=2, input_hash=source_hash)
 
 
+def enqueue_core_profile(scope: str = "global", *, store: OntologyStore | None = None, conv_store: ConversationStore | None = None, growth=None) -> str | None:
+    """核心画像重建（确定性、无模型）：input_hash = 输入签名，同 scope 只保留一个活跃任务。"""
+    from ..stores.growth_store import GrowthStore
+    from . import core_profile
+    store = store or OntologyStore.instance()
+    signature = core_profile.source_hash(store, conv_store or ConversationStore.instance(), growth or GrowthStore.instance(), scope)
+    owner = "profile" if scope == "global" else "profile:" + scope
+    return store.enqueue_job("core_profile", owner, payload={"scope": scope, "sourceHash": signature}, priority=1, input_hash=signature)
+
+
+def enqueue_core_profile_quietly(scope: str = "global", *, store: OntologyStore | None = None, conv_store: ConversationStore | None = None) -> str | None:
+    """尽力入队：画像重建失败不影响调用方（确认 / 记结果 / 整理本身已落库）。"""
+    try:
+        return enqueue_core_profile(scope, store=store, conv_store=conv_store)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("核心画像任务入队失败：%s", type(exc).__name__)
+        return None
+
+
 def _routing_pause(exc):
     detail = exc.detail if isinstance(exc.detail, dict) else {}
     preview = detail.get("preview") or {}
@@ -259,6 +278,9 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
                     {"kind": kind, "jobId": exc.job_id, "code": exc.code})
                 return None
 
+        if result.get("created") or result.get("promoted") or result.get("reaffirmed"):
+            from .alignment import scope_for
+            enqueue_followup("core_profile", lambda: enqueue_core_profile(scope_for(conversation_id, conv_store), store=store, conv_store=conv_store))
         if result.get("created") or result.get("promoted"):
             enqueue_followup("project", lambda: enqueue_projection(store=store))
             try:
@@ -307,6 +329,7 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
             generated_by=generated_by,
             meta={"routingSources": refs, "charterBasis": basis(policy)},
         )
+        enqueue_core_profile_quietly(scope_for(conversation_id, conv_store), store=store, conv_store=conv_store)
         return {"state": "done", "revision": saved["revision"]}
     if kind == "draft_turn":
         from . import deliberate
@@ -330,6 +353,10 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
         finally:
             provider_gate.release(channel)
         return result
+    if kind == "core_profile":
+        from . import core_profile
+
+        return core_profile.refresh_job(payload, store=store, conv_store=conv_store)
     if kind == "home_brief":
         from .. import zhijun_home
 
@@ -340,6 +367,10 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
         from . import nudges
 
         return nudges.scan(conv_store=conv_store)
+    if kind == "proactive_scan":
+        from . import proactive
+
+        return proactive.run(store=store, convs=conv_store, scope=str(payload.get("scope") or "global"))
     if kind == "consolidate":
         from . import consolidate
         from .routing import Router
@@ -373,6 +404,13 @@ def enqueue_material_extraction(material_id: str, *, store: OntologyStore | None
 def enqueue_nudge_scan(*, store: OntologyStore | None = None) -> str | None:
     store = store or OntologyStore.instance()
     return store.enqueue_job("nudge_scan", "hourly", payload={}, priority=0)
+
+
+def enqueue_proactive_scan(*, store: OntologyStore | None = None, scope: str = "global") -> str | None:
+    """知君主动发起对话的扫描（V3 M8）：与提醒扫描同频、同优先级，排在它之后处理。"""
+    store = store or OntologyStore.instance()
+    owner = "hourly" if scope == "global" else "hourly:" + scope
+    return store.enqueue_job("proactive_scan", owner, payload={"scope": scope}, priority=0)
 
 
 _NUDGE_SCAN_INTERVAL = 3600.0
@@ -435,6 +473,7 @@ class OntologyWorker:
                 last_scan = time.time()
                 try:
                     enqueue_nudge_scan(store=store)
+                    enqueue_proactive_scan(store=store)
                     from . import consolidate
 
                     if consolidate.should_run(store):

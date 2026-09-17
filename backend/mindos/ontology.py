@@ -24,7 +24,7 @@ from .domain_scope import _device_scope_of
 from .zhijun.alignment import visible
 from .zhijun import projection
 from .zhijun.confirm import review_claim as _review_claim
-from .zhijun.jobs import enqueue_projection
+from .zhijun.jobs import enqueue_projection, enqueue_core_profile_quietly
 
 _PREFIX = "/api/mindos/ontology"
 _TAGS = ["zhijun-ontology"]
@@ -225,7 +225,18 @@ def create_claim(req: ClaimCreate, request: Request = None):
         enqueue_projection(store=store)
     except Exception:  # noqa: BLE001
         pass
+    enqueue_core_profile_quietly(_scope(request), store=store, conv_store=ConversationStore.instance())
     return claim
+
+
+def get_core_profile(request: Request = None):
+    """知君每轮回答都带着的一页纸（本机视图；未按通道预算裁剪，budget 给界面标注）。"""
+    from .stores.growth_store import GrowthStore
+    from .zhijun import core_profile
+
+    page = core_profile.cached(_store(), ConversationStore.instance(), GrowthStore.instance(), _scope(request))
+    return {"scope": page["scope"], "sourceHash": page["sourceHash"], "generatedAt": page["generatedAt"],
+            "lines": page["lines"], "text": page["text"], "budget": dict(core_profile.BUDGETS)}
 
 
 def review(claim_id: str, req: ReviewRequest, request: Request = None):
@@ -415,6 +426,7 @@ def _build_router(write_guard=None) -> APIRouter:
     built.add_api_route("/inbox", inbox, methods=["GET"])
     built.add_api_route("/entities", list_entities, methods=["GET"])
     built.add_api_route("/projection", get_projection, methods=["GET"])
+    built.add_api_route("/core-profile", get_core_profile, methods=["GET"])
     return built
 
 

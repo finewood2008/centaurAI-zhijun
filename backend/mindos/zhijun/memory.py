@@ -48,10 +48,11 @@ def extraction_allowed(ontology, convs, cid, text):
 
 def process_candidates(valid, entities, *, store, conversation_id, message_id, user_text,
                        routing_sources=None, input_origin=None, prev_assistant=None, request_message_id=None):
-    from .extract import admission, existing_candidate, explicit_memory_request, followup_memory_request, memory_source_message, memory_request_declined, persist
+    from .extract import (admission, auto_confirmable, existing_candidate, explicit_memory_request, followup_memory_request,
+                          memory_source_message, memory_request_declined, persist, _question_source)
     convs = ConversationStore.instance()
     message = convs.get_message(message_id)
-    empty = {"created": [], "reaffirmed": [], "promoted": [], "suppressed": len(valid)}
+    empty = {"created": [], "reaffirmed": [], "promoted": [], "suppressed": len(valid), "autoConfirmed": []}
     if (not message or message["conversationId"] != conversation_id or message["role"] != "user"
             or message["status"] != "complete" or message["content"] != user_text):
         return empty
@@ -75,28 +76,54 @@ def process_candidates(valid, entities, *, store, conversation_id, message_id, u
     if request_message_id and any(row["message_id"] == message_id for row in ledger.admissions(conversation_id)):
         return empty  # replay/rephrased model output cannot create another candidate
     topic = topic_for(convs, conversation_id, request["id"])
-    # Known identities must not consume the proposal slot before a new identity
-    # is considered. Read only: no evidence refresh or automatic confirmation.
     scope = scope_for(conversation_id, convs)
-    novel = []
-    duplicate_count = tombstone_count = 0
-    for claim in valid:
-        if claim.subject in ("me", "我", "本人", "我自己", "用户"):
-            if existing_candidate(store, claim, ME_ENTITY_ID, convs, scope):
-                duplicate_count += 1
-                continue
-            if store.find_tombstone_by_hash(ME_ENTITY_ID, claim.predicate, claim.content, device_scope=scope):
-                tombstone_count += 1
-                continue
-        novel.append(claim)
-    long_term, contextual = admission(novel, user_text, input_origin, prev_assistant=prev_assistant)
-    explicit = explicit_memory_request(request["content"])
+    # V3 M2（拍板 4）：important 模式且章程允许时，亲口说的高置信自述直接记住（可撤回）；manual 模式仍只出 working。
+    auto_confirm_allowed = automatic_allowed(store, convs, conversation_id)
     # Every new extracted interpretation is a candidate, even in the legacy path.
     # [] still marks local-derived ancestry, never invents an external grant.
     sources = routing_sources if routing_sources is not None else []
+    # Known identities must not consume the proposal slot before a new identity
+    # is considered. Repeats now mature the record instead of being dropped:
+    # append this message as evidence (once) and refresh lastReaffirmed; a
+    # working record restated in the user's own words is confirmed. Assisted
+    # text and quotes sliced from a question/hypothetical are not reaffirmation.
+    novel, reaffirmed, promoted, auto_confirmed = [], [], [], []
+    duplicate_count = tombstone_count = 0
+    for claim in valid:
+        if claim.subject in ("me", "我", "本人", "我自己", "用户"):
+            existing = existing_candidate(store, claim, ME_ENTITY_ID, convs, scope)
+            if existing is not None:
+                duplicate_count += 1
+                if (not input_origin and not _question_source(claim.quote, user_text)
+                        and not any(e.get("messageId") == message_id for e in existing.get("evidence", []))):
+                    evidence = [{"kind": "conversation_turn", "conversation_id": conversation_id, "message_id": message_id,
+                                 "quote": claim.quote, "locator": {"routingSources": sources, "localOnly": True}}]
+                    store.add_evidence(existing["id"], evidence, reaffirm=True)
+                    reaffirmed.append(existing["id"])
+                    if existing["trustState"] == "working" and auto_confirmable(claim, user_text, input_origin=input_origin, allowed=auto_confirm_allowed):
+                        try:
+                            store.transition(existing["id"], "confirm", surface="conversation", conversation_id=conversation_id,
+                                             message_id=message_id, note="用户再次亲口说到，视为确认")
+                            promoted.append(existing["id"])
+                            auto_confirmed.append(existing["id"])
+                        except OntologyConflictError:
+                            pass
+                continue
+            if store.find_tombstone_by_hash(ME_ENTITY_ID, claim.predicate, claim.content, device_scope=scope):
+                # A tombstone only yields to the user's own restatement (persist then supersedes it); model repeats stay suppressed.
+                if not auto_confirmable(claim, user_text, input_origin=input_origin, allowed=auto_confirm_allowed):
+                    tombstone_count += 1
+                    continue
+        novel.append(claim)
+    long_term, contextual = admission(novel, user_text, input_origin, prev_assistant=prev_assistant)
+    explicit = explicit_memory_request(request["content"])
     selected = (long_term or (contextual[:1] if explicit else []))
     result = persist(selected, entities if selected else [], store=store, conversation_id=conversation_id,
-                     message_id=message_id, routing_sources=sources, input_origin=input_origin)
+                     message_id=message_id, routing_sources=sources, input_origin=input_origin,
+                     user_text=user_text, auto_confirm_allowed=auto_confirm_allowed)
+    result["reaffirmed"] = list(dict.fromkeys([*reaffirmed, *result["reaffirmed"]]))
+    result["promoted"] = list(dict.fromkeys([*promoted, *result["promoted"]]))
+    result["autoConfirmed"] = list(dict.fromkeys([*auto_confirmed, *result.get("autoConfirmed", [])]))
     for claim_id in result["created"]:
         ledger.register(claim_id, conversation_id, topic, message_id, explicit)
     # Contextual notes do not produce ontology candidates. One local outline per

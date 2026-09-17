@@ -130,6 +130,8 @@ class MemoryContextRoutingTests(unittest.TestCase):
         self.ordinary_message("我想讨论星桥项目被安排的工作与个人追求之间的关系")
         plan = self.plan("那这件事该怎么办？")
         self.assertIn(c["id"], [x["id"] for x in plan.assembled.provenance["confirmedClaims"]])
+        # V3：同一条也由核心画像常驻提供；检索命中仍如实计为本轮读取，只是提示词里不重复原文。
+        self.assertIn(c["id"], plan.assembled.provenance["coreProfile"]["claimIds"])
         self.execute(plan)
         self.assertIn(c["content"], self.online.requests[-1].system)
 
@@ -207,11 +209,22 @@ class MemoryContextRoutingTests(unittest.TestCase):
             response = self.send(body, preview)
         self.assertEqual(response.status_code, 200, response.text)
         assistant = self.convs.list_messages(self.cid)[-1]
-        memory = assistant["meta"]["routingProvenance"]["memoryContext"]
+        provenance = assistant["meta"]["routingProvenance"]
+        memory = provenance["memoryContext"]
         self.assertEqual(memory["directCount"], 1)
         self.assertEqual(memory["inheritedCount"], 0)
         self.assertEqual(memory["status"], "direct")
         self.assertEqual(self.convs.get_message(assistant["id"])["meta"]["routingProvenance"]["memoryContext"], memory)
+        # V3：同一条也在核心画像里；直接读取与画像行合并为一次回执，提示词里原文只出现一次（画像块），
+        # 上下文包里以「（已在核心画像）」标出仍是本轮读取。
+        self.assertEqual(provenance["coreProfile"]["claimIds"], [c["id"]])
+        self.assertEqual([x["id"] for x in provenance["confirmedClaims"]], [c["id"]])
+        self.assertEqual(self.convs.get_receipt(assistant["id"])["confirmedClaimIds"], [c["id"]])
+        system = self.online.requests[-1].system
+        self.assertIn(c["content"], system)
+        self.assertIn("（已在核心画像）", system)
+        item = next(i for i in provenance["contextPlan"]["background"] + provenance["contextPlan"]["evidence"] if i["id"] == c["id"])
+        self.assertTrue(item["inProfile"])
 
     def test_partially_authorized_charter_does_not_claim_full_check(self):
         c = self.charter(); self.enable()
@@ -265,6 +278,8 @@ class MemoryContextRoutingTests(unittest.TestCase):
             plan = self.plan("那怎么办？")
         self.assertIn(c["id"], [x["id"] for x in plan.assembled.provenance["confirmedClaims"]])
         self.assertEqual(plan.assembled.provenance["memoryContext"]["directCount"], 1)
+        # V3：同一条也在核心画像里；previous-direct 仍如实重开并计数，原文由画像块提供。
+        self.assertIn(c["id"], plan.assembled.provenance["coreProfile"]["claimIds"])
         self.execute(plan)
         self.assertIn(c["content"], self.online.requests[-1].system)
 
@@ -286,6 +301,61 @@ class MemoryContextRoutingTests(unittest.TestCase):
         direct = [c["id"] for c in plan.assembled.provenance["confirmedClaims"]]
         self.assertEqual(direct, [current["id"]])
         self.assertEqual(plan.assembled.provenance["memoryContext"]["inheritedCount"], 1)
+        # V3：两条都在核心画像里常驻，但只有最新回复直接引用的那条算本轮直接读取；旧祖先仍只是继承。
+        self.assertIn(current["id"], plan.assembled.provenance["coreProfile"]["claimIds"])
+        self.assertIn(old["id"], plan.assembled.provenance["coreProfile"]["claimIds"])
+
+    def test_corrections_block_lists_retracted_understanding_and_counts_notices(self):
+        from mindos.zhijun.routing import CORRECTIONS_HEADING
+        c = self.claim()
+        self.onto.transition(c["id"], "retract", surface="ontology_page")
+        question = "星桥项目的工作安排该怎么办？"
+        # 本地通道：与话题相近的已纠正理解进入「不得再复述」块，并如实计入 retractedNotices
+        plan = self.plan(question)
+        self.assertFalse(plan.provider.external)
+        self.assertIn(CORRECTIONS_HEADING, plan.assembled.system)
+        self.assertIn(c["content"], plan.assembled.system)
+        self.assertEqual(plan.assembled.provenance["retractedNotices"], 1)
+        self.assertEqual(plan.assembled.retracted_count, 1)
+        self.assertEqual(plan.assembled.provenance["confirmedClaims"], [])
+        self.assertNotIn(c["id"], plan.assembled.provenance["coreProfile"]["claimIds"])
+        # 在线通道：未授权的行丢弃、不阻塞对话；授权后进入并把 claim_history 记为来源
+        self.enable()
+        plan = self.plan(question)
+        self.assertTrue(plan.provider.external)
+        self.assertNotIn(CORRECTIONS_HEADING, plan.assembled.system)
+        self.assertEqual(plan.assembled.provenance["retractedNotices"], 0)
+        self.assertEqual(plan.preview["missing"], [])
+        r = Router(self.onto, self.convs, self.cid)
+        self.allow_refs([r.resolve(r.ref("claim_history", c["id"]))[0]["ref"]])
+        plan = self.plan(question)
+        self.assertIn(CORRECTIONS_HEADING, plan.assembled.system)
+        self.assertEqual(plan.assembled.provenance["retractedNotices"], 1)
+        self.assertTrue(any(s["kind"] == "claim_history" and s["id"] == c["id"] for s in plan.preview["sources"]))
+        self.execute(plan)
+        self.assertIn(c["content"], self.online.requests[-1].system)
+
+    def test_template_opening_alone_keeps_a_new_chat_fresh_for_online_mode(self):
+        from mindos.zhijun.routing import is_template_opening, has_conversation_history
+        created = self.client.post("/api/mindos/conversations", json={"mode": "chat"}).json()
+        messages = self.convs.list_messages(created["id"])
+        self.assertEqual([m["meta"]["kind"] for m in messages], ["chat_open"])
+        self.assertTrue(all(is_template_opening(m) for m in messages))
+        self.assertFalse(has_conversation_history(self.convs, created["id"]))
+        body = {"mode": "online", "acknowledge": True, "serviceId": service_info(self.online)["id"], "expectedRevision": 0}
+        response = self.client.put(f"/api/mindos/conversations/{created['id']}/routing", json=body)
+        self.assertEqual(response.status_code, 200, response.text)
+        # 有真实对话内容的会话仍受保护：必须明确不携带旧历史
+        other = self.client.post("/api/mindos/conversations", json={"mode": "chat"}).json()
+        self.convs.append_message(other["id"], "user", "PRIVATE_OLD_HISTORY")
+        self.assertTrue(has_conversation_history(self.convs, other["id"]))
+        blocked = self.client.put(f"/api/mindos/conversations/{other['id']}/routing", json=body)
+        self.assertNotEqual(blocked.status_code, 200)
+        self.assertEqual(blocked.json()["detail"]["code"], "FRESH_CONTEXT_REQUIRED")
+        allowed = self.client.put(f"/api/mindos/conversations/{other['id']}/routing", json={**body, "freshContext": True})
+        self.assertEqual(allowed.status_code, 200, allowed.text)
+        self.assertFalse(is_template_opening({"role": "user", "provider": "template", "meta": {"kind": "chat_open"}}))
+        self.assertTrue(is_template_opening({"role": "assistant", "provider": "fake", "meta": {"kind": "zhijun_initiated"}}))
 
     def test_explicit_charter_task_survives_fresh_context_without_copying_history(self):
         self.charter()

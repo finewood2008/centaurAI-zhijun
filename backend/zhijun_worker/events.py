@@ -110,6 +110,7 @@ def handle(event):
                 hour = value["scheduledAt"] // 60
                 if int(store.meta_get("workspace_tick_hour", "-1")) < hour:
                     jobs.append(("nudge_scan", "hourly", {}))
+                    jobs.append(("proactive_scan", "hourly", {"scope": "global"}))
                     if consolidate.should_run(store):
                         jobs.append(("consolidate", "nightly", {}))
             elif kind.startswith("material.") and kind != "material.ready" and not stale:

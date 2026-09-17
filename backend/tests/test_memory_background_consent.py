@@ -118,9 +118,11 @@ SCENARIO = r'''
             assert resume()['queuedCount']==1
             assert run_claimed()['state']=='paused' and not generated
     if generated:
-        assert onto.list_claims(trust_states=('confirmed',))==[]
-        candidates=onto.list_claims(trust_states=('working',))
-        assert len(candidates)==1 and candidates[0]['trustState']=='working',candidates
+        # V3（拍板 4）：用户亲口要求记住的第一人称原话直接记为已确认（可撤回），不再进待确认队列。
+        assert onto.list_claims(trust_states=('working',))==[]
+        candidates=onto.list_claims(trust_states=('confirmed',))
+        assert len(candidates)==1 and candidates[0]['trustOrigin']=='utterance',candidates
+        assert result['autoConfirmed']==result['created'],result
         assert resume()['queuedCount']==0
     assert convs.get_message(message['id']) is not None
     assert any(name=='model.describe' for name,_ in port.calls)

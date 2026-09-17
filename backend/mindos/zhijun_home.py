@@ -201,7 +201,7 @@ def _template_brief(state: str, nodes: list[dict]) -> dict:
     return {"status": "ready", "headline": _clip(headline, 28), "message": _clip(message + "。", 120), "generatedBy": "template", "sourceRefs": refs}
 
 
-def _next_action(state: str, onboarding: dict | None, tracking: list[dict], uncertain: list[dict], conversations: ConversationStore, now: datetime, scope="global") -> dict:
+def _next_action(state: str, onboarding: dict | None, tracking: list[dict], uncertain: list[dict], conversations: ConversationStore, now: datetime, scope="global", inquiry: dict | None = None) -> dict:
     if state == "first_meet":
         return {"kind": "onboarding", "title": "从第一次认识开始", "description": "聊聊眼下在意的事，也可以跳过、直接开始使用", "targetId": None, "say": None}
     if state == "building" and onboarding:
@@ -229,7 +229,31 @@ def _next_action(state: str, onboarding: dict | None, tracking: list[dict], unce
     if nudges:
         item = nudges[0]
         return {"kind": "nudge", "title": _clip(item.get("message") or "有件事想和你聊聊", 38), "description": _clip(item.get("whyNow") or "", 64), "targetId": item.get("id"), "say": item.get("message")}
+    if inquiry:
+        # 求知引擎：知君还不知道 / 该核对 / 未了结的一件事；判断目标走回访会话。
+        if inquiry.get("targetType") == "decision" and inquiry.get("targetId"):
+            return {"kind": "review", "title": _clip(inquiry.get("question") or "回看一个判断", 38), "description": _clip(inquiry.get("why") or "到了约好核对结果的时候", 64), "targetId": inquiry["targetId"], "say": None}
+        return {"kind": "inquiry", "title": _clip(inquiry.get("question") or "有件事想问问你", 38), "description": _clip(inquiry.get("why") or "", 64), "targetId": inquiry.get("targetId"), "say": inquiry.get("question")}
     return {"kind": "chat", "title": "聊聊最近的变化", "description": "带一件最近让你在意的事来，我们从这里继续", "targetId": None, "say": "最近有件事，我想和你聊聊："}
+
+
+def _initiated_items(conversations: ConversationStore, scope: str = "global", limit: int = 3) -> list[dict]:
+    """知君想和你聊：最近由知君发起、你还没回的会话（最多 3 条；归档的不算）。"""
+    items: list[dict] = []
+    try:
+        pending = conversations.list_initiated(device_scope=scope, status="active", unanswered_only=True, limit=20)
+    except Exception:  # noqa: BLE001 - 附加信息，不阻塞首页
+        return items
+    for conversation in pending[:limit]:
+        info = conversation.get("initiated") or {}
+        items.append({
+            "conversationId": conversation["id"],
+            "title": conversation.get("title") or "",
+            "whyNow": str(info.get("whyNow") or ""),
+            "kind": str(info.get("kind") or ""),
+            "createdAt": info.get("createdAt") or conversation.get("createdAt"),
+        })
+    return items
 
 
 def _source_hash(now: datetime, stats: dict, conversations: list[dict], decisions: list[dict]) -> str:
@@ -293,13 +317,21 @@ def _base_overview(*, now: datetime, ontology: OntologyStore, conversations: Con
     if policy["charterId"]:
         source_hash = digest([source_hash, basis(policy)])
     proactive = check_action(policy, "proactive")["allowed"]
+    picked = None
+    if proactive and state == "established":
+        try:
+            from .zhijun import inquiry as inquiry_engine
+            picked = inquiry_engine.pick(ontology, conversations, growth, scope, now=now)
+        except Exception:  # noqa: BLE001 - 求知目标是附加物，不阻塞首页
+            picked = None
     return {
         "state": state,
         "brief": _template_brief(state, nodes) if proactive else {"status": "ready", "headline": "按你的节奏", "message": "章程已关闭主动提醒；需要时可以主动开始对话。", "sourceRefs": [], "generatedBy": "template"},
         "proactiveAllowed": proactive,
         "map": {"relationshipDays": _relationship_days(conversation_items, [*confirmed, *working], decisions, now), "nodes": nodes},
-        "nextAction": _next_action(state, onboarding, tracking, uncertain, conversations, now, scope) if proactive else {"kind": "chat", "title": "开始对话", "description": "由你决定何时开始", "targetId": None},
+        "nextAction": _next_action(state, onboarding, tracking, uncertain, conversations, now, scope, inquiry=picked) if proactive else {"kind": "chat", "title": "开始对话", "description": "由你决定何时开始", "targetId": None},
         "timeline": _timeline(confirmed, decisions),
+        "initiated": _initiated_items(conversations, scope),
         "generatedAt": _iso_now(now),
         "sourceHash": source_hash,
     }

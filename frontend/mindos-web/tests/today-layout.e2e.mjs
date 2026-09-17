@@ -30,7 +30,7 @@ const modules = {
   '@/services/api': `export const getZhijunHome=async()=>{if(window.__holdHome) await new Promise(resolve=>window.__finishHome=resolve); return (${JSON.stringify(synthetic)});}; export const createConversation=async()=>({id:'synthetic'}); export const updateOnboarding=async()=>{};`,
   '@/components/matters/MattersHome.vue': "import {h} from 'vue'; export default {setup(){window.__mattersMounts=(window.__mattersMounts||0)+1;return()=>h('section',{'data-testid':'independent-matters'},'合成事情列表')}};",
   '@/composables/useToast': 'export const useToast=()=>()=>{};',
-  '@/shared/labels': "export const greetingLine=()=> '合成日期';",
+  '@/shared/labels': "export const greetingLine=()=> '合成日期'; export const initiatedKindLabel=(kind)=>kind;",
   'vue-router': 'export const useRouter=()=>({push:async()=>{}});',
 }
 const bundle = await build({

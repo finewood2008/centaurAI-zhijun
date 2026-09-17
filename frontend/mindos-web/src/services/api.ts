@@ -1766,6 +1766,28 @@ export interface ConversationOutcomesBrief {
   commitments: number
 }
 
+// 记忆 V3 · M8 知君的主动性：知君主动发起的会话（列表与详情都带；旧盒端没有这个字段）。
+// 第一条消息是 meta.kind=zhijun_initiated 的知君消息，whyNow 说明为何现在；answeredAt 为空表示你还没回。
+export type InitiatedKind =
+  | 'review_due'
+  | 'commitment_due'
+  | 'principle_tension'
+  | 'weekly_review'
+  | 'open_loop'
+  | 'nod'
+  | 'stale'
+  | 'gap'
+  | 'milestone'
+  | 'greeting'
+
+export interface ConversationInitiated {
+  by: 'zhijun'
+  kind: InitiatedKind
+  whyNow: string
+  createdAt: string
+  answeredAt: string | null
+}
+
 export interface Conversation {
   id: string
   title: string
@@ -1782,13 +1804,21 @@ export interface Conversation {
   outcomes?: ConversationOutcomesBrief | null
   // POST /conversations {mode:'review'}：已存在同一判断的回访会话时返回它并标 reused
   reused?: boolean
+  initiated?: ConversationInitiated | null
 }
 
 // GET /conversations/{id}/outcomes：这段对话留下了什么
+// 记忆 V3：亲口说的高置信事实会直接记下（undoable），卡片上可一键撤回；旧盒端没有这三个字段
+export interface OutcomeClaimBrief extends ClaimBrief {
+  trustOrigin?: TrustOrigin
+  createdAt?: string
+  undoable?: boolean
+}
+
 export interface ConversationOutcomes {
   conversationId: string
-  confirmedClaims: ClaimBrief[]
-  workingClaims: ClaimBrief[]
+  confirmedClaims: OutcomeClaimBrief[]
+  workingClaims: OutcomeClaimBrief[]
   decision: { id: string; title: string; choice: string; reviewAt: string | null; status: string } | null
   commitments: { claimId: string; content: string; validTo: string | null }[]
   pendingJobs: number
@@ -1941,10 +1971,27 @@ export interface Nudge {
   createdAt: string
 }
 
+// 记忆 V3 · M8：知君主动发起对话的节制（policy.proactive；旧盒端没有这个字段，各项都按可选处理）
+export interface ProactivePolicy {
+  enabled?: boolean
+  // 0..5
+  maxPerDay?: number
+  // 1..24
+  minGapHours?: number
+  quietHours?: { start: string; end: string } | null
+  // 「先别找我三天」写在这里；过期后自动失效
+  snoozeUntil?: string | null
+  // 多久没聊主动问候；0 = 关闭
+  greetAfterDays?: number
+  // 连续没被回应时后端自行放缓，只读
+  backoffUntil?: string | null
+}
+
 export interface NudgePolicy {
   enabled: boolean
   maxPerDay: number
   silencedRefs: string[]
+  proactive?: ProactivePolicy | null
 }
 
 export interface MemoryPolicy {
@@ -2295,7 +2342,8 @@ export interface HomeBrief {
 }
 
 export interface HomeNextAction {
-  kind: 'onboarding' | 'resume_onboarding' | 'review' | 'reflect' | 'commitment' | 'confirm' | 'nudge' | 'chat'
+  // inquiry：求知引擎挑的一句问句（title/description/targetId/say 同 chat），今日页走 /chat?say= 带话头
+  kind: 'onboarding' | 'resume_onboarding' | 'review' | 'reflect' | 'commitment' | 'confirm' | 'nudge' | 'chat' | 'inquiry'
   title: string
   description: string
   targetId: string | null
@@ -2311,6 +2359,15 @@ export interface HomeTimelineEvent {
   sourceRef: HomeSourceRef
 }
 
+// 今日页「知君想和你聊」：知君主动发起、你还没回的会话（后端最多给 3 条；旧盒端没有这个字段）
+export interface HomeInitiated {
+  conversationId: string
+  title: string
+  whyNow: string
+  kind: InitiatedKind
+  createdAt: string
+}
+
 export interface ZhijunHomeOverview {
   state: ZhijunHomeState
   brief: HomeBrief
@@ -2319,6 +2376,7 @@ export interface ZhijunHomeOverview {
   timeline: HomeTimelineEvent[]
   generatedAt: string
   sourceHash: string
+  initiated?: HomeInitiated[]
 }
 
 // SSE 事件载荷（POST /mindos/conversations/{id}/messages）
@@ -2410,6 +2468,10 @@ export interface ProvenanceEvent {
   pastDecisions?: ProvenancePastDecision[]
   // 商量 / 回访 / 深入时无论词面是否命中都带上的原则与做法分区已确认理解
   anchorClaimIds?: string[]
+  // 记忆 V3：本轮常驻提示词的核心画像（行数、涉及的理解、未授权而丢弃的行数）
+  coreProfile?: { lineCount: number; claimIds: string[]; sourceHash: string; excludedCount: number }
+  // 记忆 V3：本轮提示词里带的那一个求知目标（一轮最多一问）
+  inquiry?: { kind: string; targetId: string | null }
 }
 
 export type ExtractionSkipReason = 'too_short' | 'pure_question' | 'disabled' | (string & {})
@@ -2442,8 +2504,9 @@ export interface StreamErrorEvent {
   ragV2?: import('./taskRouting').RagV2Prompt
 }
 
+// mode=chat 时盒端会先写一条模板开场（meta.kind=chat_open）随响应带回；旧盒端没有 opening 字段
 export function createConversation(payload: { mode?: ConversationMode; title?: string; decisionId?: string; taskContext?: 'charter' } = {}) {
-  return postJson<Conversation>('/mindos/conversations', payload)
+  return postJson<Conversation & { opening?: Message }>('/mindos/conversations', payload)
 }
 
 export function getDecisionDraft(conversationId: string) {
@@ -2500,6 +2563,13 @@ export function getNudgePolicy() {
 
 export function putNudgePolicy(payload: Partial<NudgePolicy>) {
   return putJson<NudgePolicy>('/mindos/nudges/policy', payload)
+}
+
+/** 「先别找我三天」：先读当前策略，只改 proactive.snoozeUntil 再整体写回；days ≤ 0 表示取消。 */
+export async function snoozeProactive(days: number, now: Date = new Date()) {
+  const policy = await getNudgePolicy()
+  const snoozeUntil = days > 0 ? new Date(now.valueOf() + days * 86_400_000).toISOString() : null
+  return putNudgePolicy({ proactive: { ...(policy.proactive ?? {}), snoozeUntil } })
 }
 
 export function getMemoryPolicy() {
@@ -2609,6 +2679,38 @@ export function listEntities(type?: OntologyEntity['type']) {
 
 export function getProjection() {
   return request<OntologyProjection>('/mindos/ontology/projection')
+}
+
+// 核心画像：知君每次回答都带着的一页纸（确定性生成、只含已确认且不受限的内容）。GET /ontology/core-profile 是本机视图。
+export type CoreProfileSection = Section | 'recent'
+export type CoreProfileLineKind = 'claim' | 'decision' | 'summary' | 'matter'
+
+export interface CoreProfileLine {
+  id: string
+  section: CoreProfileSection
+  kind: CoreProfileLineKind
+  // 来源标签原文：你告诉我的 / 资料里看到的 / 你想成为的 / 对话摘要 / 判断簿 / 事项
+  label: string
+  text: string
+  ref: string
+  claimId?: string | null
+  decisionId?: string | null
+  summaryRef?: string | null
+  matterId?: string | null
+  date?: string | null
+}
+
+export interface CoreProfile {
+  scope: string
+  sourceHash: string
+  generatedAt: string
+  lines: CoreProfileLine[]
+  text: string
+  budget: { external: number; local: number }
+}
+
+export function getCoreProfile() {
+  return request<CoreProfile>('/mindos/ontology/core-profile')
 }
 
 export function getZhijunStatus() {

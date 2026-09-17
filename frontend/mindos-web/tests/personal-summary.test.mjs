@@ -27,10 +27,11 @@ assert.deepEqual(input, original, 'summary does not mutate or confirm source rec
 assert.equal(summaryStatus(input.find(c => c.id === 'wish')), '理想方向，不等同于已实现')
 assert.equal(summaryStatus(input.find(c => c.id === 'project')), '只适用于当时情境')
 assert.equal(summaryStatus(input.find(c => c.id === 'uncertain')), '待你确认')
-assert.deepEqual(ontologyLoadPlan('summary', 'who'), { claims: false, overview: true, stats: false })
-assert.deepEqual(ontologyLoadPlan('map', 'who'), { claims: false, overview: true, stats: true })
-assert.deepEqual(ontologyLoadPlan('list', 'who'), { claims: true, overview: false, stats: true })
-assert.deepEqual(ontologyLoadPlan('summary', 'inbox'), { claims: true, overview: false, stats: true })
+// 摘要视图多读一份后端核心画像；其它视图不读
+assert.deepEqual(ontologyLoadPlan('summary', 'who'), { claims: false, overview: true, stats: false, profile: true })
+assert.deepEqual(ontologyLoadPlan('map', 'who'), { claims: false, overview: true, stats: true, profile: false })
+assert.deepEqual(ontologyLoadPlan('list', 'who'), { claims: true, overview: false, stats: true, profile: false })
+assert.deepEqual(ontologyLoadPlan('summary', 'inbox'), { claims: true, overview: false, stats: true, profile: false })
 
 let reads = 0
 let needed = true
