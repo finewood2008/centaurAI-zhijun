@@ -1,32 +1,67 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { needsDeConsent, routeQuestion } from '@/services/taskRouting'
+import { conversationSetup, needsDeConsent, routeQuestion } from '@/services/taskRouting'
+import { conversationNotice } from '@/shared/conversationPresentation'
+const props = defineProps<{ conversation?: boolean }>()
+const acknowledged = ref(false)
 const dialog = ref<HTMLDialogElement | null>(null)
 const keys = ref<string[]>([])
 const question = computed(() => routeQuestion.value)
 const deConsent = computed(() => !!question.value && needsDeConsent(question.value.preview))
 const grantable = computed(() => question.value?.preview.sources.filter(s => !s.blocked && (deConsent.value || question.value!.preview.missing.includes(s.key))) || [])
 const unavailable = computed(() => question.value?.preview.sources.filter(s => s.blocked) || [])
-watch(question, async value => {
+function cancel() { conversationSetup.value?.done(false); question.value?.done({ action: 'cancel' }) }
+watch(() => props.conversation, (value, previous) => { if (previous && !value) cancel() })
+watch([question, conversationSetup], async ([value, setup]) => {
+  acknowledged.value = false
   keys.value = value?.preview.sources.filter(s => !s.blocked && value.preview.missing.includes(s.key)).map(s => s.key) || []
   await nextTick()
-  if (value && !dialog.value?.open) dialog.value?.showModal()
-  else if (!value) dialog.value?.close()
+  if ((value || setup) && !dialog.value?.open) dialog.value?.showModal()
+  else if (!value && !setup) dialog.value?.close()
 })
 </script>
 <template>
-  <dialog ref="dialog" class="route-consent" aria-labelledby="route-title" @cancel.prevent="question?.done({ action: 'cancel' })">
-    <template v-if="question?.preview.charterConflict">
+  <dialog ref="dialog" class="route-consent" aria-labelledby="route-title" @cancel.prevent="cancel">
+    <template v-if="conversationSetup">
+      <h2 id="route-title">继续前，确认资料使用</h2>
+      <p>本段对话需要将你发送的文字交给联网服务处理；引用资料仍按已有权限单独核对。已发送的内容无法收回。</p>
+      <p v-if="conversationSetup.protectedHistory">原有记录会保留，但受保护的旧历史不会自动用于接下来的回答。</p>
+      <label><input v-model="acknowledged" type="checkbox" /> 我理解并同意上述处理方式</label>
+      <footer><button :disabled="!acknowledged" @click="conversationSetup.done(true)">确认并继续</button><button @click="cancel">取消，保留输入</button></footer>
+    </template>
+    <template v-else-if="question?.preview.charterConflict">
       <h2 id="route-title">这次处理与你的章程约定不同</h2>
-      <p>{{ question.preview.charterConflict.detail }}</p>
+      <p>{{ conversation ? conversationNotice(question.preview.charterConflict.detail, '需要先核对你对资料使用的约定。') : question.preview.charterConflict.detail }}</p>
       <p><RouterLink :to="{ path: '/me/charter', query: { version: question.preview.charterConflict.charterVersion } }">人生章程第 {{ question.preview.charterConflict.charterVersion }} 版</RouterLink></p>
       <blockquote v-for="clause in question.preview.charterConflict.clauses" :key="clause.id">{{ clause.text }}</blockquote>
-      <p>本次原计划交给 {{ question.preview.service.name }} · {{ question.preview.purposeLabel }}。</p>
+      <p v-if="!conversation">本次原计划交给 {{ question.preview.service.name }} · {{ question.preview.purposeLabel }}。</p>
       <p class="route-tip">只为本轮设置例外，不改动正式章程，也不代表同意发送资料。需要的资料授权会另外核对。</p>
       <footer>
-        <button @click="question.done({ action: 'local' })">遵守章程，仅本地处理</button>
+        <button v-if="!conversation" @click="question.done({ action: 'local' })">遵守章程，仅本地处理</button>
         <button v-if="question.preview.charterConflict.canOverride" @click="question.done({ action: 'exception' })">仅本轮例外，继续核对资料权限</button>
         <button @click="question.done({ action: 'cancel' })">取消，保留输入</button>
+      </footer>
+    </template>
+    <template v-else-if="question && conversation">
+      <h2 id="route-title">本次资料使用确认</h2>
+      <p>回答需要使用下列文字，并交给联网服务处理。原文件保留在盒子中，已发送的内容无法收回。</p>
+      <fieldset v-if="grantable.length"><legend>本次使用的资料</legend>
+        <label v-for="source in grantable" :key="source.key + source.version" class="route-source">
+          <input v-if="!deConsent" v-model="keys" type="checkbox" :value="source.key" :disabled="!question.preview.missing.includes(source.key)" />
+          <span>{{ source.title }}</span>
+        </label>
+      </fieldset>
+      <details v-if="unavailable.length"><summary>{{ unavailable.length }} 项资料暂不可用</summary><p v-for="source in unavailable" :key="source.key">{{ source.title }}：{{ conversationNotice(source.blocked, '需要重新核对使用权限。') }}</p></details>
+      <details><summary>查看将使用的文字</summary>
+        <div v-for="source in question.preview.sources" :key="source.key + source.version"><strong>{{ source.title }}</strong><pre>{{ source.text }}</pre></div>
+        <template v-if="deConsent"><p>还包括本次对话中所需的文字及必要的回答说明。</p><pre v-for="(message, i) in question.preview.request.messages.filter(m => m.role !== 'system')" :key="i">{{ message.content }}</pre></template>
+      </details>
+      <p v-if="question.preview.excluded.length">有 {{ question.preview.excluded.length }} 项内容未纳入本次回答。</p>
+      <footer>
+        <button v-if="deConsent" :disabled="unavailable.length > 0" @click="question.done({ action: 'allow', keys: question.preview.sources.map(source => source.key) })">确认本次使用</button>
+        <button v-else-if="grantable.length" :disabled="!keys.length" @click="question.done({ action: 'allow', keys: [...keys] })">确认使用所选资料</button>
+        <button v-if="question.allowOmit" @click="question.done({ action: 'omit' })">不使用这些资料继续</button>
+        <button @click="cancel">取消，保留输入</button>
       </footer>
     </template>
     <template v-else-if="question">

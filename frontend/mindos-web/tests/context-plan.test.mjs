@@ -77,7 +77,7 @@ assert.equal(isContextReviewError({ code: 'TIMEOUT', stage: 'supplemented' }), f
 assert.equal(contextNeedsReview({ meta: { contextStage: 'lookup_unavailable' } }), false, 'optional lookup failure is not an authorization or failed-message card')
 
 const strip = await readFile(new URL('../src/components/conversation/ProvenanceStrip.vue', import.meta.url), 'utf8')
-assert.match(strip, /<p v-if="lookupNotice" class="zj-prov__line zj-prov__lookup-notice" data-testid="context-lookup-notice">\{\{ lookupNotice \}\}<\/p>/)
+assert.match(strip, /<p v-if="lookupNotice" class="zj-prov__line zj-prov__lookup-notice" data-testid="context-lookup-notice">\{\{ conversation \? conversationNotice\(lookupNotice, '[^']+'\) : lookupNotice \}\}<\/p>/)
 assert.ok(strip.indexOf('data-testid="context-lookup-notice"') < strip.indexOf('<div v-if="open"'), 'the small notice stays visible while the provenance detail is collapsed')
 assert.doesNotMatch(strip, /role="alert"|<dialog|<Modal|<Banner/)
 assert.match(strip, /\.zj-prov__lookup-notice\s*\{[^}]*overflow-wrap: anywhere/s)

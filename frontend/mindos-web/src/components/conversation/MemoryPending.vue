@@ -60,7 +60,7 @@ async function review(claim: Claim, action: ReviewAction | 'dismiss', editedCont
       <p>这里汇总这段对话各话题中尚未确认的理解。你决定哪些值得留下，不必逐条完成；它们不会因你打开列表就自动确认。</p>
       <p v-if="loading" role="status">正在读取…</p>
       <p v-if="error" role="alert">{{ error }} <button :disabled="!!busyId" @click="load">重新读取</button></p>
-      <p v-else-if="!loading && !items.length">暂时没有待核对理解。若后台个人理解暂停，可在「模型与授权」核对并继续。</p>
+      <p v-else-if="!loading && !items.length">暂时没有待核对理解。若整理暂停，可在「整理状态」查看并继续。</p>
       <div v-for="item in items" :key="item.claim.id" class="memory-pending-item">
         <ClaimCandidateChip :claim="item.claim" :busy="!!busyId" dismissible @review="(action, text) => review(item.claim, action, text)" @dismiss="review(item.claim, 'dismiss')" />
       </div>

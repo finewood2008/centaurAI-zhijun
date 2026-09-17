@@ -2,8 +2,9 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ChevronDown, ShieldCheck } from 'lucide-vue-next'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
-import { askRoute, grantDefaultDeConsent, needsDeConsent, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
-const props = defineProps<{ conversationId?: string; disabled?: boolean; activateOnlineChannel?: () => Promise<boolean> }>()
+import { askRoute, ensureConversationService, grantDefaultDeConsent, needsDeConsent, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
+import { conversationNotice } from '@/shared/conversationPresentation'
+const props = defineProps<{ conversation?: boolean; conversationId?: string; disabled?: boolean; activateOnlineChannel?: () => Promise<boolean> }>()
 const emit = defineEmits<{
   (e: 'mode', value: string): void
   (e: 'mode-selected', value: string): void
@@ -33,14 +34,15 @@ const currentMode = computed<'online' | 'local' | null>(() => state.value?.mode?
 const onlineAvailable = computed(() => state.value?.service?.external === true)
 const localModelLabel = computed(() => state.value?.localService?.model || '本机模型')
 const onlineModelLabel = computed(() => onlineAvailable.value ? (state.value?.service?.model || state.value?.service?.name || '在线模型') : '未启用')
-const taskLabels: Record<string, string> = { alignment: '自我校准', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
+const taskLabels: Record<string, string> = { reflection: '历史观察整理', alignment: '自我校准', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
 const taskLabel = (key: string) => taskLabels[key] || (key.startsWith('file_reply:') ? '文件反馈' : '后台整理')
 const taskCount = (task: any) => Number.isInteger(task.count) && task.count > 0 ? task.count : null
 const pausedMemory = computed(() => state.value?.pending?.find((task: any) => task.task_key === 'extract_turn'))
 const failedCount = computed(() => (state.value?.pending ?? []).reduce((total: number, task: any) => total + (task.failedCount || 0), 0))
 const attentionLabel = computed(() => {
-  if (error.value || state.value?.error || policy.value?.serviceChanged || handling.value?.serviceChanged) return '检查设置'
-  if (currentMode.value === 'online' && !onlineAvailable.value) return '在线模型不可用'
+  if (props.conversation && (error.value || state.value?.error)) return '整理状态待核对'
+  if (!props.conversation && (error.value || state.value?.error || policy.value?.serviceChanged || handling.value?.serviceChanged)) return '检查设置'
+  if (!props.conversation && currentMode.value === 'online' && !onlineAvailable.value) return '在线模型不可用'
   if (failedCount.value) return `整理未完成 · ${failedCount.value}`
   if (pausedMemory.value) return `个人理解暂停${taskCount(pausedMemory.value) ? ` · ${taskCount(pausedMemory.value)} 轮` : ''}`
   return `待处理 ${state.value?.pending?.length ?? 0}`
@@ -198,10 +200,13 @@ async function pending(task: any, reprepare = false) {
   const valid = begin(), target = actionPath.value
   const abort = new AbortController(); pendingController = abort
   try {
+    if (props.conversation && (!props.conversationId || !await ensureConversationService(props.conversationId, abort.signal))) return
+    if (!valid()) return
     let localOnly = false
     if (!reprepare) {
       const preview = await routingRequest<RoutePreview>(target + '/pending/' + task.preview_id, 'GET', undefined, abort.signal)
       if (!valid()) return
+      if (props.conversation && !preview.service.external) throw new Error('这项整理需要重新核对资料使用方式，原记录仍保留。')
       if (await grantDefaultDeConsent(props.conversationId || 'default', preview, abort.signal)) {
         // The resumed worker rebuilds and rechecks the same task before egress.
       } else {
@@ -209,6 +214,7 @@ async function pending(task: any, reprepare = false) {
         if (!valid() || choice.action === 'cancel') return
         if (choice.action === 'allow' && (choice.keys?.length || needsDeConsent(preview))) await routingRequest(target + '/grant', 'POST', { revision: preview.revision, keys: needsDeConsent(preview) ? preview.sources.map(source => source.key) : choice.keys }, abort.signal)
         if (!valid()) return
+        if (props.conversation && choice.action === 'local') return
         localOnly = choice.action === 'local'
       }
     }
@@ -268,14 +274,14 @@ async function reconcileRecentExtractionJobs(conversationId: string, jobIds: str
 }
 function reportMemoryPollingTimeout(conversationId: string) {
   if (alive && props.conversationId === conversationId) {
-    backgroundNotice.value = '个人理解整理仍未结束，可稍后打开「模型与授权」查看状态；原对话已保留。'
+    backgroundNotice.value = props.conversation ? '个人理解整理仍未结束，可稍后查看整理状态；原对话已保留。' : '个人理解整理仍未结束，可稍后打开「模型与授权」查看状态；原对话已保留。'
   }
 }
 defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, reportMemoryPollingTimeout })
 </script>
 <template>
   <section class="routing-panel" aria-label="对话处理方式">
-    <div class="routing-mode" role="group" :aria-label="conversationId ? '本段对话使用的模型' : '新对话默认使用的模型'">
+    <div v-if="!conversation" class="routing-mode" role="group" :aria-label="conversationId ? '本段对话使用的模型' : '新对话默认使用的模型'">
       <span class="routing-mode__label">{{ conversationId ? '本段对话' : '新对话默认' }}</span>
       <button type="button" class="routing-mode__choice" data-testid="routing-local-mode" :aria-pressed="currentMode === 'local'" :disabled="disabled || busy || !state" @click="useLocal">
         本地模型 <small v-if="currentMode === 'local'">{{ localModelLabel }}</small>
@@ -284,23 +290,23 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
         在线模型 <small v-if="currentMode === 'online' || !onlineAvailable">{{ onlineModelLabel }}</small>
       </button>
     </div>
-    <button type="button" class="routing-manage" :disabled="disabled || busy" :aria-expanded="open" aria-haspopup="dialog" @click="show">
+    <button v-if="!conversation" type="button" class="routing-manage" :disabled="disabled || busy" :aria-expanded="open" aria-haspopup="dialog" @click="show">
       模型与授权 <span v-if="policy?.active" class="routing-default">已授权</span><ChevronDown :size="13" aria-hidden="true" />
     </button>
-    <button v-if="state?.pending?.length || error || state?.error || policy?.serviceChanged || handling?.serviceChanged || (currentMode === 'online' && !onlineAvailable)" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ attentionLabel }}</button>
+    <button v-if="state?.pending?.length || backgroundNotice || error || state?.error || (!conversation && (policy?.serviceChanged || handling?.serviceChanged || (currentMode === 'online' && !onlineAvailable)))" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ conversation && backgroundNotice ? '整理状态' : attentionLabel }}</button>
     <p v-if="backgroundNotice" class="routing-fine" role="status">{{ backgroundNotice }}</p>
-    <SideDrawer :open="open" title="模型与授权" @close="open = false">
+    <SideDrawer :open="open" :title="conversation ? '整理状态' : '模型与授权'" @close="open = false">
       <div class="routing-settings">
-        <section v-if="state" class="routing-group">
+        <section v-if="state && !conversation" class="routing-group">
           <h3>{{ conversationId ? '本段对话使用哪个模型' : '新对话默认使用哪个模型' }}</h3>
           <p v-if="currentMode === 'local'" class="routing-service">当前使用：本地模型 <span>· {{ localModelLabel }}</span></p>
           <p v-else class="routing-service">当前使用：在线模型 <span>· {{ onlineModelLabel }}</span></p>
           <p>本地模型在盒子上处理，不向在线模型发送本轮内容；使用在线模型前会继续核对资料授权。</p>
-          <p v-if="!onlineAvailable" id="routing-online-blocked" class="routing-warning" role="status">在线通道尚未启用或已暂停。先在偏好设置中启用已配置的供应商，才可将{{ conversationId ? '本段对话' : '新对话默认方式' }}切换为在线模型。</p>
+          <p v-if="!onlineAvailable" id="routing-online-blocked" class="routing-warning" role="status">在线通道尚未启用或已暂停。先在设置中启用已配置的供应商，才可将{{ conversationId ? '本段对话' : '新对话默认方式' }}切换为在线模型。</p>
           <p v-if="state.mode.cutoff && state.mode.mode === 'online'">不携带受保护旧历史的在线上下文；原记录仍保留。</p>
           <div v-if="!onlineAvailable" class="routing-actions" aria-describedby="routing-online-blocked">
             <button v-if="activateOnlineChannel" type="button" class="routing-primary" :disabled="activatingOnline || busy || disabled" @click="enableOnlineChannel">{{ activatingOnline ? '正在启用在线通道…' : '启用已配置的在线通道' }}</button>
-            <RouterLink v-else class="routing-settings-link" to="/settings">前往偏好设置启用在线通道</RouterLink>
+            <RouterLink v-else class="routing-settings-link" to="/settings">前往设置启用在线通道</RouterLink>
             <button v-if="currentMode === 'online'" :disabled="busy || disabled" @click="change('local')">改用本地模型</button>
           </div>
           <p v-if="!onlineAvailable && error" class="routing-warning routing-action-error" role="alert" data-testid="routing-online-activation-error">{{ error }}</p>
@@ -310,7 +316,7 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
           </template>
           <button v-else :disabled="busy || disabled" @click="change('local')">{{ conversationId ? '切换为本地模型' : '新对话默认使用本地模型' }}</button>
         </section>
-        <section v-if="state" class="routing-group">
+        <section v-if="state && !conversation" class="routing-group">
           <div class="routing-setting-title"><h3><ShieldCheck :size="17" aria-hidden="true" /> 资料来源默认授权</h3><button class="routing-switch" role="switch" aria-label="资料来源默认授权" :aria-checked="!!policy?.active" :disabled="busy || !state.service?.external" @click="toggleDefault"><span /></button></div>
           <p>开启后，本设备各在线对话及后台理解任务可自动使用所需的对话、个人理解、判断和复盘文字，包括今后新增或修改的相关内容；只发送实际需要的部分。</p>
           <p class="routing-fine">此开关减少同一服务和用途下的资料来源授权询问。设备安全通道仍可能要求核对每次在线发送的输入、系统提示和完整来源范围。</p>
@@ -330,7 +336,7 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
           </div>
           <p class="routing-fine">仅本地对话不受影响。换服务需重新确认，来源不明或已删除的内容仍被拦截。关闭开关即停止默认授权；逐次批准的权限可另行撤销。</p>
         </section>
-        <section v-if="state" class="routing-group">
+        <section v-if="state && !conversation" class="routing-group">
           <div class="routing-setting-title"><h3>记住资料受限时的处理方式</h3><button class="routing-switch" role="switch" aria-label="记住资料受限时的处理方式" :aria-checked="!!handling?.active" :disabled="busy || !state.service?.external" @click="toggleHandling"><span /></button></div>
           <p>用于本设备各在线对话。遇到未授权或暂不可用的参考资料时，按你选定的方式继续，减少重复询问；不会开启新的授权。</p>
           <p v-if="handling?.active">已开启 · {{ handling.action === 'omit' ? '跳过受限资料，继续在线对话' : '本轮改用本地模型' }} <button class="routing-link" @click="editHandling">修改方式</button></p>
@@ -351,14 +357,15 @@ defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, re
                 <strong>{{ taskLabel(task.task_key) }}</strong>
                 <span v-if="taskCount(task)" class="routing-task__count">{{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span>
               </div>
-              <p v-if="task.detail" class="routing-fine">{{ task.detail }}</p>
+              <p v-if="task.detail" class="routing-fine">{{ conversation ? conversationNotice(task.detail, task.failedCount ? '整理未完成，原对话已保留。' : '需要核对资料后继续。') : task.detail }}</p>
               <p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p>
             </div>
             <button type="button" class="routing-task__action" :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button>
           </div>
         </section>
-        <details v-if="state" class="routing-group"><summary>撤销已批准的授权</summary><p>停止本设备后续使用资料，关闭默认授权。日常在线消息仍按对话处理方式发送；已经发送的内容无法收回。</p><button :disabled="busy" @click="revoke">撤销本设备资料用途授权</button></details>
-        <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="state?.error || (error && onlineAvailable)" class="routing-warning" role="alert">{{ state?.error || error }}</p>
+        <details v-if="state && !conversation" class="routing-group"><summary>撤销已批准的授权</summary><p>停止本设备后续使用资料，关闭默认授权。日常在线消息仍按对话处理方式发送；已经发送的内容无法收回。</p><button :disabled="busy" @click="revoke">撤销本设备资料用途授权</button></details>
+        <p v-if="notice" class="routing-notice" role="status">{{ conversation ? conversationNotice(notice, '处理状态已更新。') : notice }}</p><p v-if="state?.error || (error && (conversation || onlineAvailable))" class="routing-warning" role="alert">{{ conversation ? conversationNotice(state?.error || error, '暂时无法读取整理状态，请重试。') : state?.error || error }}</p>
+        <template v-if="conversation"><p v-if="state && !state.pending?.length && !error && !state.error">目前没有需要处理的整理。</p><button :disabled="busy" @click="refresh">刷新状态</button></template>
       </div>
     </SideDrawer>
   </section>

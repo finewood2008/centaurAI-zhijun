@@ -75,12 +75,12 @@ def onboarding_context(router, content, expression=None, retry_id=None):
     topics = topic_progress(messages, content, expression)
     remaining = next((t for t in topics if t["state"] == "pending"), None)
     question = next((t[2] for t in TOPICS if remaining and t[0] == remaining["id"]), "")
-    instruction = ("这是轻量的第一次认识，不是问卷。先简短回应本轮内容，再最多问一个具体问题。"
+    instruction = ("这是轻量的第一次认识。优先帮助用户处理眼前真实的事情，最多问一个与这件事有关的问题。不要为了建档推进话题。"
         "已经涉及或跳过的话题不重复索取，允许用户回答一部分、暂不确定或随时结束。"
         "不要声称已写入章程或已确认本体；这里只形成待核对草稿。"
         "用户要求换个说法时简化上一问，不推进话题；已明确结束时不再提问。\n"
         + "话题进度（仅是聊过，不是正式确认）：" + json.dumps(topics, ensure_ascii=False)
-        + ("\n下一话题的一问：" + question if question else "\n已有初步起点。简短收束，请用户查看小结或直接开始使用，不再追加问题。"))
+        + ("\n仅当用户明确希望继续认识自己、或愿意换话题时才可参考的问题：" + question if question else "\n已有初步起点。简短收束，请用户查看小结或直接开始使用，不再追加问题。"))
     if expression and expression.get("kind") == "control":
         instruction += "\n这是对话操作，不是回答，不抽取成个人事实。"
     return instruction, remaining["id"] if remaining else None

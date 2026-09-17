@@ -3,14 +3,14 @@ import { computed } from 'vue'
 import type { ContextItem, ProvenanceEvent } from '@/services/api'
 import { contextItems, normalizeContextPlan } from '@/shared/provenanceGraph'
 import { charterSourceLabel } from '@/shared/charterWorkspace'
-const props = defineProps<{ provenance: ProvenanceEvent }>()
+const props = defineProps<{ provenance: ProvenanceEvent; conversation?: boolean }>()
 const plan = computed(() => normalizeContextPlan(props.provenance.contextPlan))
 const provided = computed(() => plan.value ? contextItems(plan.value, 'providedRefs') : [])
 const cited = computed(() => plan.value ? contextItems(plan.value, 'citedRefs') : [])
 function sourceLink(item: ContextItem) {
   if (item.kind === 'claim') return { path: '/me', query: { claim: item.id, section: item.claim?.section } }
   if (item.kind === 'material') return { path: '/materials/' + encodeURIComponent(item.material?.materialId || item.ref?.id || item.id) }
-  if (item.kind === 'decision') return { path: '/judgments', query: { decisionId: item.id } }
+  if (item.kind === 'decision') return { path: '/review', query: { decisionId: item.id } }
   return null
 }
 </script>
@@ -20,13 +20,13 @@ function sourceLink(item: ContextItem) {
       <h4>遵循的约定</h4>
       <div v-if="provenance.charterBasis?.version && provenance.charterBasis.clauseIds.length" data-testid="provenance-charter-clauses">
         <RouterLink :to="{ path: '/me/charter', query: { version: provenance.charterBasis.version } }">人生章程第 {{ provenance.charterBasis.version }} 版</RouterLink> · {{ provenance.charterBasis.clauseIds.length }} 条约定
-        <details><summary>查看条款标识</summary>{{ provenance.charterBasis.clauseIds.join('、') }}</details>
+        <details v-if="!conversation"><summary>查看条款标识</summary>{{ provenance.charterBasis.clauseIds.join('、') }}</details>
       </div>
       <p v-else>本轮没有记录章程约定。资料权限仍独立检查。</p>
       <p class="zj-context__note">约定约束处理方式，不等于关于你的事实或回答引用。</p>
     </section>
     <section class="zj-context__section" data-testid="context-provided">
-      <h4>提供给模型的信息 <span>{{ provided.length }} 项</span></h4>
+      <h4>{{ conversation ? '本次参考的内容' : '提供给模型的信息' }} <span>{{ provided.length }} 项</span></h4>
       <p v-if="!provided.length">本轮未记录额外提供的信息条目。</p>
       <details v-for="item in provided" :key="item.citationId" class="zj-context__item">
         <summary>{{ item.title || item.id }} <small>{{ plan.background.some(b => b.citationId === item.citationId) ? '背景' : '证据' }}</small></summary>
@@ -39,7 +39,7 @@ function sourceLink(item: ContextItem) {
     <section class="zj-context__section" data-testid="context-cited">
       <h4>回答明确引用的信息 <span>{{ cited.length }} 项</span></h4>
       <ul v-if="cited.length"><li v-for="item in cited" :key="item.citationId">{{ item.title || item.id }} · 版本 {{ item.version }}</li></ul>
-      <p v-else>这条回答没有标注可核验的来源引用；不能据此判断模型是否受到某条信息影响。</p>
+      <p v-else>{{ conversation ? '这条回答没有明确标注来源，暂时无法核对引用依据。' : '这条回答没有标注可核验的来源引用；不能据此判断模型是否受到某条信息影响。' }}</p>
       <p class="zj-context__note">只列出回答中出现、且确实提供过的引用标识。它不证明结论被证据支持，也不是因果影响或影响权重。</p>
       <p v-if="plan.citationAudit?.invalidRefs.length" class="zj-context__note">另有 {{ plan.citationAudit.invalidRefs.length }} 个无法核验的引用标识，未列入明确引用。</p>
     </section>

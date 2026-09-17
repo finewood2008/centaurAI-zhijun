@@ -15,7 +15,7 @@ from ..stores.ontology_store import OntologyStore
 from . import context as context_module
 from . import deliberate, extract, jobs, memory
 from .gate import conversation_locks, provider_gate
-from .provider import ONBOARDING_QUESTIONS, ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
+from .provider import ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
 from .request_budget import normalize_request_budget
 
 logger = logging.getLogger(__name__)
@@ -558,12 +558,6 @@ def _run_locked(
         else:
             result = _enqueue_followup(lambda: jobs.enqueue_draft(conversation_id, assistant_id, store=ontology))
             yield ("decision_draft", {**result, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []})
-
-    if conversation.get("mode") == "onboarding" and (onboarding_turn or 0) > len(ONBOARDING_QUESTIONS) and memory.automatic_allowed(ontology, conv_store, conversation_id):
-        try:
-            jobs.enqueue_first_observation(conversation_id, assistant_id, store=ontology)
-        except Exception:  # noqa: BLE001
-            pass
 
     preceding = [m for m in conv_store.list_messages(conversation_id) if m["role"] == "assistant" and m["seq"] < user_message["seq"] and m["status"] == "complete"]
     ok, reason = extract.should_extract(content, preceding[-1]["content"] if preceding else None)

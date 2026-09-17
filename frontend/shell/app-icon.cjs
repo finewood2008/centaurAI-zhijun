@@ -1,8 +1,8 @@
 'use strict'
 const path = require('node:path')
 
-// The checked-in PNG and packaged ICNS both derive from mindos-web/logo.jpg.
-const APP_ICON = path.join(__dirname, 'assets', 'centaur.png')
+// The PNG, ICNS and in-app mark share assets/zhijun-mark.json vector paths.
+const APP_ICON = path.join(__dirname, 'assets', 'zhijun.png')
 
 function installDockIcon(app, platform = process.platform) {
   // Electron's Dock API is macOS-only and must run after app.whenReady().

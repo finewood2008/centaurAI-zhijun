@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { ontologySummary, preferredOntologyView, summaryStatus } from '../src/components/ontology/summary.ts'
+import { ontologySummary, summaryStatus } from '../src/components/ontology/summary.ts'
 import { createOntologyStatsLoader, ontologyLoadPlan } from '../src/pages/ontologyLoading.ts'
 
 const claim = (id, extras = {}) => ({ id, content: id, section: 'who', trustState: 'confirmed', layer: 'self_declared', scope: 'long_term', firstSeen: '2026-09-01T00:00:00Z', lastReaffirmed: '2026-09-01T00:00:00Z', evidence: [], ...extras })
@@ -27,10 +27,6 @@ assert.deepEqual(input, original, 'summary does not mutate or confirm source rec
 assert.equal(summaryStatus(input.find(c => c.id === 'wish')), '理想方向，不等同于已实现')
 assert.equal(summaryStatus(input.find(c => c.id === 'project')), '只适用于当时情境')
 assert.equal(summaryStatus(input.find(c => c.id === 'uncertain')), '待你确认')
-assert.equal(preferredOntologyView(null), 'summary')
-assert.equal(preferredOntologyView('list'), 'list')
-assert.equal(preferredOntologyView('map'), 'map')
-assert.equal(preferredOntologyView('summary'), 'summary')
 assert.deepEqual(ontologyLoadPlan('summary', 'who'), { claims: false, overview: true, stats: false })
 assert.deepEqual(ontologyLoadPlan('map', 'who'), { claims: false, overview: true, stats: true })
 assert.deepEqual(ontologyLoadPlan('list', 'who'), { claims: true, overview: false, stats: true })

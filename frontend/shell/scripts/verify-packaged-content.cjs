@@ -17,7 +17,7 @@ const dependencies = [
 function verifyPackagedContent(filename, shell = path.resolve(__dirname, '..')) {
   const lock = JSON.parse(fs.readFileSync(path.join(shell, 'package-lock.json')));
   const metadata = JSON.parse(fs.readFileSync(path.join(shell, 'package.json')));
-  const files = ['app-icon.cjs', 'assets/centaur.png', 'main.js', 'preload.cjs', 'security.cjs',
+  const files = ['app-icon.cjs', 'assets/zhijun.png', 'main.js', 'preload.cjs', 'security.cjs',
     'provisioning-window.cjs', 'provisioning-broker.cjs', 'provisioning/preload.cjs',
     'provisioning/renderer.js', 'provisioning/picker.cjs', 'provisioning/setup.css', 'provisioning/setup.html'];
   for (const dir of ['production', 'runtime']) {

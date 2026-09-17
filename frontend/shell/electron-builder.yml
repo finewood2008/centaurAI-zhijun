@@ -20,7 +20,7 @@ files:
   - '!node_modules/@nexusaos/device-provisioning-uni/**/*'
   - production/**/*.cjs
   - runtime/**/*.cjs
-  - assets/centaur.png
+  - assets/zhijun.png
   - '!**/*.map'
 
 artifactName: 'Zhijun-${version}-${os}-${arch}.${ext}'

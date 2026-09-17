@@ -24,6 +24,32 @@ function modules() {
 }
 const bytes = value => new TextEncoder().encode(value)
 
+test('external Agent management reaches the signed domain catalog without exposing private MCP dispatch', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('external-agents-test')
+  const resolveOperation = load('services/productCatalog.ts').resolveProductOperation
+  const policy = createRequire(import.meta.url)('../../shell/runtime/product-policy.cjs')
+  const accepted = []
+  load('services/transport.ts').installProductTransport(async (path, init = {}) => {
+    const resolved = resolveOperation(path, init.method || 'GET')
+    const result = policy.operationRequest({ version: 1, requestId: 'external-agents-0001', operationId: resolved.operation.id,
+      params: resolved.params, query: resolved.query, body: init.body ? JSON.parse(init.body) : null })
+    assert.equal(result.operation.capability, 'domain')
+    accepted.push(result)
+    return Response.json({ available: false, grants: [] })
+  })
+  const api = load('services/api.ts').api
+  await api.externalAgents()
+  await api.setExternalAgentsEnabled(true)
+  await api.setExternalGrantState('gr_test', 3, 'revoked')
+  assert.deepEqual(accepted.map(r => r.operation.id), ['get_api_mindos_settings_external_agents',
+    'put_api_mindos_settings_external_agents_enabled', 'patch_api_mindos_settings_external_agents_grants_grant_id'])
+  assert.deepEqual(accepted[2].value.params, { grantId: 'gr_test' })
+  assert.deepEqual(accepted[2].value.body, { expectedRevision: 3, state: 'revoked' })
+  assert.throws(() => resolveOperation('/v1/external-agent-tools', 'POST'))
+  assert.throws(() => resolveOperation('/api/mindos/settings/external-agents?accountId=other'))
+})
+
 test('material pagination traverses API, renderer catalog and actual shell policy without allowing identity query fields', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('materials-pagination')

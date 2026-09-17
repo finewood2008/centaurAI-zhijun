@@ -1326,6 +1326,14 @@ export interface SensitiveRuleUpdatePayload extends SensitiveRuleCreatePayload {
 }
 
 export const api = {
+  externalAgents: (signal?: AbortSignal) => request<import('./externalAgents').ExternalAgentStatus>('/mindos/settings/external-agents', { signal }),
+  externalAgentPreview: (signal?: AbortSignal) => request<import('./externalAgents').AccessPreview>('/mindos/settings/external-agents/preview', { signal }),
+  externalAgentAudit: (signal?: AbortSignal) => request<{ items: import('./externalAgents').AccessAudit[] }>('/mindos/settings/external-agents/audit', { signal }),
+  setExternalAgentsEnabled: (enabled: boolean) => putJson<{ enabled: boolean }>('/mindos/settings/external-agents/enabled', { enabled }),
+  updateExternalGrant: (id: string, body: import('./externalAgents').GrantUpdate) => putJson<import('./externalAgents').AgentGrant>(`/mindos/settings/external-agents/grants/${encodeURIComponent(id)}`, body),
+  setExternalGrantState: (id: string, expectedRevision: number, state: 'active' | 'paused' | 'revoked') => request<import('./externalAgents').AgentGrant>(`/mindos/settings/external-agents/grants/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS }, body: JSON.stringify({ expectedRevision, state }),
+  }),
   getRedactionStatus: (id: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction`),
   getRedactionReview: (id: string, kind: string) => request<{
     text: string

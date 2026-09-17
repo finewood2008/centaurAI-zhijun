@@ -82,7 +82,7 @@ function openSource(source: HomeSourceRef) {
     return
   }
   if (source.sourceType === 'decision') {
-    router.push({ path: '/judgments', query: { decisionId: source.id.replace(/^decision:/, '') } })
+    router.push({ path: '/review', query: { decisionId: source.id.replace(/^decision:/, '') } })
     return
   }
   router.push({ path: '/me', query: { claim: source.id.replace(/^claim:/, '') } })
@@ -212,6 +212,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <RouterLink to="/review" class="zj-reflections-entry"><span>回看</span><span>回看经历，理解自己的选择</span><ArrowRight :size="16" aria-hidden="true" /></RouterLink>
       <RelationshipTimeline :items="overview.timeline" @open="openSource" />
 
       <p v-if="overview.state === 'first_meet'" class="zj-today__first-note">
@@ -222,6 +223,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.zj-reflections-entry { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 20px; border:1px solid #e0e4d9; border-radius:12px; color:#54654a; font-size:14px; text-decoration:none; }
+.zj-reflections-entry span:nth-child(2) { color:#858c7d; font-size:12px; flex:1; }
 .zj-today {
   display: grid;
   gap: 22px;

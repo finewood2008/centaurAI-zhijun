@@ -57,7 +57,7 @@ def _rag_boundary(*, fresh=False):
 PURPOSES = {"chat": "日常对话", "draft_turn": "判断草稿", "decision_suggestions": "判断候选",
             "charter_draft": "人生章程整理",
             "reply_assistance": "回复辅助",
-            "alignment": "自我校准提议", "learning": "情境推演与复盘", "extract_turn": "个人理解提议",
+            "alignment": "自我校准与照见", "learning": "情境推演与复盘", "extract_turn": "个人理解提议",
             "summarize_conversation": "会话摘要", "first_observation": "初次理解",
             "home_brief": "首页来信", "consolidate": "理解整理"}
 
@@ -216,6 +216,15 @@ class Router:
                 base["text"] += "\n证据：" + "\n".join(str(e.get("quote") or "")[:500] for e in claim.get("evidence", [])[:6])
                 if kind == "claim_history":
                     base["text"] = "[历史已纠正/替代理解，仅用于回顾当时记录，不代表当前用户]\n" + base["text"]
+            elif kind == "reflection":
+                from ..stores.reflection_store import ReflectionStore
+                from .reflections import source_text, version
+                item = ReflectionStore(self.onto).get(ident)
+                if not item or item["scope"] != self.scope or item["status"] not in ("accepted", "contextual"):
+                    raise ValueError("照见未被认可或已撤回，不能沿用原观察")
+                self._scope(item["conversationId"])
+                base.update(title="用户校准的照见 · " + item["title"], text=source_text(item), version=version(item))
+                parents = item["sources"]
             elif kind == "summary":
                 cid, _, revision = ident.rpartition(":")
                 self._scope(cid)
@@ -466,7 +475,7 @@ class Router:
                     if not batch:
                         raise ValueError("候选已删除")
                     self._scope(batch["conversationId"])
-                elif kind in ("matter", "artifact"):
+                elif kind in ("matter", "artifact", "reflection"):
                     resolved = self.resolve(s["ref"], _cache=source_cache, _budget=source_budget)
                     if any(node["blocked"] for node in resolved):
                         raise ValueError("事项或成果的来源已变化或不可用")
@@ -500,7 +509,7 @@ class Router:
         policy = self.store.policy(self.scope) if policy is None else policy
         if (policy["enabled"] and policy["service"] == service and purpose in policy["purposes"]
                 and source["key"] not in policy["exclusions"]
-                and (source["kind"] in ("message", "claim", "draft", "decision", "episode", "material", "reply_assist", "summary")
+                and (source["kind"] in ("message", "claim", "draft", "decision", "episode", "material", "reply_assist", "summary", "reflection")
                      or (policy.get("includeCharter", False) and source["kind"] in ("charter", "charter_document", "charter_clause", "charter_draft", "charter_workspace")))
                 and (source["kind"] != "material" or policy["includeFiles"])):
             # File text has its own explicit standing-consent switch. A profile
@@ -838,6 +847,12 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
                           "这是有范围的概览，不代表全部本体，不能用没有检索到推断没有记录。")
     elif material_refs:
         excluded.extend({"id": r["materialId"], "reason": "本轮明确不使用这些文件"} for r in material_refs)
+    if not omit:
+        from .reflections import chat_context
+        reflection_text, reflection_refs = chat_context(router, content, p)
+        if reflection_text:
+            system.append(reflection_text)
+            refs.extend(reflection_refs)
     attached_materials = []
     if material_refs and not omit and not os.environ.get("ZHIJUN_WORKSPACE_ID"):
         text, attached_materials = attachment_context(material_refs, router.scope, content,

@@ -1,6 +1,6 @@
 # 知君独立桌面宿主
 
-当前桌面已接入完整产品页面和受控业务传输。页面由 `zhijun://desktop/desktop.html` 加载，不启动本机 Python/Vite，也不依赖 PC 本机 8618 服务。Consumer账号登录、SDK连接和业务授权均由主进程管理；只有真实v2工作区校验成功后才显示“今日来信、对话、我的本体、判断、资料与边界、偏好”等原产品入口。仅登录成功、SDK连接成功或v1只读授权成功都不足以打开完整工作区。
+当前桌面已接入完整产品页面和受控业务传输。页面由 `zhijun://desktop/desktop.html` 加载，不启动本机 Python/Vite，也不依赖 PC 本机 8618 服务。Consumer账号登录、SDK连接和业务授权均由主进程管理；只有真实v2工作区校验成功后才显示“今日来信、对话、回看、我的本体、资料与边界、偏好”等产品入口。仅登录成功、SDK连接成功或v1只读授权成功都不足以打开完整工作区。
 
 在仓库根安装依赖并启动：
 
@@ -94,7 +94,7 @@ v2通过同一SDK session请求 `GET /api/mindos/zhijun/context`，核对账号�
 
 ## 应用图标
 
-开发启动会在 macOS Dock 使用原有半人马图像；Windows/Linux 窗口和打包配置也指向同源资产。原图为 `../mindos-web/logo.jpg`。运行 `npm run icons:build` 会通过仓库内的 Swift/CoreGraphics 脚本去除原图近白背景，在暖白圆角底板外保留真实透明留白，再用 `sips` / `iconutil` 重建 `assets/centaur.png` 和 `assets/centaur.icns`。`assets/centaur-source.json` 记录源图、渲染脚本、构建脚本、布局参数和产物哈希，重复构建应得到相同结果。正式安装包仍需在对应平台构建核验，设置打包配置不代表安装包已经产出。
+知君产品图标使用暖白底、朱砂色的宋体「知」字。侧栏保留初版朱砂印与「知君」名称，不展示企业署名；点击后打开介绍弹窗，以「半人马人工智能出品」说明品牌关系。`../assets/zhijun-mark.json` 保存矢量轮廓；`npm run icons:build` 通过 Swift/CoreGraphics 生成带透明外边距的 `assets/zhijun.png` 与 `assets/zhijun.icns`，以及 SVG 资产和网页图标。`assets/zhijun-source.json` 记录源文件、脚本及产物哈希。打包配置指向同源资产，安装包仍需另行构建和核验。
 
 账号已登录时保留主导航；未连接的业务内容区显示选盒或错误提示。应用授权拒绝和账号服务故障会单独提示，不应据此认定盒子离线。
 

@@ -23,7 +23,7 @@ const ontologyLabels = await readFile(new URL('../src/shared/ontology.ts', impor
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 
 // 路由：今日首屏 + 四入口 + 会话详情；旧问答/生成/治理/纠错页不再存在
-for (const path of ["path: '/onboarding'", "path: '/onboarding/chat'", "path: '/onboarding/c/:conversationId'", "path: '/'", "path: '/chat'", "path: '/c/:conversationId'", "path: '/me'", "path: '/me/inbox'", "path: '/judgments'", "path: '/data'"]) {
+for (const path of ["path: '/onboarding'", "path: '/onboarding/chat'", "path: '/onboarding/c/:conversationId'", "path: '/'", "path: '/chat'", "path: '/c/:conversationId'", "path: '/me'", "path: '/me/inbox'", "path: '/review'", "path: '/data'"]) {
   assert.ok(router.includes(path), `router 缺少 ${path}`)
 }
 assert.match(router, /router\.beforeEach/)
@@ -113,13 +113,13 @@ for (const rel of ['../src/components/ontology/SelfMap.vue', '../src/pages/Ontol
 const nudgeStrip = await readFile(new URL('../src/components/conversation/NudgeStrip.vue', import.meta.url), 'utf8')
 assert.match(nudgeStrip, /path: '\/chat', query: \{ say: text \}/)
 assert.match(nudgeStrip, /showAll\?: boolean/)
-assert.match(router, /path: '\/growth', redirect: '\/judgments'/)
+assert.match(router, /\['\/judgments', '\/reflections', '\/growth'\]/)
 for (const gone of ["'/qa'", "'/generate'", "'/governance'", "'/corrections'", 'QaPage', 'GovernancePage', 'GeneratePage', 'CorrectionsPage']) {
   assert.ok(!router.includes(gone), `router 不应再引用 ${gone}`)
 }
 
 // 侧栏：单组五项，今日在最上
-for (const label of ["label: '今日来信'", "label: '对话'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
+for (const label of ["label: '今日来信'", "label: '对话'", "label: '我的本体'", "label: '回看'", "label: '资料与边界'"]) {
   assert.ok(sidebar.includes(label), `sidebar 缺少 ${label}`)
 }
 assert.doesNotMatch(sidebar, /问知君|本体治理|logo\.jpg/)
@@ -204,7 +204,7 @@ assert.match(alignmentPrivacy, /transitional\.has\(result\.state\.status\)/)
 assert.doesNotMatch(alignmentPrivacy, /setTimeout\(poll, 5000\)/)
 assert.doesNotMatch(routingPanel, /setInterval\(/)
 assert.match(chatStream, /streamPost\(/)
-assert.match(chatStream, /prepareChatRoute\(conversationId, request, signal\)/)
+assert.match(chatStream, /prepareChatRoute\(conversationId, request, signal, conversationOnly\)/)
 assert.match(conversation, /surface: current\.value\.mode === 'onboarding' \? 'onboarding' : 'conversation'/)
 assert.doesNotMatch(conversation, /fetch\(/)
 

@@ -48,7 +48,7 @@ async function openDecision() {
     }
     return
   }
-  router.push({ path: '/judgments', query: { decisionId: item.id } })
+  router.push({ path: '/review', query: { decisionId: item.id } })
 }
 </script>
 

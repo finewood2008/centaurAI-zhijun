@@ -1,6 +1,7 @@
 /** Desktop workspace lifetime. Web pages keep their existing storage behavior. */
 let desktop = false
 let scope: string | null = null
+let preferenceOwner: string | null = null
 let epoch = 0
 const resets = new Set<() => void>()
 const controllers = new Set<AbortController>()
@@ -15,9 +16,10 @@ export function onProductScopeReset(reset: () => void): () => void {
   resets.add(reset)
   return () => resets.delete(reset)
 }
-export function setProductScope(next: string | null): void {
+export function setProductScope(next: string | null, stableOwner: string | null = next): void {
   if (scope === next) return
   scope = next
+  preferenceOwner = next === null ? null : stableOwner
   epoch++
   for (const controller of controllers) controller.abort(new DOMException('连接已变化', 'AbortError'))
   controllers.clear()
@@ -26,6 +28,20 @@ export function setProductScope(next: string | null): void {
   objectUrls.clear()
   for (const key of storageKeys) { try { sessionStorage.removeItem(key) } catch { /* Storage can be unavailable. */ } }
   storageKeys.clear()
+}
+
+/** Device-local UI preferences survive reconnects, but never cross account/box owners. */
+export function createProductLocalStorage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
+  const ownerEpoch = epoch
+  const owner = preferenceOwner
+  const valid = () => !desktop || (owner !== null && ownerEpoch === epoch && owner === preferenceOwner)
+  const keyFor = (key: string) => `zhijun.preferences.${desktop ? encodeURIComponent(owner ?? '') : 'web'}.${key}`
+  const check = () => { if (!valid()) throw new Error('连接已变化，请重新打开回看') }
+  return {
+    getItem(key) { return valid() ? localStorage.getItem(keyFor(key)) : null },
+    setItem(key, value) { check(); localStorage.setItem(keyFor(key), value) },
+    removeItem(key) { check(); localStorage.removeItem(keyFor(key)) },
+  }
 }
 export function workspaceRequestSignal(signal?: AbortSignal | null): { signal: AbortSignal; abort: () => void; dispose: () => void } {
   const controller = new AbortController()

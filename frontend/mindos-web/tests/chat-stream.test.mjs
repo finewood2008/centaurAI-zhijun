@@ -101,6 +101,23 @@ for (const error of [new ApiError('SOURCE_CHANGED'), new ApiError('SOURCE_UNAVAI
 }
 console.log('PASS chat stream: stable identity, finite preview refresh, authorization, source failures, cancellation, and no replay after SSE')
 
+for (const needsRag of [false, true]) {
+  let attempts = 0
+  const prompt = { interactionId: 'rag-conversation', status: 'sensitive_confirmation_required', hits: [], passedCount: 0 }
+  const h = harness(async (_path, _body, handlers) => {
+    if (++attempts === 1) {
+      if (needsRag) handlers.error({ code: 'RAG_SENSITIVE_CONFIRMATION_REQUIRED', ragV2: prompt, userMessageId: 'user-1' })
+      else throw new ApiError('ROUTE_CHANGED')
+    } else handlers.message_done({ messageId: 'answer-1' })
+  }, async (_cid, body, _signal, conversationOnly) => {
+    assert.equal(conversationOnly, true, 'route refresh must keep the conversation-only service guard')
+    return { ...body, localOnly: false, routeRevision: 'new-preview' }
+  })
+  assert.equal(await h.streamChat('conversation-1', original, {}, undefined, undefined, true), true)
+  assert.equal(h.previews.length, 1)
+  assert.equal(h.calls[1][1].localOnly, false)
+}
+
 {
   const h = harness(async (_p, _b, handlers) => { handlers.meta({ messageId: 'reply-1' }) })
   await assert.rejects(h.streamChat('conversation-1', original, { meta() {} }), { code: 'CHAT_STREAM_INCOMPLETE' })

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import type { RagV2MaterialItem, RagV2Prompt } from '@/services/taskRouting'
+import { conversationNotice } from '@/shared/conversationPresentation'
 
 import BaseButton from '../ui/BaseButton.vue'
 
@@ -32,6 +33,7 @@ interface RagDetectionNotice {
 
 const props = withDefaults(
   defineProps<{
+    conversation?: boolean
     status: RagSensitiveStatus
     interactionId?: string
     items?: RagV2MaterialItem[]
@@ -334,7 +336,7 @@ function cancel() {
       <div class="rag-sensitive__eyebrow">资料安全确认</div>
       <h3>发现可能包含敏感信息的资料</h3>
       <p class="rag-sensitive__lead">
-        请选择发送脱敏内容，或在有权限时领取原文。未经选择，资料不会发送给模型。
+        {{ conversation ? '请选择使用脱敏内容，或在有权限时使用原文。确认前，资料不会交给联网服务处理。' : '请选择发送脱敏内容，或在有权限时领取原文。未经选择，资料不会发送给模型。' }}
       </p>
       <p v-if="detectionNotice?.withheldCount" class="rag-sensitive__lead">
         另有 {{ withheldCount }} 个片段尚未完成检测；处理当前敏感项后，会再请你决定是否仅用已通过片段、重试或明确承担风险。
@@ -370,7 +372,7 @@ function cancel() {
       <div class="rag-sensitive__eyebrow rag-sensitive__eyebrow--warning">敏感检测暂不可用</div>
       <h3>部分资料已暂缓使用</h3>
       <p class="rag-sensitive__lead">
-        {{ detectionNotice?.message || '敏感检测服务暂时不可用。未完成检测的资料不会展示，也不会发送给模型。' }}
+        {{ conversation ? conversationNotice(detectionNotice?.message, '敏感检测暂时不可用。未完成检测的资料不会展示，也不会用于回答。') : detectionNotice?.message || '敏感检测服务暂时不可用。未完成检测的资料不会展示，也不会发送给模型。' }}
       </p>
 
       <dl class="rag-sensitive__counts" aria-label="资料检测结果">
@@ -419,7 +421,7 @@ function cancel() {
       <div v-else class="rag-sensitive__risk" role="alert" aria-label="风险放行确认">
         <strong>确认承担风险后放行</strong>
         <p>
-          {{ detectionNotice?.riskMessage || '这些资料未完成敏感检测，放行后可能把敏感信息发送给模型。' }}
+          {{ conversation ? conversationNotice(detectionNotice?.riskMessage, '这些资料未完成敏感检测，继续后可能把敏感信息交给联网服务处理。') : detectionNotice?.riskMessage || '这些资料未完成敏感检测，放行后可能把敏感信息发送给模型。' }}
         </p>
         <label class="rag-sensitive__acknowledgement">
           <input v-model="riskAcknowledged" type="checkbox" :disabled="busy" />

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useRoute } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
 import ToastHost from '@/components/ui/ToastHost.vue'
 import RoutingConsent from '@/components/conversation/RoutingConsent.vue'
@@ -8,6 +9,8 @@ import { ragQuestion, type RagV2Choice } from '@/services/taskRouting'
 
 const ragPrompt = computed(() => ragQuestion.value?.prompt)
 const chooseRag = (choice: RagV2Choice) => ragQuestion.value?.done(choice)
+const route = useRoute()
+const conversationPresentation = computed(() => ['conversation', 'conversation-detail', 'onboarding-chat', 'onboarding-conversation'].includes(String(route.name)))
 </script>
 
 <template>
@@ -16,10 +19,11 @@ const chooseRag = (choice: RagV2Choice) => ragQuestion.value?.done(choice)
       <template v-if="$slots.content" #content><slot name="content" /></template>
       <template v-if="$slots.topbar" #topbar="controls"><slot name="topbar" v-bind="controls" /></template>
     </MainLayout>
-    <RoutingConsent />
+    <RoutingConsent :conversation="conversationPresentation" />
     <Teleport to="body">
       <div v-if="ragPrompt" class="rag-sensitive-host" @click.self="chooseRag('cancel')">
         <RagSensitiveDialog
+          :conversation="conversationPresentation"
           :key="ragPrompt.interactionId"
           :interaction-id="ragPrompt.interactionId"
           :status="ragPrompt.status"

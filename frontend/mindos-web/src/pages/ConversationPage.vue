@@ -59,7 +59,8 @@ import { createSessionGate } from '@/composables/sessionGate'
 import { createMemoryAttentionPoller } from '@/composables/useMemoryAttentionPolling'
 import { createInFlightReads } from '@/composables/inFlightReads'
 import { reviewNote } from '@/shared/ontology'
-import { MODEL_UNAVAILABLE_TEXT, modelUnavailable } from '@/shared/model'
+import { modelUnavailable } from '@/shared/model'
+import { CHAT_UNAVAILABLE, conversationNotice } from '@/shared/conversationPresentation'
 import { extractionSkipNote, hasConversationOutcomes } from '@/shared/labels'
 import { placeMemoryAttention } from '@/shared/memoryAttention'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
@@ -316,7 +317,7 @@ async function onConfirmDraft(payload: DecisionDraftConfirmPayload) {
       kind: 'decision_confirmed',
       decisionId: result.decision.id,
     })
-    toast({ type: 'success', message: '已记进判断簿，到期知君会来回访' })
+    toast({ type: 'success', message: '已保存选择，到期知君会来回访' })
     void refreshOutcomes(current.value.id, true)
     await scrollToBottom()
   } catch (err) {
@@ -602,11 +603,11 @@ watch(
 function friendlyError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
     if (err.status === 409 && err.code === 'TURN_IN_FLIGHT') return '这段对话还在生成中，请稍等再发。'
-    if (err.status === 429) return '模型正忙，请稍后再试。'
-    if (err.status === 503) return '模型服务不可用，请到「偏好」检查模型配置。'
-    return err.message || fallback
+    if (err.status === 429) return '暂时有些忙，请稍后重试。'
+    if (err.status === 503) return CHAT_UNAVAILABLE
+    return conversationNotice(err.message, fallback)
   }
-  return err instanceof Error && err.message ? err.message : fallback
+  return err instanceof Error && err.message ? conversationNotice(err.message, fallback) : fallback
 }
 
 let statusTimer: number | null = null
@@ -1133,7 +1134,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
     const routeState = await routingRequest(routePath(conv.id), 'GET', undefined, signal)
     routingMode.value = routeState.mode.mode
     sendBody = await prepareChatRoute(conv.id, { content, depth, mode, materialRefs: imports.references, replyAssistance: origin,
-      localOnly: systemPromptLocalOnly || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal)
+      localOnly: systemPromptLocalOnly || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal, true)
     if (!sendBody || !alive || currentId.value !== conv.id) {
       composerRef.value?.restoreSubmission(content, origin, conv.id)
       streaming.value = false; abortController = null; return
@@ -1141,7 +1142,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
   } catch (err) {
     streaming.value = false; abortController = null
     composerRef.value?.restoreSubmission(content, origin, conv.id)
-    if (!signal.aborted) toast({ type: 'error', message: friendlyError(err, '未能完成外发预览') })
+    if (!signal.aborted) toast({ type: 'error', message: friendlyError(err, CHAT_UNAVAILABLE) })
     return
   }
   const now = new Date().toISOString()
@@ -1258,7 +1259,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
               ? '回答已保存，但整理任务未能保存；请稍后检查整理状态。'
               : e.taskKind === 'charter_draft'
                 ? '回答已保存，但人生章程草稿整理未完成，请稍后重新整理。'
-                : '回答已保存，但个人理解整理未完成，可在“模型与授权”中重新整理。'
+                : '回答已保存，但个人理解整理未完成，可在“整理状态”中重新整理。'
             assistant.backgroundFailures = [...new Set([...(assistant.backgroundFailures || []), note])]
             assistant.extractionNote = assistant.backgroundFailures.join('\n')
             void refreshMemoryAttention(conv.id)
@@ -1290,12 +1291,13 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           }
           if (!alive) return
           if (assistant.id.startsWith('local-')) rollback()
-          else assistant.content = assistant.content || e.message || '生成已暂停，可重试'
-          toast({ type: 'error', message: e.message || '生成失败' })
+          else assistant.content = assistant.content || conversationNotice(e.message)
+          toast({ type: 'error', message: conversationNotice(e.message) })
         },
       },
       signal,
       () => alive && currentId.value === conv.id,
+      true,
     )
     if (!completed) rollback()
   } catch (err) {
@@ -1372,7 +1374,7 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
   try {
     abortController = new AbortController()
     retrySignal = abortController.signal
-    const body = await prepareChatRoute(cid, contextRetryBody(user, message, localOnly), abortController.signal)
+    const body = await prepareChatRoute(cid, contextRetryBody(user, message, localOnly), abortController.signal, true)
     if (!body || !alive || currentId.value !== cid) return
     message.meta = { ...message.meta, requestId: body.requestId }
     message.streaming = true
@@ -1391,9 +1393,9 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
         if (isContextReviewError(e)) {
           message.meta = { ...message.meta, contextStage: e.stage || 'supplemented', contextPending: { code: e.code, stage: e.stage || 'supplemented' } }
           if (!started) message.content = e.message || '补充信息仍需核对，原消息已保留。'
-        } else toast({ type: 'error', message: e.message })
+        } else toast({ type: 'error', message: conversationNotice(e.message) })
       },
-    }, abortController.signal, () => alive && currentId.value === cid)
+    }, abortController.signal, () => alive && currentId.value === cid, true)
     if (!receivedBusinessError && alive && currentId.value === cid && ownerEpoch === productScopeEpoch()) await loadConversation(cid)
   } catch (e) {
     if (retrySignal?.aborted) { message.status = 'aborted'; return }
@@ -1558,6 +1560,7 @@ function onCite(assistant: UiMessage, index: number) {
 }
 
 const imports = reactive(useChatImports({
+  conversationOnly: true,
   conversationId: importsConversationId,
   ensure: async () => (await ensureConversation(showIntro.value ? 'onboarding' : 'chat')).id,
   refreshMessages: async id => {
@@ -1570,7 +1573,7 @@ const imports = reactive(useChatImports({
     void loadConversations()
     return true
   },
-  notify: message => toast({ type: 'error', message }),
+  notify: message => toast({ type: 'error', message: conversationNotice(message, '暂时无法处理资料，请重试。') }),
 }))
 
 function onFileDragOver(event: DragEvent) {
@@ -1676,10 +1679,9 @@ onBeforeUnmount(() => {
               <button type="button" :disabled="metadataBusy[archiveUndo.conversation.id]" @click="undoArchive">撤销</button>
               <button type="button" :disabled="metadataBusy[archiveUndo.conversation.id]" aria-label="关闭归档提示" @click="archiveUndo = null">关闭</button>
             </span>
-            <RouterLink v-if="modelBlocked && !imports.localOnly && !alignmentLocalOnly && !prefillLocalOnly" to="/settings" class="zj-page__model-link">{{ MODEL_UNAVAILABLE_TEXT }} · 去偏好</RouterLink>
-            <span v-else-if="prefillLocalOnly">本机模型 · 系统话头</span>
+            <span v-if="modelBlocked">{{ CHAT_UNAVAILABLE }} <button class="zj-page__tool" :disabled="streaming" @click="loadStatus(); routingPanel?.refresh()">重试</button></span>
             <template v-if="pendingJobs > 0">
-              <span v-if="modelBlocked || prefillLocalOnly" class="zj-page__dot" aria-hidden="true">·</span>
+              <span v-if="modelBlocked" class="zj-page__dot" aria-hidden="true">·</span>
               <span class="zj-page__pending" data-testid="head-pending">还在整理 {{ pendingJobs }} 件事</span>
             </template>
             <span v-if="isReview" class="zj-seal zj-seal--accent">回访</span>
@@ -1687,7 +1689,7 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="zj-page__tools">
-          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" @jobs-resumed="onMemoryJobsResumed" />
+          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" conversation :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" @jobs-resumed="onMemoryJobsResumed" />
           <MatterWorkspace v-if="(!currentId || loadedConversationId) && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :ensure-conversation="async () => (await ensureConversation('chat')).id" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
@@ -1700,7 +1702,7 @@ onBeforeUnmount(() => {
 
       <div class="zj-page__body">
       <div class="zj-page__stream">
-      <AlignmentPrivacy v-if="loadedConversationId && conversationAuxPhase >= 2 && routingMode === 'legacy'" ref="alignmentPrivacy" :conversation-id="loadedConversationId" :streaming="streaming" :managed="false" @local-only="alignmentLocalOnly = $event" />
+      <AlignmentPrivacy v-if="loadedConversationId && conversationAuxPhase >= 2 && routingMode === 'legacy'" ref="alignmentPrivacy" conversation :conversation-id="loadedConversationId" :streaming="streaming" :managed="false" @local-only="alignmentLocalOnly = $event" />
       <div ref="listRef" class="zj-page__messages">
         <div v-if="showIntro" class="zj-intro">
           <Sparkles :size="22" aria-hidden="true" />
@@ -1750,6 +1752,7 @@ onBeforeUnmount(() => {
               @save="matterWorkspace?.saveFromReply(m)"
             />
             <ImportBatchCard
+              conversation
               v-for="batch in imports.batches.filter(b => b.messageId === m.id)" :key="batch.id"
               :batch="batch" :busy="imports.busyBatch === batch.id || imports.ragBusyBatch === batch.id || imports.uploading"
               @preview="imports.showPreview($event)" @retry="imports.retry(batch, $event)"
@@ -1758,23 +1761,22 @@ onBeforeUnmount(() => {
               @reupload="(item, file) => imports.reupload(batch, item, file)"
             />
             <div v-if="m.meta?.importId && m.role === 'assistant'" class="zj-file-followups">
-              <span>{{ m.external ? '外部模型' : '本机模型' }} · {{ m.model }} · 对这批文件的反馈</span>
+              <span>对这批文件的反馈</span>
               <div>
                 <button type="button" @click="askAboutFiles(m, '请继续总结这些文件的重点')">内容总结</button>
                 <button type="button" @click="askAboutFiles(m, '请指出这些文件中的潜在问题，并给出依据')">潜在问题</button>
                 <button type="button" @click="askAboutFiles(m, '这些文件与我已经确认的信息有什么联系？请区分依据与推测')">联系已有资料</button>
               </div>
             </div>
-            <ProvenanceStrip v-if="m.role === 'assistant' && m.provenance" :provenance="m.provenance" :meta="m.turnMeta" />
+            <ProvenanceStrip v-if="m.role === 'assistant' && m.provenance" conversation :provenance="m.provenance" :meta="m.turnMeta" />
             <p v-if="m.role === 'user' && m.meta?.replyAssistance" class="zj-turn__note">{{ (m.meta.replyAssistance as any).kind === 'assisted' ? '由 AI 候选辅助起草，你已发送' : '对话操作' }}</p>
             <ReplyAssistance v-if="loadedConversationId && conversationAuxPhase >= 4 && m.id === replyTarget" :conversation-id="loadedConversationId" :message-id="m.id" :disabled="streaming"
               @insert="(text, origin) => composerRef?.insertReply(text, origin)" @write="composerRef?.focus()" />
             <div v-if="m.role === 'assistant' && !m.streaming && ['error', 'aborted'].includes(m.status)" class="zj-file-followups">
-              <span>{{ m.replySyncFailed ? '回复同步未完成，请先核对已保存结果；不会自动重新发送。' : contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '消息已保留，未自动切换模型。' }}</span>
+              <span>{{ m.replySyncFailed ? '回复同步未完成，请先核对已保存结果；不会自动重新发送。' : contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '暂时无法回答，请重试。原消息已保留。' }}</span>
               <div>
               <button v-if="m.replySyncFailed" :disabled="streaming || m.replySyncing" @click="checkSavedReply(m)">{{ m.replySyncing ? '正在核对…' : '核对已保存回复' }}</button>
-              <button :disabled="streaming" @click="retryMessage(m, false)">{{ contextNeedsReview(m) ? '核对补充资料并继续' : '重试当前模式' }}</button>
-              <button :disabled="streaming" @click="retryMessage(m, true)">改用本地</button>
+              <button :disabled="streaming" @click="retryMessage(m, false)">{{ contextNeedsReview(m) ? '核对补充资料并继续' : '重试' }}</button>
               </div>
             </div>
             <p v-if="m.replySyncing && m.streaming" class="zj-turn__note" role="status">连接读取中断，正在核对盒子已保存的回复…</p>
@@ -1807,15 +1809,14 @@ onBeforeUnmount(() => {
           :uploading="imports.uploading"
           :retrieval-only="imports.retrievalOnly"
           :allow-deliberate="!isReview && !guidedOnboarding && !showIntro"
-          :notice="modelBlocked && !imports.staged.length && !imports.localOnly && !alignmentLocalOnly && !prefillLocalOnly ? MODEL_UNAVAILABLE_TEXT : undefined"
-          notice-to="/settings"
+          :notice="modelBlocked ? CHAT_UNAVAILABLE : undefined"
           :placeholder="current?.mode === 'onboarding' || showIntro ? '回答知君的问题，或者说说你想先聊什么…' : isReview ? '说说实际发生了什么，和预期比差在哪…' : undefined"
           @send="send"
           @stop="stop"
           @files="imports.stageFiles($event)"
           @pick-materials="imports.openPicker()"
         >
-          <template #attachments><ChatFilesPanel :model="imports" /></template>
+          <template #attachments><ChatFilesPanel conversation :model="imports" /></template>
         </Composer>
       </div>
       </div>

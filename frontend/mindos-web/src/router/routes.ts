@@ -10,8 +10,8 @@ export const productRoutes: RouteRecordRaw[] = [
   { path: '/me', name: 'ontology', component: () => import('@/pages/OntologyPage.vue'), meta: { title: '我的本体' } },
   { path: '/me/charter', name: 'charter', component: () => import('@/pages/CharterPage.vue'), meta: { title: '我的本体 · 人生章程' } },
   { path: '/me/inbox', name: 'ontology-inbox', component: () => import('@/pages/OntologyPage.vue'), meta: { title: '我的本体' } },
-  { path: '/judgments', name: 'judgments', component: () => import('@/pages/GrowthPage.vue'), meta: { title: '判断' } },
-  { path: '/growth', redirect: '/judgments' },
+  { path: '/review', name: 'review', component: () => import('@/pages/GrowthPage.vue'), meta: { title: '回看' } },
+  ...['/judgments', '/reflections', '/growth'].map(path => ({ path, redirect: (to: { query: import('vue-router').LocationQuery; hash: string }) => ({ path: '/review', query: to.query, hash: to.hash }) })),
   { path: '/data', name: 'data', component: () => import('@/pages/DataHubPage.vue'), meta: { title: '资料与边界' } },
   // 隐藏路由（不进侧栏）
   { path: '/materials', name: 'materials', component: () => import('@/pages/RawMaterialsPage.vue'), meta: { title: '原材料' } },
@@ -22,6 +22,6 @@ export const productRoutes: RouteRecordRaw[] = [
   { path: '/recycle-bin', name: 'recycle-bin', component: () => import('@/pages/RecycleBinPage.vue'), meta: { title: '回收站' } },
   { path: '/search', name: 'search', component: () => import('@/pages/SearchPage.vue'), meta: { title: '搜索记忆' } },
   { path: '/graph', name: 'graph', component: () => import('@/pages/GraphPage.vue'), meta: { title: '关系图谱' } },
-  { path: '/settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue'), meta: { title: '偏好' } },
+  { path: '/settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue'), meta: { title: '设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

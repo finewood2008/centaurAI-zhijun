@@ -48,6 +48,25 @@ function routing(overrides = {}) {
   return { ...mount('RoutingPanel', { conversationId: 'a', disabled: false }, api), api, calls, states }
 }
 
+// Conversation recovery must not change global defaults or resume after cancellation.
+{
+  const h = routing({ ensureConversationService: async () => true }); await flush()
+  h.props.conversation = true
+  const read = h.api.routingRequest
+  h.api.routingRequest = async (...args) => {
+    const result = await read(...args)
+    return args[0].includes('/pending/') ? { ...result, service: { external: true } } : result
+  }
+  await h.ui.pending(h.states.a.pending[0])
+  assert.equal(h.calls.filter(c => c.path.endsWith('/resume')).length, 1)
+  assert.equal(h.calls.find(c => c.path.endsWith('/resume')).body.localOnly, false)
+  h.api.ensureConversationService = async () => false
+  await h.ui.pending(h.states.a.pending[0])
+  assert.equal(h.calls.filter(c => c.path.endsWith('/resume')).length, 1)
+  assert.equal(h.calls.filter(c => c.path.endsWith('/default-consent')).length, 0)
+  h.close()
+}
+
 // Reading authoritative state must never look like an explicit user choice.
 // A successful mode action (including re-selecting the active online pill) is
 // the only signal that may override a pending system-prompt local route.

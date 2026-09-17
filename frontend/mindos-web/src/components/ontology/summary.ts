@@ -1,9 +1,6 @@
 import type { Claim, Section } from '@/services/api'
 
 export type OntologyView = 'summary' | 'map' | 'list'
-export function preferredOntologyView(saved: string | null): OntologyView {
-  return saved === 'map' || saved === 'list' ? saved : 'summary'
-}
 
 export function summaryStatus(claim: Claim): string {
   if (claim.trustState === 'working') return '待你确认'

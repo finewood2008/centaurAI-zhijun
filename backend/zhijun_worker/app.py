@@ -153,7 +153,8 @@ def create_app(workspace, capabilities=None):
         domain.include_router(module.router, dependencies=[Depends(require_workspace)])
     from mindos import memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes
     from mindos.zhijun import charter
-    for module in (memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes, charter):
+    from mindos import reflection_routes
+    for module in (memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes, charter, reflection_routes):
         router = module.build_router(require_workspace)
         registered.extend(router.routes)
         domain.include_router(router, dependencies=[Depends(require_workspace)])
@@ -163,6 +164,11 @@ def create_app(workspace, capabilities=None):
     registered.extend(model_router.routes)
     domain.include_router(model_router, dependencies=[Depends(require_workspace)])
     model_runtime.install_error_handlers(domain)
+
+    from zhijun_mcp.management import build_router as build_external_agent_router
+    external_agent_router = build_external_agent_router(require_workspace)
+    registered.extend(external_agent_router.routes)
+    domain.include_router(external_agent_router)
 
     @domain.exception_handler(ports.CapabilityError)
     async def capability_error(request, exc):
@@ -189,7 +195,7 @@ class DispatchApp:
             return
         try:
             raw_target = scope.get("raw_path", scope["path"].encode()) + (b"?" + scope["query_string"] if scope.get("query_string") else b"")
-            if scope["method"] != "POST" or raw_target not in {b"/v1/dispatch", b"/v1/events"}:
+            if scope["method"] != "POST" or raw_target not in {b"/v1/dispatch", b"/v1/events", b"/v1/external-agent-tools", b"/v1/external-agent-owner"}:
                 raise HTTPException(404, {"code": "WORKER_ROUTE_NOT_ALLOWED"})
             values = [v for k, v in scope["headers"] if k.lower() == HEADER.lower().encode()]
             if len(values) != 1:
@@ -207,6 +213,25 @@ class DispatchApp:
             verify(values[0].decode("ascii"), self.workspace.key, self.workspace.workspace_id,
                    self.workspace.ownership_epoch, bytes(body), self.nonces,
                    expected_relative_path=raw_target.decode("ascii"))
+            if raw_target in {b"/v1/external-agent-tools", b"/v1/external-agent-owner"}:
+                if not self.domain.state.active:
+                    raise HTTPException(503, {"code": "WORKER_NOT_RUNNING"})
+                from zhijun_mcp.runtime import invoke, invoke_owner
+                from zhijun_mcp.models import AccessError
+                from starlette.concurrency import run_in_threadpool
+                import secrets
+                execution_token = ports.execution.set({"requestId": secrets.token_hex(16),
+                    "operationId": "external_agent_tools" if raw_target == b"/v1/external-agent-tools" else "external_agent_owner"})
+                try:
+                    handler = invoke if raw_target == b"/v1/external-agent-tools" else invoke_owner
+                    result = await run_in_threadpool(handler, strict_json(bytes(body)))
+                except AccessError as exc:
+                    raise HTTPException(exc.status, {"code": exc.code}) from None
+                except Exception:
+                    raise HTTPException(503, {"code": "EXTERNAL_AGENTS_UNAVAILABLE"}) from None
+                finally:
+                    ports.execution.reset(execution_token)
+                return await JSONResponse(result, headers={"Cache-Control": "no-store"})(scope, receive, send)
             if raw_target == b"/v1/events":
                 if not self.domain.state.active:
                     raise HTTPException(503, {"code": "WORKER_NOT_RUNNING"})

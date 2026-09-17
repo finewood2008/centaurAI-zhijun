@@ -57,7 +57,7 @@ onMounted(load)
     <p v-if="error" role="alert">{{ error }} <button :disabled="busy || loading" @click="load">重新读取</button></p>
     <div class="actions"><button :disabled="busy || loading || !progress" @click="continueChat">{{ progress?.state === 'ready' ? '继续认识我' : '回到对话，查看小结' }}</button><button :disabled="busy || loading || !progress" @click="finish">先使用，稍后核对</button></div>
     <section><h2>以后按需要补充</h2><p>这些不是初始化关卡，模型配置和资料授权仍由你决定。</p>
-      <div class="actions"><RouterLink to="/chat">聊一件眼下的事</RouterLink><RouterLink to="/me/charter">建立人生章程</RouterLink><RouterLink to="/judgments">我的判断</RouterLink><RouterLink to="/data">带入资料与持续来源</RouterLink><RouterLink to="/settings">模型与偏好</RouterLink><RouterLink to="/">今日来信</RouterLink></div>
+      <div class="actions"><RouterLink to="/chat">聊一件眼下的事</RouterLink><RouterLink to="/me/charter">建立人生章程</RouterLink><RouterLink to="/review">回看</RouterLink><RouterLink to="/data">带入资料与持续来源</RouterLink><RouterLink to="/">今日来信</RouterLink></div>
     </section>
   </main>
 </template>

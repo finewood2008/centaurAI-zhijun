@@ -2,7 +2,8 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { getAlignmentState, grantAlignmentConsent, type AlignmentState, type Claim } from '@/services/api'
 import { ALIGNMENT_LEVELS } from '@/shared/alignment'
-const props = defineProps<{ conversationId: string; streaming?: boolean; managed?: boolean }>()
+import { conversationNotice } from '@/shared/conversationPresentation'
+const props = defineProps<{ conversation?: boolean; conversationId: string; streaming?: boolean; managed?: boolean }>()
 const emit = defineEmits<{ proposals: [claims: Claim[]]; localOnly: [value: boolean] }>()
 const state = ref<AlignmentState | null>(null)
 const selected = ref<string[]>([])
@@ -58,10 +59,10 @@ async function consent(localOnly: boolean) {
 <template>
   <aside v-if="!managed && state && (state.sources.length || state.state.status)" class="alignment-privacy" data-testid="alignment-privacy">
     <details>
-      <summary>自我画像 · {{ state.state.local_only || missing.length ? '默认本机处理' : '查看校准与授权' }}</summary>
-      <p v-if="state.state.detail">{{ state.state.detail }}</p>
+      <summary>{{ conversation ? '资料校准与授权' : `自我画像 · ${state.state.local_only || missing.length ? '默认本机处理' : '查看校准与授权'}` }}</summary>
+      <p v-if="state.state.detail">{{ conversation ? conversationNotice(state.state.detail, '需要核对资料的使用权限。') : state.state.detail }}</p>
       <p>深层画像不等于普通资料。未授权的内容及其对话衍生内容不会外发。</p>
-      <p v-if="state.service?.external">外部服务：{{ state.service.name }} · {{ state.service.model }}</p>
+      <p v-if="state.service?.external && !conversation">外部服务：{{ state.service.name }} · {{ state.service.model }}</p>
       <div v-for="source in state.sources" :key="source.fingerprint" class="alignment-privacy__source">
         <label><input v-model="selected" type="checkbox" :value="source.fingerprint" :disabled="source.blocked || busy">{{ source.content }}</label>
         <p>第 {{ source.revision }} 版 · {{ source.level == null ? '尚未校准' : ALIGNMENT_LEVELS[source.level] }} · {{ source.allowed ? '当前服务已授权' : '未授权' }}</p>
@@ -69,16 +70,16 @@ async function consent(localOnly: boolean) {
         <p v-if="source.proposal">当时的待确认提议：{{ source.proposal.reason }}（不是用户已认可的判断）</p>
         <p v-if="source.reason">说明：{{ source.reason }}</p>
         <details><summary>此次涉及的证据</summary><blockquote v-for="e in source.evidence" :key="e.id">{{ e.quote }}</blockquote></details>
-        <p v-if="source.blocked">旧版本、已撤回或不可外发的画像：含这些历史内容的对话只能本地继续。</p>
+        <p v-if="source.blocked">{{ conversation ? '这项理解的使用受到限制，相关历史不会自动用于回答。' : '旧版本、已撤回或不可外发的画像：含这些历史内容的对话只能本地继续。' }}</p>
       </div>
       <div class="alignment-privacy__actions">
         <button v-if="state.service?.external" type="button" :disabled="busy || !selected.length" @click="consent(false)">允许所选画像用于该服务</button>
-        <button type="button" :disabled="busy" @click="consent(true)">仅本地处理</button>
+        <button v-if="!conversation" type="button" :disabled="busy" @click="consent(true)">仅本地处理</button>
       </div>
       <p v-if="!state.sources.length">校准后的具体画像会在这里逐项展示，再由你决定是否授权。</p>
       <p>文件权限仍需单独确认；修改画像、换服务或撤销授权后重新核对。</p>
     </details>
-    <p v-if="error" role="alert">{{ error }}</p>
+    <p v-if="error" role="alert">{{ conversation ? conversationNotice(error, '暂时无法保存，请重试。') : error }}</p>
   </aside>
 </template>
 

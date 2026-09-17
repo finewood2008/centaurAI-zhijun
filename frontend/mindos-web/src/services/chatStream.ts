@@ -15,6 +15,7 @@ export async function streamChat(
   handlers: SseHandlers,
   signal?: AbortSignal,
   isCurrent: () => boolean = () => true,
+  conversationOnly = false,
 ): Promise<boolean> {
   let request = body
   let received = false
@@ -54,7 +55,7 @@ export async function streamChat(
         const updated = await prepareChatRoute(conversationId, {
           ...request,
           ...(terminal.userMessageId ? { retryUserId: terminal.userMessageId } : {}),
-        }, signal)
+        }, signal, conversationOnly)
         if (!updated || !isCurrent()) return false
         request = updated
         continue
@@ -63,7 +64,7 @@ export async function streamChat(
     } catch (error) {
       if (attempt === 0 && !received && !signal?.aborted && error instanceof ApiError && error.status === 409 && canRefreshRoute(error)) {
         if (!isCurrent()) return false
-        const updated = await prepareChatRoute(conversationId, request, signal)
+        const updated = await prepareChatRoute(conversationId, request, signal, conversationOnly)
         if (!updated || !isCurrent()) return false
         request = updated
         continue

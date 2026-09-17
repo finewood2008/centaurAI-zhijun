@@ -71,7 +71,7 @@ test('desktop data hub exposes material management and knowledge navigation with
   load('shared/productScope.ts').enableDesktopProduct()
   const page = pageSetup('DataHubPage', load)
   assert.deepEqual(page.ui.primaryCards.map(card => [card.to, card.title]), [
-    ['/materials', '原材料'], ['/search', '找回资料'], ['/settings', '偏好（模型与隐私）'],
+    ['/materials', '原材料'], ['/search', '找回资料'],
   ])
   assert.deepEqual(page.ui.moreCards.map(card => [card.to, card.title]), [
     ['/knowledge', '知识档案'], ['/recycle-bin', '回收站'],

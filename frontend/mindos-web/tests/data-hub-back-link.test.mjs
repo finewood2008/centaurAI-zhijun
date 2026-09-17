@@ -6,9 +6,9 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 
 const read = path => readFile(new URL(`../src/${path}`, import.meta.url), 'utf8')
 const back = await read('components/ui/DataHubBackLink.vue')
-const pages = ['RawMaterialsPage', 'SearchPage', 'SettingsPage', 'KnowledgePage', 'RecycleBinPage']
+const pages = ['RawMaterialsPage', 'SearchPage', 'KnowledgePage', 'RecycleBinPage']
 
-test('all five first-level modules show one fixed data hub link independently of loading state', async () => {
+test('all four data modules show one fixed data hub link independently of loading state', async () => {
   for (const page of pages) {
     const source = await read(`pages/${page}.vue`)
     const template = parse(source).descriptor.template.content
@@ -21,13 +21,13 @@ test('all five first-level modules show one fixed data hub link independently of
   assert.doesNotMatch(back, /router\.back|history\.back|window\.location|location\.href/)
   assert.match(back, /max-width: 100%/)
   assert.match(back, /:focus-visible/)
-  for (const page of ['MaterialDetailPage', 'KnowledgeEditPage', 'ConversationPage']) {
+  for (const page of ['MaterialDetailPage', 'KnowledgeEditPage', 'ConversationPage', 'SettingsPage']) {
     assert.doesNotMatch(await read(`pages/${page}.vue`), /DataHubBackLink/)
   }
 })
 
 test('fixed return works from a fresh deep link and normal router navigation respects existing leave veto', async () => {
-  for (const path of ['/materials', '/search', '/settings', '/knowledge', '/recycle-bin']) {
+  for (const path of ['/materials', '/search', '/knowledge', '/recycle-bin']) {
     const router = createRouter({ history: createMemoryHistory(), routes: [path, '/data'].map(path => ({ path, component: {} })) })
     await router.push(path)
     let unsaved = true

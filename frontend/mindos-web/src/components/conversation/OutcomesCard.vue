@@ -44,7 +44,7 @@ function dueText(iso: string | null | undefined): string {
         <RouterLink to="/me/inbox" class="zj-outcomes__link">等你点头 {{ working }} 条</RouterLink>
       </li>
       <li v-if="outcomes.decision" class="zj-outcomes__item">
-        <RouterLink :to="{ path: '/judgments', query: { decisionId: outcomes.decision.id } }" class="zj-outcomes__link">
+        <RouterLink :to="{ path: '/review', query: { decisionId: outcomes.decision.id } }" class="zj-outcomes__link">
           判断「{{ outcomes.decision.title }}」已入簿<template v-if="dueText(outcomes.decision.reviewAt)">，回访 {{ dueText(outcomes.decision.reviewAt) }}</template>
         </RouterLink>
       </li>

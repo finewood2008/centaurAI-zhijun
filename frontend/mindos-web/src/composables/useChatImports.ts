@@ -3,12 +3,13 @@ import { api, chatImports, type ChatImportBatch, type ChatImportFile, type ChatM
 import { validateImport } from '@/features/import/validation'
 import type { ReplyAssistanceInput } from '@/shared/replyAssistance'
 import { createChatImportPoller, hasTransitionalImports, shouldRetryChatImportError } from './chatImportPolling'
-import { askRag, requiresFreshRagSearch, submitRagDecision } from '@/services/taskRouting'
+import { askRag, ensureConversationService, requiresFreshRagSearch, submitRagDecision } from '@/services/taskRouting'
 import { isDesktopProduct } from '@/shared/productScope'
 
 export interface StagedChatFile { id: string; name: string; size: number; file?: File; materialId?: string; version?: number }
 
 export function useChatImports(options: {
+  conversationOnly?: boolean
   conversationId: Ref<string | null | undefined>
   ensure: () => Promise<string>
   refreshMessages: (id: string) => Promise<boolean>
@@ -115,7 +116,9 @@ export function useChatImports(options: {
     let accepted = false
     try {
       id = await options.ensure()
-      const batch = await chatImports.create(id, { requestId, content, replyAssistance, localOnly: forceLocalOnly || localOnly.value, files: pending.map(({ file, ...metadata }) => metadata) })
+      if (options.conversationOnly && !await ensureConversationService(id, undefined, forceLocalOnly || localOnly.value, true)) return false
+      if (options.conversationId.value !== id) return false
+      const batch = await chatImports.create(id, { requestId, content, replyAssistance, localOnly: options.conversationOnly ? false : forceLocalOnly || localOnly.value, files: pending.map(({ file, ...metadata }) => metadata) })
       accepted = true
       staged.value = []
       requestId = crypto.randomUUID()
@@ -154,6 +157,10 @@ export function useChatImports(options: {
     if (importBlocked()) return
     busyBatch.value = batch.id
     try {
+      if (options.conversationOnly) {
+        if (batch.localOnly) { options.notify('这批文件的原处理方式暂不支持，请重新选择需要讨论的文件。'); return }
+        if (!await ensureConversationService(batch.conversationId, undefined, false, true) || options.conversationId.value !== batch.conversationId) return
+      }
       if (fileId) await chatImports.retryFile(batch.conversationId, batch.id, fileId)
       else await chatImports.retry(batch.conversationId, batch.id)
       await refresh()
@@ -165,7 +172,13 @@ export function useChatImports(options: {
   async function reupload(batch: ChatImportBatch, item: ChatImportFile, file: File) {
     if (importBlocked()) return
     busyBatch.value = batch.id
-    try { await chatImports.upload(batch.conversationId, batch.id, item.id, file); await chatImports.seal(batch.conversationId, batch.id); await refresh() }
+    try {
+      if (options.conversationOnly) {
+        if (batch.localOnly) { options.notify('这批文件的原处理方式暂不支持，请重新选择需要讨论的文件。'); return }
+        if (!await ensureConversationService(batch.conversationId, undefined, false, true) || options.conversationId.value !== batch.conversationId) return
+      }
+      await chatImports.upload(batch.conversationId, batch.id, item.id, file); await chatImports.seal(batch.conversationId, batch.id); await refresh()
+    }
     catch (e) { options.notify(e instanceof Error ? e.message : '重传失败') }
     finally { busyBatch.value = null }
   }
@@ -180,8 +193,10 @@ export function useChatImports(options: {
     if (importBlocked()) return
     const id = options.conversationId.value
     if (!id || !consentRefs.value?.length) return
+    if (options.conversationOnly && (onlyLocal || !service.value?.external)) { options.notify('暂时无法处理这些资料，请重试'); return }
     consentBusy.value = true
     try {
+      if (options.conversationOnly && (!await ensureConversationService(id, undefined, false, true) || options.conversationId.value !== id)) return
       await chatImports.consent(id, consentRefs.value, onlyLocal, service.value?.id)
       localOnly.value = onlyLocal; consentRefs.value = null
       await refresh()
@@ -194,6 +209,10 @@ export function useChatImports(options: {
     if (!batch.ragV2 || ragBusyBatch.value) return
     ragBusyBatch.value = batch.id
     try {
+      if (options.conversationOnly) {
+        if (batch.localOnly) { options.notify('这批文件的原处理方式暂不支持，请重新选择需要讨论的文件。'); return }
+        if (!await ensureConversationService(batch.conversationId, undefined, false, true) || options.conversationId.value !== batch.conversationId) return
+      }
       const action = await askRag(batch.ragV2)
       try { await submitRagDecision(batch.conversationId, batch.ragV2, action) }
       catch (error) {

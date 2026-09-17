@@ -138,8 +138,8 @@ export function headerAggregateItems(input: {
   const reflect = input.pendingReviews ?? 0
   const jobs = input.pendingJobs ?? 0
   if (inbox > 0) out.push({ key: 'inbox', text: `待确认 ${inbox}`, to: '/me/inbox' })
-  if (due > 0) out.push({ key: 'review', text: overdue > 0 ? `待回访 ${due}（逾期 ${overdue}）` : `待回访 ${due}`, to: '/judgments' })
-  if (reflect > 0) out.push({ key: 'reflect', text: `待复盘 ${reflect}`, to: '/judgments' })
+  if (due > 0) out.push({ key: 'review', text: overdue > 0 ? `待回访 ${due}（逾期 ${overdue}）` : `待回访 ${due}`, to: '/review' })
+  if (reflect > 0) out.push({ key: 'reflect', text: `待复盘 ${reflect}`, to: '/review' })
   if (jobs > 0) out.push({ key: 'jobs', text: `还在整理 ${jobs} 件`, to: '' })
   return out
 }

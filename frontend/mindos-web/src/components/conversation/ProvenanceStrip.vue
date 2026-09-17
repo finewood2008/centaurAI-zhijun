@@ -7,10 +7,12 @@ import type { ProvenanceEvent, TurnMetaEvent } from '@/services/api'
 import { formatDay, sectionLabel } from '@/shared/ontology'
 import { ALIGNMENT_LEVELS } from '@/shared/alignment'
 import { channelShort } from '@/shared/model'
+import { conversationNotice } from '@/shared/conversationPresentation'
 import { normalizeProvenance, provenanceCharterSummary, provenanceMemorySummary } from '@/shared/provenanceGraph'
 import ProvenanceGraph from '@/components/conversation/ProvenanceGraph.vue'
 
 const props = defineProps<{
+  conversation?: boolean
   provenance: ProvenanceEvent & { fromReceipt?: boolean }
   meta?: TurnMetaEvent | null
 }>()
@@ -39,20 +41,20 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
       @click="open = !open"
     >
       <FileText :size="14" aria-hidden="true" />
-      <span class="zj-prov__summary">{{ summary }}</span>
-      <span v-if="provenance.fromReceipt" class="zj-prov__receipt" title="由本轮回执还原">（回执）</span>
-      <span v-if="channelTag" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ channelTag }}</span>
+      <span class="zj-prov__summary">{{ conversation ? '回答依据' : summary }}</span>
+      <span v-if="!conversation && provenance.fromReceipt" class="zj-prov__receipt" title="由本轮回执还原">（回执）</span>
+      <span v-if="!conversation && channelTag" class="zj-prov__channel" :class="meta?.external ? 'is-external' : 'is-local'">{{ channelTag }}</span>
       <component :is="open ? ChevronUp : ChevronDown" :size="14" aria-hidden="true" />
     </button>
-    <p v-if="lookupNotice" class="zj-prov__line zj-prov__lookup-notice" data-testid="context-lookup-notice">{{ lookupNotice }}</p>
-    <p v-if="provenance.routing?.handlingNotice" class="zj-prov__line" data-testid="routing-handling-notice">{{ provenance.routing.handlingNotice }}</p>
+    <p v-if="lookupNotice" class="zj-prov__line zj-prov__lookup-notice" data-testid="context-lookup-notice">{{ conversation ? conversationNotice(lookupNotice, '部分资料暂时无法读取，本次回答可能不完整。') : lookupNotice }}</p>
+    <p v-if="provenance.routing?.handlingNotice" class="zj-prov__line" data-testid="routing-handling-notice">{{ conversation ? conversationNotice(provenance.routing.handlingNotice, '本次按已有资料使用约定处理。') : provenance.routing.handlingNotice }}</p>
     <div v-if="open" class="zj-prov__body">
-      <p v-if="provenance.routing">{{ provenance.routing.service.external ? '在线处理' : '本地处理' }} · {{ provenance.routing.service.name }} · {{ provenance.routing.service.model }} · {{ provenance.routing.purposeLabel }}</p>
-      <p v-if="provenance.routing?.defaultAuthorization">其中 {{ provenance.routing.defaultAuthorization.sourceCount }} 项来源按你开启的默认授权处理（设置第 {{ provenance.routing.defaultAuthorization.revision }} 版）。可在「模型与授权」关闭。</p>
-      <p v-if="provenance.routing?.excluded.length">本轮有 {{ provenance.routing.excluded.length }} 条历史或资料未纳入：{{ [...new Set(provenance.routing.excluded.map(x => x.reason))].join('；') }}</p>
-      <ProvenanceGraph v-if="safeProvenance.contextPlan" :provenance="safeProvenance" />
+      <p v-if="provenance.routing && !conversation">{{ provenance.routing.service.external ? '在线处理' : '本地处理' }} · {{ provenance.routing.service.name }} · {{ provenance.routing.service.model }} · {{ provenance.routing.purposeLabel }}</p>
+      <p v-if="provenance.routing?.defaultAuthorization">{{ conversation ? '本次按你已有的资料授权使用相关内容。' : `其中 ${provenance.routing.defaultAuthorization.sourceCount} 项来源按你开启的默认授权处理（设置第 ${provenance.routing.defaultAuthorization.revision} 版）。可在「模型与授权」关闭。` }}</p>
+      <p v-if="provenance.routing?.excluded.length">本轮有 {{ provenance.routing.excluded.length }} 条历史或资料未纳入：{{ [...new Set(provenance.routing.excluded.map(x => conversation ? conversationNotice(x.reason, '不在本次可用范围内') : x.reason))].join('；') }}</p>
+      <ProvenanceGraph v-if="safeProvenance.contextPlan" :conversation="conversation" :provenance="safeProvenance" />
       <template v-else>
-      <p class="zj-prov__line zj-prov__muted">这是旧格式回执。下列是当时保存的关联记录，无法准确区分哪些文本提供给了模型、哪些被回答明确引用；不会据此补写历史。</p>
+      <p class="zj-prov__line zj-prov__muted">{{ conversation ? '这条旧记录未完整保留回答依据。以下是当时关联的内容，不代表回答引用过。' : '这是旧格式回执。下列是当时保存的关联记录，无法准确区分哪些文本提供给了模型、哪些被回答明确引用；不会据此补写历史。' }}</p>
       <p v-if="safeProvenance.memoryContext?.inheritedCount" class="zj-prov__line" data-testid="provenance-inherited">历史权限链关联了 {{ safeProvenance.memoryContext.inheritedCount }} 条本体理解，不代表本轮重新读取、提供或引用了原记录。</p>
       <section v-if="provenance.alignmentSources?.length" class="zj-prov__group">
         <h4>旧回执关联的自我校准</h4>
@@ -80,7 +82,7 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
         <h4>旧回执关联的历史判断</h4>
         <ul>
           <li v-for="d in pastDecisions" :key="d.id">
-            <RouterLink :to="{ path: '/judgments', query: { decisionId: d.id } }">{{ d.title }}</RouterLink>
+            <RouterLink :to="{ path: '/review', query: { decisionId: d.id } }">{{ d.title }}</RouterLink>
             <span class="zj-prov__tag">当时选了「{{ d.choice }}」<template v-if="formatDay(d.createdAt)"> · {{ formatDay(d.createdAt) }}</template></span>
           </li>
         </ul>
@@ -104,7 +106,7 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
         </ul>
       </section>
       </template>
-      <p class="zj-prov__line zj-prov__muted">这轮给模型的提示约 {{ provenance.promptChars }} 字。</p>
+      <p v-if="!conversation" class="zj-prov__line zj-prov__muted">这轮给模型的提示约 {{ provenance.promptChars }} 字。</p>
     </div>
   </div>
 </template>

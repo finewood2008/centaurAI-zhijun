@@ -3,7 +3,7 @@ import { saveProductText } from '@/services/productFiles'
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { FileText, FolderOpen, Search, Settings, Trash2, ShieldCheck, AlertTriangle, PackageOpen } from 'lucide-vue-next'
+import { FileText, FolderOpen, Search, Trash2, ShieldCheck, AlertTriangle, PackageOpen } from 'lucide-vue-next'
 import { exportOntology, getContextPackStatus, getProjection, purgeOntology, type ContextPackStatus, type OntologyProjection, type Section } from '@/services/api'
 import { sectionLabel } from '@/shared/ontology'
 import { formatDate } from '@/shared/format'
@@ -73,7 +73,6 @@ async function doPurge() {
 const primaryCards = [
   { to: '/materials', icon: FolderOpen, title: '原材料', desc: '导入文档、图片、音频；查看处理状态与原件出处' },
   { to: '/search', icon: Search, title: '找回资料', desc: '搜索已经带入的资料，找回原文与细节' },
-  { to: '/settings', icon: Settings, title: '偏好（模型与隐私）', desc: '用哪个模型、什么能出设备、提醒多不多' },
 ]
 const moreCards = [
   { to: '/knowledge', icon: FileText, title: '知识档案', desc: '由资料整理出的知识卡片' },
@@ -134,7 +133,7 @@ async function toggleProjection() {
       <p>默认不发送原件。只有你先确认 Data Agent 的敏感交付方式、再明确允许本轮外部模型用途后，才会发送完成这一轮所必需的问题和片段；每一轮的出处条里都看得到送出了什么。标为敏感或受限的个人理解仍不会外发。</p>
       <p v-if="packError" class="zj-hub__pack-meta">{{ packError }}</p>
       <p v-else-if="pack" class="zj-hub__pack-meta">
-        其他 Agent 能拿到的只有你确认过并打开「可带走」的理解，目前 <strong>{{ pack.exportable }}</strong> 条。
+        旧版「可带走」共有 <strong>{{ pack.exportable }}</strong> 条已确认理解。新的外部 Agent 授权在设置中单独管理，不会沿用这些开关自动开放资料。
         <RouterLink to="/me" class="zj-hub__pack-link">去「我的本体」逐条决定</RouterLink>
       </p>
     </section>

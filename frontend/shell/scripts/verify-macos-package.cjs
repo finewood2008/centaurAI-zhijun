@@ -57,7 +57,7 @@ const packagedDependencies = new Map([...productionPackages,
 const packagePath = name => `/node_modules/${name}`
 const expectedAsarEntries = new Set([
   '/node_modules', '/node_modules/@nexusaos', '/node_modules/@noble', '/node_modules/@peculiar',
-  '/app-icon.cjs', '/assets', '/assets/centaur.png', '/main.js', '/package.json', '/preload.cjs',
+  '/app-icon.cjs', '/assets', '/assets/zhijun.png', '/main.js', '/package.json', '/preload.cjs',
   '/provisioning-window.cjs', '/provisioning-broker.cjs', '/provisioning', '/provisioning/preload.cjs',
   ...(testFlavor ? ['/provisioning/preload.mjs'] : []), '/provisioning/renderer.js',
   '/provisioning/picker.cjs', '/provisioning/setup.css', '/provisioning/setup.html',

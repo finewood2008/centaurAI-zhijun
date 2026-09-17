@@ -6,7 +6,7 @@ import { isValidClaimToken, normalizeClaimToken } from './claimToken'
 import { useDesktopWorkspace } from './workspace'
 import SecureConnectionProgress from './SecureConnectionProgress.vue'
 
-const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+const props = withDefaults(defineProps<{ embedded?: boolean; settings?: boolean }>(), { embedded: false, settings: false })
 const { controller, state } = useDesktopWorkspace()
 const route = useRoute()
 const phone = ref('')
@@ -202,7 +202,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="desktop-shell" :class="{ embedded: props.embedded }" :data-testid="props.embedded ? 'workspace-unavailable' : undefined">
+  <div class="desktop-shell" :class="{ embedded: props.embedded }" :data-testid="props.embedded && !props.settings ? 'workspace-unavailable' : undefined">
     <header v-if="!props.embedded" class="app-header">
       <a class="brand" href="#/materials" aria-label="知君桌面首页"><span class="brand-mark">知</span><span>知君<small>桌面工作区</small></span></a>
       <div class="header-status" role="status"><span class="status-dot" :class="{ connected: phase === 'ready' }"></span>{{ !state.hostAvailable ? '桌面服务未就绪' : phase ? labels[phase] : '正在初始化' }}</div>
@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
     </div>
 
     <component :is="props.embedded ? 'section' : 'main'">
-      <p v-if="props.embedded" class="workspace-notice" role="status">{{ pageTitle }}需要连接盒子后使用。连接就绪前不会加载此页面的数据。</p>
+      <p v-if="props.embedded && !props.settings" class="workspace-notice" role="status">{{ pageTitle }}需要连接盒子后使用。连接就绪前不会加载此页面的数据。</p>
       <section v-if="!state.hostAvailable" class="welcome-card" data-testid="missing-host">
         <p class="eyebrow">知君桌面</p><h1>请从桌面应用打开</h1>
         <p>当前页面没有桌面连接服务。请启动知君桌面应用后，再登录并选择盒子。</p>
@@ -232,7 +232,7 @@ onBeforeUnmount(() => {
             <p v-else-if="phase === 'disconnecting'">正在结束当前连接并清理临时状态。</p>
             <p v-else-if="phase === 'ready'">盒子已连通，正在确认工作区是否就绪。</p>
             <p v-else>连接尚未就绪，请查看提示后重新选择盒子或登录。</p>
-            <p v-if="displayAccount" class="account" data-testid="account">账号：{{ displayAccount }}<span v-if="state.snapshot?.subject?.deviceId"> · 盒子：{{ state.snapshot.subject.deviceId }}</span><span v-if="connectionPathLabel"> · {{ connectionPathLabel }}</span></p>
+            <p v-if="displayAccount && !props.settings" class="account" data-testid="account">账号：{{ displayAccount }}<span v-if="state.snapshot?.subject?.deviceId"> · 盒子：{{ state.snapshot.subject.deviceId }}</span><span v-if="connectionPathLabel"> · {{ connectionPathLabel }}</span></p>
           </div>
           <div class="connection-actions">
             <button v-if="canSignIn && environment !== 'production'" class="primary" data-testid="sign-in" @click="controller.control('beginSignIn')">登录知君</button>
