@@ -33,6 +33,7 @@ try {
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 1000 })
     if (width < 768) await page.waitForFunction(() => document.querySelector('.ws-sidebar').getBoundingClientRect().right <= 1)
+    await page.waitForFunction(() => { const box = document.querySelector('.reflection-card').getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal overflow')
     await page.screenshot({ path: output + `/02-corrected-${width}.png`, fullPage: true })
   }
