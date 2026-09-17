@@ -10,7 +10,7 @@ const cited = computed(() => plan.value ? contextItems(plan.value, 'citedRefs') 
 function sourceLink(item: ContextItem) {
   if (item.kind === 'claim') return { path: '/me', query: { claim: item.id, section: item.claim?.section } }
   if (item.kind === 'material') return { path: '/materials/' + encodeURIComponent(item.material?.materialId || item.ref?.id || item.id) }
-  if (item.kind === 'decision') return { path: '/judgments', query: { decisionId: item.id } }
+  if (item.kind === 'decision') return { path: '/review', query: { decisionId: item.id } }
   return null
 }
 </script>

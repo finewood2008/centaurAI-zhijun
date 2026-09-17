@@ -69,9 +69,9 @@ try {
   await page.goto(origin + '/desktop.html', { waitUntil: 'networkidle' })
   const navigation = page.getByRole('navigation', { name: '主导航' })
   await navigation.waitFor()
-  assert.equal(await navigation.getByRole('link').count(), 6)
+  assert.equal(await navigation.getByRole('link').count(), 5)
   await page.getByTestId('workspace-unavailable').waitFor()
-  for (const label of ['今日来信', '对话', '照见', '我的本体', '判断', '资料与边界']) {
+  for (const label of ['今日来信', '对话', '回看', '我的本体', '资料与边界']) {
     await navigation.getByRole('link', { name: label, exact: true }).click()
     await page.waitForFunction(title => document.title === `${title} · 知君`, label)
     assert.equal(await page.getByTestId('workspace-unavailable').count(), 1)
@@ -98,7 +98,7 @@ try {
   assert.match(await connectionStatus.innerText(), /合成盒子/)
   assert.doesNotMatch(await connectionStatus.innerText(), /synthetic-device/)
 
-  for (const label of ['今日来信', '对话', '照见', '我的本体', '判断', '资料与边界']) {
+  for (const label of ['今日来信', '对话', '回看', '我的本体', '资料与边界']) {
     await navigation.getByRole('link', { name: label, exact: true }).click()
     await page.waitForFunction(title => document.title === `${title} · 知君`, label)
     await page.waitForTimeout(80)
@@ -131,5 +131,5 @@ try {
   await page.evaluate(() => window.__productTestExpire())
   await page.getByTestId('password-login').waitFor()
   assert.equal(await navigation.count(), 0, 'workspace unmounts on confirmed connectivity-session expiry')
-  console.log('product-navigation: logged-in failure keeps navigation without business dispatch, reselect/reconnect recovers, stale page unmounts; six navigation entries, preferences, all 15 page components, shared connection and expiry-to-login passed with synthetic HTTP errors')
+  console.log('product-navigation: logged-in failure keeps navigation without business dispatch, reselect/reconnect recovers, stale page unmounts; five navigation entries, preferences, all product page components, shared connection and expiry-to-login passed with synthetic HTTP errors')
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }

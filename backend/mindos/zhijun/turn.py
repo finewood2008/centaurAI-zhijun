@@ -341,11 +341,6 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
         preceding = [m for m in conv_store.list_messages(cid) if m["role"] == "assistant" and m["seq"] < conv_store.get_message(user_id)["seq"] and m["status"] == "complete"]
         extraction_ok, extraction_reason = extract.should_extract(content, preceding[-1]["content"] if preceding else None)
         if not current_refs and (not expression or expression["kind"] != "control") and jobs.extraction_enabled() and extraction_ok and memory_allowed:
-            if memory.automatic_allowed(ontology, conv_store, cid):
-                reflection_job = _enqueue_followup(lambda: ontology.enqueue_job("reflection", user_id,
-                    payload={"conversationId": cid, "messageId": user_id, "assistantId": assistant_id,
-                             "localOnly": not guarded.external}, priority=7))
-                yield "extraction", {**reflection_job, "taskKind": "reflection"}
             yield "extraction", _enqueue_followup(lambda: jobs.enqueue_extraction(cid, user_id, store=ontology))
         else:
             yield "extraction", {"state": "skipped", "reason": "file_discussion" if current_refs else "memory_policy" if not memory_allowed else extraction_reason if not extraction_ok else "disabled", "jobId": None}

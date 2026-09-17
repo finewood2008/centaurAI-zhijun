@@ -57,7 +57,7 @@ class ReflectionTests(TestCase):
     def test_full_loop_correction_is_in_next_real_chat_prompt_and_survives_restart(self):
         item = self.generate()
         state = memory.attention(self.onto,self.convs,self.cid)
-        self.assertEqual(state['reflection']['status'],'surfaced')
+        self.assertNotIn('reflection',state)  # Unified review uses the existing conversation API.
         self.assertIsNone(state['candidate'])
         note = '主要针对新合作伙伴，熟悉的人不用反复确认。'
         result = self.review(item,'contextual',note)
@@ -75,7 +75,7 @@ class ReflectionTests(TestCase):
         self.assertIn('不把观察泛化成人格',plan.assembled.system)
         self.assertTrue(any(r['kind']=='reflection' for r in plan.refs))
         self.assertEqual(self.onto.list_claims(),[], 'accepting a reflection must not create a Claim')
-        self.assertEqual(memory.attention(self.onto,self.convs,self.cid)['reflection']['feedback']['note'],note)
+        self.assertEqual(self.ledger.get(item['id'])['feedback']['note'],note)
 
     def test_accept_then_reject_invalidates_old_derived_history_and_next_prompt(self):
         item = self.generate()
@@ -195,7 +195,7 @@ class ReflectionTests(TestCase):
         with patch('mindos.zhijun.charter_policy.scope_policy',return_value=policy):
             self.assertFalse(reflections.automatic_allowed(self.onto,self.convs,self.cid))
             self.assertEqual(reflections.run_job(self.payload,self.onto,self.convs)['reason'],'memory_policy')
-            self.assertIsNone(memory.attention(self.onto,self.convs,self.cid)['reflection'])
+            self.assertIsNone(memory.attention(self.onto,self.convs,self.cid).get('reflection'))
 
     def test_opaque_legacy_evidence_does_not_produce_an_unusable_observation(self):
         with self.convs._connect() as db:
@@ -204,7 +204,7 @@ class ReflectionTests(TestCase):
         self.assertEqual(result['reason'],'insufficient_independent_evidence')
         self.assertEqual(self.local.requests,[])
 
-    def test_optional_reflection_is_queued_only_after_a_successful_turn(self):
+    def test_unified_review_never_queues_an_independent_reflection_job(self):
         from mindos.zhijun.turn import run_turn
         from mindos.zhijun.provider import ProviderError
         with patch.dict('os.environ',{'ZHIJUN_EXTRACTION':'1'}):
@@ -212,9 +212,9 @@ class ReflectionTests(TestCase):
                 provider=self.local,request_id='reflection-trigger-turn',conv_store=self.convs,ontology=self.onto))
             self.assertFalse(any(kind=='error' for kind,_ in events),events)
             with self.onto._connect() as db:
-                self.assertEqual(db.execute("SELECT count(*) FROM ontology_jobs WHERE kind='reflection'").fetchone()[0],1)
+                self.assertEqual(db.execute("SELECT count(*) FROM ontology_jobs WHERE kind='reflection'").fetchone()[0],0)
             self.local.error=ProviderError('synthetic failure',code='PROVIDER_TIMEOUT')
             list(run_turn(conversation_id=self.cid,content='这次新的合作里我仍然重视坦诚讲清楚具体交付风险，便于决定是否推进。',
                 provider=self.local,request_id='reflection-failed-turn',conv_store=self.convs,ontology=self.onto))
             with self.onto._connect() as db:
-                self.assertEqual(db.execute("SELECT count(*) FROM ontology_jobs WHERE kind='reflection'").fetchone()[0],1)
+                self.assertEqual(db.execute("SELECT count(*) FROM ontology_jobs WHERE kind='reflection'").fetchone()[0],0)

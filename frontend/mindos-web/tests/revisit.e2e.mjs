@@ -1,0 +1,82 @@
+// Real Vue + existing HTTP routes + temporary SQLite; no real account or model.
+import assert from 'node:assert/strict'
+import { mkdir, readFile } from 'node:fs/promises'
+import { chromium } from 'playwright'
+import { expect } from 'playwright/test'
+
+const origin = process.env.REVISIT_ORIGIN || 'http://127.0.0.1:8777'
+const health = await (await fetch(origin + '/api/health')).json()
+assert.equal(health.version, 'zhijun-revisit-fixture')
+const fixture = await (await fetch(origin + '/__fixture')).json()
+assert.equal(fixture.synthetic, true)
+const catalog = JSON.parse(await readFile(new URL('../../shared/product-operations.json', import.meta.url), 'utf8'))
+const known = catalog.operations.map(op => ({ method: op.method, path: new RegExp('^' + op.path.replace(/\{[^}]+\}/g, '[^/]+') + '$') }))
+const browser = await chromium.launch({ headless: true, channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome' })
+const errors = [], requests = []
+const screenshots = '/private/tmp/zhijun-review-screenshots'
+await mkdir(screenshots, { recursive: true })
+try {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('request', req => { if (new URL(req.url()).pathname.startsWith('/api/')) requests.push({ method: req.method(), path: new URL(req.url()).pathname }) })
+  await page.goto(`${origin}/mindos/reflections?decisionId=${fixture.decisionId}&action=outcome`)
+  await expect(page.getByRole('main').getByRole('heading', { name: '回看', exact: true })).toBeVisible()
+  assert.ok(page.url().includes('/review?'))
+  assert.equal(new URL(page.url()).searchParams.get('decisionId'), fixture.decisionId)
+  const nav = page.getByRole('navigation', { name: '主导航' })
+  await expect(nav.getByRole('link')).toHaveCount(5)
+  await expect(nav.getByRole('link', { name: '回看', exact: true })).toHaveCount(1)
+  await expect(nav.getByRole('link', { name: '回看', exact: true })).toHaveAttribute('aria-current', 'page')
+  await expect(nav.getByRole('link', { name: /^(判断|照见)$/ })).toHaveCount(0)
+  const card = page.getByTestId(`revisit-${fixture.decisionId}`)
+  await expect(card).toHaveCount(1)
+  await expect(page.getByTestId(`revisit-${fixture.sourceId}`)).toHaveCount(0)
+  await card.locator(`#outcome-result-${fixture.decisionId}`).fill('合成结果：两周内完成了一次交付。')
+  await card.getByRole('button', { name: '保存结果', exact: true }).click()
+  await expect(card).toContainText('合成结果：两周内完成了一次交付。')
+  await page.goto(origin + '/mindos/judgments')
+  await expect(card).toContainText('合成结果：两周内完成了一次交付。')
+  await card.getByRole('button', { name: '复盘', exact: true }).click()
+  await card.locator(`#review-reflection-${fixture.decisionId}`).fill('合成复盘：提前讲清楚范围对这次合作有帮助。')
+  await card.locator(`#review-lessons-${fixture.decisionId}`).fill('这只适用于这次试点，仍需更多经历。')
+  await card.locator(`#review-next-${fixture.decisionId}`).fill('与对方核对下一次合作的范围。')
+  await card.getByRole('button', { name: '确认完成复盘', exact: true }).click()
+  await expect(card).toContainText('合成复盘：提前讲清楚范围对这次合作有帮助。')
+  await page.reload()
+  await expect(card).toContainText('这只适用于这次试点，仍需更多经历。')
+  await page.screenshot({ path: screenshots + '/01-review-desktop.png', fullPage: true })
+
+  await card.getByRole('button', { name: '和知君一起回看', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue(/我想一起回看这段经历/)
+  const reviewUrl = page.url().split('?')[0]
+  assert.equal((await (await fetch(origin + '/__fixture')).json()).requests, fixture.requests, 'prefill never calls a model')
+  await page.goto(origin + '/mindos/review')
+  await card.getByRole('button', { name: '和知君一起回看', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: '输入消息', exact: true })).toHaveValue(/我想一起回看这段经历/)
+  assert.equal(page.url().split('?')[0], reviewUrl, 'reopening reuses the existing review conversation')
+
+  await page.goto(origin + '/mindos/review')
+  await page.getByTestId(`revisit-${fixture.conversationId}`).getByRole('link', { name: '和知君一起回看', exact: true }).click()
+  const input = page.getByRole('textbox', { name: '输入消息', exact: true })
+  await expect(input).toHaveValue(/我想一起回看这段经历/)
+  assert.ok(page.url().includes('/c/' + fixture.conversationId))
+  await input.fill('合成补充：这次交流只适用于新团队，熟悉的团队不需要同样的安排。')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(page.getByText('合成回复：可以补充后来发生的事情。这次观察只适用于你说的情境，你可以继续修正。', { exact: true })).toBeVisible()
+  await page.reload()
+  await expect(page.getByText('合成补充：这次交流只适用于新团队，熟悉的团队不需要同样的安排。', { exact: true })).toBeVisible()
+
+  await page.goto(origin + '/mindos/growth')
+  await expect(page.getByRole('main').getByRole('heading', { name: '回看', exact: true })).toBeVisible()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(page.locator('.ws-sidebar')).toHaveAttribute('aria-hidden', 'true')
+  await expect.poll(() => page.locator('.ws-sidebar').evaluate(el => el.getBoundingClientRect().right <= 0)).toBe(true)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: screenshots + '/02-review-mobile.png', fullPage: true })
+  assert.deepEqual(errors, [])
+  assert.equal(requests.filter(r => r.path.includes('/reflections')).length, 0)
+  const nonCatalog = requests.filter(r => !['/api/health', '/api/mindos/access-context'].includes(r.path)
+    && !known.some(op => op.method === r.method && op.path.test(r.path)))
+  assert.deepEqual(nonCatalog, [], 'all business requests use the existing operation catalog')
+  console.log('PASS unified review: five entries, redirects, source deduplication, result/review persistence, review reuse, ordinary conversation correction, explicit send, mobile layout, existing APIs only')
+} finally { await browser.close() }

@@ -38,7 +38,7 @@ try {
   const choice = panel.getByPlaceholder('最后你打算怎么选')
   const reason = panel.getByPlaceholder('关键的事实、假设和取舍')
   const outcome = panel.getByPlaceholder('到时候怎么判断这个选择对不对')
-  const save = panel.getByRole('button', { name: '记进判断簿', exact: true })
+  const save = panel.getByRole('button', { name: '保存选择', exact: true })
   const generate = async () => {
     await panel.getByRole('button', { name: /帮我想几个方向|换一组方向/ }).click()
     await panel.getByTestId('decision-direction').first().waitFor({ timeout: 90000 })
@@ -97,7 +97,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
   await page.screenshot({ path: '../../data/diagnostics/decision-suggestions/mobile.png', animations: 'disabled' })
   await save.click()
-  await panel.getByText('已记进判断簿', { exact: true }).waitFor()
+  await panel.getByText('已保存选择', { exact: true }).waitFor()
   const saved = await getDraft()
   assert.equal(saved.status, 'confirmed')
   assert.equal(saved.fields.rationale, '请求期间的新修改')

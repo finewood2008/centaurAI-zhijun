@@ -82,7 +82,7 @@ function openSource(source: HomeSourceRef) {
     return
   }
   if (source.sourceType === 'decision') {
-    router.push({ path: '/judgments', query: { decisionId: source.id.replace(/^decision:/, '') } })
+    router.push({ path: '/review', query: { decisionId: source.id.replace(/^decision:/, '') } })
     return
   }
   router.push({ path: '/me', query: { claim: source.id.replace(/^claim:/, '') } })
@@ -212,7 +212,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <RouterLink to="/reflections" class="zj-reflections-entry"><span>照见</span><span>回看我们一起核对过的理解</span><ArrowRight :size="16" aria-hidden="true" /></RouterLink>
+      <RouterLink to="/review" class="zj-reflections-entry"><span>回看</span><span>回看经历，理解自己的选择</span><ArrowRight :size="16" aria-hidden="true" /></RouterLink>
       <RelationshipTimeline :items="overview.timeline" @open="openSource" />
 
       <p v-if="overview.state === 'first_meet'" class="zj-today__first-note">

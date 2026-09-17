@@ -80,7 +80,7 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
         <h4>旧回执关联的历史判断</h4>
         <ul>
           <li v-for="d in pastDecisions" :key="d.id">
-            <RouterLink :to="{ path: '/judgments', query: { decisionId: d.id } }">{{ d.title }}</RouterLink>
+            <RouterLink :to="{ path: '/review', query: { decisionId: d.id } }">{{ d.title }}</RouterLink>
             <span class="zj-prov__tag">当时选了「{{ d.choice }}」<template v-if="formatDay(d.createdAt)"> · {{ formatDay(d.createdAt) }}</template></span>
           </li>
         </ul>

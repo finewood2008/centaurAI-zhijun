@@ -26,8 +26,8 @@ assert.match(api, /todayItems: GrowthTodayItem\[\]/)
 
 // IA：/ 是「今日」首屏（TodayPage），/chat 是对话空白态，/c/:id 是具体会话；/growth 重定向到 /judgments，由 GrowthPage 承接；
 // 旧的 HomePage 与 /today 路径不再存在；侧栏五入口，今日在最上
-assert.match(router, /path: '\/growth', redirect: '\/judgments'/)
-assert.match(router, /path: '\/judgments', name: 'judgments', component: \(\) => import\('@\/pages\/GrowthPage\.vue'\), meta: \{ title: '判断' \}/)
+assert.match(router, /\['\/judgments', '\/reflections', '\/growth'\]/)
+assert.match(router, /path: '\/review', name: 'review', component: \(\) => import\('@\/pages\/GrowthPage\.vue'\), meta: \{ title: '回看' \}/)
 assert.match(router, /path: '\/', name: 'today', component: \(\) => import\('@\/pages\/TodayPage\.vue'\), meta: \{ title: '今日来信' \}/)
 assert.match(router, /path: '\/chat', name: 'conversation', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\), meta: \{ title: '对话' \}/)
 assert.match(router, /path: '\/c\/:conversationId', name: 'conversation-detail', component: \(\) => import\('@\/pages\/ConversationPage\.vue'\)/)
@@ -38,17 +38,13 @@ assert.ok(sidebar.indexOf("label: '今日来信'") < sidebar.indexOf("label: '�
 assert.match(sidebar, /to: '\/', label: '今日来信'/)
 assert.match(sidebar, /to: '\/chat', label: '对话'/)
 assert.match(sidebar, /label: '对话'/)
-assert.match(sidebar, /label: '判断'/)
+assert.match(sidebar, /label: '回看'/)
 assert.match(sidebar, /label: '我的本体'/)
 
-// 判断页：判断簿看板在前，趋势（时间线）折在「查看趋势」里，少于 5 个判断默认收起，展开状态记 localStorage
-assert.ok(growth.indexOf('class="board-section"') < growth.indexOf('class="growth-trend"'))
-assert.match(growth, /<details v-if="decisions\.length" class="growth-trend" :open="trendOpen"/)
-assert.match(growth, /<summary>查看趋势<\/summary>/)
-assert.match(growth, /decisions\.value\.length >= 5/)
-assert.match(growth, /localStorage\.setItem\(TREND_KEY/)
-assert.match(growth, /visibleBoardColumns = computed\(\(\) => boardColumns\.value\.filter/)
-assert.match(growth, /v-for="column in visibleBoardColumns"/)
+// A single timeline combines existing choices and conversations.
+assert.match(growth, /revisitEntries/);
+assert.match(growth, /listConversations/);
+assert.doesNotMatch(growth, /listReflections|reviewReflection\(/);
 
 assert.match(growth, /new Date\(decisionReviewAt\.value\)/)
 assert.match(growth, /reviewAt = localDate\.toISOString\(\)/)

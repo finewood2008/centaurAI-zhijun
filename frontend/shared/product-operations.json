@@ -2690,34 +2690,6 @@
       "maxResponseBytes": 524288,
       "capability": "materials",
       "mutating": true
-    },
-    {
-      "id": "get_api_mindos_reflections",
-      "method": "GET",
-      "path": "/api/mindos/reflections",
-      "pathParams": [],
-      "query": [],
-      "body": "none",
-      "response": "json",
-      "maxRequestBytes": 0,
-      "maxResponseBytes": 524288,
-      "capability": "domain",
-      "mutating": false
-    },
-    {
-      "id": "post_api_mindos_reflections_reflection_id_feedback",
-      "method": "POST",
-      "path": "/api/mindos/reflections/{reflectionId}/feedback",
-      "pathParams": [
-        "reflectionId"
-      ],
-      "query": [],
-      "body": "json",
-      "response": "json",
-      "maxRequestBytes": 524288,
-      "maxResponseBytes": 524288,
-      "capability": "domain",
-      "mutating": true
     }
   ]
 }

@@ -63,7 +63,6 @@ import { MODEL_UNAVAILABLE_TEXT, modelUnavailable } from '@/shared/model'
 import { extractionSkipNote, hasConversationOutcomes } from '@/shared/labels'
 import { placeMemoryAttention } from '@/shared/memoryAttention'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
-import ReflectionCard from '@/components/reflection/ReflectionCard.vue'
 import ClaimCandidateChip from '@/components/conversation/ClaimCandidateChip.vue'
 import ReplyAssistance from '@/components/conversation/ReplyAssistance.vue'
 import CharterConversation from '@/components/conversation/CharterConversation.vue'
@@ -317,7 +316,7 @@ async function onConfirmDraft(payload: DecisionDraftConfirmPayload) {
       kind: 'decision_confirmed',
       decisionId: result.decision.id,
     })
-    toast({ type: 'success', message: '已记进判断簿，到期知君会来回访' })
+    toast({ type: 'success', message: '已保存选择，到期知君会来回访' })
     void refreshOutcomes(current.value.id, true)
     await scrollToBottom()
   } catch (err) {
@@ -1779,9 +1778,6 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <p v-if="m.replySyncing && m.streaming" class="zj-turn__note" role="status">连接读取中断，正在核对盒子已保存的回复…</p>
-            <ReflectionCard v-if="!charterAttention && !streaming && m.role === 'assistant' && m.status === 'complete' && memoryAttention?.reflection?.messageId === m.id && memoryAttention.reflection.conversationId === currentId && memoryAttention.reflection.status !== 'retired'"
-              :key="memoryAttention.reflection.id" :reflection="memoryAttention.reflection" :disabled="streaming"
-              @updated="item => { if (memoryAttention) memoryAttention.reflection = item }" />
             <AlignmentCard v-if="!charterAttention && !m.streaming && memoryPlacement?.kind === 'alignment' && memoryPlacement.messageId === m.id"
               :key="memoryPlacement.claim.id" :claim="memoryPlacement.claim" :conversation-id="currentId || undefined" :message-id="m.id"
               @updated="onAlignmentUpdated" @refreshed="c => onAlignmentUpdated(c, false)" />

@@ -1,15 +1,14 @@
 <script setup lang="ts">
-// 侧栏导航：一级入口 今日来信 / 对话 / 照见 / 我的本体 / 判断 / 资料与边界；底部偏好。
+// 侧栏导航：一级入口 今日来信 / 对话 / 回看 / 我的本体 / 资料与边界；底部偏好。
 // 桌面 ≥768px 常驻（768-1199 折叠为图标栏），<768px 转为抽屉（由 open 控制）。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Database,
   MessageCircle,
-  Scale,
   Settings,
   Mail,
-  Eye,
+  History,
   UserRound,
   X,
   type LucideIcon,
@@ -35,9 +34,8 @@ const groups: NavGroup[] = [
     items: [
       { to: '/', label: '今日来信', icon: Mail, exact: true },
       { to: '/chat', label: '对话', icon: MessageCircle, alsoPrefix: '/c/' },
-      { to: '/reflections', label: '照见', icon: Eye },
+      { to: '/review', label: '回看', icon: History },
       { to: '/me', label: '我的本体', icon: UserRound },
-      { to: '/judgments', label: '判断', icon: Scale },
       { to: '/data', label: '资料与边界', icon: Database },
     ],
   },

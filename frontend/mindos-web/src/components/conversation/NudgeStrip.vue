@@ -151,7 +151,7 @@ function silenceMessage(n: Nudge | null): string {
   if (n.kind === 'principle_tension') return '这条原则与做法的张力以后不会再提醒；你仍可以在「我的本体」里自己核对。'
   if (n.kind === 'weekly_review') return '以后周末不再邀请你回顾；想看的时候随时在对话里说一声。'
   if (n.kind === 'commitment_due') return '这件事到期后不会再提醒；它仍留在「我的本体 · 手头的事」里。'
-  return `「${n.triggerRef?.title || '这个判断'}」以后不会再出现在提醒里，你仍可以在判断页手动回访。`
+  return `「${n.triggerRef?.title || '这次选择'}」以后不会再出现在提醒里，你仍可以在回看中手动打开。`
 }
 
 onMounted(() => {

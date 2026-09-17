@@ -130,7 +130,7 @@ function useDirection(candidate: DecisionDirection, onlyEmpty: boolean) {
     touched[key] = true
     assisted[key] = true
   }
-  chosenNotice.value = Object.keys(patch).length ? '已填入你选用的候选，可继续修改。还没有保存到判断簿。' : '没有空白项，已保留你填写的内容。'
+  chosenNotice.value = Object.keys(patch).length ? '已填入你选用的候选，可继续修改。还没有保存选择。' : '没有空白项，已保留你填写的内容。'
 }
 
 function setConfidence(value: number) {
@@ -162,7 +162,7 @@ function isFlash(key: string) {
       <div class="zj-panel__title">
         <span class="zj-panel__lead">判断草稿</span>
         <span class="zj-seal" :class="!draft || draft.status === 'discarded' ? 'zj-seal--muted' : draft.status === 'confirmed' ? 'zj-seal--green' : 'zj-seal--warning'">
-          {{ !draft ? (pending ? '整理中' : '还没好') : draft.status === 'confirmed' ? '已记进判断簿' : draft.status === 'discarded' ? '已放弃' : '还没记' }}
+          {{ !draft ? (pending ? '整理中' : '还没好') : draft.status === 'confirmed' ? '已保存选择' : draft.status === 'discarded' ? '已放弃' : '还没记' }}
         </span>
       </div>
       <button type="button" class="zj-panel__toggle" :aria-expanded="!collapsed" @click="collapsed = !collapsed">
@@ -209,7 +209,7 @@ function isFlash(key: string) {
           <span class="zj-panel__k">和你过去的判断有关</span>
           <ul>
             <li v-for="d in related" :key="d.id">
-              <router-link to="/judgments">{{ d.title }}</router-link> · 当时选了「{{ d.choice }}」 · {{ decisionStatusLabel(d.status) }}
+              <router-link to="/review">{{ d.title }}</router-link> · 当时选了「{{ d.choice }}」 · {{ decisionStatusLabel(d.status) }}
             </li>
           </ul>
         </div>
@@ -272,13 +272,13 @@ function isFlash(key: string) {
 
         <div class="zj-panel__actions">
           <BaseButton variant="secondary" size="sm" :disabled="busy" @click="emit('discard')">先不记</BaseButton>
-          <BaseButton type="submit" variant="primary" size="sm" :loading="busy" :disabled="missing.length > 0">记进判断簿</BaseButton>
+          <BaseButton type="submit" variant="primary" size="sm" :loading="busy" :disabled="missing.length > 0">保存选择</BaseButton>
         </div>
-        <p class="zj-panel__rule">候选不代表你的想法。只有你选用或填写，并点击「记进判断簿」后才会保存；刷新前请完成确认，未提交的编辑不会保存。</p>
+        <p class="zj-panel__rule">候选不代表你的想法。只有你选用或填写，并点击「保存选择」后才会保存；刷新前请完成确认，未提交的编辑不会保存。</p>
       </form>
 
       <p v-else-if="draft.status === 'confirmed'" class="zj-panel__done">
-        已记进判断簿。<router-link to="/judgments">去判断页查看</router-link>
+        已保存选择。<router-link to="/review">去回看中查看</router-link>
       </p>
       </template>
     </div>

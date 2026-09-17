@@ -68,11 +68,11 @@ test('Electron custom protocol renders an initially failed signed-in account and
   try {
     const navigation = page.getByRole('navigation', { name: '主导航' })
     await expect(navigation).toBeVisible({ timeout: 10000 })
-    await expect(navigation.getByRole('link')).toHaveCount(6)
+    await expect(navigation.getByRole('link')).toHaveCount(5)
     await expect(page.getByTestId('workspace-unavailable')).toBeVisible()
     await expect(page.getByTestId('error')).toContainText('TRANSPORT_UNAVAILABLE')
     assert.match(page.url(), /^zhijun:\/\/desktop\//)
-    for (const label of ['对话', '照见', '我的本体', '判断', '资料与边界']) {
+    for (const label of ['对话', '回看', '我的本体', '资料与边界']) {
       await navigation.getByRole('link', { name: label, exact: true }).click()
       await expect(page.getByTestId('workspace-unavailable')).toBeVisible()
       await expect(page.getByTestId('workspace-unavailable')).toContainText(`${label}需要连接盒子后使用`)
