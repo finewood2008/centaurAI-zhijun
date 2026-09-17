@@ -132,6 +132,8 @@ test('v1 simulation keeps full product gated while real preload policy, device s
     return api.materials.list({ callId: crypto.randomUUID(), expectedGeneration: s.data.generation }, { limit: 20, offset: 0 })
   })
   assert.ok(second.data.items.every(item => item.materialId.startsWith('synthetic-box-b-')))
+  await page.getByRole('link', { name: '设置', exact: true }).click()
+  await expect(page.getByTestId('box-settings')).toBeVisible()
   await page.getByTestId('sign-out').click()
   await expect(page.getByTestId('sign-in')).toBeVisible()
   await expect(page.getByTestId('materials-table')).toHaveCount(0)

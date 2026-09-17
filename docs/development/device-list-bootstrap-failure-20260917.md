@@ -5,8 +5,8 @@
 - [x] 使用当前桌面登录身份，只读复现签名 bootstrap 请求；不输出令牌或私钥。
 - [x] 核对 Admin ORM、迁移文件及部署顺序。
 - [x] 修复客户端对服务端异常的分类，补充回归测试。
-- [ ] 取得可用部署连接，检查生产 schema 是否存在部分迁移，备份后补齐缺失项。
-- [ ] 同一桌面账号重试签名 bootstrap，确认成功返回盒子列表。
+- [x] 取得可用部署连接，检查并备份 schema；执行前发现并发操作已补齐，保护检查阻止重复 DDL。
+- [x] 同一桌面账号重试签名 bootstrap，确认成功返回 2 台盒子。
 
 影响文件：`frontend/shell/production/consumer-client.cjs`、
 `frontend/shell/tests/consumer.test.cjs` 及本文。
@@ -37,10 +37,20 @@ V2 路由收到明确服务端失败（`success:false` 且 HTTP/业务 code 为 
 以及服务恢复后的列表重试。consumer、production-adapter、runtime 共 101 项测试通过，
 `git diff --check` 通过。尚未重新打包或替换已安装客户端。
 
-## 线上恢复步骤（待执行）
+## 线上恢复核查
 
 服务器：`8.138.1.109`；应用目录：`/data/apps/nexusaos_admin_backend-0.1`。
-本次直接 SSH 使用现有认证未成功，尚未修改生产数据库。
+用户补充登录方式后完成生产核查与备份。本会话未执行数据库 DDL：执行前的 schema
+保护检查发现另一处操作已补齐迁移，随即转为只读验收。
+
+2026-09-17 14:08:59 CST 确认新列为 nullable VARCHAR(36)，reset 表 33 列及 8 个索引
+符合既有迁移。原 2 条绑定、135 条客户端 grants 与备份逐行一致。
+备份和验收回执位于服务器私有目录
+`/data/secrets/nexusaos-remoteops/device-list-migration-20260917`（0700）；
+`before.json` SHA256 为 `5a1f5fd7452efa96f5059a17b631cdf0008eb29d5af7d25f18f05592852c747b`。
+原桌面账号签名请求已返回 2 台 ready/canConnect 盒子；界面观察已连接 AMD-A2A-248。
+
+以下为此次使用的核对步骤：
 
 1. 核对线上 migration 与当前代码一致，确认 Consumer V2、Console Claim 的前置迁移已完成。
 2. 检查 `information_schema`，确认新列、索引及 reset 表是否部分存在；保存相关 schema 和备份。
