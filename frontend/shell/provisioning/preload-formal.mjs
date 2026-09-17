@@ -25,10 +25,10 @@ const CLAIM_ERRORS = new Set(['CLAIM_INVALID_STATE', 'CLAIM_OPERATION_IN_PROGRES
   'PAIRING_EXPIRED', 'PAIRING_CANCELLED', 'PAIRING_MISMATCH', 'PAIRING_SUPERSEDED',
   'SETUP_WINDOW_CLOSED', 'ACCESS_PROJECTION_PENDING', 'ACCESS_PROJECTION_FAILED', 'DEVICE_ACK_TIMEOUT',
   'DEVICE_OFFLINE', 'FEATURE_NOT_AVAILABLE', 'SERVICE_TEMPORARILY_UNAVAILABLE',
-  'VERIFICATION_CODE_MISMATCH', 'UNSUPPORTED_NETWORK_SECURITY', 'HELLO_CONTEXT_EXPIRED',
+  'UNSUPPORTED_NETWORK_SECURITY', 'HELLO_CONTEXT_EXPIRED',
   'REQUESTED_OPS_MISMATCH', 'PROTOCOL_CHANGED', 'CLAIM_UNKNOWN_ERROR'])
 const LOCAL_UI_ERRORS = new Set(['PROVISIONING_USER_GESTURE_REQUIRED', 'PROVISIONING_BLUETOOTH_UNAVAILABLE',
-  'PROVISIONING_SCAN_IN_PROGRESS', 'PROVISIONING_PHYSICAL_CODE_INVALID', 'PROVISIONING_NOT_STARTED',
+  'PROVISIONING_SCAN_IN_PROGRESS', 'PROVISIONING_NOT_STARTED',
   'DISCOVERY_RUNTIME_FAILURE', 'PROVISIONING_SCAN_TIMEOUT', 'PROVISIONING_SCAN_CANCELLED',
   'NotFoundError', 'NotAllowedError', 'SecurityError'])
 const flowId = process.argv.find(value => value.startsWith(FLOW_ARGUMENT))?.slice(FLOW_ARGUMENT.length)
@@ -299,10 +299,7 @@ const api = Object.freeze({
     await claim('bindSelected', bound)
   },
   begin: () => claim('begin'),
-  confirmPhysicalDevice(code) {
-    if (typeof code !== 'string' || !/^\d{6}$/.test(code)) return Promise.reject(failure('VERIFICATION_CODE_MISMATCH'))
-    return claim('confirmPhysicalDevice', { verificationCode: code })
-  },
+  confirmPhysicalDevice: () => claim('confirmPhysicalDevice'),
   async provideWifi(input) {
     if (!input || typeof input.ssid !== 'string' || !['open', 'wpa-personal'].includes(input.security)
         || typeof input.password !== 'string') throw failure('CLAIM_INPUT_MISMATCH')

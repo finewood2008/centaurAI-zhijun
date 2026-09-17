@@ -26,7 +26,7 @@ function fixture() {
     getSnapshot() { return this.snapshot },
     subscribe(value) { listener = value; value(this.snapshot); return () => { listener = () => {} } },
     async begin(input) { calls.push(['begin', input]); this.snapshot = { state: 'previewReady',
-      compatiblePreview: { display_name: 'CentaurAI Box', verification_code: '233449',
+      compatiblePreview: { display_name: 'CentaurAI Box', device_id: 'centauros-001122334455667788e2334b',
         identity_public_key_sha256: 'a'.repeat(64), model: 'M1', serial_suffix: 'E2334B',
         network_state: 'unprovisioned' } }; listener(this.snapshot) },
     async confirmPhysicalDevice(input) { calls.push(['confirmPhysicalDevice', input]); this.snapshot.state = 'awaitingWifi' },
@@ -51,11 +51,11 @@ function fixture() {
 
 test('snapshot projection exposes only the allowlisted UI model', () => {
   assert.deepEqual(projectSnapshot({ state: 'establishingSecureChannel', pairingToken: 'secret',
-    errorCode: 'DEVICE_IDENTITY_MISMATCH', preview: { display_name: 'CentaurAI Box', verification_code: '123456',
+    errorCode: 'DEVICE_IDENTITY_MISMATCH', preview: { display_name: 'CentaurAI Box',
       identity_public_key_sha256: 'b'.repeat(64), model: 'M1', serial_suffix: 'ABC123', network_state: 'connected',
-      device_id: 'must-not-leak' } }), {
+      device_id: 'centauros-abcdef123456abcdefab12cd' } }), {
     state: 'authenticating', attentionCode: 'DEVICE_IDENTITY_MISMATCH', retryable: false,
-    preview: { name: 'CentaurAI Box', shortCode: '123456', publicKeyFingerprint: 'b'.repeat(64),
+    preview: { name: 'CentaurAI Box', deviceId: 'centauros-abcdef123456abcdefab12cd', shortCode: 'AB12CD', publicKeyFingerprint: 'b'.repeat(64),
       hardwareProfile: 'M1', macSuffix: 'ABC123', state: 'connected' },
   })
 })
@@ -75,7 +75,10 @@ test('claim IPC binds one opaque lease and transfers Wi-Fi bytes only to coordin
     lastSeenMonotonicMs: now, selectionLeaseId: randomUUID() }
   await invoke('bindSelected', selected)
   await invoke('begin')
-  await invoke('confirmPhysicalDevice', { verificationCode: '233449' })
+  await assert.rejects(invoke('confirmPhysicalDevice', { verificationCode: '233449' }),
+    { message: 'CLAIM_INPUT_MISMATCH' })
+  await invoke('confirmPhysicalDevice')
+  assert.ok(f.calls.find(call => call[0] === 'confirmPhysicalDevice')[1] instanceof AbortSignal)
   const password = new TextEncoder().encode('correct horse')
   await invoke('provideWifi', { ssid: 'Office', security: 'wpa_personal', hidden: false,
     passwordUtf8: password.buffer })
@@ -126,8 +129,8 @@ async function realBeginFixture(t, payload, failureCode) {
   let cloudCalls = 0
   const noCloud = new Proxy({}, { get: () => () => { cloudCalls++; throw new Error('unexpected external call') } })
   const validInfo = {
-    schema_version: 2, device_id: 'centauros-test123', display_name: 'CentaurAI Box', model: 'C100',
-    serial_suffix: '334B', verification_code: '123456', verification_code_source: 'label',
+    schema_version: 3, device_id: 'centauros-001122334455667788e2334b', display_name: 'CentaurAI Box', model: 'C100',
+    serial_suffix: '334B',
     provisioning_protocol_version: 2, security_profile: 'NEXUSAOS_LOCAL_AEAD_V2',
     identity_public_key_sha256: 'a'.repeat(64), pairing_mode_remaining_seconds: 300,
     network_state: 'connected', cloud_enrollment_status: 'ready', max_message_bytes: 2048,
@@ -164,11 +167,12 @@ async function realBeginFixture(t, payload, failureCode) {
   return { f, invoke, cloudCalls: () => cloudCalls }
 }
 
-test('real coordinator reads canonical V2 preview without starting authentication or external writes', async t => {
+test('real coordinator reads canonical schema V3 preview without starting authentication or external writes', async t => {
   const f = await realBeginFixture(t)
   const result = await f.invoke('begin')
   assert.equal(result.snapshot.state, 'authenticating')
   assert.equal(result.preview.macSuffix, '334B')
+  assert.equal(result.preview.shortCode, 'E2334B')
   assert.equal(f.cloudCalls(), 0)
   assert.deepEqual(f.f.contents.sent.filter(v => v.channel === TRANSPORT_COMMAND_CHANNEL)
     .map(v => v.message.kind), ['transport.connect', 'transport.readDeviceInfo'])
@@ -177,7 +181,7 @@ test('real coordinator reads canonical V2 preview without starting authenticatio
 for (const [name, payload, wireFailure, code] of [
   ['legacy V1', '{"schema_version":1,"ble_name":"CentaurOS-Setup-E2334B"}\n', undefined, 'LOCAL_DEVICE_INCOMPATIBLE'],
   ['malformed JSON', '{not json}', undefined, 'PROTOCOL_CHANGED'],
-  ['incomplete V2', '{"schema_version":2}', undefined, 'PROTOCOL_CHANGED'],
+  ['incomplete V3', '{"schema_version":3}', undefined, 'PROTOCOL_CHANGED'],
   ['transport error', undefined, 'LOCAL_DEVICE_INFO_INVALID', 'LOCAL_DEVICE_INFO_INVALID'],
 ]) {
   test(`real coordinator rejects ${name}, preserves reason and closes without external writes`, async t => {

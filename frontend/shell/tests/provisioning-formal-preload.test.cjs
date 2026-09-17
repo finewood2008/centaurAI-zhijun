@@ -33,6 +33,14 @@ test('formal preload exposes no v1 provisioning operation and scrubs password by
   assert.match(source, /legacyAllowed:\s*false/)
   assert.match(source, /encoded\?\.fill\(0\)/)
   assert.doesNotMatch(source, /createProvisioningSession|provisionWifi|scanWifiNetworks|allowLegacyPlaintextProvisioning/)
+  assert.doesNotMatch(source, /verificationCode|VERIFICATION_CODE_MISMATCH/)
+})
+
+test('physical confirmation sends no code or other input to Main', async () => {
+  const h = await preloadHarness()
+  await h.api.confirmPhysicalDevice()
+  assert.equal(h.invoked.at(-1).payload.kind, 'claim.confirmPhysicalDevice')
+  assert.equal(Object.hasOwn(h.invoked.at(-1).payload, 'input'), false)
 })
 
 test('production package excludes v1 SDKs while the marked test flavor retains them', () => {
