@@ -39,7 +39,7 @@ function service(transport = async () => ({ ok: true, json: async () => ({ state
 
 test('status service uses the facade without caching and rejects extra, malformed or contradictory state', async () => {
   const h = service(), controller = new AbortController()
-  assert.deepEqual(await h.getSensitiveRuleStatus(controller.signal), { state: 'active', applying: false })
+  assert.deepEqual(await h.getSensitiveRuleStatus(controller.signal), { state: 'active', applying: false, rolloutManage: false })
   assert.equal(h.calls[0][0], '/api/mindos/settings/sensitive-rules/status')
   assert.equal(h.calls[0][1].cache, 'no-store')
   assert.equal(h.calls[0][1].signal, controller.signal)
@@ -49,8 +49,17 @@ test('status service uses the facade without caching and rejects extra, malforme
     await assert.rejects(service(async () => ({ ok: true, json: async () => value })).getSensitiveRuleStatus(),
       { code: 'INVALID_SENSITIVE_RULE_STATUS_RESPONSE' })
   }
+  assert.deepEqual(await service(async () => ({ ok: true, json: async () => ({ state: 'applying', applying: true,
+    historicalScanRequired: true }) })).getSensitiveRuleStatus(),
+  { state: 'applying', applying: true, historicalScanRequired: true, rolloutManage: false })
   const upstreamError = Object.assign(new ApiError('not available', 503), { retryAfter: 120 })
   await assert.rejects(service(async () => ({ ok: false, error: upstreamError })).getSensitiveRuleStatus(), error => error === upstreamError)
+  const managed = service(async () => ({ ok: true, json: async () => ({ state: 'pending', applying: false,
+    scanEnabled: true, historicalScanRequired: true, retryAvailable: false, targetDetectorRevision: 'sensitive-detector-v2:abc' }) }))
+  const status = await managed.getSensitiveRuleStatus(undefined, true)
+  assert.equal(managed.calls[0][0], '/api/mindos/settings/sensitive-rules/rollout/status')
+  assert.equal(status.historicalScanRequired, true)
+  assert.equal(status.rolloutManage, true)
 })
 
 test('polling starts only when enabled, uses a low frequency, and stops at active', async () => {
@@ -100,7 +109,8 @@ test('optional errors preserve last state, respect Retry-After and stop on insuf
   const p = h.createSensitiveRuleStatusPoller({ apply: v => updates.push(v), onError: e => errors.push(e), read: async () => {
     if (++reads === 1) return { state: 'applying', applying: true }
     if (reads === 2) throw Object.assign(new ApiError('temporary', 503), { retryAfter: 120 })
-    throw new ApiError('denied', 403, 'CAPABILITY_DENIED')
+    if (reads === 3) throw new ApiError('denied', 403, 'CAPABILITY_DENIED')
+    return { state: 'active', applying: false }
   } })
   p.setEnabled(true); await flush(); h.tick(); await flush()
   assert.equal(updates.at(-1).state, 'applying')
@@ -109,7 +119,10 @@ test('optional errors preserve last state, respect Retry-After and stop on insuf
   h.tick(); await flush()
   assert.equal(h.timers.size, 0)
   p.refresh(); p.setEnabled(false); p.setEnabled(true); await flush()
-  assert.equal(reads, 3, 'capability denial stops status calls until a fresh component/account scope')
+  assert.equal(reads, 3, 'capability denial stops automatic reads')
+  p.refresh(true); await flush()
+  assert.equal(reads, 4, 'explicit user retry can recover after permission is granted')
+  assert.equal(updates.at(-1).state, 'active')
   p.dispose()
 })
 
@@ -151,20 +164,24 @@ test('Retry-After beyond the timer limit stops automatic polling until an explic
 
 function panel({ statusRead, hidden = false } = {}) {
   const h = service(), mounted = [], cleanups = [], resets = [], listeners = new Map(), exports = {}, writes = []
+  let connected = true
   const document = { visibilityState: hidden ? 'hidden' : 'visible',
     addEventListener: (name, fn) => listeners.set(name, fn), removeEventListener: name => listeners.delete(name) }
-  const rule = { ruleId: 'custom-project', source: 'custom', immutable: false, revision: 1,
+  const rule = { ruleId: 'custom-project', source: 'custom', immutable: false, revision: 1, deletable: true,
     name: '项目代号', description: '识别尚未公开的内部项目代号', examples: ['虚构项目'], counterExamples: [],
     enabled: true, deliveryMode: 'confirm', allowOriginalAfterConfirm: false }
   const api = {
+    getSensitiveRuleCapabilities: async () => ({ policyWrite: true, builtinWrite: false, rolloutManage: false }),
     getSensitiveRules: async () => ({ items: [rule], customCount: 1, maxCustomRules: 4, detectorPromptWithinLimit: true }),
-    updateSensitiveRule: async (id, value) => { writes.push([id, value]); return { ...rule, ...value, revision: 2 } },
+    getSensitiveRule: async () => ({ ...rule, etag: '"1"' }),
+    updateSensitiveRule: async (id, value) => { writes.push([id, value]); return { ...rule, ...value, etag: '"2"', revision: 2, changeImpact: 'semantic_detection' } },
   }
   new Function('require', 'exports', 'document', panelCode)(id => {
     if (id === 'vue') return { ...Vue, onMounted: fn => mounted.push(fn), onUnmounted: fn => cleanups.push(fn) }
     if (id.endsWith('/api')) return { api, ApiError }
-    if (id.endsWith('/productScope')) return { onProductScopeReset: fn => { resets.push(fn); return () => resets.splice(resets.indexOf(fn), 1) } }
-    if (id.endsWith('/sensitiveRuleStatus')) return { createSensitiveRuleStatusPoller: options => h.createSensitiveRuleStatusPoller({ ...options, read: statusRead }) }
+    if (id.endsWith('/productScope')) return { hasProductScope: () => connected,
+      onProductScopeReset: fn => { resets.push(fn); return () => resets.splice(resets.indexOf(fn), 1) } }
+    if (id.endsWith('/sensitiveRuleStatus')) return { createSensitiveRuleStatusPoller: options => h.createSensitiveRuleStatusPoller({ ...options, read: statusRead }), getSensitiveRuleStatus: h.getSensitiveRuleStatus }
     throw Error('Unexpected dependency ' + id)
   }, exports, document)
   const scope = Vue.effectScope(), props = Vue.reactive({ enabled: true })
@@ -172,7 +189,8 @@ function panel({ statusRead, hidden = false } = {}) {
   mounted.forEach(fn => fn())
   return { ...h, ui, props, document, writes,
     visible(value) { document.visibilityState = value ? 'visible' : 'hidden'; listeners.get('visibilitychange')?.() },
-    reset() { [...resets].forEach(fn => fn()) },
+    reset() { connected = false; [...resets].forEach(fn => fn()) },
+    connect() { connected = true; [...resets].forEach(fn => fn()) },
     close() { cleanups.forEach(fn => fn()); scope.stop(); assert.equal(listeners.size, 0) } }
 }
 
@@ -185,10 +203,9 @@ test('settings keeps optional status failures separate from CRUD and refreshes s
   assert.equal(h.ui.customRemaining.value, 3)
   await h.ui.toggle(h.ui.rules.value[0]); await flush()
   assert.equal(h.writes.length, 1)
-  assert.equal(h.writes[0][1].expectedRevision, 1)
-  assert.ok(h.writes[0][1].requestId)
+  assert.equal(h.writes[0][1].expectedEtag, '"1"')
   assert.ok(reads >= 2)
-  assert.match(h.ui.notice.value, /识别语义变更会在后台应用/)
+  assert.match(h.ui.notice.value, /需确认后扫描历史材料/)
   assert.equal(h.ui.error.value, '')
   h.close()
 })
@@ -208,5 +225,10 @@ test('settings status is idle while hidden or disabled and discards results afte
   pending[1].resolve({ state: 'applying', applying: true }); await flush()
   assert.equal(h.ui.applicationStatus.value, null)
   assert.equal(h.timers.size, 0)
+  h.connect(); await flush()
+  assert.equal(pending.length, 3, 'new box gets a fresh status reader')
+  pending[2].resolve({ state: 'active', applying: false }); await flush()
+  if (pending[3]) { pending[3].resolve({ state: 'active', applying: false }); await flush() }
+  assert.equal(h.ui.applicationStatus.value.state, 'active')
   h.close()
 })

@@ -53,7 +53,14 @@ _INDEX_STATES = {"none", "building", "indexed", "failed", "stale"}
 _FAILURE_STAGES = {"registration", "parsing", "snapshot", "chunking", "embedding", "indexing"}
 _JOB_ACTIONS = {"poll", "retry", "cancel", "contact_admin"}
 _RULE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}")
+_CUSTOM_RULE_ETAG = re.compile(r'"[1-9][0-9]{0,9}"')
+_BUILTIN_RULE_ETAG = re.compile(r'"builtin:[1-9][0-9]{0,9}:(?:0|[1-9][0-9]{0,9})"')
+_DETECTOR_REVISION = re.compile(r"sensitive-detector-v[0-9]+:[0-9a-f]{16,64}")
 _DELIVERY_MODES = {"confirm", "always_mask", "block"}
+_BUILTIN_EDITABLE_FIELDS = {
+    "displayName", "enabled", "description", "examples", "counterExamples",
+    "deliveryMode", "allowOriginalAfterConfirm", "masking",
+}
 _RULE_INPUT_REQUIRED = {
     "name", "description", "examples", "enabled", "deliveryMode",
     "allowOriginalAfterConfirm",
@@ -393,12 +400,11 @@ def _retry_after(headers: Any) -> Optional[int]:
 
 
 def sensitive_rule_status(value: Any) -> Dict[str, Any]:
-    """Validate both DE contracts and preserve the existing desktop status shape.
+    """Validate the public application status, retaining the optional scan hint.
 
-    Newer DE versions add historicalScanRequired. It is a public boolean hint,
-    not permission to start a scan. Older desktop clients require exactly the
-    original two fields, so validate the hint without forwarding it or changing
-    the meaning of applying. Internal scan diagnostics remain forbidden.
+    Older DE versions return only state/applying; their two-field shape stays
+    compatible. The hint is not permission to start a scan. Internal scan
+    diagnostics remain forbidden.
     """
     required = {"state", "applying"}
     if (not isinstance(value, dict)
@@ -411,7 +417,10 @@ def sensitive_rule_status(value: Any) -> Dict[str, Any]:
                 and (type(value["historicalScanRequired"]) is not bool
                      or (value["historicalScanRequired"] and not value["applying"])))):
         raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_STATUS_RESPONSE", status=502)
-    return {"state": value["state"], "applying": value["applying"]}
+    result = {"state": value["state"], "applying": value["applying"]}
+    if "historicalScanRequired" in value:
+        result["historicalScanRequired"] = value["historicalScanRequired"]
+    return result
 
 
 def _header(headers: Any, name: str) -> Optional[str]:
@@ -431,6 +440,27 @@ def _rule_id(value: Any, code: str = "INVALID_SENSITIVE_RULE_ID") -> str:
 def _revision(value: Any) -> int:
     if type(value) is not int or not 1 <= value <= 2_147_483_647:
         raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_REVISION")
+    return value
+
+
+def _rule_etag(value: Any, *, source: str, item: Optional[Mapping[str, Any]] = None) -> str:
+    pattern = _BUILTIN_RULE_ETAG if source == "built_in" else _CUSTOM_RULE_ETAG
+    if not isinstance(value, str) or pattern.fullmatch(value) is None:
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_ETAG", status=502)
+    if item is not None:
+        if source == "custom" and value != f'"{item["revision"]}"':
+            raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_ETAG", status=502)
+        if source == "built_in" and {"definitionRevision", "overrideRevision"} <= set(item):
+            expected = f'"builtin:{item["definitionRevision"]}:{item["overrideRevision"]}"'
+            if value != expected:
+                raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_ETAG", status=502)
+    return value
+
+
+def _detector_revision(value: Any) -> str:
+    if (not isinstance(value, str) or not 38 <= len(value) <= 128
+            or _DETECTOR_REVISION.fullmatch(value) is None):
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_ROLLOUT_REVISION")
     return value
 
 
@@ -483,6 +513,58 @@ def _sensitive_rule_input(value: Any) -> Dict[str, Any]:
     }
 
 
+def _builtin_rule_input(value: Any) -> Dict[str, Any]:
+    if (not isinstance(value, Mapping) or not set(value) <=
+            _BUILTIN_EDITABLE_FIELDS | {"acknowledgeSimilarRuleId"}
+            or not set(value) & _BUILTIN_EDITABLE_FIELDS):
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_INPUT")
+    result: Dict[str, Any] = {}
+    for key, item in value.items():
+        if item is None:
+            result[key] = None
+        elif key == "displayName":
+            result[key] = _clean_rule_text(item, 2, 50)
+        elif key == "description":
+            result[key] = _clean_rule_text(item, 10, 500)
+        elif key in {"examples", "counterExamples"}:
+            result[key] = _clean_rule_examples(item, required=False)
+        elif key in {"enabled", "allowOriginalAfterConfirm"}:
+            if type(item) is not bool:
+                raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_INPUT")
+            result[key] = item
+        elif key == "deliveryMode":
+            if item not in _DELIVERY_MODES:
+                raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_INPUT")
+            result[key] = item
+        elif key == "masking":
+            try:
+                result[key] = _masking(item)
+            except DataAgentRagV2Error:
+                raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_INPUT") from None
+        elif key == "acknowledgeSimilarRuleId":
+            result[key] = _rule_id(item, "INVALID_SENSITIVE_RULE_INPUT")
+    return result
+
+
+def _sensitive_rollout_status(value: Any) -> Dict[str, Any]:
+    required = {"state", "scanEnabled", "applying", "historicalScanRequired",
+                "retryAvailable", "targetDetectorRevision"}
+    if (not isinstance(value, dict) or set(value) != required
+            or value.get("state") not in {"disabled", "active", "pending", "applying", "failed"}
+            or any(type(value.get(key)) is not bool for key in
+                   ("scanEnabled", "applying", "historicalScanRequired", "retryAvailable"))
+            or value["scanEnabled"] != (value["state"] != "disabled")
+            or value["applying"] != (value["state"] == "applying")
+            or value["historicalScanRequired"] != (value["state"] == "pending")
+            or value["retryAvailable"] != (value["state"] == "failed")):
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_ROLLOUT_STATUS_RESPONSE", status=502)
+    try:
+        _detector_revision(value["targetDetectorRevision"])
+    except DataAgentRagV2Error:
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_ROLLOUT_STATUS_RESPONSE", status=502) from None
+    return {key: value[key] for key in required}
+
+
 def _masking(value: Any) -> Dict[str, Any]:
     required = {"strategy", "prefixCharacters", "suffixCharacters", "replacement"}
     if (not isinstance(value, dict) or set(value) != required
@@ -528,7 +610,7 @@ def _sensitive_rule(value: Any) -> Dict[str, Any]:
             or value["examples"] != examples or value["counterExamples"] != counter_examples
             or (source == "custom" and not examples)):
         raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502)
-    return {
+    result = {
         "ruleId": rule_id, "source": source, "immutable": immutable,
         "revision": revision, "name": name, "description": description,
         "examples": examples, "counterExamples": counter_examples,
@@ -536,6 +618,60 @@ def _sensitive_rule(value: Any) -> Dict[str, Any]:
         "allowOriginalAfterConfirm": allow_original,
         "masking": _masking(value["masking"]),
     }
+    try:
+        if "displayName" in value:
+            result["displayName"] = _clean_rule_text(value["displayName"], 2, 50)
+        if "aliases" in value:
+            aliases = value["aliases"]
+            if (not isinstance(aliases, list) or len(aliases) > 32
+                    or any(not isinstance(alias, str) or not 1 <= len(alias) <= 80
+                           or any(ord(char) < 32 for char in alias) for alias in aliases)):
+                raise ValueError()
+            result["aliases"] = list(aliases)
+        for key in ("editable", "deletable", "resettable", "overridden",
+                    "overrideApplied", "overrideNeedsReview", "historicalScanRequired"):
+            if key in value:
+                if type(value[key]) is not bool:
+                    raise ValueError()
+                result[key] = value[key]
+        for key in ("definitionRevision", "overrideBaseDefinitionRevision", "overrideRevision",
+                    "recognizerRevision"):
+            if key in value:
+                minimum = 0 if key == "overrideRevision" else 1
+                if type(value[key]) is not int or not minimum <= value[key] <= 2_147_483_647:
+                    raise ValueError()
+                result[key] = value[key]
+        if "recognizerKind" in value:
+            if value["recognizerKind"] not in {"deterministic", "semantic", "hybrid"}:
+                raise ValueError()
+            result["recognizerKind"] = value["recognizerKind"]
+        if "editableFields" in value:
+            fields = value["editableFields"]
+            if (not isinstance(fields, list) or len(fields) > len(_BUILTIN_EDITABLE_FIELDS)
+                    or len(set(fields)) != len(fields)
+                    or any(not isinstance(field, str) or field not in _BUILTIN_EDITABLE_FIELDS
+                           for field in fields)):
+                raise ValueError()
+            result["editableFields"] = list(fields)
+        if "systemConstraints" in value:
+            constraints = value["systemConstraints"]
+            if (not isinstance(constraints, dict) or set(constraints) !=
+                    {"requiredEnabled", "minimumDeliveryMode", "maskingFloor"}
+                    or type(constraints["requiredEnabled"]) is not bool
+                    or constraints["minimumDeliveryMode"] not in _DELIVERY_MODES):
+                raise ValueError()
+            result["systemConstraints"] = {
+                "requiredEnabled": constraints["requiredEnabled"],
+                "minimumDeliveryMode": constraints["minimumDeliveryMode"],
+                "maskingFloor": _masking(constraints["maskingFloor"]),
+            }
+        if "changeImpact" in value:
+            if value["changeImpact"] not in {"none", "delivery_only", "semantic_detection"}:
+                raise ValueError()
+            result["changeImpact"] = value["changeImpact"]
+    except (TypeError, ValueError, DataAgentRagV2Error):
+        raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502) from None
+    return result
 
 
 def _sensitive_catalogue(value: Any) -> Dict[str, Any]:
@@ -577,11 +713,8 @@ def _sensitive_catalogue(value: Any) -> Dict[str, Any]:
     return {"items": items, **{key: value[key] for key in required - {"items"}}}
 
 
-def _etag_revision(headers: Any, expected: int) -> int:
-    value = _header(headers, "ETag")
-    if value != f'"{expected}"':
-        raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_ETAG", status=502)
-    return expected
+def _response_rule_etag(headers: Any, item: Mapping[str, Any]) -> str:
+    return _rule_etag(_header(headers, "ETag"), source=item["source"], item=item)
 
 
 class DataAgentRagV2Client:
@@ -631,8 +764,10 @@ class DataAgentRagV2Client:
         body: Optional[bytes] = None,
         content_type: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        if_match_revision: Optional[int] = None,
+        if_match_etag: Optional[str] = None,
+        acknowledge_similar_rule_id: Optional[str] = None,
         include_response_headers: bool = False,
+        expected_status: Optional[int] = None,
     ) -> Any:
         if not path.startswith("/v1/agent/apps/"):
             raise DataAgentRagV2Error("INVALID_APPLICATION_PATH")
@@ -645,8 +780,10 @@ class DataAgentRagV2Client:
             headers["Content-Type"] = content_type
         if idempotency_key is not None:
             headers["Idempotency-Key"] = _idempotency_key(idempotency_key)
-        if if_match_revision is not None:
-            headers["If-Match"] = f'"{_revision(if_match_revision)}"'
+        if if_match_etag is not None:
+            headers["If-Match"] = if_match_etag
+        if acknowledge_similar_rule_id is not None:
+            headers["X-Acknowledge-Similar-Rule-Id"] = acknowledge_similar_rule_id
         request = urllib.request.Request(
             self.base_url + path, data=body, method=method, headers=headers
         )
@@ -721,7 +858,8 @@ class DataAgentRagV2Client:
                 trace_id=trace_id,
                 similar_rule_id=similar_rule_id,
             )
-        if status is None or not 200 <= status < 300:
+        if status is None or not 200 <= status < 300 or (
+                expected_status is not None and status != expected_status):
             raise DataAgentRagV2Error(
                 "INVALID_RESPONSE_ENVELOPE", status=502, trace_id=trace_id
             )
@@ -730,6 +868,21 @@ class DataAgentRagV2Client:
 
     def capabilities(self) -> Dict[str, Any]:
         return self._request("GET", "/v1/agent/apps/capabilities")
+
+    def get_sensitive_capabilities(self) -> Dict[str, bool]:
+        value = self.capabilities()
+        enabled = value.get("enabledCapabilities") if isinstance(value, dict) else None
+        if (not isinstance(enabled, list) or len(enabled) > 128
+                or any(not isinstance(item, str) or not 1 <= len(item) <= 128
+                       for item in enabled) or len(set(enabled)) != len(enabled)):
+            raise DataAgentRagV2Error("INVALID_CAPABILITIES_RESPONSE", status=502)
+        granted = set(enabled)
+        policy = "mindos.sensitive.policy.write" in granted
+        return {
+            "policyWrite": policy,
+            "builtinWrite": policy and "mindos.sensitive.policy.builtin.write" in granted,
+            "rolloutManage": policy and "mindos.sensitive.rollout.manage" in granted,
+        }
 
     def upload_constraints(self) -> Tuple[int, set[str]]:
         capabilities = self.capabilities()
@@ -941,7 +1094,7 @@ class DataAgentRagV2Client:
         item = _sensitive_rule(data)
         if item["ruleId"] != checked_id:
             raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502)
-        _etag_revision(headers, item["revision"])
+        item["etag"] = _response_rule_etag(headers, item)
         return item
 
     def create_sensitive_rule(
@@ -955,33 +1108,98 @@ class DataAgentRagV2Client:
         item = _sensitive_rule(data)
         if item["source"] != "custom":
             raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502)
-        _etag_revision(headers, item["revision"])
+        item["etag"] = _response_rule_etag(headers, item)
         return item
 
     def update_sensitive_rule(
-        self, rule_id: str, rule: Mapping[str, Any], *, revision: int,
+        self, rule_id: str, rule: Mapping[str, Any], *, etag: str,
     ) -> Dict[str, Any]:
         checked_id = _rule_id(rule_id)
+        checked_etag = _rule_etag(etag, source="custom")
         data, headers = self._request(
             "PUT", "/v1/agent/apps/sensitive-delivery/rules/custom/" + quote(checked_id, safe=""),
             body=_json_body(_sensitive_rule_input(rule)), content_type="application/json",
-            if_match_revision=revision, include_response_headers=True,
+            if_match_etag=checked_etag, include_response_headers=True,
         )
         item = _sensitive_rule(data)
         if item["ruleId"] != checked_id or item["source"] != "custom":
             raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502)
-        _etag_revision(headers, item["revision"])
+        item["etag"] = _response_rule_etag(headers, item)
         return item
 
-    def delete_sensitive_rule(self, rule_id: str, *, revision: int) -> Dict[str, bool]:
+    def delete_sensitive_rule(self, rule_id: str, *, etag: str) -> Dict[str, bool]:
         checked_id = _rule_id(rule_id)
         data = self._request(
             "DELETE", "/v1/agent/apps/sensitive-delivery/rules/custom/" + quote(checked_id, safe=""),
-            if_match_revision=revision,
+            if_match_etag=_rule_etag(etag, source="custom"),
         )
         if not isinstance(data, dict) or set(data) != {"deleted"} or data["deleted"] is not True:
             raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_DELETE_RESPONSE", status=502)
         return {"deleted": True}
+
+    def update_builtin_sensitive_rule(
+        self, rule_id: str, rule: Mapping[str, Any], *, etag: str,
+    ) -> Dict[str, Any]:
+        checked_id = _rule_id(rule_id)
+        checked_etag = _rule_etag(etag, source="built_in")
+        data, headers = self._request(
+            "PUT", "/v1/agent/apps/sensitive-delivery/rules/built-in/" + quote(checked_id, safe=""),
+            body=_json_body(_builtin_rule_input(rule)), content_type="application/json",
+            if_match_etag=checked_etag, include_response_headers=True,
+        )
+        item = _sensitive_rule(data)
+        if item["ruleId"] != checked_id or item["source"] != "built_in":
+            raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502)
+        item["etag"] = _response_rule_etag(headers, item)
+        return item
+
+    def reset_builtin_sensitive_rule(
+        self, rule_id: str, *, etag: str,
+        acknowledge_similar_rule_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        checked_id = _rule_id(rule_id)
+        checked_etag = _rule_etag(etag, source="built_in")
+        acknowledged = (_rule_id(acknowledge_similar_rule_id, "INVALID_SENSITIVE_RULE_INPUT")
+                        if acknowledge_similar_rule_id is not None else None)
+        data, headers = self._request(
+            "POST", "/v1/agent/apps/sensitive-delivery/rules/built-in/" +
+            quote(checked_id, safe="") + ":reset",
+            if_match_etag=checked_etag,
+            acknowledge_similar_rule_id=acknowledged,
+            include_response_headers=True,
+        )
+        item = _sensitive_rule(data)
+        if item["ruleId"] != checked_id or item["source"] != "built_in":
+            raise DataAgentRagV2Error("INVALID_SENSITIVE_RULE_RESPONSE", status=502)
+        item["etag"] = _response_rule_etag(headers, item)
+        return item
+
+    def get_sensitive_rollout_status(self) -> Dict[str, Any]:
+        return _sensitive_rollout_status(self._request(
+            "GET", "/v1/agent/apps/sensitive-delivery/rollout/status",
+        ))
+
+    def start_sensitive_rollout(
+        self, expected_detector_revision: str, *, idempotency_key: str,
+    ) -> Dict[str, Any]:
+        return _sensitive_rollout_status(self._request(
+            "POST", "/v1/agent/apps/sensitive-delivery/rollout:start",
+            body=_json_body({"expectedDetectorRevision": _detector_revision(expected_detector_revision),
+                             "confirmHistoricalScan": True}),
+            content_type="application/json", idempotency_key=idempotency_key,
+            expected_status=202,
+        ))
+
+    def retry_sensitive_rollout(
+        self, expected_detector_revision: str, *, idempotency_key: str,
+    ) -> Dict[str, Any]:
+        return _sensitive_rollout_status(self._request(
+            "POST", "/v1/agent/apps/sensitive-delivery/rollout:retry",
+            body=_json_body({"expectedDetectorRevision": _detector_revision(expected_detector_revision),
+                             "confirmRetry": True}),
+            content_type="application/json", idempotency_key=idempotency_key,
+            expected_status=202,
+        ))
 
 
 def configured_client(

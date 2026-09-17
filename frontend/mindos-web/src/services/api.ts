@@ -103,6 +103,8 @@ export async function throwApiError(res: Response): Promise<never> {
   let retryAfter: number | undefined
   let traceId: string | undefined
   const retryHeader = res.headers.get('Retry-After')
+  const similarHeader = res.headers.get('X-Similar-Rule-Id')
+  if (similarHeader && SAFE_SENSITIVE_RULE_ID.test(similarHeader)) similarRuleId = similarHeader
   if (retryHeader && /^\d+$/.test(retryHeader.trim())) retryAfter = Number(retryHeader)
   else if (retryHeader && Number.isFinite(Date.parse(retryHeader))) retryAfter = Math.max(0, Math.ceil((Date.parse(retryHeader) - Date.now()) / 1000))
   try {
@@ -112,6 +114,7 @@ export async function throwApiError(res: Response): Promise<never> {
       retryAfter = Math.max(retryAfter ?? 0, Math.ceil(metadata.retryAfter))
     }
     if (typeof metadata?.traceId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(metadata.traceId)) traceId = metadata.traceId
+    if (!traceId && typeof body?.traceId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(body.traceId)) traceId = body.traceId
     if (body && typeof body.detail === 'string') message = body.detail
     else if (body && body.detail && typeof body.detail === 'object') {
       if (typeof body.detail.detail === 'string') message = body.detail.detail
@@ -1275,13 +1278,36 @@ export interface RedactionStatus {
 export type SensitiveRuleSource = 'built_in' | 'custom'
 export type SensitiveRuleDeliveryMode = 'confirm' | 'always_mask' | 'block'
 export type SensitiveRuleMasking = Readonly<Record<string, unknown>>
+export type SensitiveRuleEditableField = 'displayName' | 'enabled' | 'description' | 'examples' | 'counterExamples' | 'deliveryMode' | 'allowOriginalAfterConfirm' | 'masking'
+export interface SensitiveRuleMaskingFloor {
+  strategy: 'full' | 'fixed' | 'keep_edges'
+  prefixCharacters?: number
+  suffixCharacters?: number
+  replacement?: string
+}
 
 export interface SensitiveRule {
   ruleId: string
   source: SensitiveRuleSource
   immutable: boolean
   revision: number
+  etag?: string
+  editable?: boolean
+  editableFields?: SensitiveRuleEditableField[]
+  deletable?: boolean
+  resettable?: boolean
+  overridden?: boolean
+  overrideNeedsReview?: boolean
+  changeImpact?: 'none' | 'delivery_only' | 'semantic_detection'
+  historicalScanRequired?: boolean
+  recognizerKind?: string
+  systemConstraints?: {
+    requiredEnabled: boolean
+    minimumDeliveryMode: SensitiveRuleDeliveryMode
+    maskingFloor: SensitiveRuleMaskingFloor
+  }
   name: string
+  displayName?: string
   description: string
   examples: string[]
   counterExamples: string[]
@@ -1321,8 +1347,28 @@ export interface SensitiveRuleCreatePayload extends SensitiveRuleDraft {
   acknowledgeSimilarRuleId?: string
 }
 
-export interface SensitiveRuleUpdatePayload extends SensitiveRuleCreatePayload {
-  expectedRevision: number
+export interface SensitiveRuleUpdatePayload extends SensitiveRuleDraft {
+  expectedEtag: string
+  acknowledgeSimilarRuleId?: string
+}
+
+export type SensitiveBuiltInRuleDraft = Partial<Pick<SensitiveRule, SensitiveRuleEditableField>> & {
+  acknowledgeSimilarRuleId?: string
+}
+
+export interface SensitiveRuleRolloutStatus {
+  state: 'disabled' | 'active' | 'pending' | 'applying' | 'failed'
+  scanEnabled: boolean
+  applying: boolean
+  historicalScanRequired: boolean
+  retryAvailable: boolean
+  targetDetectorRevision: string | null
+}
+
+export interface SensitiveRuleCapabilities {
+  policyWrite: boolean
+  builtinWrite: boolean
+  rolloutManage: boolean
 }
 
 export const api = {
@@ -1364,6 +1410,8 @@ export const api = {
     postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/retry`, payload),
   getSensitiveRules: (signal?: AbortSignal) =>
     request<SensitiveRulesResponse>('/mindos/settings/sensitive-rules', { signal }),
+  getSensitiveRuleCapabilities: (signal?: AbortSignal) =>
+    request<SensitiveRuleCapabilities>('/mindos/settings/sensitive-rules/capabilities', { signal }),
   getSensitiveRule: (ruleId: string, signal?: AbortSignal) =>
     request<SensitiveRule>(`/mindos/settings/sensitive-rules/${encodeURIComponent(ruleId)}`, { signal }),
   createSensitiveRule: (payload: SensitiveRuleCreatePayload) => {
@@ -1371,16 +1419,32 @@ export const api = {
     return postJson<SensitiveRule>('/mindos/settings/sensitive-rules/custom', { requestId, rule })
   },
   updateSensitiveRule: (ruleId: string, payload: SensitiveRuleUpdatePayload) => {
-    const { requestId, expectedRevision, ...rule } = payload
+    const { expectedEtag, ...rule } = payload
     return putJson<SensitiveRule>(`/mindos/settings/sensitive-rules/custom/${encodeURIComponent(ruleId)}`, {
-      requestId, expectedRevision, rule,
+      expectedEtag, rule,
     })
   },
-  deleteSensitiveRule: (ruleId: string, expectedRevision: number) =>
+  deleteSensitiveRule: (ruleId: string, expectedEtag: string) =>
     request<{ deleted: boolean; ruleId: string }>(`/mindos/settings/sensitive-rules/custom/${encodeURIComponent(ruleId)}`, {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS },
-      body: JSON.stringify({ expectedRevision }),
+      body: JSON.stringify({ expectedEtag }),
+    }),
+  updateBuiltInSensitiveRule: (ruleId: string, expectedEtag: string, rule: SensitiveBuiltInRuleDraft) =>
+    putJson<SensitiveRule>(`/mindos/settings/sensitive-rules/built-in/${encodeURIComponent(ruleId)}`, { expectedEtag, rule }),
+  resetBuiltInSensitiveRule: (ruleId: string, expectedEtag: string, acknowledgeSimilarRuleId?: string) =>
+    postJson<SensitiveRule>(`/mindos/settings/sensitive-rules/built-in/${encodeURIComponent(ruleId)}/reset`, {
+      expectedEtag, ...(acknowledgeSimilarRuleId ? { acknowledgeSimilarRuleId } : {}),
+    }),
+  getSensitiveRuleRolloutStatus: (signal?: AbortSignal) =>
+    request<SensitiveRuleRolloutStatus>('/mindos/settings/sensitive-rules/rollout/status', { signal }),
+  startSensitiveRuleRollout: (requestId: string, expectedDetectorRevision: string) =>
+    postJson<SensitiveRuleRolloutStatus>('/mindos/settings/sensitive-rules/rollout/start', {
+      requestId, expectedDetectorRevision, confirmHistoricalScan: true,
+    }),
+  retrySensitiveRuleRollout: (requestId: string, expectedDetectorRevision: string) =>
+    postJson<SensitiveRuleRolloutStatus>('/mindos/settings/sensitive-rules/rollout/retry', {
+      requestId, expectedDetectorRevision, confirmRetry: true,
     }),
   health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),

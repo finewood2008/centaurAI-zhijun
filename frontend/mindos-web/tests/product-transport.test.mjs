@@ -131,9 +131,15 @@ test('sensitive rule API matches the trusted facade envelope', async () => {
   }
   await api.createSensitiveRule({ requestId: 'rule-create-0001', ...rule })
   await api.updateSensitiveRule('csr_rule_1', {
-    requestId: 'rule-update-0001', expectedRevision: 3, ...rule,
+    expectedEtag: '"3"', ...rule,
   })
-  await api.deleteSensitiveRule('csr_rule_1', 4)
+  await api.deleteSensitiveRule('csr_rule_1', '"4"')
+  await api.getSensitiveRuleCapabilities()
+  await api.updateBuiltInSensitiveRule('person_name', '"builtin:1:0"', { enabled: false })
+  await api.resetBuiltInSensitiveRule('person_name', '"builtin:1:1"', 'csr_nearby')
+  await api.getSensitiveRuleRolloutStatus()
+  await api.startSensitiveRuleRollout('rollout-start-1', 'sensitive-detector-v2:' + 'a'.repeat(24))
+  await api.retrySensitiveRuleRollout('rollout-retry-1', 'sensitive-detector-v2:' + 'a'.repeat(24))
 
   assert.deepEqual(calls[0], {
     path: '/api/mindos/settings/sensitive-rules/custom', method: 'POST',
@@ -141,11 +147,29 @@ test('sensitive rule API matches the trusted facade envelope', async () => {
   })
   assert.deepEqual(calls[1], {
     path: '/api/mindos/settings/sensitive-rules/custom/csr_rule_1', method: 'PUT',
-    body: { requestId: 'rule-update-0001', expectedRevision: 3, rule },
+    body: { expectedEtag: '"3"', rule },
   })
   assert.deepEqual(calls[2], {
     path: '/api/mindos/settings/sensitive-rules/custom/csr_rule_1', method: 'DELETE',
-    body: { expectedRevision: 4 },
+    body: { expectedEtag: '"4"' },
+  })
+  assert.equal(calls[3].path, '/api/mindos/settings/sensitive-rules/capabilities')
+  assert.deepEqual(calls[4], {
+    path: '/api/mindos/settings/sensitive-rules/built-in/person_name', method: 'PUT',
+    body: { expectedEtag: '"builtin:1:0"', rule: { enabled: false } },
+  })
+  assert.deepEqual(calls[5], {
+    path: '/api/mindos/settings/sensitive-rules/built-in/person_name/reset', method: 'POST',
+    body: { expectedEtag: '"builtin:1:1"', acknowledgeSimilarRuleId: 'csr_nearby' },
+  })
+  assert.equal(calls[6].path, '/api/mindos/settings/sensitive-rules/rollout/status')
+  assert.deepEqual(calls[7], {
+    path: '/api/mindos/settings/sensitive-rules/rollout/start', method: 'POST',
+    body: { requestId: 'rollout-start-1', expectedDetectorRevision: 'sensitive-detector-v2:' + 'a'.repeat(24), confirmHistoricalScan: true },
+  })
+  assert.deepEqual(calls[8], {
+    path: '/api/mindos/settings/sensitive-rules/rollout/retry', method: 'POST',
+    body: { requestId: 'rollout-retry-1', expectedDetectorRevision: 'sensitive-detector-v2:' + 'a'.repeat(24), confirmRetry: true },
   })
 })
 

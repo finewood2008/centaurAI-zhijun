@@ -72,7 +72,7 @@ def _job(job_id: str, *, state="processing", stage="indexing", index_state="buil
 
 
 def _rule(rule_id="csr_rule_1", *, revision=1, source="custom") -> dict:
-    return {
+    result = {
         "ruleId": rule_id, "source": source, "immutable": source == "built_in",
         "revision": revision, "name": "项目代号", "description": "能够识别尚未公开的内部项目代号信息。",
         "examples": ["灯塔计划"], "counterExamples": ["普通项目"], "enabled": True,
@@ -81,6 +81,19 @@ def _rule(rule_id="csr_rule_1", *, revision=1, source="custom") -> dict:
                     "suffixCharacters": 0, "replacement": "[项目代号已脱敏]"},
         "createdAt": 1.0, "updatedAt": 1.0,
     }
+    if source == "built_in":
+        result.update({
+            "displayName": "项目代号", "editable": True, "deletable": False,
+            "resettable": True, "overridden": False, "overrideApplied": False,
+            "overrideNeedsReview": False, "definitionRevision": 1,
+            "overrideBaseDefinitionRevision": 1, "overrideRevision": 0,
+            "recognizerKind": "semantic", "recognizerRevision": 1,
+            "editableFields": ["displayName", "enabled", "deliveryMode", "masking"],
+            "systemConstraints": {"requiredEnabled": False,
+                                  "minimumDeliveryMode": "confirm",
+                                  "maskingFloor": result["masking"].copy()},
+        })
+    return result
 
 
 def _rule_input(**updates) -> dict:
@@ -358,13 +371,15 @@ class DataAgentRagV2ClientTest(unittest.TestCase):
             _rule_input(), idempotency_key="rule-create-0001"
         )
         update_result = client.update_sensitive_rule(
-            "csr_rule_1", _rule_input(name=" 项目代号 "), revision=1,
+            "csr_rule_1", _rule_input(name=" 项目代号 "), etag='"1"',
         )
-        self.assertEqual(client.delete_sensitive_rule("csr_rule_1", revision=2), {"deleted": True})
+        self.assertEqual(client.delete_sensitive_rule("csr_rule_1", etag='"2"'), {"deleted": True})
 
         self.assertEqual(create_result["revision"], 1)
+        self.assertEqual(create_result["etag"], '"1"')
         self.assertNotIn("createdAt", create_result)
         self.assertEqual(update_result["revision"], 2)
+        self.assertEqual(update_result["etag"], '"2"')
         create, update, delete = [entry[0] for entry in opener.requests]
         self.assertEqual(create.get_header("Idempotency-key"), "rule-create-0001")
         self.assertEqual(create.get_header("X-app-secret"), APP_SECRET)
@@ -386,7 +401,9 @@ class DataAgentRagV2ClientTest(unittest.TestCase):
         catalogue = client.list_sensitive_rules()
         self.assertEqual(item["ruleId"], "csr_rule_1")
         self.assertNotIn("createdAt", item)
-        self.assertNotIn("aliases", catalogue["items"][0])
+        self.assertEqual(catalogue["items"][0]["aliases"], ["手机号"])
+        self.assertEqual(catalogue["items"][0]["editableFields"],
+                         ["displayName", "enabled", "deliveryMode", "masking"])
         self.assertEqual(catalogue["customCount"], 1)
         self.assertTrue(opener.requests[0][0].full_url.endswith("/sensitive-delivery/rules/csr_rule_1"))
 
@@ -429,6 +446,124 @@ class DataAgentRagV2ClientTest(unittest.TestCase):
         client, _ = self.client([invalid])
         with self.assertRaisesRegex(DataAgentRagV2Error, "INVALID_SIMILAR_RULE_RESPONSE"):
             client.create_sensitive_rule(_rule_input(), idempotency_key="rule-create-0002")
+
+    def test_sensitive_capabilities_only_exposes_effective_rule_permissions(self):
+        client, opener = self.client([_Response(200, _success({
+            "enabledCapabilities": ["mindos.read", "mindos.sensitive.policy.write",
+                                    "mindos.sensitive.policy.builtin.write",
+                                    "mindos.sensitive.rollout.manage"],
+            "secretInternalSetting": "not-for-renderer",
+        }))])
+        self.assertEqual(client.get_sensitive_capabilities(), {
+            "policyWrite": True, "builtinWrite": True, "rolloutManage": True,
+        })
+        self.assertEqual(opener.requests[0][0].method, "GET")
+        client, _ = self.client([_Response(200, _success({
+            "enabledCapabilities": ["mindos.sensitive.policy.builtin.write",
+                                    "mindos.sensitive.rollout.manage"],
+        }))])
+        self.assertEqual(client.get_sensitive_capabilities(), {
+            "policyWrite": False, "builtinWrite": False, "rolloutManage": False,
+        })
+
+    def test_builtin_rule_uses_opaque_etag_and_reset_acknowledgement_header(self):
+        current = _rule("person_name", source="built_in")
+        changed = _rule("person_name", source="built_in")
+        changed["overrideRevision"] = 1
+        changed["overridden"] = True
+        changed["overrideApplied"] = True
+        changed["changeImpact"] = "semantic_detection"
+        changed["historicalScanRequired"] = True
+        reset = _rule("person_name", source="built_in")
+        reset["overrideRevision"] = 2
+        client, opener = self.client([
+            _Response(200, _success(current), {"ETag": '"builtin:1:0"'}),
+            _Response(200, _success(changed), {"ETag": '"builtin:1:1"'}),
+            _Response(200, _success(reset), {"ETag": '"builtin:1:2"'}),
+        ])
+        self.assertEqual(client.get_sensitive_rule("person_name")["etag"], '"builtin:1:0"')
+        changed_result = client.update_builtin_sensitive_rule(
+            "person_name", {"enabled": False}, etag='"builtin:1:0"',
+        )
+        self.assertEqual(changed_result["etag"], '"builtin:1:1"')
+        self.assertEqual(changed_result["changeImpact"], "semantic_detection")
+        self.assertTrue(changed_result["historicalScanRequired"])
+        reset_result = client.reset_builtin_sensitive_rule(
+            "person_name", etag='"builtin:1:1"',
+            acknowledge_similar_rule_id="csr_similar",
+        )
+        self.assertEqual(reset_result["etag"], '"builtin:1:2"')
+        put, post = [entry[0] for entry in opener.requests[1:]]
+        self.assertTrue(put.full_url.endswith("/rules/built-in/person_name"))
+        self.assertEqual(put.get_header("If-match"), '"builtin:1:0"')
+        self.assertEqual(json.loads(put.data), {"enabled": False})
+        self.assertTrue(post.full_url.endswith("/rules/built-in/person_name:reset"))
+        self.assertEqual(post.get_header("If-match"), '"builtin:1:1"')
+        self.assertEqual(post.get_header("X-acknowledge-similar-rule-id"), "csr_similar")
+        self.assertIsNone(post.data)
+
+    def test_builtin_rule_rejects_invalid_etags_fields_and_mismatched_response(self):
+        client, opener = self.client([])
+        for etag in ('"1"', '"builtin:1:0"\r\nX-Hijack: yes', 'W/"builtin:1:0"'):
+            with self.assertRaisesRegex(DataAgentRagV2Error, "INVALID_SENSITIVE_RULE_ETAG"):
+                client.update_builtin_sensitive_rule("person_name", {"enabled": False}, etag=etag)
+        for payload in ({"ruleId": "person_name"}, {"masking": {"strategy": "full"}},
+                        {"enabled": "false"}):
+            with self.assertRaisesRegex(DataAgentRagV2Error, "INVALID_SENSITIVE_RULE_INPUT"):
+                client.update_builtin_sensitive_rule(
+                    "person_name", payload, etag='"builtin:1:0"')
+        self.assertEqual(opener.requests, [])
+
+        current = _rule("person_name", source="built_in")
+        client, _ = self.client([_Response(200, _success(current),
+                                          {"ETag": '"builtin:2:0"'})])
+        with self.assertRaisesRegex(DataAgentRagV2Error, "INVALID_SENSITIVE_RULE_ETAG"):
+            client.get_sensitive_rule("person_name")
+
+    def test_rollout_status_start_retry_use_latest_revision_and_idempotency(self):
+        revision = "sensitive-detector-v2:" + "a" * 24
+        pending = {"state": "pending", "scanEnabled": True, "applying": False,
+                   "historicalScanRequired": True, "retryAvailable": False,
+                   "targetDetectorRevision": revision}
+        applying = {**pending, "state": "applying", "applying": True,
+                    "historicalScanRequired": False}
+        failed = {**pending, "state": "failed", "historicalScanRequired": False,
+                  "retryAvailable": True}
+        client, opener = self.client([
+            _Response(200, _success(pending)),
+            _Response(202, _success(applying)),
+            _Response(202, _success(failed)),
+        ])
+        self.assertEqual(client.get_sensitive_rollout_status(), pending)
+        self.assertEqual(client.start_sensitive_rollout(
+            revision, idempotency_key="rollout-start-0001"), applying)
+        self.assertEqual(client.retry_sensitive_rollout(
+            revision, idempotency_key="rollout-retry-0001"), failed)
+        start, retry = [entry[0] for entry in opener.requests[1:]]
+        self.assertTrue(start.full_url.endswith("/sensitive-delivery/rollout:start"))
+        self.assertEqual(start.get_header("Idempotency-key"), "rollout-start-0001")
+        self.assertEqual(json.loads(start.data), {
+            "expectedDetectorRevision": revision, "confirmHistoricalScan": True,
+        })
+        self.assertTrue(retry.full_url.endswith("/sensitive-delivery/rollout:retry"))
+        self.assertEqual(retry.get_header("Idempotency-key"), "rollout-retry-0001")
+        self.assertEqual(json.loads(retry.data), {
+            "expectedDetectorRevision": revision, "confirmRetry": True,
+        })
+
+    def test_rollout_rejects_untrusted_revision_or_response(self):
+        client, opener = self.client([])
+        with self.assertRaisesRegex(DataAgentRagV2Error, "INVALID_SENSITIVE_ROLLOUT_REVISION"):
+            client.start_sensitive_rollout("sensitive-detector-v2:wrong",
+                                           idempotency_key="rollout-start-0001")
+        self.assertEqual(opener.requests, [])
+        bad = {"state": "failed", "scanEnabled": True, "applying": False,
+               "historicalScanRequired": False, "retryAvailable": False,
+               "targetDetectorRevision": "sensitive-detector-v2:" + "a" * 24}
+        client, _ = self.client([_Response(200, _success(bad))])
+        with self.assertRaisesRegex(DataAgentRagV2Error,
+                                    "INVALID_SENSITIVE_ROLLOUT_STATUS_RESPONSE"):
+            client.get_sensitive_rollout_status()
 
 
 if __name__ == "__main__":
