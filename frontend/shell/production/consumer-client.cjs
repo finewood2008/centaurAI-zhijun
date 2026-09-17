@@ -286,6 +286,15 @@ async function createConsumerClient({ config, store, fetchImpl = fetch, timeoutM
         && !(modernEnvelope && envelope.code === undefined && typeof envelope.success === 'boolean'))
         || (modernEnvelope && (typeof envelope.success !== 'boolean'
           || (envelope.success && envelope.errorCode != null)))) fail();
+      // Admin's global exception handler can return a legacy code:500 envelope
+      // (even with HTTP 200), without V2 request IDs or a UTC serverTime. Treat
+      // that as a service failure before V2 metadata validation; never expose
+      // the remote diagnostic. Known pairing errors retain their typed path.
+      if (route.startsWith('/app-api/v1/') && envelope.success === false && !PAIRING_ERROR_CODES.has(envelope.errorCode)
+          && ((response.status >= 500 && response.status <= 599)
+            || (envelope.code >= 500 && envelope.code <= 599))) {
+        throw new DesktopError('ACCOUNT_SERVICE_UNAVAILABLE', { phase: 'account_service', httpStatus: response.status });
+      }
       const headerRequestId = response.headers.get('x-request-id') || response.headers.get('request-id');
       if (headerRequestId && envelope.requestId && headerRequestId !== envelope.requestId) fail();
       return { code: response.ok ? (envelope.code === undefined || envelope.code === 0 ? 200 : envelope.code) : response.status,

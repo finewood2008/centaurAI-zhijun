@@ -616,6 +616,35 @@ test('a gated bootstrap never falls back to the legacy device list', async () =>
   await client.dispose();
 });
 
+test('bootstrap legacy server failures preserve login and report service unavailability without leaking SQL', async () => {
+  for (const status of [200, 500]) {
+    const store = memoryStore(); const routes = []; let failed = true;
+    const client = await createConsumerClient({ config, store, fetchImpl: async (url, init) => {
+      if (url.endsWith('/login')) return reply(token());
+      routes.push(new URL(url).pathname); verifySigned(store, url, init);
+      assert.ok(url.endsWith('/app-api/v1/sync/bootstrap'));
+      return failed ? new Response(JSON.stringify({ code: 500, success: false,
+        msg: 'private SQL diagnostic: Unknown column synthetic_private_column',
+        time: '2026-09-17T14:01:52.526194' }),
+      { status, headers: { 'content-type': 'application/json' } }) : bootstrapReply([device]);
+    } });
+    await client.signIn(credentials);
+    await assert.rejects(client.listDevices(), error => {
+      assert.equal(error.code, 'ACCOUNT_SERVICE_UNAVAILABLE');
+      assert.equal(error.httpStatus, status);
+      assert.equal(error.phase, 'account_service');
+      assert.equal(JSON.stringify(toPublicError(error)).includes('synthetic_private_column'), false);
+      assert.equal(error.message.includes('private SQL'), false);
+      return true;
+    });
+    assert.equal((await store.load()).accessToken, 'access-1');
+    failed = false;
+    assert.equal((await client.listDevices()).length, 1);
+    assert.deepEqual(routes, Array(2).fill('/prod-api/app-api/v1/sync/bootstrap'));
+    await client.dispose();
+  }
+});
+
 test('a late bootstrap result after another login cannot expose cached authorization', async () => {
   const store = memoryStore(); const entered = deferred(); const pending = deferred();
   const client = await createConsumerClient({ config, store, fetchImpl: async url => {

@@ -37,7 +37,7 @@ function fixture(overrides = {}) {
   const ids = ['result', 'scan', 'cancel-scan', 'disconnect', 'read-status', 'scan-networks',
     'submit-wifi', 'security', 'password', 'availability', 'legacy-row', 'test-build-warning',
     'secure-notice', 'candidates', 'device-actions', 'device-info', 'networks', 'wifi', 'ssid', 'legacy',
-    'mode-description', 'physical-confirmation-panel', 'physical-confirmation', 'physical-code',
+    'mode-description', 'physical-confirmation-panel', 'physical-confirmation',
     'confirm-physical', 'wifi-panel', 'ownership-panel', 'confirm-ownership', 'v2-progress',
     'v2-state', 'v2-guidance', 'refresh-state', 'scan-status']
   const elements = Object.fromEntries(ids.map(id => [id, new FakeElement()]))
@@ -137,7 +137,7 @@ test('test-only warning and plaintext control stay hidden in a production build'
   assert.match(testBuild.elements['secure-notice'].textContent, /Wi-Fi 密码不会被端到端加密/)
 })
 
-test('formal flow confirms the physical code and renders only allowlisted preview fields', async () => {
+test('formal flow requires explicit physical confirmation without a code and renders only allowlisted preview fields', async () => {
   let confirmed
   let selected
   const f = fixture({
@@ -145,10 +145,11 @@ test('formal flow confirms the physical code and renders only allowlisted previe
     scan: async () => [{ candidateId: 'opaque-candidate-1', name: 'CentaurOS-Setup-123456', shortCode: '123456' }],
     select: async candidateId => { selected = candidateId },
     begin: async () => ({ preview: {
-      name: 'CentaurOS-Setup-123456', shortCode: '123456', publicKeyFingerprint: 'safe-fingerprint',
+      name: 'CentaurOS-Setup-123456', deviceId: 'centauros-abcdef123456abcdef123456',
+      shortCode: '123456', publicKeyFingerprint: 'safe-fingerprint',
       reason: 'RAW_DEVICE_REASON_MUST_NOT_RENDER', secret: 'RAW_SECRET_MUST_NOT_RENDER',
     } }),
-    confirmPhysicalDevice: async code => { confirmed = code; return { state: 'awaitingWifi' } },
+    confirmPhysicalDevice: async (...args) => { confirmed = args; return { state: 'awaitingWifi' } },
   })
 
   f.elements.scan.click()
@@ -161,16 +162,12 @@ test('formal flow confirms the physical code and renders only allowlisted previe
   assert.equal(f.elements['physical-confirmation-panel'].hidden, false)
   assert.equal(f.elements['wifi-panel'].hidden, true)
   assert.match(f.elements['device-info'].textContent, /CentaurOS-Setup-123456/)
+  assert.match(f.elements['device-info'].textContent, /centauros-abcdef123456abcdef123456/)
   assert.doesNotMatch(f.elements['device-info'].textContent, /RAW_DEVICE_REASON|RAW_SECRET/)
-  assert.equal(f.elements['confirm-physical'].disabled, true)
-
-  f.elements['physical-code'].value = '123456'
-  f.elements['physical-code'].emit('input')
   assert.equal(f.elements['confirm-physical'].disabled, false)
   f.elements['physical-confirmation'].emit('submit')
-  assert.equal(f.elements['physical-code'].value, '', 'physical confirmation code clears before awaiting IPC')
   await flush(); await flush()
-  assert.equal(confirmed, '123456')
+  assert.deepEqual(confirmed, [])
   assert.equal(f.elements['physical-confirmation-panel'].hidden, true)
   assert.equal(f.elements['wifi-panel'].hidden, false)
   assert.equal(f.elements['v2-state'].textContent, '可以设置 Wi-Fi')

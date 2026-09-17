@@ -27,13 +27,15 @@ function abortError() { return new DOMException('Aborted', 'AbortError') }
 function projectPreview(value) {
   if (!plain(value)) return undefined
   const name = value.display_name === 'CentaurAI Box' ? value.display_name : undefined
-  const shortCode = typeof value.verification_code === 'string' && /^\d{6}$/.test(value.verification_code)
-    ? value.verification_code : undefined
+  const deviceIdSuffix = typeof value.device_id === 'string' ? value.device_id.slice(-6) : ''
+  const shortCode = /^[A-Za-z0-9]{6}$/.test(deviceIdSuffix) ? deviceIdSuffix.toUpperCase() : undefined
+  const deviceId = typeof value.device_id === 'string' && /^[A-Za-z0-9._-]{1,36}$/.test(value.device_id)
+    ? value.device_id : undefined
   const publicKeyFingerprint = typeof value.identity_public_key_sha256 === 'string'
     && /^[a-f0-9]{64}$/.test(value.identity_public_key_sha256)
     ? value.identity_public_key_sha256 : undefined
-  if (!name || !shortCode || !publicKeyFingerprint) return undefined
-  return Object.freeze({ name, shortCode, publicKeyFingerprint,
+  if (!name || !deviceId || !shortCode || !publicKeyFingerprint) return undefined
+  return Object.freeze({ name, deviceId, shortCode, publicKeyFingerprint,
     macSuffix: typeof value.serial_suffix === 'string' ? value.serial_suffix.slice(0, 16) : '',
     hardwareProfile: typeof value.model === 'string' ? value.model.slice(0, 64) : '',
     state: value.network_state === 'connected' ? 'connected' : 'unprovisioned' })
@@ -263,8 +265,8 @@ function createProvisioningBroker({ ipcMain, window, provisioningContext, provis
         clientId: provisioningContext.clientId, clientPlatform: 'electron' }, new AbortController().signal)
       beginResponse = true
     } else if (action === 'confirmPhysicalDevice') {
-      if (!exact(input, ['verificationCode']) || !/^\d{6}$/.test(input.verificationCode)) throw new Error('VERIFICATION_CODE_MISMATCH')
-      await coordinator.confirmPhysicalDevice(input, new AbortController().signal)
+      if (input !== undefined) throw new Error('CLAIM_INPUT_MISMATCH')
+      await coordinator.confirmPhysicalDevice(new AbortController().signal)
     } else if (action === 'provideWifi') {
       const wifi = validateWifi(input)
       try { await coordinator.provideWifi(wifi) } catch (error) { wifi.passwordUtf8?.fill(0); throw error }

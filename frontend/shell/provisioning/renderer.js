@@ -45,17 +45,15 @@ const ERROR_MESSAGES = Object.freeze({
   DEVICE_ALREADY_OWNED: '这台盒子已有归属，不能作为新盒子再次认领。',
   DEVICE_NOT_CLAIMABLE: '这台盒子当前不能认领，请核对交付状态。',
   SETUP_WINDOW_CLOSED: '盒子的配网窗口已关闭，请按设备说明重新进入配网模式。',
-  VERIFICATION_CODE_MISMATCH: '盒身确认码不正确，请核对 6 位数字。',
   PROVISIONING_INVALID_WIFI_CREDENTIALS: '请检查 Wi-Fi 名称、安全类型和密码。',
   PROVISIONING_LEGACY_CONFIRMATION_REQUIRED: '配网协议 v1 的明文兼容模式需要再次确认。',
   PROVISIONING_STATUS_TIMEOUT: '盒子尚未确认联网结果，请检查路由器和盒子状态。',
   PROVISIONING_AUTHENTICATION_FAILED: '无法认证这台盒子，请重新进入配网模式后再试。',
-  PROVISIONING_PHYSICAL_CODE_INVALID: '盒身确认码不正确，请核对 6 位数字。',
   PROVISIONING_WIFI_AUTHENTICATION_FAILED: '盒子未能连接 Wi-Fi，请检查网络名称和密码。',
   PROVISIONING_OWNERSHIP_CONFLICT: '这台盒子暂时无法绑定到当前账号，请联系管理员处理。',
   PROVISIONING_CLOUD_UNAVAILABLE: '盒子暂时无法连接服务，请检查网络后重试。',
   UNSUPPORTED_NETWORK_SECURITY: '当前网络安全类型不受支持，请选择开放网络或 WPA/WPA2 个人网络。',
-  HELLO_CONTEXT_EXPIRED: '盒子的安全会话已过期，请重新扫描并核对盒身确认码。',
+  HELLO_CONTEXT_EXPIRED: '盒子的安全会话已过期，请重新扫描并核对设备短码。',
   REQUESTED_OPS_MISMATCH: '盒子固件与当前知君版本的安全能力不匹配，请先更新盒子固件。',
   PROVISIONING_CANCELLED: '已取消本次配网。',
   PROVISIONING_NOT_STARTED: '请先扫描并确认眼前的盒子。',
@@ -67,7 +65,7 @@ const ERROR_MESSAGES = Object.freeze({
 
 const FORMAL_STATES = Object.freeze({
   idle: ['准备开始', '打开盒子的配网模式，然后扫描附近盒子。'],
-  authenticating: ['正在认证盒子', '请核对设备信息，并输入盒身显示的 6 位数字。'],
+  authenticating: ['正在认证盒子', '请核对设备信息与眼前盒子的固定设备短码，然后确认。'],
   awaitingWifi: ['可以设置 Wi-Fi', '网络密码只在加密会话中发送，提交后会立即从页面清除。'],
   awaitingOwnershipConfirmation: ['等待确认绑定', '确认后，这台盒子会绑定到当前知君账号。'],
   waitingCloud: ['正在等待盒子上线', '盒子正在连接网络和服务，请保持通电。'],
@@ -106,7 +104,7 @@ function safeScalar(value, maxLength = 160) {
 
 function renderPreview(preview) {
   const visible = {}
-  const fields = ['name', 'shortCode', 'macSuffix', 'publicKeyFingerprint', 'centaurosVersion', 'hardwareProfile', 'state']
+  const fields = ['name', 'deviceId', 'shortCode', 'macSuffix', 'publicKeyFingerprint', 'centaurosVersion', 'hardwareProfile', 'state']
   for (const field of fields) {
     const value = safeScalar(preview?.[field])
     if (value !== undefined) visible[field] = value
@@ -135,7 +133,7 @@ function renderFormalSnapshot(snapshot) {
     element('scan-status').textContent = '已选择盒子，但本次连接未完成。请查看下方原因。'
   } else if (hasPreview && discoveryState === 'selected') {
     element('scan-status').textContent = state === 'authenticating' && !physicalConfirmed
-      ? '已读取设备信息，请继续核对盒身确认码。' : '已选择盒子，请查看下方配网进度。'
+      ? '已读取设备信息，请核对眼前盒子的固定设备短码。' : '已选择盒子，请查看下方配网进度。'
   }
   element('v2-progress').hidden = false
   element('v2-progress').classList.toggle('attention', state === 'attentionRequired')
@@ -154,7 +152,7 @@ function updateControls() {
     element('disconnect').disabled = !formalSessionActive || formalRestartRequired
     element('read-status').disabled = true
     element('scan-networks').disabled = true
-    element('confirm-physical').disabled = busy || !/^\d{6}$/.test(element('physical-code').value)
+    element('confirm-physical').disabled = busy || !hasPreview || physicalConfirmed || formalState !== 'authenticating'
     element('submit-wifi').disabled = busy || formalState !== 'awaitingWifi'
     element('confirm-ownership').disabled = busy || formalState !== 'awaitingOwnershipConfirmation'
     element('refresh-state').disabled = busy || !formalSessionActive || formalRestartRequired
@@ -216,7 +214,7 @@ function applyMode() {
     element('legacy').checked = false
     element('device-actions').hidden = true
     element('wifi-panel').hidden = true
-    element('mode-description').textContent = '打开盒子的配网模式，由知君建立加密会话。请核对盒身 6 位数字后，再设置网络并确认绑定。'
+    element('mode-description').textContent = '打开盒子的配网模式，由知君建立加密会话。请核对设备短码并确认眼前的盒子，再设置网络并确认绑定。'
     element('secure-notice').textContent = '知君只会通过已认证的加密会话发送网络设置；Wi-Fi 密码提交后会立即从页面清除。'
     renderFormalSnapshot({ state: 'idle' })
   } else {
@@ -288,7 +286,7 @@ function renderFormalCandidates(devices, selectable = true) {
         renderPreview(preview)
         if (response?.snapshot && typeof response.snapshot === 'object') renderFormalSnapshot(response.snapshot)
         else renderFormalSnapshot({ state: 'authenticating' })
-        show('已找到盒子。请核对设备信息，并输入盒身 6 位数字。')
+        show('已找到盒子。请核对设备信息与眼前盒子的固定设备短码。')
       })
     })
     item.append(button)
@@ -424,7 +422,6 @@ function resetFormal() {
   hasPreview = false
   physicalConfirmed = false
   element('password').value = ''
-  element('physical-code').value = ''
   renderPreview(null)
   renderFormalSnapshot({ state: formalRestartRequired ? 'cancelled' : 'idle' })
 }
@@ -476,15 +473,11 @@ element('disconnect').addEventListener('click', () => {
   })
 })
 
-element('physical-code').addEventListener('input', updateControls)
 element('physical-confirmation').addEventListener('submit', event => {
   event.preventDefault()
   void run(async epoch => {
-    const code = element('physical-code').value
-    element('physical-code').value = ''
-    if (!/^\d{6}$/.test(code)) throw Object.assign(new Error(), { code: 'PROVISIONING_PHYSICAL_CODE_INVALID' })
     renderFormalSnapshot({ state: 'authenticating' })
-    const snapshot = await api.confirmPhysicalDevice(code)
+    const snapshot = await api.confirmPhysicalDevice()
     if (epoch !== operationEpoch) return
     physicalConfirmed = true
     renderFormalSnapshot(snapshot && typeof snapshot === 'object' ? snapshot : { state: 'awaitingWifi' })
