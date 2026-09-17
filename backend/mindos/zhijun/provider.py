@@ -658,16 +658,33 @@ def _fake_allowed() -> bool:
     return os.environ.get("MINDOS_RUNTIME_ENV", "").strip().lower() != "production"
 
 
+def workspace_provider(*, local_only=False) -> ChatProvider:
+    """Resolve workspace models only through the authenticated DE capability."""
+    from zhijun_worker.capabilities import CapabilityError
+    from zhijun_worker.model import CapabilityProvider
+
+    try:
+        return CapabilityProvider(local_only=local_only)
+    except CapabilityError as exc:
+        raise ProviderError("工作区模型服务暂时不可用，请重新读取模型设置", code=exc.code,
+                            status_code=exc.status, retryable=exc.status in {429, 502, 503, 504}) from None
+
+
 def build_provider(snapshot=None) -> ChatProvider:
     """按环境变量与设置页快照选择模型通道。
 
-    工作区 worker 与 Web 复用 HTTP 通道，但配置只能来自工作区设置快照。
+    工作区 worker 通过已鉴权 DE 能力读取配置与调用模型。
     - ``ZHIJUN_PROVIDER=fake``：演示模型（生产环境拒绝）。
     - ``ZHIJUN_PROVIDER=anthropic``：本机网络边界禁止，明确报错。
     - ``ZHIJUN_PROVIDER=openai`` 或设置页「外部问答」已开启且 provider=openai：OpenAI 兼容通道。
     - 其余：本地 Ollama（沿用材料通道快照的地址与模型）。
     """
     workspace = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
+    if workspace:
+        if snapshot is not None:
+            raise ProviderError("工作区模型配置必须重新从模型服务读取", code="WORKSPACE_MODEL_SNAPSHOT_FORBIDDEN",
+                                status_code=409, retryable=False)
+        return workspace_provider()
     override = "" if workspace else os.environ.get("ZHIJUN_PROVIDER", "").strip().lower()
     if override == "fake":
         if not _fake_allowed():

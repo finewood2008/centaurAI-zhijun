@@ -1,7 +1,25 @@
 // 回复出处小图的数据整形回归：分组、上限、线宽、空态。
 // 运行：node --experimental-strip-types tests/provenance-graph.test.mjs
 import assert from 'node:assert/strict'
-import { MAX_SHOWN, groups, isEmpty, lineWidth, normalizeProvenance, provenanceCharterSummary, provenanceMemorySummary, truncateTitle } from '../src/shared/provenanceGraph.ts'
+import { MAX_SHOWN, groups, isEmpty, lineWidth, matterPermissionNotice, normalizeProvenance, provenanceCharterSummary, provenanceMemorySummary, truncateTitle } from '../src/shared/provenanceGraph.ts'
+
+{
+  const excluded = { id: 'matter_private', title: 'PRIVATE_MATTER_TITLE', kind: 'matter', restricted: true, reason: '按默认方式跳过未授权资料，原记录保留' }
+  const contextPlan = { revision: 'r1', stage: 'initial', delivery: 'provided', providedRefs: [], excluded: [excluded] }
+  const notice = matterPermissionNotice({ contextPlan })
+  assert.match(notice, /有事情记录.*未提供给在线模型/)
+  assert.match(notice, /核对本轮授权/)
+  assert.ok(!notice.includes(excluded.title) && !notice.includes(excluded.id))
+  for (const replacement of [{ kind: 'material' }, { restricted: false }, { reason: '来源已失效' }]) {
+    assert.equal(matterPermissionNotice({ contextPlan: { ...contextPlan, excluded: [{ ...excluded, ...replacement }] } }), '')
+  }
+  assert.equal(matterPermissionNotice({ contextPlan: { ...contextPlan, delivery: 'awaiting_authorization' } }), '')
+  const provided = { citationId: 'p1', kind: 'matter', id: 'permitted', version: 'v1', title: '已授权事项', text: '获准的内容' }
+  const mixed = matterPermissionNotice({ contextPlan: { ...contextPlan, evidence: [provided], providedRefs: ['p1'] } })
+  assert.equal(mixed, notice, 'an omitted matter must not imply all matters were withheld')
+  assert.ok(!mixed.includes('没有向在线模型提供相关事情记录'))
+  assert.equal(matterPermissionNotice(null), '')
+}
 
 const claim = (i, over = {}) => ({ id: `clm_${i}`, content: `理解 ${i}`, section: 'matters', layer: 'self_declared', ...over })
 

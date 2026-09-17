@@ -1,4 +1,6 @@
-"""Workspace chat uses Web transports and exclusively workspace model settings."""
+"""Legacy non-workspace saved profiles retain their HTTP transport contracts.
+
+Workspace factory authority is covered by test_workspace_capability_provider_entrypoints."""
 from __future__ import annotations
 
 import io
@@ -13,19 +15,15 @@ from mindos.zhijun import provider as providers
 from mindos.zhijun.routing import EGRESS_PERMIT
 
 
-class WorkspaceProviderTests(unittest.TestCase):
+class SavedProfileTransportTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {
-            "ZHIJUN_WORKSPACE_ID": "workspace-test",
             "MINDOS_RUNTIME_ENV": "production",
-            "ZHIJUN_PROVIDER": "fake",
+            "ZHIJUN_PROVIDER": "",
             "ZHIJUN_OPENAI_BASE_URL": "https://wrong.invalid/v1",
             "ZHIJUN_OPENAI_MODEL": "wrong-model",
             "ZHIJUN_OPENAI_API_KEY": "wrong-secret",
             "ZHIJUN_OPENAI_TASK_MODEL": "wrong-task-model",
-            "ZHIJUN_OPENAI_TIMEOUT": "1",
-            "ZHIJUN_OPENAI_THINKING": "deepseek",
-            "ZHIJUN_LOCAL_NUM_CTX": "1",
         }, clear=True)
         self.env.start()
         self.addCleanup(self.env.stop)
@@ -33,14 +31,14 @@ class WorkspaceProviderTests(unittest.TestCase):
                                      timeout_seconds=40, keep_alive=0, context_window=4096)
         self.snap = SimpleNamespace(provider="openai", external_enabled=True,
             base_url="https://workspace.invalid/v1", model="workspace-model", timeout_seconds=23,
-            secret_ref="workspace-secret-ref", external_provider_id=None, local=self.local)
+            secret_ref="workspace-secret-ref", external_provider_id="saved-profile", local=self.local)
         self.runtime = Mock()
         self.runtime.get_chat_snapshot.return_value = self.snap
         self.runtime.resolve_api_key.return_value = "workspace-secret"
         factory = patch.object(providers, "get_provider", return_value=self.runtime)
         factory.start()
         self.addCleanup(factory.stop)
-        # Any accidentally retained DE model dependency must fail, without network access.
+        # Non-workspace Web transport must not acquire a workspace capability.
         capabilities = patch("zhijun_worker.capabilities.require", side_effect=AssertionError("DE model must not be called"))
         capabilities.start()
         self.addCleanup(capabilities.stop)
@@ -48,18 +46,15 @@ class WorkspaceProviderTests(unittest.TestCase):
         self.addCleanup(EGRESS_PERMIT.reset, token)
         self.req = providers.ChatRequest(system="system", messages=[{"role": "user", "content": "test"}])
 
-    def test_workspace_online_ignores_all_environment_model_overrides(self):
-        for override in ("fake", "anthropic", "ollama", "openai"):
-            with self.subTest(override=override), patch.dict(os.environ, {"ZHIJUN_PROVIDER": override}):
-                actual = providers.build_provider()
-                self.assertIsInstance(actual, providers.OpenAICompatibleProvider)
-                self.assertEqual(actual._base_url, self.snap.base_url)
-                self.assertEqual(actual.model, "workspace-model")
-                self.assertEqual(actual.task_model, "workspace-model")
-                self.assertEqual(actual._api_key, "workspace-secret")
-                self.assertEqual(actual._timeout, 23)
-                self.assertEqual(actual._thinking, "off")
-                self.assertRegex(actual.configuration_revision, r"^[a-f0-9]{64}$")
+    def test_saved_profile_does_not_borrow_ambient_endpoint_model_or_key(self):
+        actual = providers.build_provider()
+        self.assertIsInstance(actual, providers.OpenAICompatibleProvider)
+        self.assertEqual(actual._base_url, self.snap.base_url)
+        self.assertEqual(actual.model, "workspace-model")
+        self.assertEqual(actual.task_model, "workspace-model")
+        self.assertEqual(actual._api_key, "workspace-secret")
+        self.assertEqual(actual._timeout, 23)
+        self.assertRegex(actual.configuration_revision, r"^[a-f0-9]{64}$")
 
     def test_configuration_revision_is_stable_opaque_and_changes_on_rotation(self):
         original = providers.build_provider().configuration_revision
@@ -70,7 +65,7 @@ class WorkspaceProviderTests(unittest.TestCase):
                 self.assertNotEqual(providers.build_provider().configuration_revision, original)
         self.assertNotIn("workspace-secret", original)
 
-    def test_workspace_incomplete_online_config_never_borrows_global_settings(self):
+    def test_saved_profile_incomplete_online_config_never_borrows_global_settings(self):
         for field in ("base_url", "model", "key"):
             with self.subTest(field=field):
                 if field == "key":
@@ -82,7 +77,7 @@ class WorkspaceProviderTests(unittest.TestCase):
                     providers.build_provider()
                 self.assertEqual(raised.exception.code, "PROVIDER_MISCONFIGURED")
 
-    def test_workspace_local_uses_existing_configured_service(self):
+    def test_saved_profile_local_choice_uses_configured_service(self):
         self.snap.external_enabled = False
         with patch.dict(os.environ, {"ZHIJUN_PROVIDER": "openai"}):
             actual = providers.build_provider()
@@ -90,16 +85,9 @@ class WorkspaceProviderTests(unittest.TestCase):
         self.assertFalse(actual.external)
         self.assertEqual(actual._base_url, self.local.base_url)
         self.assertEqual(actual.model, "npu-model")
-        self.assertEqual(actual._num_ctx, 4096)
+        self.assertEqual(actual._num_ctx, providers.DEFAULT_LOCAL_NUM_CTX)
         self.assertEqual(actual._timeout, 40)
         self.runtime.resolve_api_key.assert_not_called()
-
-    def test_workspace_missing_local_model_does_not_guess_a_cpu_model(self):
-        self.snap.external_enabled = False
-        self.local.model = ""
-        with self.assertRaises(providers.ProviderError) as raised:
-            providers.build_provider()
-        self.assertEqual(raised.exception.code, "PROVIDER_MISCONFIGURED")
 
     def test_online_stream_reuses_sse_and_actual_transport_authorization(self):
         permit = Mock()

@@ -2411,7 +2411,7 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": false
     },
     {
@@ -2424,7 +2424,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2437,7 +2437,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2450,7 +2450,7 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": false
     },
     {
@@ -2463,7 +2463,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2480,7 +2480,7 @@
       "response": "json",
       "maxRequestBytes": 0,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2495,7 +2495,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2510,7 +2510,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {
@@ -2525,7 +2525,7 @@
       "response": "json",
       "maxRequestBytes": 524288,
       "maxResponseBytes": 524288,
-      "capability": "domain",
+      "capability": "models",
       "mutating": true
     },
     {

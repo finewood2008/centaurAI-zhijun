@@ -2312,7 +2312,7 @@ export interface ContextPlan {
   evidence: ContextItem[]
   providedRefs: string[]
   citedRefs: string[]
-  excluded: Array<{ id?: string; title?: string; reason: string }>
+  excluded: Array<{ id?: string; kind?: string; title?: string; reason: string; restricted?: boolean }>
   stage: 'initial' | 'supplemented' | 'lookup_unavailable'
   delivery?: 'prepared' | 'provided' | 'awaiting_authorization' | 'paused'
   lookupNotice?: string

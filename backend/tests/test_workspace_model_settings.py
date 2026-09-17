@@ -1,4 +1,7 @@
-"""Workspace-owned chat settings through the authenticated product dispatcher."""
+"""Legacy runtime settings adapter and secret-store isolation.
+
+The product catalog now routes model settings to DE. The explicit adapter fixture
+here retains migration/old database behavior; it is not the production route."""
 import json
 import os
 from pathlib import Path
@@ -37,6 +40,14 @@ class NoDE:
     stream = call
 w = Workspace(wid, account, 'device-model-test', 1, root, b'k'*32, root/'worker.sock')
 app = create_app(w, NoDE())
+# Retain the old adapter's signed-dispatch and storage regressions explicitly.
+# Production never publishes these domain routes: the catalog is DE-owned.
+operations = json.loads((Path.cwd().parent/'frontend/shared/product-operations.json').read_text())['operations']
+legacy = {item['id']: item for item in operations
+          if item['path'].startswith(('/api/system/models/chat-provider', '/api/system/models/external-providers'))}
+assert len(legacy) == 9 and all(item['capability']=='models' for item in legacy.values())
+assert not set(legacy) & set(app.catalog)
+app.catalog.update({key: {**item, 'capability':'domain'} for key,item in legacy.items()})
 def dispatch(client, op, body=None, params=None, proof=True, query=None):
     raw = json.dumps(dict(version=1, requestId='model-settings-test', operationId=op,
         params=params or {}, query=query or {}, body=body)).encode()
@@ -112,7 +123,7 @@ with TestClient(app) as client:
 '''
 
 
-def test_signed_settings_two_workspaces_and_restart(tmp_path):
+def test_legacy_settings_adapter_two_workspaces_and_restart(tmp_path):
     backend = Path(__file__).resolve().parents[1]
     foreign = ""
     for account, action in (("a", "create"), ("b", "create"), ("a", "reopen")):

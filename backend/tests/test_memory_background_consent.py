@@ -1,4 +1,4 @@
-"""Production workspace memory uses Zhijun authorization, never DE model grants."""
+"""Workspace background memory preserves source authorization across DE model capabilities."""
 import os
 from pathlib import Path
 import subprocess
@@ -7,50 +7,21 @@ import sys
 import pytest
 
 from tests.test_zhijun_worker import CHILD
+from tests.test_zhijun_worker_ports import CAPABILITY_FIXTURE
 
 
-CAPABILITIES = r'''
-class MemoryCapabilities:
-    def __init__(self):self.calls=[]
-    def call(self,name,payload):
-        self.calls.append((name,payload))
-        if name in {'domain.background.register','domain.background.finish'}:return {'ok':True}
-        if name=='materials.evidence':return []
-        if name=='retrieval.score':return {}
-        raise AssertionError('Chat/memory must not call DE model/consent/preview: '+name)
-    def stream(self,name,payload):raise AssertionError('No DE model stream')
-port=MemoryCapabilities()
-from zhijun_worker.workspace import WorkspaceLock
-initial_lock=WorkspaceLock(w);initial_lock.acquire();initial_lock.close()
-from unittest.mock import patch
-from dataclasses import replace
-from mindos.runtime_config_provider import get_provider
-from mindos.zhijun import provider as provider_module
-runtime=get_provider()
-snapshot=replace(runtime.get_chat_snapshot(),provider='openai',external_enabled=True,
-    base_url='https://synthetic-memory.invalid/v1',model='synthetic-memory',
-    external_provider_id='memory-profile',secret_ref='synthetic-ref',api_key_configured=True)
-patch.object(runtime,'get_chat_snapshot',lambda:snapshot).start()
-patch.object(runtime,'resolve_api_key',lambda snap:'synthetic-secret').start()
+CAPABILITIES = CAPABILITY_FIXTURE + r'''
+provider_module=direct_provider
 generated=[]
-def open_json(*args,**kwargs):
-    from mindos.zhijun.routing import EGRESS_PERMIT
-    permit=EGRESS_PERMIT.get()
-    assert callable(permit),'real transport boundary must be authorized'
-    preview=permit()
+def fixture_json(preview):
     assert preview['purpose']=='extract_turn' and not preview['missing']
-    assert 'deConsentRequired' not in preview
     generated.append(preview)
     text='我长期认同做决定前尊重当事人的意愿'
-    content={'entities':[], 'claims':[{
+    return {'entities':[], 'claims':[{
         'section':'principles','layer':'self_declared','predicate':'holds_principle',
         'subject':'me','object':None,'content':text,'quote':text,'confidence':0.95,
         'scope_hint':'long_term','privacy_hint':'private','merge_into':None,
         'why_it_matters':'讨论合作与个人决定时，先核对当事人的意愿和边界。','date':None}]}
-    import io
-    return io.BytesIO(json.dumps({'choices':[{'message':{'content':json.dumps(content,ensure_ascii=False)}}]}).encode())
-patch.object(provider_module.llm_transport,'allowed_urlopen',open_json).start()
-app=create_app(w,port)
 '''
 
 
@@ -97,7 +68,7 @@ SCENARIO = r'''
         response=dispatch(client,'put_api_mindos_conversations_conversation_id_routing_default_consent',
             {'enabled':False,'expectedRevision':1},cid)
         assert response.status_code==200,response.text
-    if action=='configuration_changed':snapshot=replace(snapshot,secret_ref='rotated-synthetic-ref')
+    if action=='configuration_changed':snapshot.secret_ref='rotated-synthetic-ref'
     def run_claimed():
         job=onto.claim_next_job('synthetic-worker')
         assert job['jobId']==jid,job
@@ -128,7 +99,8 @@ SCENARIO = r'''
         assert result['state']=='paused' and result['reason']=='consent_required',result
         assert not generated and not onto.list_claims(trust_states=('confirmed','working'))
         p=routes.get_preview(result['previewId'],ident)
-        assert p['missing'] and 'deConsentRequired' not in p,p
+        assert p['missing'],p
+        assert not generated and not port.receipts
         if action in {'explicit','source_changed'}:
             grant=dispatch(client,'post_api_mindos_conversations_conversation_id_routing_grant',
                 {'revision':result['previewId'],'keys':[s['key'] for s in p['sources']]},cid)
@@ -151,7 +123,8 @@ SCENARIO = r'''
         assert len(candidates)==1 and candidates[0]['trustState']=='working',candidates
         assert resume()['queuedCount']==0
     assert convs.get_message(message['id']) is not None
-    assert not any(name.startswith(('model.','models.','domain.preview','domain.consent')) for name,_ in port.calls)
+    assert any(name=='model.describe' for name,_ in port.calls)
+    assert len([1 for name,_ in port.calls if name=='model.complete_json'])==len(generated)
 '''
 
 

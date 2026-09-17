@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import heapq
 import os
+import re
 import sys
 
 from fastapi import HTTPException
@@ -55,6 +56,47 @@ def bound_matter(router, include_inactive=False):
     return snapshot, {"ref": router.ref("matter", matter["id"], version=source_version(matter)),
         "category": "matter", "title": ("正在推进 · " if matter["status"] == "active" else "回顾事项 · ") + matter["title"], "text": matter_text(matter), "score": 1.2,
         "query": "\n".join(matter[key] for key in ("title", "goal", "context", "nextStep", "outcome") if matter.get(key))[:1200]}
+
+
+def matter_candidates(router, content):
+    """Explicit current-turn discovery, without creating a conversation binding.
+
+    Generic references offer a small selection; a concrete title selects matching
+    records. Historical prose and model-generated lookup hints cannot broaden it.
+    Authorization and source versions are still checked by ContextPlan/Router.
+    """
+    from ..stores.matters_store import MattersStore, matter_text, source_version
+    text = str(content or "").strip()
+    if re.search(r"(?:不要|不用|不必|无需|别)(?:再)?(?:读取|查看|参考|查询|搜索|看|读|查)", text) or re.search(
+            r"(?:不要|不用|不必|无需|别|先不).{0,16}(?:事情|事件|事项|项目)", text):
+        return []
+    generic = bool(re.search(r"(?:我的|我(?:记录|保存|创建|正在推进)的)(?:事情|事件|事项|项目)|事情与成果", text)
+                   and re.search(r"[?？]|什么|哪些|建议|分析|查看|看到|看得|读取|查找|列出|梳理|回顾|记得", text))
+    compact = re.sub(r"\s+", "", text).casefold()
+    ranked = []
+    rows = _batches(router.onto, "SELECT id,title FROM work_matters WHERE device_scope=? AND status='active' ORDER BY updated_at DESC,id", (router.scope,))
+    for batch in rows:
+        for row in batch:
+            title = re.sub(r"\s+", "", row["title"]).casefold()
+            # Strip only conversational framing, retaining the concrete subject.
+            name = re.sub(r"^(?:我)?(?:准备|打算|计划|想)?(?:做|开展|推进)?(?:一个|一项)?", "", title)
+            name = re.sub(r"(?:的)?(?:项目|事情|事项)$", "", name)
+            named = bool(len(name) >= 4 and name in compact) or bool(len(title) >= 4 and title in compact)
+            if named or generic:
+                ranked.append((1.1 if named else .6, row["id"]))
+        # Keep spare candidates so private records do not fill all visible slots.
+        ranked = sorted(ranked, key=lambda item: -item[0])[:32]
+    store = MattersStore(router.onto, router.convs)
+    candidates = []
+    for score, ident in ranked:
+        if ranked[0][0] > 1 and score < 1:
+            continue
+        matter = store.get(ident, router.scope)
+        if matter and matter["status"] == "active":
+            candidates.append({"ref": router.ref("matter", ident, version=source_version(matter)),
+                "category": "matter", "title": "已记录事项（未关联本对话） · " + matter["title"],
+                "text": matter_text(matter), "score": score})
+    return candidates
 
 
 def artifact_candidates(router, matter_id, queries):

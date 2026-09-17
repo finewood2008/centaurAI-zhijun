@@ -19,6 +19,8 @@ SCENARIO = r'''
     from mindos.stores.conversation_store import ConversationStore
     from mindos.chat_imports import service_info
     jobs.stop_worker()
+    from zhijun_worker.capabilities import execution
+    authority=execution.set({'requestId':'synthetic-background', 'operationId':'post_api_mindos_conversations_conversation_id_messages'})
     onto=OntologyStore.instance();convs=ConversationStore.instance()
     cid={'conversationId':ident}
     original_provider=provider_module.build_provider()
@@ -48,10 +50,10 @@ SCENARIO = r'''
         same=router.prepare('extract_turn',request,refs,provider_module.build_provider(),background=True)
         assert same['revision']==authorized['revision']
     else:
-        snapshot=replace(snapshot,secret_ref='rotated-account-secret-ref')
+        snapshot.secret_ref='rotated-account-secret-ref'
         replacement=provider_module.build_provider()
         assert replacement.model==original_provider.model
-        assert replacement._base_url==original_provider._base_url
+        assert replacement.name==original_provider.name
         assert replacement.configuration_revision!=original_provider.configuration_revision
         replacement_service=service_info(replacement)['id']
         assert replacement_service!=original_service
@@ -87,7 +89,9 @@ SCENARIO = r'''
                                  revision=refreshed['revision'],background=True)
         assert permitted.complete_json(request)['claims']
         assert len(generated)==1
-    assert not any(name.startswith(('model.','models.','domain.preview','domain.consent')) for name,_ in port.calls)
+    assert any(name=='models.consent.issue' for name,_ in port.calls)
+    assert len([1 for name,_ in port.calls if name=='model.complete_json'])==len(generated)
+    execution.reset(authority)
 '''
 
 

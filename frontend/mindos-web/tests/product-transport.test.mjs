@@ -50,6 +50,35 @@ test('external Agent management reaches the signed domain catalog without exposi
   assert.throws(() => resolveOperation('/api/mindos/settings/external-agents?accountId=other'))
 })
 
+test('online model settings use the DE authority and preserve managed provider revisions without a key', async () => {
+  const load = modules(), scope = load('shared/productScope.ts')
+  scope.enableDesktopProduct(); scope.setProductScope('managed-models-test')
+  const resolveOperation = load('services/productCatalog.ts').resolveProductOperation
+  const policy = createRequire(import.meta.url)('../../shell/runtime/product-policy.cjs')
+  const calls = []
+  load('services/transport.ts').installProductTransport(async (path, init = {}) => {
+    const resolved = resolveOperation(path, init.method || 'GET')
+    const result = policy.operationRequest({ version: 1, requestId: 'managed-models-0001', operationId: resolved.operation.id,
+      params: resolved.params, query: resolved.query, body: init.body ? JSON.parse(init.body) : null })
+    assert.equal(result.operation.capability, 'models')
+    calls.push(result.value)
+    return Response.json({ providers: [], platformStatus: 'available' })
+  })
+  const api = load('services/api.ts').api
+  await api.getChatProvider()
+  await api.getExternalProviders()
+  await api.getExternalProviderModels('managed:platform', 2, undefined, 'a'.repeat(64))
+  await api.activateExternalProvider('managed:platform', { revision: 2, providerRevision: 'a'.repeat(64), model: 'approved-model', chatRevision: 3 })
+  await api.testChatProvider({})
+  assert.deepEqual(calls[2].params, { providerId: 'managed:platform' })
+  assert.deepEqual(calls[3].body, { revision: 2, providerRevision: 'a'.repeat(64), model: 'approved-model', chatRevision: 3 })
+  assert.ok(calls.every(call => !JSON.stringify(call).includes('apiKey')))
+  const catalog = JSON.parse(readFileSync(new URL('../../shared/product-operations.json', import.meta.url), 'utf8'))
+  const online = catalog.operations.filter(op => /^\/api\/system\/models\/(chat-provider|external-providers)(?:\/|$)/.test(op.path))
+  assert.equal(online.length, 9)
+  assert.ok(online.every(op => op.capability === 'models'))
+})
+
 test('material pagination traverses API, renderer catalog and actual shell policy without allowing identity query fields', async () => {
   const load = modules(), scope = load('shared/productScope.ts')
   scope.enableDesktopProduct(); scope.setProductScope('materials-pagination')

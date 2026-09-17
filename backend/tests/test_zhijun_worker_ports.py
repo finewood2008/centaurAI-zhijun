@@ -15,15 +15,23 @@ from zhijun_worker.model import CapabilityProvider
 from tests.test_zhijun_worker import CHILD, workspace
 
 
-def test_default_consent_policy_stays_in_workspace_without_de_registration(monkeypatch):
+def test_default_consent_policy_registers_same_revision_and_revokes_in_de(monkeypatch):
     from mindos import routing_routes
-    from zhijun_worker import capabilities
+    from zhijun_worker import consent
+    from mindos.zhijun.routing import PURPOSES
 
-    port = Mock(side_effect=AssertionError("consent must stay in workspace"))
+    port = Mock()
+    port.call.side_effect = lambda name, payload: {"registered": True, "revision": payload["policyRevision"]}
     monkeypatch.setenv("ZHIJUN_WORKSPACE_ID", "workspace-fixture")
-    monkeypatch.setattr(capabilities, "require", port)
+    monkeypatch.setattr(consent, "require", lambda: port)
+    revoke_receipts = Mock()
+    monkeypatch.setattr(consent, "revoke", revoke_receipts)
     store = Mock()
     store.policy.return_value = {"service": "service-fixture", "serviceName": "fixture"}
+    store.set_policy.return_value = {"revision": 5, "enabled": True, "service": "service-fixture",
+        "configurationRevision": "a" * 64, "purposes": list(PURPOSES), "includeFiles": False,
+        "includeCharter": True, "autoEgress": True}
+    store.revoke.return_value = {"revision": 6}
     router = SimpleNamespace(store=store, scope="workspace-fixture")
     provider = SimpleNamespace(name="openai", model="fixture", external=True,
                                service_id="service-fixture", configuration_revision="a" * 64)
@@ -34,9 +42,15 @@ def test_default_consent_policy_stays_in_workspace_without_de_registration(monke
         includeCharter=True, serviceId="service-fixture", expectedRevision=4)
     assert routing_routes.set_default_consent("conversation", req, None) == {"saved": True}
     assert store.set_policy.call_args.kwargs["configuration_revision"] == "a" * 64
+    assert port.call.call_args.args == ("domain.consent-policy.register", {
+        "action": "enable", "policyRevision": 5, "serviceId": "service-fixture",
+        "configurationRevision": "a" * 64, "purposes": list(PURPOSES), "includeFiles": False,
+        "includeCharter": True, "autoEgress": True})
     routing_routes.revoke("conversation", routing_routes.Revoke(key="claim:one"), None)
     store.revoke.assert_called_once_with("workspace-fixture", "claim:one")
-    port.assert_not_called()
+    revoke_receipts.assert_called_once_with("claim:one")
+    assert port.call.call_args.args == ("domain.consent-policy.register", {
+        "action": "revoke", "key": "claim:one", "policyRevision": 6})
 
 
 def test_capability_url_and_execution_binding(tmp_path):
@@ -162,58 +176,88 @@ def test_material_understanding_uses_safe_text_and_rechecks_fence(monkeypatch, f
 
 
 CAPABILITY_FIXTURE = r'''
-class SyntheticCapabilities:
-    def call(self,name,payload):
-        assert not name.startswith(('model.','models.consent.','domain.preview.','domain.consent-policy.')),name
-        if name in {'domain.background.register','domain.background.finish'}:return {'ok':True}
-        if name=='materials.evidence':return []
-        if name=='retrieval.score':return {}
-        raise AssertionError('Unimplemented fixture capability '+name)
-    def stream(self,name,payload):
-        raise AssertionError('No model stream may pass through DE: '+name)
-app=create_app(w,SyntheticCapabilities())
+import time,hashlib
 from types import SimpleNamespace
-from mindos import runtime_config_provider
 from mindos.zhijun import provider as direct_provider
 from mindos.zhijun.routing import EGRESS_PERMIT
 from mindos.chat_imports import service_info
-import io
-local=SimpleNamespace(base_url='http://127.0.0.1:18134',model='fixture-npu',timeout_seconds=3,keep_alive=0,context_window=4096)
-snapshot=SimpleNamespace(provider='openai',external_enabled=True,base_url='https://fixture.invalid/v1',
-    model='fixture-online',timeout_seconds=3,external_provider_id='fixture-account',secret_ref='workspace-fixture-secret',local=local)
-original_runtime_factory=runtime_config_provider.get_provider
-def fixture_runtime():
-    runtime=original_runtime_factory()
-    runtime.get_chat_snapshot=lambda:snapshot
-    runtime.resolve_api_key=lambda snap:'fixture-test-key'
-    return runtime
-runtime_config_provider.get_provider=fixture_runtime
-direct_provider.get_provider=fixture_runtime
+from zhijun_worker.capabilities import execution
+snapshot=SimpleNamespace(base_url='https://fixture.invalid/v1',model='fixture-online',secret_ref='workspace-fixture-secret')
 model_requests=[]
-def direct_transport(url,*,channel,**kwargs):
-    payload=json.loads(kwargs['data'])
-    assert payload['model'] in {'fixture-npu','fixture-online'}
-    assert url in {'http://127.0.0.1:18134/api/chat','https://fixture.invalid/v1/chat/completions'}
-    if channel=='chat':
-        assert callable(EGRESS_PERMIT.get())
-        EGRESS_PERMIT.get()()
-        assert kwargs['headers']['Authorization']=='Bearer fixture-test-key'
-    model_requests.append(payload)
-    if payload.get('stream'):
-        from zhijun_worker.capabilities import execution
-        assert execution.get()['requestId']=='request-test'
-        assert execution.get()['operationId']=='post_api_mindos_conversations_conversation_id_messages'
-        if channel=='chat':
-            response='data: '+json.dumps({'choices':[{'delta':{'content':'隔离模型端口测试回答。'},'finish_reason':'stop'}]})+'\ndata: [DONE]\n'
-        else:
-            response=json.dumps({'message':{'content':'隔离模型端口测试回答。'},'done':True,'done_reason':'stop'})+'\n'
-    else:
-        content=json.dumps({'claims':[],'entities':[]})
-        response=json.dumps({'choices':[{'message':{'content':content}}]} if channel=='chat' else {'message':{'content':content}})
-    return io.BytesIO(response.encode())
-direct_provider.llm_transport.allowed_urlopen=direct_transport
-def online_service():
-    return service_info(direct_provider.build_provider())['id']
+class SyntheticCapabilities:
+    def __init__(self):self.calls=[];self.previews={};self.receipts={};self.policy=None;self.background={}
+    def describe(self,local=False):
+        revision=hashlib.sha256(json.dumps([snapshot.base_url,snapshot.model,snapshot.secret_ref]).encode()).hexdigest()
+        return {'name':'ollama' if local else 'openai','model':'fixture-npu' if local else snapshot.model,
+                'external':not local,'configurationRevision':'b'*64 if local else revision,
+                'serviceId':'fixture-local' if local else revision}
+    def call(self,name,payload):
+        self.calls.append((name,payload))
+        if name=='domain.background.register':
+            assert execution.get() and execution.get().get('requestId')
+            self.background[payload['id']]={**payload,'origin':dict(execution.get())}
+            return {'registered':True}
+        if name=='domain.background.finish':self.background.pop(payload['id'],None);return {'finished':True}
+        if name=='materials.evidence':return []
+        if name=='retrieval.score':return {}
+        if name=='model.describe':return self.describe(payload['localOnly'])
+        if name=='domain.preview.register':
+            self.previews[payload['preview']['revision']]=payload['preview'];return {'registered':True}
+        if name=='domain.consent-policy.register':
+            self.policy=payload;return {'registered':True,'revision':payload['policyRevision']}
+        if name in {'models.consent.issue','models.consent.background'}:
+            if name=='models.consent.background':
+                assert set(payload)=={'backgroundId','grant'}
+                task=self.background[payload['backgroundId']]
+                assert task['origin']==execution.get()
+                payload=payload['grant']
+                assert self.policy and self.policy['action']=='enable' and self.policy['autoEgress']
+                assert payload['authorization']=={'kind':'default','policyRevision':self.policy['policyRevision']}
+                assert payload['purpose']==task['purpose'] and payload['purpose'] in self.policy['purposes']
+                assert payload['configurationRevision']==self.policy['configurationRevision']
+                assert payload['serviceId']==self.policy['serviceId']
+            else:
+                assert execution.get()['operationId']=='post_api_mindos_conversations_conversation_id_routing_grant'
+            preview=self.previews[payload['previewRevision']]
+            assert payload['configurationRevision']==preview['configurationRevision']
+            assert payload['serviceId']==preview['service']['id']
+            assert sorted(x['key'] for x in payload['selectedSources'])==sorted(x['key'] for x in preview['sources'])
+            ident='synthetic-consent-'+payload['grantId']
+            self.receipts[ident]=payload
+            return {'consentId':ident,'expiresAt':time.time()+300}
+        if name=='models.consent.revoke':self.receipts.pop(payload['consentId'],None);return {'revoked':True}
+        if name=='model.complete_json':
+            preview=self.validate_model(payload)
+            if 'fixture_json' in globals():return fixture_json(preview)
+            return {'claims':[],'entities':[]}
+        raise AssertionError('Unimplemented fixture capability '+name)
+    def validate_model(self,payload):
+        action=execution.get()
+        assert action and action.get('requestId') and action.get('operationId'),'missing verified execution'
+        assert payload['configurationRevision']==self.describe(payload['localOnly'])['configurationRevision']
+        assert not any(key in payload for key in ('apiKey','baseUrl','secret_ref'))
+        preview=None
+        if not payload['localOnly']:
+            assert callable(EGRESS_PERMIT.get())
+            preview=EGRESS_PERMIT.get()()
+            assert payload['consentId'] in self.receipts
+            grant=self.receipts[payload['consentId']]
+            assert grant['configurationRevision']==payload['configurationRevision']
+            assert grant['grantId']==payload['grantId']
+        model_requests.append({**payload,'model':self.describe(payload['localOnly'])['model']})
+        return preview
+    def stream(self,name,payload):
+        assert name=='model.stream'
+        self.validate_model(payload)
+        model_requests[-1]['stream']=True
+        yield {'type':'text','text':'隔离模型端口测试回答。'}
+        yield {'type':'done','stop_reason':'stop'}
+port=SyntheticCapabilities()
+app=create_app(w,port)
+def forbidden_direct_transport(*args,**kwargs):
+    raise AssertionError('workspace must not open a direct model HTTP transport')
+direct_provider.llm_transport.allowed_urlopen=forbidden_direct_transport
+def online_service():return port.describe()['serviceId']
 '''
 
 
@@ -237,7 +281,7 @@ def test_real_domain_sse_via_authenticated_dispatch(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_real_online_preview_grant_and_default_policy_stay_in_workspace(tmp_path):
+def test_real_online_preview_grant_and_default_policy_register_with_de(tmp_path):
     backend = Path(__file__).resolve().parents[1]
     root = tmp_path / "data"
     root.mkdir(mode=0o700)
@@ -250,13 +294,13 @@ def test_real_online_preview_grant_and_default_policy_stay_in_workspace(tmp_path
     preview=dispatch(client,'post_api_mindos_conversations_conversation_id_routing_preview',{'content':content},cid)
     assert preview.status_code==200,preview.text
     p=preview.json()
-    assert 'deConsentRequired' not in p
+    assert p['deConsentRequired'] is True
     assert 'deConsentExpiresAt' not in p
     grant=dispatch(client,'post_api_mindos_conversations_conversation_id_routing_grant',
         {'revision':p['revision'],'keys':[s['key'] for s in p['sources']]},cid)
     assert grant.status_code==200,grant.text
     fresh=dispatch(client,'post_api_mindos_conversations_conversation_id_routing_preview',{'content':content},cid).json()
-    assert 'deConsentRequired' not in fresh
+    assert fresh['deConsentRequired'] is False
     result=dispatch(client,'post_api_mindos_conversations_conversation_id_messages',
         {'content':content,'routeRevision':fresh['revision']},cid)
     assert result.status_code==200,result.text
@@ -266,7 +310,7 @@ def test_real_online_preview_grant_and_default_policy_stay_in_workspace(tmp_path
     from mindos.routing_routes import DefaultConsent,set_default_consent,Revoke,revoke
     from starlette.requests import Request
     request=Request({'type':'http','headers':[],'state':{'device_scope':'test-owner'}})
-    # Exercise the real SQLite policy write with the direct provider's opaque revision.
+    # Exercise the SQLite policy write and its DE registration with the same opaque revision.
     from mindos.zhijun.routing import Router
     from mindos.stores.ontology_store import OntologyStore
     from mindos.stores.conversation_store import ConversationStore
@@ -295,11 +339,11 @@ def test_chat_attachment_retrieval_only_still_validates_trusted_upload_handle(tm
     fixture = CAPABILITY_FIXTURE.replace("        if name=='materials.evidence':return []", """        if name in ('uploads.describe','uploads.read','materials.get','materials.read_ref'):
             raise AssertionError('retrieval-only route reached material capability')
         if name=='materials.evidence':return []""")
-    fixture = fixture.replace("app=create_app(w,SyntheticCapabilities())", """from zhijun_worker import data_agent_rag_v2
+    fixture = fixture.replace("app=create_app(w,port)", """from zhijun_worker import data_agent_rag_v2
 def no_material_client(*args,**kwargs):
     raise AssertionError('retrieval-only import attempted Data Agent upload or polling')
 data_agent_rag_v2.configured_client=no_material_client
-app=create_app(w,SyntheticCapabilities())""")
+app=create_app(w,port)""")
     script = CHILD.replace("app=create_app(w)", fixture)
     extra = '''    cid={'conversationId':ident}
     batch=dispatch(client,'post_api_mindos_conversations_conversation_id_imports',
