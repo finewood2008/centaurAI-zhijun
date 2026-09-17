@@ -26,7 +26,7 @@ files:
   - '!node_modules/@nexusaos/device-provisioning-uni/**/*'
   - production/**/*.cjs
   - runtime/**/*.cjs
-  - assets/centaur.png
+  - assets/zhijun.png
   - '!**/*.map'
 extraResources:
   - from: ../mindos-web/dist-desktop
@@ -47,7 +47,7 @@ win:
       arch: [x64]
     - target: zip
       arch: [x64]
-  icon: assets/centaur.png
+  icon: assets/zhijun.png
   requestedExecutionLevel: asInvoker
   signExecutable: true
   signtoolOptions:

@@ -5,6 +5,7 @@ import test from 'node:test'
 import { compileScript, parse } from '@vue/compiler-sfc'
 import ts from 'typescript'
 import * as Vue from 'vue'
+import { conversationNotice } from '../src/shared/conversationPresentation.ts'
 
 const componentUrl = new URL('../src/components/conversation/RagSensitiveDialog.vue', import.meta.url)
 
@@ -32,11 +33,12 @@ async function loadSetup(initialProps) {
       'const { computed, ref, watch } = __vue;',
     )
     .replace(/import BaseButton from ['"]\.\.\/ui\/BaseButton\.vue['"];?/, 'const BaseButton = {};')
+    .replace(/import \{ conversationNotice \} from ['"]@\/shared\/conversationPresentation['"];?/, '')
     .replace(/export \{ __default__ as default \};?/, '')
 
   script += '\nreturn __default__;'
 
-  const component = new Function('__vue', script)(Vue)
+  const component = new Function('__vue', 'conversationNotice', script)(Vue, conversationNotice)
   const props = Vue.reactive(initialProps)
   const events = []
   const exposed = component.setup(props, {

@@ -19,7 +19,7 @@ extraResources:
 
 mac:
   category: public.app-category.productivity
-  icon: assets/centaur.icns
+  icon: assets/zhijun.icns
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist

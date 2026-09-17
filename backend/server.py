@@ -1277,6 +1277,8 @@ from mindos.memory_routes import build_router as build_memory_router
 app.include_router(build_memory_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos.matters_routes import build_router as build_matters_router
 app.include_router(build_matters_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
+from zhijun_mcp.management import build_router as build_external_agent_router
+app.include_router(build_external_agent_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos.chat_import_routes import build_router as build_chat_import_router
 app.include_router(build_chat_import_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos.zhijun.charter import build_router as build_charter_router

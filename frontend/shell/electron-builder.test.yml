@@ -17,7 +17,7 @@ files:
   - '!provisioning/preload-formal.mjs'
   - production/**/*.cjs
   - runtime/**/*.cjs
-  - assets/centaur.png
+  - assets/zhijun.png
   - '!**/*.map'
 
 extraMetadata:

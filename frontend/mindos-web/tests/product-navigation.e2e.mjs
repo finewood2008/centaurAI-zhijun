@@ -76,15 +76,16 @@ try {
     await page.waitForFunction(title => document.title === `${title} · 知君`, label)
     assert.equal(await page.getByTestId('workspace-unavailable').count(), 1)
   }
-  await page.getByRole('link', { name: '偏好', exact: true }).click()
-  await page.waitForFunction(() => document.title === '偏好 · 知君')
-  assert.equal(await page.locator('.ws-app__content .page').count(), 0, 'offline preferences cannot mount business setup')
+  await page.getByRole('link', { name: '设置', exact: true }).click()
+  await page.waitForFunction(() => document.title === '设置 · 知君')
+  assert.equal(await page.getByTestId('box-settings').count(), 1)
+  assert.equal(await page.getByTestId('workspace-settings').count(), 0, 'offline settings cannot mount business setup')
   let before = await page.evaluate(() => window.__productTestStats.starts.length)
   assert.equal(before, 0, 'navigation and onboarding guard cannot dispatch while workspace is unavailable')
   for (const phase of ['connecting', 'authorizing', 'disconnecting']) {
     await page.evaluate(phase => window.__productTestStage(phase), phase)
     assert.equal(await navigation.count(), 1, phase + ' retains navigation')
-    assert.equal(await page.getByTestId('workspace-unavailable').count(), 1)
+    assert.equal(await page.getByTestId('box-settings').count(), 1)
     assert.equal(await page.evaluate(() => window.__productTestStats.starts.length), 0)
   }
   await page.evaluate(() => window.__productTestFail())
@@ -94,15 +95,17 @@ try {
   assert.equal(await page.evaluate(() => window.__productTestStats.starts.length), 0)
   await page.getByTestId('connect-synthetic-device').click()
   await page.getByTestId('workspace-unavailable').waitFor({ state: 'detached' })
-  const connectionStatus = page.getByRole('status').filter({ hasText: '已连接盒子' })
-  assert.match(await connectionStatus.innerText(), /合成盒子/)
+  const connectionStatus = page.locator('.product-connection')
+  await page.getByTestId('workspace-settings').waitFor()
+  assert.match(await connectionStatus.innerText(), /已连接/)
+  assert.doesNotMatch(await connectionStatus.innerText(), /合成盒子/)
   assert.doesNotMatch(await connectionStatus.innerText(), /synthetic-device/)
 
   for (const label of ['今日来信', '对话', '回看', '我的本体', '资料与边界']) {
     await navigation.getByRole('link', { name: label, exact: true }).click()
     await page.waitForFunction(title => document.title === `${title} · 知君`, label)
     await page.waitForTimeout(80)
-    assert.equal(await page.getByRole('button', { name: '切换盒子', exact: true }).count(), 1)
+    assert.equal(await page.getByRole('button', { name: '切换盒子', exact: true }).count(), 0)
   }
   for (const path of ['/settings', '/materials', '/materials/m_synthetic', '/knowledge', '/knowledge/new', '/knowledge/k_synthetic', '/recycle-bin', '/search', '/graph', '/me/charter', '/me/inbox', '/onboarding', '/onboarding/chat', '/onboarding/c/c_synthetic', '/c/c_synthetic', '/growth']) {
     await page.evaluate(path => { location.hash = path }, path)
@@ -118,6 +121,8 @@ try {
   await navigation.getByRole('link', { name: '对话', exact: true }).click()
   await page.waitForFunction(() => document.title === '对话 · 知君')
   assert.equal(await page.evaluate(() => window.__productTestStats.starts.length), before, 'offline navigation cannot create a new job')
+  await page.getByRole('link', { name: '设置', exact: true }).click()
+  await page.getByTestId('box-settings').waitFor()
   await page.getByTestId('disconnect').click()
   await page.getByTestId('connect-synthetic-device').click()
   await page.getByTestId('workspace-unavailable').waitFor({ state: 'detached' })

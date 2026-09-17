@@ -4,7 +4,7 @@ import test from 'node:test'
 import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
 
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
-const settings = await readFile(new URL('../src/pages/SettingsPage.vue', import.meta.url), 'utf8')
+const settings = await readFile(new URL('../src/components/settings/WorkspaceSettings.vue', import.meta.url), 'utf8')
 
 test('chat configuration accepts admin-managed and settings shares the API source type', () => {
   const contract = api.match(/export interface ChatProviderConfig \{([\s\S]*?)\n\}/)?.[1]

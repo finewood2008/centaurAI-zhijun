@@ -3,7 +3,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type UnwrapNestedRefs 
 import { FileText, X } from 'lucide-vue-next'
 import type { useChatImports } from '@/composables/useChatImports'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
-const props = defineProps<{ model: UnwrapNestedRefs<ReturnType<typeof useChatImports>> }>()
+import { conversationNotice } from '@/shared/conversationPresentation'
+const props = defineProps<{ conversation?: boolean; model: UnwrapNestedRefs<ReturnType<typeof useChatImports>> }>()
 const m = computed(() => props.model)
 const previewDialog = ref<HTMLDialogElement | null>(null)
 const consentNames = computed(() => m.value.consentRefs?.map(r => m.value.files.find(f => f.materialId === r.materialId && f.version === r.version)?.name || r.materialId).join('、'))
@@ -17,7 +18,7 @@ onBeforeUnmount(() => previewDialog.value?.close())
 
 <template>
   <div class="chat-files">
-    <p v-if="m.loadError" class="file-warning" role="status">文件状态暂时无法同步：{{ m.loadError }} <button @click="m.refresh()">重试</button></p>
+    <p v-if="m.loadError" class="file-warning" role="status">{{ conversation ? conversationNotice(m.loadError, '文件状态暂时无法同步') : `文件状态暂时无法同步：${m.loadError}` }} <button @click="m.refresh()">重试</button></p>
     <div v-if="m.staged.length" class="staged-files" aria-label="待发送文件">
       <div v-for="file in m.staged" :key="file.id" class="staged-file">
         <FileText :size="17" /><span>{{ file.name }}</span>
@@ -34,7 +35,7 @@ onBeforeUnmount(() => previewDialog.value?.close())
           {{ file.name }}
         </label>
       </div>
-      <p>{{ m.localOnly ? '文件讨论仅使用本地模型' : '使用外部模型前会检查文件授权' }} <button v-if="m.references.length" @click="m.showConsent()">更改处理方式</button></p>
+      <p>{{ conversation ? '使用文件前会核对你的授权' : m.localOnly ? '文件讨论仅使用本地模型' : '使用外部模型前会检查文件授权' }} <button v-if="m.references.length" @click="m.showConsent()">{{ conversation ? '查看资料使用' : '更改处理方式' }}</button></p>
       <button v-if="m.references.length" @click="m.chooseReferences([])">暂不参考文件，聊点别的</button>
     </details>
     <p v-if="m.uploading" class="file-warning">文件正在上传；完成后会在对应消息里显示读取进度。</p>
@@ -43,7 +44,7 @@ onBeforeUnmount(() => previewDialog.value?.close())
   <ConfirmDialog :open="m.pickerOpen" title="选择已有资料" confirm-text="完成选择" cancel-text="关闭" @confirm="m.pickerOpen = false" @cancel="m.pickerOpen = false">
     <input v-model="m.query" class="library-search" placeholder="搜索文件名称" aria-label="搜索已有资料" />
     <p v-if="m.libraryLoading">正在读取资料库…</p>
-    <p v-else-if="m.libraryError" role="alert">{{ m.libraryError }}</p>
+    <p v-else-if="m.libraryError" role="alert">{{ conversation ? conversationNotice(m.libraryError, '暂时无法读取资料列表，请重试') : m.libraryError }}</p>
     <div v-else class="library-list">
       <button v-for="file in m.filteredLibrary" :key="file.materialId" :disabled="m.staged.some(f => f.materialId === file.materialId)" @click="m.stageMaterial(file)">
         <FileText :size="16" /><span>{{ file.fileName }}</span><small>{{ m.staged.some(f => f.materialId === file.materialId) ? '已选择' : '添加' }}</small>
@@ -53,19 +54,22 @@ onBeforeUnmount(() => previewDialog.value?.close())
     <p>已有文件不会重复上传。已选择 {{ m.staged.length }}/5 个。</p>
   </ConfirmDialog>
 
-  <ConfirmDialog :open="!!m.consentRefs" title="这些文件由谁来读？" :confirm-text="m.service?.external ? '允许发给此服务' : '仅用本地模型读取'" cancel-text="暂不处理" :loading="m.consentBusy" @confirm="m.consent(!m.service?.external)" @cancel="m.consentRefs = null">
+  <ConfirmDialog :open="!!m.consentRefs" :title="conversation ? '本次文件使用确认' : '这些文件由谁来读？'" :confirm-text="conversation ? '确认使用' : m.service?.external ? '允许发给此服务' : '仅用本地模型读取'" cancel-text="暂不处理" :loading="m.consentBusy" @confirm="m.consent(conversation ? false : !m.service?.external)" @cancel="m.consentRefs = null">
     <p class="consent-files">{{ consentNames }}</p>
+    <template v-if="conversation"><p>原文件保留在盒子中。回答所需的文字片段及相关对话会交给联网服务处理，已发送的内容无法收回。</p><p>资料或处理服务变化后，需要重新确认。</p><p v-if="!m.service?.external" role="status">暂时无法处理这些资料，请稍后重试。</p></template>
+    <template v-else>
     <p>原文件和解析保留在本机。若允许，回答所需的文字片段及相关对话会发送给：</p>
     <p><strong>{{ m.service?.name || '当前服务未配置' }}</strong> · {{ m.service?.model }}</p>
     <p>授权绑定文件版本和此服务；换服务或换文件版本需重新确认。仅本地处理不会外发这些文件。</p>
     <button v-if="m.service?.external" class="local-choice" :disabled="m.consentBusy" @click="m.consent(true)">仅用本地模型读取</button>
+    </template>
   </ConfirmDialog>
 
   <Teleport to="body">
     <dialog ref="previewDialog" class="file-preview" @close="m.previewOpen = false" @cancel="m.previewOpen = false">
       <header><h2>{{ m.preview?.name || '文件正文' }}</h2><button aria-label="关闭文件预览" @click="m.previewOpen = false"><X :size="20" /></button></header>
       <p>这是本机解析出的文字，不等于原文排版。回答可能只使用其中相关片段。</p>
-      <p v-if="m.previewError" role="alert">{{ m.previewError }}</p>
+      <p v-if="m.previewError" role="alert">{{ conversation ? conversationNotice(m.previewError, '暂时无法读取正文，请重试') : m.previewError }}</p>
       <pre v-else-if="m.preview">{{ m.preview.text || '未提取到文字' }}</pre>
       <p v-else>正在读取正文…</p>
       <button v-if="m.preview?.hasMore && m.previewRef" class="local-choice" @click="m.showPreview(m.previewRef, true)">继续加载正文</button>

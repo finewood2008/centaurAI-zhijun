@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 我的本体：摘要先读原文；保留用户已有全景 / 列表偏好。
+// 我的本体：每次从主入口进入都展示全景，页内仍可切换摘要 / 列表。
 // 全景里点一个点，右侧打开这条理解的卡片，所有动作（确认 / 修正 / 撤回 / 可带走）都在卡片上。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -26,7 +26,8 @@ import ProposalsPanel from '@/components/ontology/ProposalsPanel.vue'
 import SelfMap from '@/components/ontology/SelfMap.vue'
 import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
 import PersonalSummary from '@/components/ontology/PersonalSummary.vue'
-import { preferredOntologyView, type OntologyView } from '@/components/ontology/summary'
+import type { OntologyView } from '@/components/ontology/summary'
+import { ontologyOverviewRequest } from '@/shared/ontologyNavigation'
 import { createOntologyStatsLoader, ontologyLoadPlan } from './ontologyLoading'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -53,23 +54,10 @@ const newContent = ref('')
 const newSection = ref<Section | ''>('')
 const newLayer = ref<'self_declared' | 'aspirational'>('self_declared')
 
-// ---- 全景 / 列表 视图（记住上次选择）
-const VIEW_KEY = 'zhijun.me.view'
-function readView(): OntologyView {
-  try {
-    return preferredOntologyView(localStorage.getItem(VIEW_KEY))
-  } catch {
-    return 'summary'
-  }
-}
-const view = ref<OntologyView>(readView())
+// The view is local to this visit. Old saved preferences are deliberately ignored.
+const view = ref<OntologyView>('map')
 function setView(v: OntologyView) {
   view.value = v
-  try {
-    localStorage.setItem(VIEW_KEY, v)
-  } catch {
-    // 无法持久化时忽略
-  }
 }
 
 const mapItems = ref<Claim[]>([])
@@ -163,14 +151,7 @@ async function loadMap() {
     mapLoaded.value = true
     if (selected.value) selected.value = res.items.find((c) => c.id === selected.value?.id) ?? null
     // 从出处小图跳过来：?claim=<id> → 在全景里选中这条理解并打开详情
-    if (pendingClaimId.value) {
-      const found = res.items.find((c) => c.id === pendingClaimId.value)
-      if (found) {
-        selected.value = found
-        focusSection.value = found.section
-      }
-      pendingClaimId.value = ''
-    }
+    selectPendingClaim()
   } catch (err) {
     if (!mapGate.isCurrent(session)) return
     mapError.value = friendlyError(err, '本体全景加载失败')
@@ -284,12 +265,39 @@ async function submitCreate() {
 
 const pendingClaimId = ref('')
 
-onMounted(() => {
+function selectPendingClaim() {
+  if (!pendingClaimId.value) return
+  const found = mapItems.value.find(c => c.id === pendingClaimId.value)
+  if (found) {
+    selected.value = found
+    focusSection.value = found.section
+  }
+  pendingClaimId.value = ''
+}
+
+function openOverview() {
+  view.value = 'map'
+  selected.value = null
+  focusSection.value = null
+  layerFilter.value = null
+  filtersOpen.value = false
+  pendingClaimId.value = ''
+}
+
+watch(ontologyOverviewRequest, openOverview)
+watch(() => route.fullPath, () => {
+  if (route.path !== '/me') return
   const claimQuery = typeof route.query.claim === 'string' ? route.query.claim : ''
   if (claimQuery) {
+    openOverview()
     pendingClaimId.value = claimQuery
-    if (!usesOverview.value) view.value = 'summary'
+    if (mapLoaded.value) selectPendingClaim()
+  } else if (!route.query.section) {
+    openOverview()
   }
+}, { immediate: true })
+
+onMounted(() => {
   void loadVisibleView()
 })
 

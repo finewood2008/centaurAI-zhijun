@@ -1,8 +1,10 @@
 <script setup lang="ts">
-// 侧栏导航：一级入口 今日来信 / 对话 / 回看 / 我的本体 / 资料与边界；底部偏好。
+// 侧栏导航：一级入口 今日来信 / 对话 / 我的本体 / 回看 / 资料与边界；底部设置。
 // 桌面 ≥768px 常驻（768-1199 折叠为图标栏），<768px 转为抽屉（由 open 控制）。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import AboutZhijun from '@/components/branding/AboutZhijun.vue'
+import { requestOntologyOverview } from '@/shared/ontologyNavigation'
 import {
   Database,
   MessageCircle,
@@ -34,8 +36,8 @@ const groups: NavGroup[] = [
     items: [
       { to: '/', label: '今日来信', icon: Mail, exact: true },
       { to: '/chat', label: '对话', icon: MessageCircle, alsoPrefix: '/c/' },
-      { to: '/review', label: '回看', icon: History },
       { to: '/me', label: '我的本体', icon: UserRound },
+      { to: '/review', label: '回看', icon: History },
       { to: '/data', label: '资料与边界', icon: Database },
     ],
   },
@@ -49,6 +51,13 @@ const emit = defineEmits<{ (e: 'close'): void; (e: 'navigate'): void }>()
 
 const route = useRoute()
 const currentPath = computed(() => route.path)
+
+function navigate(item: NavItem, event: MouseEvent) {
+  if (item.to === '/me' && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+    requestOntologyOverview()
+  }
+  emit('navigate')
+}
 
 // ---- 移动端抽屉：关闭时不可聚焦、不可被读屏器访问 ----
 const MOBILE_QUERY = '(max-width: 767px)'
@@ -74,6 +83,7 @@ const hidden = computed(() => isMobile.value && !props.open)
 
 const closeBtn = ref<HTMLElement | null>(null)
 const sidebarRef = ref<HTMLElement | null>(null)
+const aboutOpen = ref(false)
 
 // 打开后焦点移到关闭按钮；关闭后焦点还给顶栏菜单按钮
 watch(
@@ -91,7 +101,7 @@ watch(
 
 // 抽屉打开时限制 Tab 焦点在抽屉内循环，避免键盘用户聚焦被遮罩的主内容
 function onDrawerKeydown(e: KeyboardEvent) {
-  if (!drawerActive.value) return
+  if (!drawerActive.value || aboutOpen.value) return
   if (e.key !== 'Tab') return
   const focusables = Array.from(
     sidebarRef.value?.querySelectorAll<HTMLElement>('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])') ?? [],
@@ -138,8 +148,10 @@ function isActive(item: NavItem): boolean {
     :aria-label="drawerActive ? '导航菜单' : undefined"
   >
     <div class="ws-sidebar__brand">
-      <span class="ws-sidebar__seal" aria-hidden="true">知</span>
-      <span class="ws-sidebar__brand-text">知君</span>
+      <button class="ws-sidebar__brand-button" type="button" aria-label="关于知君" aria-haspopup="dialog" title="关于知君" @click="aboutOpen = true">
+        <span class="ws-sidebar__seal" aria-hidden="true">知</span>
+        <span class="ws-sidebar__brand-text">知君</span>
+      </button>
       <button
         ref="closeBtn"
         class="ws-sidebar__close"
@@ -163,7 +175,7 @@ function isActive(item: NavItem): boolean {
               :aria-current="isActive(item) ? 'page' : undefined"
               :aria-label="item.label"
               :title="item.label"
-              @click="emit('navigate')"
+              @click="navigate(item, $event)"
             >
               <component :is="item.icon" class="ws-sidebar__icon" :size="18" aria-hidden="true" />
               <span class="ws-sidebar__label">{{ item.label }}</span>
@@ -179,15 +191,17 @@ function isActive(item: NavItem): boolean {
         class="ws-sidebar__item"
         :class="{ 'is-active': currentPath === '/settings' }"
         :aria-current="currentPath === '/settings' ? 'page' : undefined"
-        aria-label="偏好"
-        :title="'偏好'"
+        aria-label="设置"
+        :title="'设置'"
         @click="emit('navigate')"
       >
         <Settings class="ws-sidebar__icon" :size="18" aria-hidden="true" />
-        <span class="ws-sidebar__label">偏好</span>
+        <span class="ws-sidebar__label">设置</span>
       </RouterLink>
     </div>
   </aside>
+
+  <AboutZhijun v-model:open="aboutOpen" />
 
   <Teleport to="body">
     <div
@@ -220,6 +234,25 @@ function isActive(item: NavItem): boolean {
 }
 
 /* 朱砂印：衬线「知」字，替代原企业 logo */
+.ws-sidebar__brand-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  min-height: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-sidebar__brand-button:hover { background: transparent; }
+.ws-sidebar__brand-button:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 5px;
+  border-radius: 4px;
+}
+
 .ws-sidebar__seal {
   display: inline-flex;
   align-items: center;

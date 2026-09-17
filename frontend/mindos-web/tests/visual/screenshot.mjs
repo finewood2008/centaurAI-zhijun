@@ -24,7 +24,7 @@ const ROUTES = [
   { name: 'judgments', path: '/judgments', title: '判断' },
   { name: 'data', path: '/data', title: '资料与边界' },
   { name: 'materials', path: '/materials', title: '原材料' },
-  { name: 'settings', path: '/settings', title: '偏好' },
+  { name: 'settings', path: '/settings', title: '设置' },
 ]
 
 // 任务卡要求 390 / 768 / 1024 / 1440 四档视口

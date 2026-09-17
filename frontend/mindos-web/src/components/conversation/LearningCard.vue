@@ -41,7 +41,7 @@ async function run(fn: () => Promise<void>) {
   if (busy.value) return
   busy.value = true; error.value = ''; notice.value = ''
   try { await fn() }
-  catch (e) { error.value = e instanceof DOMException && e.name === 'TimeoutError' ? '等待超时，请刷新核对保存状态；也可以手动填写，不会切换到外部模型。' : e instanceof Error ? e.message : '操作未完成，请重试' }
+  catch (e) { error.value = e instanceof DOMException && e.name === 'TimeoutError' ? '等待超时，请刷新核对保存状态；也可以手动填写。' : e instanceof Error ? e.message : '操作未完成，请重试' }
   finally { busy.value = false }
 }
 async function suggest() {
@@ -119,7 +119,7 @@ async function resolve(action: 'apply' | 'keep' | 'defer') {
           </template>
           <div class="learning__actions"><button :disabled="busy" @click="resolve('keep')">保留原理解</button><button :disabled="busy" @click="resolve('defer')">先不判断</button></div>
         </template>
-        <template v-else><p>等真实结果回来再比较。事前预期不会被模型重写。</p><button :disabled="busy" @click="resolve('defer')">暂停这次观察</button></template>
+        <template v-else><p>等真实结果回来再比较。事前预期会保留原样。</p><button :disabled="busy" @click="resolve('defer')">暂停这次观察</button></template>
       </template>
     </div>
   </section>

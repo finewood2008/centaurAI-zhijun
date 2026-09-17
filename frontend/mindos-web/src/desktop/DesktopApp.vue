@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, readonly, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ZhijunDesktopV1 } from '../../../shared/desktop-contract'
 import App from '../App.vue'
@@ -19,6 +19,8 @@ const controller = new DesktopController(bridge, { materials: false })
 const state = shallowRef(controller.state)
 const router = useRouter()
 const signedIn = computed(() => !!state.value.snapshot?.subject?.accountId)
+const isSettings = computed(() => router.currentRoute.value.path === '/settings')
+const hasEnteredWorkspace = shallowRef(false)
 const enteredScope = shallowRef<string | null>(null)
 const uncertainWrite = shallowRef<UncertainWriteOwner | null>(null)
 const showUncertainWrite = computed(() => showWriteUncertainty(uncertainWrite.value, state.value.snapshot))
@@ -35,6 +37,7 @@ let scopeKey: string | null = null
 const stopObserving = controller.observe(next => {
   const snapshot = next.snapshot
   const previous = state.value.snapshot
+  if (previous?.subject?.accountId !== snapshot?.subject?.accountId) hasEnteredWorkspace.value = false
   // Capture before scope reset aborts old requests and unmounts their error UI.
   uncertainWrite.value = nextWriteUncertainty(previous, snapshot, uncertainWrite.value,
     !!previous?.subject?.workspaceId && !!client?.hasPendingMutations({
@@ -46,17 +49,25 @@ const stopObserving = controller.observe(next => {
   if (nextScope !== scopeKey) {
     scopeKey = nextScope
     enteredScope.value = null
-    setProductScope(scopeKey)
+    setProductScope(scopeKey, nextScope && snapshot?.subject
+      ? JSON.stringify([snapshot.subject.accountId, snapshot.subject.deviceId, workspaceId]) : null)
     if (nextScope) void nextTick(async () => {
+      await router.isReady()
       if (scopeKey !== nextScope) return
-      // Start each owner at their own home/onboarding. Never carry another owner's detail ID.
-      await router.replace({ path: '/', force: true })
-      if (scopeKey === nextScope) enteredScope.value = nextScope
+      // Settings and the bare overview have no owner detail ID. Preserve them
+      // across reloads; never carry a previous owner's detail/query into a box.
+      const route = router.currentRoute.value
+      const bareOverview = route.path === '/me' && Object.keys(route.query).length === 0
+      if (!isSettings.value && !bareOverview) await router.replace({ path: '/', force: true })
+      if (scopeKey === nextScope) {
+        enteredScope.value = nextScope
+        hasEnteredWorkspace.value = true
+      }
     })
   }
   state.value = next
 })
-provide(desktopWorkspaceKey, { controller, state })
+provide(desktopWorkspaceKey, { controller, state, ready, scopeKey: readonly(enteredScope) })
 onMounted(() => { void controller.start() })
 onBeforeUnmount(() => { stopObserving(); setProductScope(null); client?.dispose(); stopTransport(); stopFiles(); controller.dispose() })
 </script>
@@ -64,8 +75,12 @@ onBeforeUnmount(() => { stopObserving(); setProductScope(null); client?.dispose(
   <App v-if="signedIn">
     <template #content>
       <div v-if="showUncertainWrite" role="alert" data-testid="uncertain-write-notice" class="uncertain-write-notice">{{ uncertainWriteMessage }}</div>
-      <RouterView v-if="ready" :key="scopeKey ?? ''" />
-      <DesktopConnection v-else embedded />
+      <RouterView v-if="ready || isSettings" :key="isSettings ? 'settings' : scopeKey ?? ''" />
+      <DesktopConnection v-else-if="!hasEnteredWorkspace" embedded />
+      <section v-else class="connection-required" data-testid="workspace-unavailable" role="status">
+        <h1>需要连接盒子</h1>
+        <p>请从侧栏底部的「设置」连接盒子，连接后即可继续使用。</p>
+      </section>
     </template>
     <template #topbar="{ toggleMenu }"><DesktopTopbar :workspace-ready="ready" @toggle-menu="toggleMenu" /></template>
   </App>
@@ -73,4 +88,6 @@ onBeforeUnmount(() => { stopObserving(); setProductScope(null); client?.dispose(
 </template>
 <style scoped>
 .uncertain-write-notice { margin: 16px 24px; padding: 14px 18px; border: 1px solid #c98c6b; border-radius: 12px; background: #fff4e8; color: #713e2a; line-height: 1.7; }
+.connection-required { padding: 32px; color: var(--ws-text-secondary-color); }
+.connection-required h1 { color: var(--ws-text-color); font: 24px var(--ws-font-display); }
 </style>

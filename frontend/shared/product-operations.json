@@ -2690,6 +2690,131 @@
       "maxResponseBytes": 524288,
       "capability": "materials",
       "mutating": true
+    },
+    {
+      "id": "get_api_mindos_settings_external_agents",
+      "method": "GET",
+      "path": "/api/mindos/settings/external-agents",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "put_api_mindos_settings_external_agents_enabled",
+      "method": "PUT",
+      "path": "/api/mindos/settings/external-agents/enabled",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_settings_external_agents_preview",
+      "method": "GET",
+      "path": "/api/mindos/settings/external-agents/preview",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_settings_external_agents_grants",
+      "method": "POST",
+      "path": "/api/mindos/settings/external-agents/grants",
+      "pathParams": [],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "put_api_mindos_settings_external_agents_grants_grant_id",
+      "method": "PUT",
+      "path": "/api/mindos/settings/external-agents/grants/{grantId}",
+      "pathParams": [
+        "grantId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "patch_api_mindos_settings_external_agents_grants_grant_id",
+      "method": "PATCH",
+      "path": "/api/mindos/settings/external-agents/grants/{grantId}",
+      "pathParams": [
+        "grantId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
+    },
+    {
+      "id": "get_api_mindos_settings_external_agents_audit",
+      "method": "GET",
+      "path": "/api/mindos/settings/external-agents/audit",
+      "pathParams": [],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "get_api_mindos_settings_external_agents_requests_request_id",
+      "method": "GET",
+      "path": "/api/mindos/settings/external-agents/requests/{requestId}",
+      "pathParams": [
+        "requestId"
+      ],
+      "query": [],
+      "body": "none",
+      "response": "json",
+      "maxRequestBytes": 0,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": false
+    },
+    {
+      "id": "post_api_mindos_settings_external_agents_requests_request_id",
+      "method": "POST",
+      "path": "/api/mindos/settings/external-agents/requests/{requestId}",
+      "pathParams": [
+        "requestId"
+      ],
+      "query": [],
+      "body": "json",
+      "response": "json",
+      "maxRequestBytes": 524288,
+      "maxResponseBytes": 524288,
+      "capability": "domain",
+      "mutating": true
     }
   ]
 }

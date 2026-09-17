@@ -622,15 +622,17 @@ test('main connection UI exposes a capability-gated provisioning action and no W
   assert.doesNotMatch(source, /type="password"[^>]*(?:wifi|ssid)|(?:wifi|ssid)[^>]*type="password"/i)
 })
 
-test('connection status renders only the safe Direct or relay path labels', async () => {
+test('settings renders safe connection details while the topbar shows only status', async () => {
   const topbar = await readFile(new URL('../src/desktop/DesktopTopbar.vue', import.meta.url), 'utf8')
   const connection = await readFile(new URL('../src/desktop/DesktopConnection.vue', import.meta.url), 'utf8')
-  assert.match(topbar, /selectedPath === 'DIRECT' \? '直连'/)
-  assert.match(topbar, /selectedPath === 'RELAY' \? '安全中继'/)
-  assert.match(topbar, /data-testid="connection-path"/)
+  const settings = await readFile(new URL('../src/desktop/DesktopBoxSettings.vue', import.meta.url), 'utf8')
+  assert.doesNotMatch(topbar, /controller\.control|selectedPath|connection-path/)
+  assert.match(settings, /selectedPath === 'DIRECT' \? '直连'/)
+  assert.match(settings, /selectedPath === 'RELAY' \? '安全中继'/)
+  assert.match(settings, /data-testid="connection-path"/)
   assert.match(connection, /selectedPath === 'DIRECT' \? '直连'/)
   assert.match(connection, /selectedPath === 'RELAY' \? '安全中继'/)
-  for (const source of [topbar, connection]) {
+  for (const source of [topbar, settings, connection]) {
     assert.doesNotMatch(source, /iceServers|candidate|failedSessionId|fallback_from_session_id/)
   }
 })

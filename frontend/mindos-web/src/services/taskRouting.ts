@@ -36,6 +36,38 @@ function consentKeys(preview: RoutePreview, choice: RouteChoice): string[] | und
 }
 export type RouteChoice = { action: 'allow' | 'local' | 'omit' | 'cancel' | 'exception'; keys?: string[] }
 export const routeQuestion = shallowRef<{ preview: RoutePreview; allowOmit: boolean; done: (choice: RouteChoice) => void } | null>(null)
+export const conversationSetup = shallowRef<{ protectedHistory: boolean; done: (allowed: boolean) => void } | null>(null)
+
+/** Conversation UI supports the configured external service only. This does not
+ * change global defaults, source grants, or the user's restricted-data policy. */
+export async function ensureConversationService(id: string, signal?: AbortSignal, confirmCurrentInput = false, fileReply = false): Promise<boolean> {
+  const state = await routingRequest(routePath(id), 'GET', undefined, signal)
+  signal?.throwIfAborted()
+  if (!state.service?.external || state.error) throw new Error('暂时无法回答，请重试')
+  if (fileReply && state.handlingPreference?.active && state.handlingPreference.action === 'local') throw new Error('请先在设置中核对资料受限时的处理方式，再继续处理文件。')
+  const changeMode = state.mode.mode !== 'online' || state.mode.service !== state.service.id
+  if (!changeMode && !confirmCurrentInput) return true
+  conversationSetup.value?.done(false)
+  const allowed = await new Promise<boolean>(resolve => {
+    const cancel = () => question.done(false)
+    const question = { protectedHistory: state.mode.mode !== 'online', done: (value: boolean) => {
+      signal?.removeEventListener('abort', cancel)
+      if (conversationSetup.value === question) conversationSetup.value = null
+      resolve(value)
+    } }
+    conversationSetup.value = question
+    if (signal?.aborted) cancel()
+    else signal?.addEventListener('abort', cancel, { once: true })
+  })
+  if (!allowed) return false
+  signal?.throwIfAborted()
+  if (changeMode) {
+    await routingRequest(routePath(id), 'PUT', { mode: 'online', acknowledge: true,
+      serviceId: state.service.id, expectedRevision: state.mode.revision,
+      freshContext: state.mode.mode !== 'online' }, signal)
+  }
+  return true
+}
 
 export type RagV2Decision = 'masked' | 'original' | 'continue-passed' | 'retry' | 'risk-release' | 'without-materials' | 'cancel'
 export type RagV2Choice = RagV2Decision | { action: 'use-selected'; selectedPreviewIds: string[] }
@@ -82,6 +114,7 @@ export function ragPromptOf(error: unknown): RagV2Prompt | null {
 }
 
 onProductScopeReset(() => {
+  conversationSetup.value?.done(false); conversationSetup.value = null
   routeQuestion.value?.done({ action: 'cancel' }); routeQuestion.value = null
   ragQuestion.value?.done('cancel'); ragQuestion.value = null
   preparationOwner = null; chatPreparation.value = null
@@ -164,7 +197,7 @@ export function canRefreshRoute(error: unknown): boolean {
       .includes(String((error as { code?: unknown }).code))
 }
 
-export async function prepareChatRoute(id: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<(Record<string, unknown> & { routeRevision: string }) | null> {
+export async function prepareChatRoute(id: string, body: Record<string, unknown>, signal?: AbortSignal, conversationOnly = false): Promise<(Record<string, unknown> & { routeRevision: string }) | null> {
   const owner = Symbol('chat-preparation')
   preparationOwner = owner
   const progress = (stage: NonNullable<typeof chatPreparation.value>['stage'], message: string) => {
@@ -179,6 +212,11 @@ export async function prepareChatRoute(id: string, body: Record<string, unknown>
   }
   // Refresh the preview after granting: grants can change the exact revision.
   try {
+    if (conversationOnly) {
+      progress('authorizing', '正在核对本次资料使用…')
+      if (!await ensureConversationService(id, signal, data.localOnly === true)) return null
+      data = { ...data, localOnly: false }
+    }
     while (automaticRefreshes <= MAX_AUTOMATIC_REFRESHES) {
       try {
         signal?.throwIfAborted()
@@ -190,20 +228,21 @@ export async function prepareChatRoute(id: string, body: Record<string, unknown>
           confirm()
           const choice = await askRoute(preview, false, signal)
           if (choice.action === 'cancel') return null
-          if (choice.action === 'local') { data = { ...data, localOnly: true }; continue }
+          if (choice.action === 'local') { if (conversationOnly) return null; data = { ...data, localOnly: true }; continue }
           if (choice.action === 'exception' && preview.charterConflict.canOverride) {
             const result = await routingRequest<{ exceptionId: string }>(routePath(id) + '/charter-exception', 'POST', { revision: preview.revision, exceptionKey: preview.charterConflict.exceptionKey, acknowledge: true }, signal)
             data = { ...data, charterExceptionId: result.exceptionId }; continue
           }
           return null
         }
+        if (conversationOnly && !preview.service.external) throw new Error('这些资料暂时无法用于回答。请取消引用后重试，或在设置中调整资料使用方式。')
         if (!preview.service.external || (!preview.missing.length && !needsDeConsent(preview))) return { ...data, routeRevision: preview.revision }
         progress('authorizing', '正在核对资料外发授权…')
         if (await grantDefaultDeConsent(id, preview, signal)) { automaticRefreshes++; continue }
         confirm()
         const choice = await askRoute(preview, true, signal)
         if (choice.action === 'cancel') return null
-        if (choice.action === 'local') data = { ...data, localOnly: true }
+        if (choice.action === 'local') { if (conversationOnly) return null; data = { ...data, localOnly: true } }
         else if (choice.action === 'omit') data = { ...data, omitSources: true }
         else if (choice.action === 'allow') await routingRequest(routePath(id) + '/grant', 'POST', { revision: preview.revision, keys: consentKeys(preview, choice) }, signal)
       } catch (error) {

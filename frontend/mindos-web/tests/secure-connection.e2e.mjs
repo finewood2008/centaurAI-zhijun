@@ -279,6 +279,8 @@ try {
   await page.evaluate(() => window.__secureConnectionPublish('ready', { environment: 'simulation', selectedPath: 'DIRECT' }))
   await progress.waitFor({ state: 'detached' })
   assert.equal(await page.locator('[aria-label="已建立加密连接"]').count(), 0, 'simulation ready is not proof of a real encrypted connection')
+  await page.getByRole('link', { name: '设置', exact: true }).click()
+  await page.getByTestId('box-settings').waitFor()
   await page.evaluate(() => window.__secureConnectionPublish('authorizing', { environment: 'production' }))
   await progress.waitFor()
   await page.evaluate(() => window.__secureConnectionPublish('ready', { environment: 'production' }))
@@ -286,7 +288,7 @@ try {
   assert.equal(await page.locator('[aria-label="已建立加密连接"]').count(), 0, 'production ready without selectedPath remains uncertified')
 
   // With both production and a known path, the transient card leaves and the
-  // topbar may certify that exact path. Business dispatch is permitted only now.
+  // settings may certify that exact path. Business dispatch is permitted only now.
   await page.evaluate(() => window.__secureConnectionPublish('authorizing', { environment: 'production' }))
   await progress.waitFor()
   await page.evaluate(() => window.__secureConnectionPublish('ready', { environment: 'production', selectedPath: 'RELAY' }))
@@ -299,7 +301,7 @@ try {
   await page.screenshot({ path: join(screenshots, 'ready-relay.png'), fullPage: true, animations: 'disabled' })
   await page.getByRole('button', { name: '切换盒子', exact: true }).click()
   await page.getByTestId('connect-synthetic-device').waitFor()
-  assert.equal(await page.locator('[aria-label="已建立加密连接"]').count(), 0, 'disconnect must remove the topbar lock immediately')
+  assert.equal(await page.locator('[aria-label="已建立加密连接"]').count(), 0, 'disconnect must remove the settings lock immediately')
 
   // A transient account error preserves the authenticated subject. Exercise the
   // actual renderer/controller and click handler, including a pending retry.

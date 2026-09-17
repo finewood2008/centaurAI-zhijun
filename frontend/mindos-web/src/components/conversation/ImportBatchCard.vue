@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { FileText, RotateCw } from 'lucide-vue-next'
 import type { ChatImportBatch, ChatImportFile, ChatMaterialRef } from '@/services/api'
-defineProps<{ batch: ChatImportBatch; busy?: boolean }>()
+import { conversationNotice } from '@/shared/conversationPresentation'
+defineProps<{ conversation?: boolean; batch: ChatImportBatch; busy?: boolean }>()
 const emit = defineEmits<{
   (e: 'preview', ref: ChatMaterialRef): void
   (e: 'retry', fileId?: string): void
@@ -27,7 +28,7 @@ function reupload(item: ChatImportFile, event: Event) {
       <FileText :size="19" aria-hidden="true" />
       <div class="import-file__body">
         <button class="import-file__name" :disabled="file.state !== 'ready'" @click="emit('preview', { materialId: file.materialId!, version: file.version! })">{{ file.name }}</button>
-        <p :class="{ 'is-error': ['failed', 'empty', 'unavailable'].includes(file.state) }">{{ labels[file.state] }}<span v-if="file.error"> · {{ file.error }}</span></p>
+        <p :class="{ 'is-error': ['failed', 'empty', 'unavailable'].includes(file.state) }">{{ labels[file.state] }}<span v-if="file.error"> · {{ conversation ? conversationNotice(file.error, '暂时无法读取，请重试') : file.error }}</span></p>
       </div>
       <label v-if="!file.materialId && ['failed', 'pending', 'uploading'].includes(file.state)" class="reupload">
         重新选择
@@ -37,8 +38,8 @@ function reupload(item: ChatImportFile, event: Event) {
     </div>
     <p v-if="batch.state === 'waiting' || batch.state === 'queued'" class="batch-note">读取在后台进行，你可以继续聊其他内容。</p>
     <p v-if="batch.state === 'replying'" class="batch-note" role="status">知君正在整理这批文件的反馈…</p>
-    <p v-if="batch.state === 'rag_consent'" class="batch-note" role="status">Data Agent 已暂停交付敏感片段，需要你选择处理方式。</p>
-    <p v-if="batch.error && !['queued', 'waiting'].includes(batch.state)" class="batch-note">{{ batch.error }}</p>
+    <p v-if="batch.state === 'rag_consent'" class="batch-note" role="status">{{ conversation ? '敏感资料已暂缓使用，需要你确认处理方式。' : 'Data Agent 已暂停交付敏感片段，需要你选择处理方式。' }}</p>
+    <p v-if="batch.error && !['queued', 'waiting'].includes(batch.state)" class="batch-note">{{ conversation ? conversationNotice(batch.error) : batch.error }}</p>
     <div class="batch-actions">
       <button v-if="batch.state === 'consent'" @click="emit('consent', readyRefs(batch))">确认文件处理方式</button>
       <button v-if="batch.state === 'rag_consent' && batch.ragV2" :disabled="busy" @click="emit('rag', batch)">确认敏感资料</button>

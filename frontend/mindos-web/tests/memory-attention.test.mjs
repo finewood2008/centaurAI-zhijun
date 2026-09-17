@@ -21,7 +21,7 @@ assert.equal(placeMemoryAttention(null, messages, 'own'), null)
 assert.equal(placeMemoryAttention(attention(calibration), messages, null), null)
 
 const conversation = await readFile(new URL('../src/pages/ConversationPage.vue', import.meta.url), 'utf8')
-const settings = await readFile(new URL('../src/pages/SettingsPage.vue', import.meta.url), 'utf8')
+const settings = await readFile(new URL('../src/components/settings/WorkspaceSettings.vue', import.meta.url), 'utf8')
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 assert.doesNotMatch(conversation, /getInbox|seenClaimIds|pollInbox|attachLateCandidates|m\.candidates/)
 assert.match(conversation, /memoryPlacement\?\.kind === 'claim'/)

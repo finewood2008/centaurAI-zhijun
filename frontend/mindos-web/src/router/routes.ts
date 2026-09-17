@@ -22,6 +22,6 @@ export const productRoutes: RouteRecordRaw[] = [
   { path: '/recycle-bin', name: 'recycle-bin', component: () => import('@/pages/RecycleBinPage.vue'), meta: { title: '回收站' } },
   { path: '/search', name: 'search', component: () => import('@/pages/SearchPage.vue'), meta: { title: '搜索记忆' } },
   { path: '/graph', name: 'graph', component: () => import('@/pages/GraphPage.vue'), meta: { title: '关系图谱' } },
-  { path: '/settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue'), meta: { title: '偏好' } },
+  { path: '/settings', name: 'settings', component: () => import('@/pages/SettingsPage.vue'), meta: { title: '设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

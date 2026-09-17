@@ -121,9 +121,9 @@ test('host unknown-write reply arriving before its snapshot remains capturable, 
 
 test('desktop wiring captures before abort and keeps the static warning outside the generation-keyed page', () => {
   const source = readFileSync(resolve(src, 'desktop/DesktopApp.vue'), 'utf8')
-  assert.ok(source.indexOf('uncertainWrite.value = nextWriteUncertainty') < source.indexOf('setProductScope(scopeKey)'))
+  assert.ok(source.indexOf('uncertainWrite.value = nextWriteUncertainty') < source.indexOf('setProductScope(scopeKey,'))
   assert.match(source, /<div v-if="showUncertainWrite" role="alert" data-testid="uncertain-write-notice"/)
-  assert.ok(source.indexOf('data-testid="uncertain-write-notice"') < source.indexOf('<RouterView v-if="ready"'))
+  assert.ok(source.indexOf('data-testid="uncertain-write-notice"') < source.indexOf('<RouterView v-if="ready || isSettings"'))
 })
 
 test('normal reconnect CTA retains the generic warning through device selection and clears a different owner', () => {
@@ -164,7 +164,7 @@ test('compiled DesktopApp captures pending ownership before scope reset and rend
   try {
     const req = name => {
       if (name === 'vue') return { ...Vue, onMounted() {}, onBeforeUnmount() {}, provide() {} }
-      if (name === 'vue-router') return { useRouter: () => ({ replace: async () => {} }) }
+      if (name === 'vue-router') return { useRouter: () => ({ currentRoute: Vue.ref({ path: '/', query: {} }), isReady: async () => {}, replace: async () => {} }) }
       if (name === './controller') return { DesktopController: Controller }
       if (name === './productClient') return { createDesktopProductClient: () => ({
         hasPendingMutations() { events.push('capture'); return pending }, request() {}, dispose() {},

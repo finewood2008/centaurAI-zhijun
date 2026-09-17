@@ -204,7 +204,7 @@ assert.match(alignmentPrivacy, /transitional\.has\(result\.state\.status\)/)
 assert.doesNotMatch(alignmentPrivacy, /setTimeout\(poll, 5000\)/)
 assert.doesNotMatch(routingPanel, /setInterval\(/)
 assert.match(chatStream, /streamPost\(/)
-assert.match(chatStream, /prepareChatRoute\(conversationId, request, signal\)/)
+assert.match(chatStream, /prepareChatRoute\(conversationId, request, signal, conversationOnly\)/)
 assert.match(conversation, /surface: current\.value\.mode === 'onboarding' \? 'onboarding' : 'conversation'/)
 assert.doesNotMatch(conversation, /fetch\(/)
 

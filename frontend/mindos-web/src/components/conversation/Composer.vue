@@ -19,7 +19,7 @@ const props = defineProps<{
   disabled?: boolean
   placeholder?: string
   allowDeliberate?: boolean
-  // 模型没配置 / 不可用时的提示；给了就禁用输入，并在输入区上方显示同一句话（带去偏好的链接）
+  // 模型没配置 / 不可用时的提示；给了就禁用输入，并在输入区上方显示同一句话（带去设置的链接）
   notice?: string
   noticeTo?: string
   hasAttachments?: boolean
@@ -326,7 +326,7 @@ defineExpose({
     <div v-if="failedDrafts.length" class="zj-composer__assisted" role="status"><span>另有 {{ failedDrafts.length }} 份未发送草稿已保留，切换不会丢失当前输入。</span><button type="button" @click="switchFailedDraft">切换到未发送草稿</button></div>
     <p v-if="notice" class="zj-composer__notice" role="status">
       <span>{{ notice }}</span>
-      <RouterLink v-if="noticeTo" :to="noticeTo" class="zj-composer__notice-link">去偏好</RouterLink>
+      <RouterLink v-if="noticeTo" :to="noticeTo" class="zj-composer__notice-link">去设置</RouterLink>
     </p>
     <p v-else-if="showHint" class="zj-composer__intent" role="status">
       像是在拿主意？切到「我在考虑…」，知君会帮你整理成判断草稿。
