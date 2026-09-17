@@ -194,6 +194,60 @@ function desktop(product) {
   return { load, scope, client }
 }
 
+test('external Agent status distinguishes an old Gateway catalog through the real desktop error chain', { timeout: 10000 }, async () => {
+  const require = createRequire(import.meta.url)
+  const { createProductSession } = require('../../shell/runtime/product-session.cjs')
+  const { toPublicError } = require('../../shell/runtime/public-error.cjs')
+  for (const [status, code, unavailable] of [
+    [403, 'WORKSPACE_OPERATION_DENIED', true],
+    [403, 'ACCESS_DENIED', false],
+    [403, 'WORKSPACE_AUTHORIZATION_REVOKED', false],
+    [401, 'WORKSPACE_OPERATION_DENIED', false],
+    [503, 'WORKSPACE_OPERATION_DENIED', false],
+  ]) {
+    const calls = [], methods = []
+    const manager = createProductSession({ isCurrent: () => true, session: {
+      async request(request) {
+        calls.push(request)
+        return { status, headers: { 'content-type': 'application/json' },
+          body: bytes(JSON.stringify({ code, message: 'private gateway diagnostic' })) }
+      },
+    } })
+    const product = new Proxy({}, { get(_target, method) {
+      return async (_context, input) => {
+        methods.push(method)
+        try { return ok(await manager.invoke(method, input)) }
+        catch (error) { return { ok: false, error: toPublicError(error), generation: 7 } }
+      }
+    } })
+    const { load, client } = desktop(product)
+    try {
+      const { api, ApiError } = load('services/api.ts')
+      const { externalAgentsUnavailable } = load('services/externalAgents.ts')
+      await assert.rejects(api.externalAgents(), error => {
+        assert.equal(error instanceof ApiError, false, 'the shell rejection must remain a real ProductFailure')
+        assert.equal(error.status, status)
+        assert.equal(error.code, status === 503 ? 'REMOTE_ERROR' : 'ACCESS_DENIED')
+        assert.equal(error.remoteCode, unavailable ? 'WORKSPACE_OPERATION_DENIED' : undefined)
+        assert.equal(externalAgentsUnavailable(error), unavailable, `${status}/${code}`)
+        assert.equal(error.message.includes('private gateway diagnostic'), false)
+        assert.equal(JSON.stringify(error).includes('private gateway diagnostic'), false)
+        return true
+      })
+      assert.deepEqual(methods, ['start'], 'a rejected status read must not retry, poll or cancel a job')
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].method, 'POST')
+      assert.equal(calls[0].path, '/api/mindos/zhijun/operations')
+      const operation = JSON.parse(new TextDecoder().decode(calls[0].body))
+      assert.equal(operation.operationId, 'get_api_mindos_settings_external_agents')
+      assert.equal(operation.body, null, 'the transport POST must contain only the read operation')
+      assert.deepEqual(operation.params, {})
+      assert.deepEqual(operation.query, {})
+      assert.equal(client.hasPendingMutations({ generation: 7, workspaceId: 'synthetic-workspace' }), false)
+    } finally { client.dispose(); manager.close() }
+  }
+})
+
 test('catalog is finite, unique, bounded and resolves only exact method/parameters', () => {
   const catalog = JSON.parse(readFileSync(new URL('../../shared/product-operations.json', import.meta.url), 'utf8'))
   assert.equal(catalog.schemaVersion, 1)

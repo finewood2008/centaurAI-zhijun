@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { api, ApiError } from '@/services/api'
-import { editableGrant, grantLabel, PERSONAL_SECTIONS, type AccessAudit, type AccessPreview, type AgentGrant, type ExternalAgentStatus, type GrantUpdate } from '@/services/externalAgents'
+import { editableGrant, externalAgentsUnavailable, grantLabel, PERSONAL_SECTIONS, type AccessAudit, type AccessPreview, type AgentGrant, type ExternalAgentStatus, type GrantUpdate } from '@/services/externalAgents'
 
 const status = ref<ExternalAgentStatus | null>(null)
 const error = ref(''), notice = ref(''), busy = ref(false), loading = ref(true)
@@ -16,7 +16,7 @@ async function load() {
   error.value = ''
   try { const value = await api.externalAgents(controller.signal); if (alive) status.value = value }
   catch (err) {
-    if (alive && err instanceof ApiError && (err.status === 404 || err.status === 501 || ['WORKER_OPERATION_INVALID', 'PRODUCT_OPERATION_UNSUPPORTED'].includes(err.code ?? ''))) {
+    if (alive && externalAgentsUnavailable(err)) {
       status.value = { available: false, enabled: false, endpoint: null, grants: [] }
     } else if (alive) error.value = '外部 Agent 设置暂时无法读取，请重试。'
   }

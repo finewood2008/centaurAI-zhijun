@@ -28,6 +28,43 @@ const bundle = await build({
 await mkdir('/private/tmp/zhijun-external-agents', { recursive: true })
 const browser = await chromium.launch({ headless: true, channel: 'chrome' })
 try {
+  for (const scenario of [
+    { name: 'old-gateway', status: 403, code: 'ACCESS_DENIED', remoteCode: 'WORKSPACE_OPERATION_DENIED', unavailable: true },
+    { name: 'old-worker', status: 404, unavailable: true },
+    { name: 'permission-denied', status: 403, code: 'ACCESS_DENIED', unavailable: false },
+    { name: 'service-failure', status: 503, code: 'EXTERNAL_AGENTS_UNAVAILABLE', unavailable: false },
+  ]) {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
+    const errors = []
+    page.on('pageerror', error => errors.push(error.message))
+    await page.route('**/*', route => route.abort())
+    await page.setContent(`<style>*{box-sizing:border-box}body{margin:20px;background:#f7f5ef;color:#29362d;font:15px system-ui}${styles.join('\n')}</style><div id="app"></div>`)
+    await page.evaluate(scenario => {
+      window.__reads = 0
+      window.__api = { externalAgents: async () => {
+        if (++window.__reads === 1) throw Object.assign(new Error('private upstream diagnostic'), scenario)
+        return { available: true, enabled: false, endpoint: null, grants: [] }
+      } }
+    }, scenario)
+    await page.addScriptTag({ content: bundle.outputFiles[0].text })
+    if (scenario.unavailable) {
+      await expect(page.getByText(/这台盒子尚未开通外部 Agent 连接/)).toBeVisible()
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '启用外部访问' })).toHaveCount(0)
+      await page.screenshot({ path: `/private/tmp/zhijun-external-agents/${scenario.name}.png`, fullPage: true })
+      assert.equal(await page.evaluate(() => window.__reads), 1)
+    } else {
+      await expect(page.getByRole('alert')).toContainText('外部 Agent 设置暂时无法读取，请重试。')
+      await expect(page.getByText(/这台盒子尚未开通外部 Agent 连接/)).toHaveCount(0)
+      await page.getByRole('button', { name: '重试', exact: true }).click()
+      await expect(page.getByRole('button', { name: '启用外部访问' })).toBeVisible()
+      await expect(page.getByRole('alert')).toHaveCount(0)
+      assert.equal(await page.evaluate(() => window.__reads), 2)
+    }
+    assert.equal(await page.getByText('private upstream diagnostic').count(), 0)
+    assert.deepEqual(errors, [])
+    await page.close()
+  }
   for (const width of [1440, 390]) {
     const page = await browser.newPage({ viewport: { width, height: 1000 } })
     const errors = []
@@ -78,5 +115,5 @@ try {
     assert.deepEqual(errors,[])
     await page.close()
   }
-  console.log('External Agent management: desktop/narrow scope editing, cancel, pause, revoke and layout passed.')
+  console.log('External Agent management: old Gateway/worker compatibility, real errors/retry, desktop/narrow editing and layout passed.')
 } finally { await browser.close() }

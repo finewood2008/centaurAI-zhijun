@@ -121,6 +121,16 @@ function decodeJson(response, max = LIMITS.page) {
   if (response.status !== 200 && response.status !== 201 && response.status !== 202) {
     if (response.status === 429) throw gatewayCapacityError(response);
     const code = [401, 403].includes(response.status) ? 'ACCESS_DENIED' : 'REMOTE_ERROR';
+    // An older Gateway rejects unknown catalog operations before dispatch.
+    // Preserve only this fixed diagnostic, never its remote message or body.
+    if (response.status === 403 && response.body.byteLength <= 8192) {
+      try {
+        const value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body));
+        if (plain(value) && value.code === 'WORKSPACE_OPERATION_DENIED') {
+          throw new DesktopError(code, { httpStatus: 403, remoteCode: value.code });
+        }
+      } catch (error) { if (error instanceof DesktopError) throw error; }
+    }
     throw new DesktopError(code, { httpStatus: response.status });
   }
   assert(plain(response.headers), 'CONTRACT_MISMATCH');
