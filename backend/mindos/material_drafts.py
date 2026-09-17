@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 
 from .derived import KIND_GENERATED_DRAFT, _call_llm, _generator_name
 from .ollama_material_scheduler import PRIORITY_MANUAL_REGENERATE, PRIORITY_SUMMARY_ENTITIES, _scheduler
@@ -13,6 +14,12 @@ from .stores import derived_store
 from .stores.material_pipeline_store import MaterialPipelineStore
 
 logger = logging.getLogger(__name__)
+
+# ``pending`` is persisted before the in-memory scheduler runs. A process restart
+# drops the queued callable, so an old pending row is a lease rather than proof
+# that work is still running. Keep the lease comfortably above the maximum
+# normal model call/polling window, then renew it when a read resubmits the task.
+PENDING_GENERATION_LEASE_SECONDS = 15 * 60
 
 
 class DraftConfirmationLocked(RuntimeError):
@@ -79,8 +86,8 @@ def _default_title(material_id: str, supplied_title: str = "") -> str:
         return ""
 
 
-def ensure_minimal_draft(material_id: str, *, title: str = "") -> dict:
-    """为当前快照创建可编辑兜底草稿；已存在草稿绝不覆盖。"""
+def _ensure_minimal_draft_record(material_id: str, *, title: str = "") -> tuple[dict | None, bool]:
+    """Return the stored minimal draft record and whether this call created it."""
     store = derived_store.DerivedStore.instance()
     current = store.get_derived_record("material", material_id, KIND_GENERATED_DRAFT)
     if current is not None:
@@ -105,13 +112,14 @@ def ensure_minimal_draft(material_id: str, *, title: str = "") -> dict:
                     str(current.get("input_hash") or ""),
                     str(current.get("generator") or "minimal"),
                     status=current.get("status", "pending"),
+                    require_unedited=True,
                 )
             except derived_store.DraftRevisionConflict:
                 current = store.get_derived_record("material", material_id, KIND_GENERATED_DRAFT)
-        return _draft_view(current)
+        return current, False
     snapshot = MaterialPipelineStore.instance().current_snapshot(material_id)
     if snapshot is None:
-        return _draft_view(None)
+        return None, False
     text = MaterialSnapshotSaga(MaterialPipelineStore.instance()).read_snapshot_text(snapshot).strip()
     body = text[:1200] if text else "未提取到可检索文本。请补充知识卡片内容。"
     draft_title = _default_title(material_id, title) or "未命名材料"
@@ -126,8 +134,16 @@ def ensure_minimal_draft(material_id: str, *, title: str = "") -> dict:
         record = store.save_material_draft_cas(
             material_id, "", content, snapshot.get("source_hash") or "", "minimal", status="pending"
         )
+        created = True
     except derived_store.DraftRevisionConflict:
         record = store.get_derived_record("material", material_id, KIND_GENERATED_DRAFT)
+        created = False
+    return record, created
+
+
+def ensure_minimal_draft(material_id: str, *, title: str = "") -> dict:
+    """为当前快照创建可编辑兜底草稿；已存在草稿绝不覆盖。"""
+    record, _created = _ensure_minimal_draft_record(material_id, title=title)
     return _draft_view(record)
 
 
@@ -174,7 +190,8 @@ def _generate(material_id: str, snapshot_id: str, source_hash: str, text: str, f
             failed.update({"snapshotId": snapshot_id, "snapshotVersion": target_snapshot["version"],
                            "sourceHash": source_hash, "inputHash": _input_hash(text), "generationParams": params})
             store.save_material_draft_cas(material_id, str(current.get("revision") or ""), failed,
-                                          _input_hash(text), _generator_name(snap), status="failed")
+                                          _input_hash(text), _generator_name(snap), status="failed",
+                                          require_unedited=True)
         except derived_store.DraftRevisionConflict:
             pass
         return
@@ -190,7 +207,8 @@ def _generate(material_id: str, snapshot_id: str, source_hash: str, text: str, f
     updated["revision"] = _revision(updated.get("title", ""), answer)
     try:
         store.save_material_draft_cas(material_id, str(current.get("revision") or ""), updated,
-                                      _input_hash(text), _generator_name(snap), status="ok")
+                                      _input_hash(text), _generator_name(snap), status="ok",
+                                      require_unedited=True)
     except derived_store.DraftRevisionConflict:
         pass
 
@@ -213,6 +231,82 @@ def submit_generation(material_id: str, source_path: str, *, force: bool = False
                              material_id=material_id, kind="generated-draft")
 
 
+def recover_stale_generation(material_id: str, source_path: str, *, now: float | None = None) -> dict:
+    """Requeue an abandoned generated-draft task without blocking the read.
+
+    The queue is process-local while the draft row is durable. After a restart,
+    historical rows can therefore remain ``pending`` forever. Renew the row's
+    lease before submitting so detail-page polling cannot enqueue duplicates on
+    every request. User-edited/confirmed drafts are never regenerated.
+    """
+    store = derived_store.DerivedStore.instance()
+    record = store.get_derived_record("material", material_id, KIND_GENERATED_DRAFT)
+    if record is None:
+        record, created = _ensure_minimal_draft_record(material_id)
+        if record is None:
+            return _draft_view(None)
+        if created:
+            if submit_generation(material_id, source_path):
+                return _draft_view(record)
+            failed = {
+                **(record.get("content") or {}),
+                "errorCode": "generation_queue_unavailable",
+            }
+            finished = store.finish_pending_derived_lease(
+                "material",
+                material_id,
+                KIND_GENERATED_DRAFT,
+                float(record.get("updated_at") or 0),
+                status="failed",
+                content=failed,
+            )
+            return _draft_view(finished or store.get_derived_record(
+                "material", material_id, KIND_GENERATED_DRAFT
+            ))
+    content = record.get("content") or {}
+    current_time = time.time() if now is None else now
+    try:
+        updated_at = float(record.get("updated_at") or 0)
+    except (TypeError, ValueError):
+        updated_at = 0
+    if (
+        record.get("status") != "pending"
+        or content.get("userEdited")
+        or content.get("confirmed")
+        or current_time - updated_at < PENDING_GENERATION_LEASE_SECONDS
+    ):
+        return _draft_view(record)
+
+    if _scheduler.has_task(material_id, "generated-draft"):
+        return _draft_view(record)
+
+    claimed = store.renew_material_draft_generation_lease(
+        material_id,
+        current_time - PENDING_GENERATION_LEASE_SECONDS,
+        renewed_at=current_time,
+    )
+    if claimed is None:
+        return draft_of(material_id)
+    record = claimed
+    content = record.get("content") or {}
+    if submit_generation(material_id, source_path):
+        return _draft_view(record)
+
+    failed = dict(content)
+    failed["errorCode"] = "generation_queue_unavailable"
+    finished = store.finish_pending_derived_lease(
+        "material",
+        material_id,
+        KIND_GENERATED_DRAFT,
+        current_time,
+        status="failed",
+        content=failed,
+    )
+    return _draft_view(finished or store.get_derived_record(
+        "material", material_id, KIND_GENERATED_DRAFT
+    ))
+
+
 def save_draft(material_id: str, expected_revision: str, title: str, body: str) -> dict:
     store = derived_store.DerivedStore.instance()
     existing = store.get_derived_record("material", material_id, KIND_GENERATED_DRAFT)
@@ -222,24 +316,50 @@ def save_draft(material_id: str, expected_revision: str, title: str, body: str) 
         # 允许兼容客户端在首次保存时提交空 revision；正常客户端先 GET 草稿并带回 revision。
         if existing is not None and expected_revision == "":
             expected_revision = str((existing.get("content") or {}).get("revision") or "")
-    current = (existing or {}).get("content") or {}
-    if current.get("confirmed"):
-        raise DraftConfirmationLocked("draft is already confirmed")
-    if current.get("confirmationSessionId"):
-        raise DraftConfirmationLocked("draft confirmation is in progress")
     snapshot = MaterialPipelineStore.instance().current_snapshot(material_id)
-    updated = dict(current)
-    updated.update({"title": title.strip(), "content": body.strip(), "origin": "user", "userEdited": True,
-                    "snapshotId": snapshot["snapshot_id"] if snapshot else current.get("snapshotId"),
-                    "snapshotVersion": snapshot["version"] if snapshot else current.get("snapshotVersion")})
-    if snapshot is not None:
-        updated.update({"sourceHash": snapshot.get("source_hash") or "", "inputHash": _input_hash(body),
-                        "generationParams": {"mode": "user", "version": 1}})
-    updated.pop("errorCode", None)
-    updated["revision"] = _revision(updated["title"], updated["content"])
-    record = store.save_material_draft_cas(material_id, expected_revision, updated,
-                                           (snapshot.get("source_hash") or "") if snapshot else "", "user", status="ok")
-    return _draft_view(record)
+    candidate = existing
+    revision = expected_revision
+    # A generated enhancement may finish between rendering and the user's PUT.
+    # Explicit user input wins over an unedited AI/minimal revision, while a
+    # revision written by another user/session must still produce a real 409.
+    for _attempt in range(3):
+        current = (candidate or {}).get("content") or {}
+        if current.get("confirmed"):
+            raise DraftConfirmationLocked("draft is already confirmed")
+        if current.get("confirmationSessionId"):
+            raise DraftConfirmationLocked("draft confirmation is in progress")
+        updated = dict(current)
+        updated.update({"title": title.strip(), "content": body.strip(), "origin": "user", "userEdited": True,
+                        "snapshotId": snapshot["snapshot_id"] if snapshot else current.get("snapshotId"),
+                        "snapshotVersion": snapshot["version"] if snapshot else current.get("snapshotVersion")})
+        if snapshot is not None:
+            updated.update({"sourceHash": snapshot.get("source_hash") or "", "inputHash": _input_hash(body),
+                            "generationParams": {"mode": "user", "version": 1}})
+        updated.pop("errorCode", None)
+        updated["revision"] = _revision(updated["title"], updated["content"])
+        try:
+            record = store.save_material_draft_cas(
+                material_id, revision, updated,
+                (snapshot.get("source_hash") or "") if snapshot else "", "user", status="ok",
+            )
+            return _draft_view(record)
+        except derived_store.DraftRevisionConflict as exc:
+            latest = exc.current
+            latest_content = (latest or {}).get("content") or {}
+            if latest_content.get("confirmed") or latest_content.get("confirmationSessionId"):
+                raise DraftConfirmationLocked("draft confirmation is in progress") from exc
+            if latest_content.get("userEdited"):
+                if (
+                    str(latest_content.get("title") or "").strip() == title.strip()
+                    and str(latest_content.get("content") or "").strip() == body.strip()
+                ):
+                    return _draft_view(latest)
+                raise
+            candidate = latest
+            revision = str(latest_content.get("revision") or "")
+    # Continuous non-user writers are unexpected, but preserving CAS safety is
+    # preferable to silently overwriting after the bounded retry.
+    raise derived_store.DraftRevisionConflict(candidate or {})
 
 
 def lock_for_confirmation(material_id: str, expected_revision: str, session_id: str) -> dict:

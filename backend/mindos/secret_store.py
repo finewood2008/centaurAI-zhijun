@@ -327,6 +327,10 @@ def get_default_secret_store() -> SecretStore:
     部署场景使用；普通本地 Web 使用无需配置它。
     """
     try:
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            # Worker startup validates this private directory outside the data
+            # root. Do not read legacy encrypted_secrets in a restored data DB.
+            return EncryptedSQLiteSecretStore(SECRET_STORE_DIR / "model-secrets.db")
         return EncryptedSQLiteSecretStore()
     except Exception:
         return UnavailableSecretStore()

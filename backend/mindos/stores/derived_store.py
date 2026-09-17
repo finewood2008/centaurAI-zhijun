@@ -431,6 +431,8 @@ class DerivedStore:
         input_hash: str,
         generator: str,
         status: str = "ok",
+        *,
+        require_unedited: bool = False,
     ) -> dict:
         """按草稿 revision 原子保存 material-owned GENERATED_DRAFT。
 
@@ -446,7 +448,18 @@ class DerivedStore:
             row = conn.execute("SELECT * FROM derived_records WHERE id=?", (record_id,)).fetchone()
             current = self._row_to_derived(row) if row else None
             current_revision = str((current or {}).get("content", {}).get("revision") or "")
-            if current is not None and expected_revision != current_revision:
+            current_content = (current or {}).get("content") or {}
+            if (
+                (current is None and expected_revision != "")
+                or (current is not None and (
+                    expected_revision != current_revision
+                    or (require_unedited and (
+                        current_content.get("userEdited")
+                        or current_content.get("confirmed")
+                        or current_content.get("confirmationSessionId")
+                    ))
+                ))
+            ):
                 conn.rollback()
                 raise DraftRevisionConflict(current)
             created_at = current["created_at"] if current else now
@@ -463,6 +476,108 @@ class DerivedStore:
         finally:
             conn.close()
         return self.get_derived_record("material", material_id, kind)  # type: ignore[return-value]
+
+    def renew_material_draft_generation_lease(
+        self, material_id: str, stale_before: float, *, renewed_at: float | None = None,
+    ) -> dict | None:
+        """Atomically claim one stale, unedited generated-draft task for recovery.
+
+        Draft revisions hash user-visible content and therefore cannot double as
+        an internal job lease. Comparing ``updated_at`` inside the write
+        transaction ensures concurrent detail reads cannot both requeue the same
+        abandoned task.
+        """
+        kind = "GENERATED_DRAFT"
+        record_id = f"material:{material_id}:{kind}"
+        now = time.time() if renewed_at is None else renewed_at
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM derived_records WHERE id=?", (record_id,)).fetchone()
+            record = self._row_to_derived(row) if row else None
+            content = (record or {}).get("content") or {}
+            if (
+                record is None
+                or record.get("status") != "pending"
+                or float(record.get("updated_at") or 0) > stale_before
+                or content.get("userEdited")
+                or content.get("confirmed")
+            ):
+                conn.rollback()
+                return None
+            conn.execute("UPDATE derived_records SET updated_at=? WHERE id=?", (now, record_id))
+            conn.commit()
+            claimed = {**record, "updated_at": now}
+        finally:
+            conn.close()
+        return claimed
+
+    def renew_pending_derived_lease(
+        self,
+        owner_type: str,
+        owner_id: str,
+        kind: str,
+        stale_before: float,
+        *,
+        renewed_at: float | None = None,
+    ) -> dict | None:
+        """Atomically claim a stale pending derived task for resubmission."""
+        record_id = f"{owner_type}:{owner_id}:{kind}"
+        now = time.time() if renewed_at is None else renewed_at
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM derived_records WHERE id=?", (record_id,)).fetchone()
+            record = self._row_to_derived(row) if row else None
+            if (
+                record is None
+                or record.get("status") != "pending"
+                or float(record.get("updated_at") or 0) > stale_before
+            ):
+                conn.rollback()
+                return None
+            conn.execute("UPDATE derived_records SET updated_at=? WHERE id=?", (now, record_id))
+            conn.commit()
+            claimed = {**record, "updated_at": now}
+        finally:
+            conn.close()
+        return claimed
+
+    def finish_pending_derived_lease(
+        self,
+        owner_type: str,
+        owner_id: str,
+        kind: str,
+        leased_at: float,
+        *,
+        status: str,
+        content: dict,
+        failed_at: float | None = None,
+    ) -> dict | None:
+        """Finish exactly one claimed pending lease if no newer writer replaced it."""
+        record_id = f"{owner_type}:{owner_id}:{kind}"
+        now = time.time() if failed_at is None else failed_at
+        conn = self._connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM derived_records WHERE id=?", (record_id,)).fetchone()
+            record = self._row_to_derived(row) if row else None
+            if (
+                record is None
+                or record.get("status") != "pending"
+                or float(record.get("updated_at") or 0) != leased_at
+            ):
+                conn.rollback()
+                return None
+            conn.execute(
+                "UPDATE derived_records SET status=?, content_json=?, updated_at=? WHERE id=?",
+                (status, json.dumps(content or {}, ensure_ascii=False), now, record_id),
+            )
+            conn.commit()
+            finished = {**record, "status": status, "content": content or {}, "updated_at": now}
+        finally:
+            conn.close()
+        return finished
 
 
     def list_derived_records(

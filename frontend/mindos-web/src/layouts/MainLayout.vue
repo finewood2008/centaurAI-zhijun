@@ -37,10 +37,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       @navigate="closeSidebar"
     />
     <div class="ws-app__main">
-      <AppTopbar @toggle-menu="toggleSidebar" />
+      <slot name="topbar" :toggle-menu="toggleSidebar">
+        <AppTopbar @toggle-menu="toggleSidebar" />
+      </slot>
       <main class="ws-app__content">
         <ErrorBoundary>
-          <RouterView />
+          <slot name="content"><RouterView /></slot>
         </ErrorBoundary>
       </main>
     </div>

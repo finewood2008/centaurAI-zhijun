@@ -26,7 +26,7 @@ def _error(status: int, code: str, message: str) -> HTTPException:
 
 
 def get_today(request: Request = None):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return nudge_service.today(scope=_device_scope_of(request))
 
 

@@ -2,32 +2,45 @@
 import { computed, ref, watch, onBeforeUnmount } from 'vue'
 import { ChevronDown, ShieldCheck } from 'lucide-vue-next'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
-import { askRoute, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
-const props = defineProps<{ conversationId?: string; disabled?: boolean }>()
-const emit = defineEmits<{ (e: 'mode', value: string): void }>()
+import { askRoute, grantDefaultDeConsent, needsDeConsent, routePath, routingRequest, type RoutePreview } from '@/services/taskRouting'
+const props = defineProps<{ conversationId?: string; disabled?: boolean; activateOnlineChannel?: () => Promise<boolean> }>()
+const emit = defineEmits<{
+  (e: 'mode', value: string): void
+  (e: 'mode-selected', value: string): void
+  (e: 'jobs-resumed', value: { conversationId: string; jobIds: string[] }): void
+}>()
 const state = ref<any>(null)
 const error = ref('')
 const notice = ref('')
+const backgroundNotice = ref('')
 const acknowledge = ref(false)
 const open = ref(false)
 const busy = ref(false)
+const activatingOnline = ref(false)
 const configureDefault = ref(false)
 const consentAcknowledge = ref(false)
 const includeFiles = ref(false)
 const includeCharter = ref(false)
+const autoEgress = ref(false)
 const configureHandling = ref(false)
 const handlingAction = ref<'omit' | 'local'>('omit')
 const path = computed(() => props.conversationId ? routePath(props.conversationId) : '/mindos/conversations/routing/default')
 const actionPath = computed(() => routePath(props.conversationId || 'default'))
 const policy = computed(() => state.value?.defaultAuthorization)
 const handling = computed(() => state.value?.handlingPreference)
-const taskLabels: Record<string, string> = { alignment: '自我校准', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
+const currentMode = computed<'online' | 'local' | null>(() => state.value?.mode?.mode === 'online' ? 'online'
+  : ['local', 'legacy'].includes(state.value?.mode?.mode) ? 'local' : null)
+const onlineAvailable = computed(() => state.value?.service?.external === true)
+const localModelLabel = computed(() => state.value?.localService?.model || '本机模型')
+const onlineModelLabel = computed(() => onlineAvailable.value ? (state.value?.service?.model || state.value?.service?.name || '在线模型') : '未启用')
+const taskLabels: Record<string, string> = { reflection: '照见整理', alignment: '自我校准与照见', extract_turn: '个人理解', draft_turn: '判断草稿', home_brief: '今日来信', summarize_conversation: '会话摘要', first_observation: '初步理解', consolidate: '理解整理', learning: '情境复盘', decision_suggestions: '判断候选', reply_assistance: '回复辅助' }
 const taskLabel = (key: string) => taskLabels[key] || (key.startsWith('file_reply:') ? '文件反馈' : '后台整理')
 const taskCount = (task: any) => Number.isInteger(task.count) && task.count > 0 ? task.count : null
 const pausedMemory = computed(() => state.value?.pending?.find((task: any) => task.task_key === 'extract_turn'))
 const failedCount = computed(() => (state.value?.pending ?? []).reduce((total: number, task: any) => total + (task.failedCount || 0), 0))
 const attentionLabel = computed(() => {
   if (error.value || state.value?.error || policy.value?.serviceChanged || handling.value?.serviceChanged) return '检查设置'
+  if (currentMode.value === 'online' && !onlineAvailable.value) return '在线模型不可用'
   if (failedCount.value) return `整理未完成 · ${failedCount.value}`
   if (pausedMemory.value) return `个人理解暂停${taskCount(pausedMemory.value) ? ` · ${taskCount(pausedMemory.value)} 轮` : ''}`
   return `待处理 ${state.value?.pending?.length ?? 0}`
@@ -36,65 +49,125 @@ let sequence = 0
 let mutation = 0
 let alive = true
 let pendingController: AbortController | null = null
+let readController: AbortController | null = null
+// Only jobs explicitly queued by this page may use the existing default policy.
+// A second pause is left for manual review, never an automatic retry loop.
+const automaticAttempts = new Set<string>()
 function begin() {
   pendingController?.abort(); pendingController = null
   const ticket = ++mutation, target = path.value
   busy.value = true; sequence++; error.value = ''; notice.value = ''
   return () => alive && ticket === mutation && target === path.value
 }
-async function refresh() {
-  if (busy.value) return
+async function refresh(): Promise<boolean> {
+  if (busy.value) return false
+  readController?.abort()
+  const controller = new AbortController()
+  readController = controller
   const target = path.value, ticket = ++sequence
   try {
-    const next = await routingRequest(target)
-    if (target !== path.value || ticket !== sequence) return
+    const next = await routingRequest(target, 'GET', undefined, controller.signal)
+    if (target !== path.value || ticket !== sequence) return false
     state.value = next; error.value = ''; emit('mode', next.mode.mode)
-  } catch (e) { if (ticket === sequence) error.value = e instanceof Error ? e.message : '设置读取失败' }
+    return true
+  } catch (e) { if (ticket === sequence && !controller.signal.aborted) error.value = e instanceof Error ? e.message : '设置读取失败'; return false }
+  finally { if (readController === controller) readController = null }
 }
 watch(path, () => {
   pendingController?.abort(); pendingController = null
+  readController?.abort(); readController = null
   mutation++; sequence++; busy.value = false
   open.value = false; state.value = null; error.value = ''; notice.value = ''
+  backgroundNotice.value = ''; automaticAttempts.clear()
   acknowledge.value = false; configureDefault.value = false; consentAcknowledge.value = false
   configureHandling.value = false
-  includeFiles.value = false; includeCharter.value = false
+  includeFiles.value = false; includeCharter.value = false; autoEgress.value = false
   void refresh()
 }, { immediate: true })
-const timer = setInterval(() => { if (!props.disabled) void refresh() }, 10000)
-onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort(); clearInterval(timer) })
+onBeforeUnmount(() => { alive = false; mutation++; sequence++; pendingController?.abort(); readController?.abort() })
 function show() { open.value = true; void refresh() }
-async function change(mode: string) {
+async function change(mode: string): Promise<boolean> {
   const valid = begin(), target = path.value
   try {
     const result = await routingRequest(target, 'PUT', { mode, acknowledge: acknowledge.value,
       serviceId: state.value.service?.id || '', expectedRevision: state.value.mode.revision,
       freshContext: mode === 'online' && state.value.mode.mode !== 'online' })
-    if (!valid()) return
+    if (!valid()) return false
     state.value = result
-    emit('mode', state.value.mode.mode); acknowledge.value = false
+    emit('mode', state.value.mode.mode)
+    emit('mode-selected', state.value.mode.mode)
+    acknowledge.value = false
     notice.value = mode === 'online' ? '在线理解已启用；资料授权按下方设置执行。' : '已切换为本地处理。'
-  } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '切换未完成' }
+    return true
+  } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '切换未完成'; return false }
   finally { if (valid()) busy.value = false }
+}
+async function useLocal(): Promise<boolean> {
+  if (props.disabled || busy.value || !state.value) return false
+  if (currentMode.value === 'local') return true
+  return change('local')
+}
+async function ensureLocal(): Promise<boolean> {
+  if (props.disabled) return false
+  // Re-read the authoritative revision before the CAS. A second bounded pass
+  // recovers a normal cross-window 409 without weakening the mode boundary.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!await refresh() || !state.value) return false
+    if (currentMode.value === 'local') return true
+    if (await change('local')) {
+      if (await refresh() && ['local', 'legacy'].includes(state.value?.mode?.mode)) return true
+    }
+  }
+  return false
+}
+function chooseOnline() {
+  if (props.disabled || busy.value || !state.value) return
+  if (currentMode.value === 'online' && onlineAvailable.value && state.value.mode.service === state.value.service?.id) {
+    emit('mode-selected', 'online')
+  }
+  acknowledge.value = false
+  show()
+}
+async function enableOnlineChannel() {
+  if (!props.activateOnlineChannel || props.disabled || busy.value || activatingOnline.value) return
+  activatingOnline.value = true; error.value = ''; notice.value = ''
+  try {
+    const activated = await props.activateOnlineChannel()
+    if (!activated || !onlineAvailable.value) {
+      error.value = '在线通道尚未启用，请核对下方供应商设置后重试。'
+      return
+    }
+    acknowledge.value = false
+    notice.value = '在线通道已启用。请确认发送说明后，再切换到在线模型。'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '在线通道未启用，请重试。'
+  } finally { activatingOnline.value = false }
 }
 async function saveDefault(enabled: boolean) {
   const valid = begin(), target = actionPath.value
   try {
     const result = await routingRequest(target + '/default-consent', 'PUT', {
       enabled, includeFiles: includeFiles.value, includeCharter: includeCharter.value, acknowledge: consentAcknowledge.value,
+      autoEgress: autoEgress.value,
       serviceId: state.value.service?.id || '', expectedRevision: policy.value?.revision || 0,
     })
     if (!valid()) return
     state.value = result
     configureDefault.value = false; consentAcknowledge.value = false
-    notice.value = enabled ? '默认授权已开启，适用范围内不再逐次询问。不会自动恢复已暂停的任务。' : '默认授权已关闭。之前逐次批准的授权仍有效，可在下方一并撤销。'
+    notice.value = enabled ? `默认授权已开启；${autoEgress.value ? '符合范围的在线请求不再逐次弹窗。' : '每次在线发送仍会单独确认。'}不会自动恢复已暂停的任务。` : '默认授权已关闭。之前逐次批准的授权仍有效，可在下方一并撤销。'
   } catch (e) { if (valid()) error.value = e instanceof Error ? e.message : '默认授权未保存' }
   finally { if (valid()) busy.value = false }
 }
 function toggleDefault() {
   if (policy.value?.active) void saveDefault(false)
-  else { includeFiles.value = false; includeCharter.value = false; consentAcknowledge.value = false; configureDefault.value = true }
+  else { includeFiles.value = false; includeCharter.value = false; autoEgress.value = false; consentAcknowledge.value = false; configureDefault.value = true }
 }
-function editDefault() { includeFiles.value = !!policy.value?.includeFiles; includeCharter.value = !!policy.value?.includeCharter; consentAcknowledge.value = false; configureDefault.value = true }
+function editDefault(enableAuto = policy.value?.autoEgress) { includeFiles.value = !!policy.value?.includeFiles; includeCharter.value = !!policy.value?.includeCharter; autoEgress.value = !!enableAuto; consentAcknowledge.value = false; configureDefault.value = true }
+function toggleAutoEgress() {
+  if (!policy.value?.autoEgress) { editDefault(true); return }
+  includeFiles.value = !!policy.value?.includeFiles; includeCharter.value = !!policy.value?.includeCharter
+  autoEgress.value = false; consentAcknowledge.value = true; void saveDefault(true)
+}
 async function saveHandling(enabled: boolean) {
   const valid = begin(), target = actionPath.value
   try {
@@ -129,14 +202,26 @@ async function pending(task: any, reprepare = false) {
     if (!reprepare) {
       const preview = await routingRequest<RoutePreview>(target + '/pending/' + task.preview_id, 'GET', undefined, abort.signal)
       if (!valid()) return
-      const choice = preview.missing.length ? await askRoute(preview, false, abort.signal) : { action: 'allow' as const, keys: [] }
-      if (!valid() || choice.action === 'cancel') return
-      if (choice.action === 'allow' && choice.keys?.length) await routingRequest(target + '/grant', 'POST', { revision: preview.revision, keys: choice.keys }, abort.signal)
-      if (!valid()) return
-      localOnly = choice.action === 'local'
+      if (await grantDefaultDeConsent(props.conversationId || 'default', preview, abort.signal)) {
+        // The resumed worker rebuilds and rechecks the same task before egress.
+      } else {
+        const choice = preview.missing.length || needsDeConsent(preview) ? await askRoute(preview, false, abort.signal) : { action: 'allow' as const, keys: [] }
+        if (!valid() || choice.action === 'cancel') return
+        if (choice.action === 'allow' && (choice.keys?.length || needsDeConsent(preview))) await routingRequest(target + '/grant', 'POST', { revision: preview.revision, keys: needsDeConsent(preview) ? preview.sources.map(source => source.key) : choice.keys }, abort.signal)
+        if (!valid()) return
+        localOnly = choice.action === 'local'
+      }
     }
-    const result = await routingRequest<{ queuedCount?: number; pendingCount?: number }>(target + '/resume', 'POST', { task: task.task_key, localOnly }, abort.signal)
     if (!valid()) return
+    const result = await routingRequest<{ queuedCount?: number; pendingCount?: number; jobIds?: string[] }>(target + '/resume', 'POST', { task: task.task_key, localOnly }, abort.signal)
+    if (!valid()) return
+    if (task.task_key === 'extract_turn' && props.conversationId && result.jobIds?.length) {
+      // A new explicit user action starts a fresh bounded attempt for only the
+      // jobs the server actually requeued, never the whole historical backlog.
+      for (const id of result.jobIds) automaticAttempts.delete(id)
+      backgroundNotice.value = ''
+      emit('jobs-resumed', { conversationId: props.conversationId, jobIds: result.jobIds })
+    }
     notice.value = reprepare ? '正在重新准备待办，没有增加授权；仍需授权的内容会在这里提示。'
       : result.queuedCount === 0 ? '这些任务已经排队，无需重复恢复。'
       : `${result.queuedCount ? `已恢复 ${result.queuedCount} 项待办` : '任务已排队'}，处理完成后会更新到对话里。${result.pendingCount ? `还有 ${result.pendingCount} 项需要核对。` : ''}`
@@ -144,41 +229,103 @@ async function pending(task: any, reprepare = false) {
   finally { if (valid()) { busy.value = false; pendingController = null } }
   if (valid()) await refresh()
 }
-defineExpose({ refresh })
+async function reconcileRecentExtractionJobs(conversationId: string, jobIds: string[]): Promise<boolean | undefined> {
+  if (!alive || props.conversationId !== conversationId) return false
+  if (busy.value) return undefined
+  if (!await refresh() || props.conversationId !== conversationId || busy.value) return undefined
+  backgroundNotice.value = ''
+  const tracked = new Set(jobIds)
+  const jobs = (state.value?.pending ?? []).filter((task: any) => task.task_key === 'extract_turn')
+    .flatMap((task: any) => task.jobs ?? [])
+    .filter((job: any) => tracked.has(job.jobId) && job.state === 'paused' && job.previewId
+      && !job.previewExpired && !automaticAttempts.has(job.jobId))
+  if (!jobs.length) return false
+  const valid = begin(), target = actionPath.value
+  const abort = new AbortController(); pendingController = abort
+  let resumed = false
+  try {
+    for (const job of jobs) {
+      if (!valid()) break
+      const preview = await routingRequest<RoutePreview>(target + '/pending/' + encodeURIComponent(job.previewId), 'GET', undefined, abort.signal)
+      if (!valid()) break
+      if (preview.conversationId !== conversationId || preview.purpose !== 'extract_turn'
+          || preview.defaultAuthorization?.applies !== true || preview.defaultAuthorization.autoEgress !== true) continue
+      automaticAttempts.add(job.jobId)
+      if (!await grantDefaultDeConsent(conversationId, preview, abort.signal) || !valid()) continue
+      const result = await routingRequest<{ queuedCount?: number }>(target + '/resume', 'POST', {
+        task: 'extract_turn', jobId: job.jobId, localOnly: false,
+      }, abort.signal)
+      if (!valid()) break
+      resumed = result.queuedCount !== 0 || resumed
+    }
+  } catch (e) {
+    if (valid()) error.value = e instanceof Error ? e.message : '个人理解整理需要核对，请打开模型与授权。'
+  } finally {
+    if (valid()) { busy.value = false; pendingController = null }
+  }
+  // Preserve a failed grant/resume message; refreshing here would clear it.
+  return valid() && resumed
+}
+function reportMemoryPollingTimeout(conversationId: string) {
+  if (alive && props.conversationId === conversationId) {
+    backgroundNotice.value = '个人理解整理仍未结束，可稍后打开「模型与授权」查看状态；原对话已保留。'
+  }
+}
+defineExpose({ refresh, useLocal, ensureLocal, reconcileRecentExtractionJobs, reportMemoryPollingTimeout })
 </script>
 <template>
   <section class="routing-panel" aria-label="对话处理方式">
-    <button class="routing-trigger" :disabled="disabled || busy" :aria-expanded="open" aria-haspopup="dialog" @click="show">
-      <span class="routing-dot" :class="{ online: state?.mode.mode === 'online' }" aria-hidden="true" />
-      <span>{{ state?.mode.mode === 'online' ? '在线理解' : '本地处理' }}</span>
-      <span v-if="policy?.active" class="routing-default">默认授权</span><ChevronDown :size="13" aria-hidden="true" />
+    <div class="routing-mode" role="group" :aria-label="conversationId ? '本段对话使用的模型' : '新对话默认使用的模型'">
+      <span class="routing-mode__label">{{ conversationId ? '本段对话' : '新对话默认' }}</span>
+      <button type="button" class="routing-mode__choice" data-testid="routing-local-mode" :aria-pressed="currentMode === 'local'" :disabled="disabled || busy || !state" @click="useLocal">
+        本地模型 <small v-if="currentMode === 'local'">{{ localModelLabel }}</small>
+      </button>
+      <button type="button" class="routing-mode__choice" :class="{ 'is-unavailable': !onlineAvailable }" data-testid="routing-online-mode" :aria-pressed="currentMode === 'online'" :disabled="disabled || busy || !state" @click="chooseOnline">
+        在线模型 <small v-if="currentMode === 'online' || !onlineAvailable">{{ onlineModelLabel }}</small>
+      </button>
+    </div>
+    <button type="button" class="routing-manage" :disabled="disabled || busy" :aria-expanded="open" aria-haspopup="dialog" @click="show">
+      模型与授权 <span v-if="policy?.active" class="routing-default">已授权</span><ChevronDown :size="13" aria-hidden="true" />
     </button>
-    <button v-if="state?.pending?.length || error || state?.error || policy?.serviceChanged || handling?.serviceChanged" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ attentionLabel }}</button>
+    <button v-if="state?.pending?.length || error || state?.error || policy?.serviceChanged || handling?.serviceChanged || (currentMode === 'online' && !onlineAvailable)" class="routing-attention" :title="pausedMemory ? '聊天仍可继续，但这些轮次尚未完成个人理解整理；点击查看原因和恢复' : undefined" @click="show">{{ attentionLabel }}</button>
+    <p v-if="backgroundNotice" class="routing-fine" role="status">{{ backgroundNotice }}</p>
     <SideDrawer :open="open" title="模型与授权" @close="open = false">
       <div class="routing-settings">
         <section v-if="state" class="routing-group">
-          <h3>{{ conversationId ? '本段对话的处理方式' : '新对话默认方式' }}</h3>
-          <p class="routing-service">{{ state.service?.name || '服务待配置' }} <span>· {{ state.service?.model }}</span></p>
-          <p>在线负责对话与理解，本地负责资料解析、检索和权限。在线失败时由你选择重试或改用本地，不自动降级。</p>
+          <h3>{{ conversationId ? '本段对话使用哪个模型' : '新对话默认使用哪个模型' }}</h3>
+          <p v-if="currentMode === 'local'" class="routing-service">当前使用：本地模型 <span>· {{ localModelLabel }}</span></p>
+          <p v-else class="routing-service">当前使用：在线模型 <span>· {{ onlineModelLabel }}</span></p>
+          <p>本地模型在盒子上处理，不向在线模型发送本轮内容；使用在线模型前会继续核对资料授权。</p>
+          <p v-if="!onlineAvailable" id="routing-online-blocked" class="routing-warning" role="status">在线通道尚未启用或已暂停。先在偏好设置中启用已配置的供应商，才可将{{ conversationId ? '本段对话' : '新对话默认方式' }}切换为在线模型。</p>
           <p v-if="state.mode.cutoff && state.mode.mode === 'online'">不携带受保护旧历史的在线上下文；原记录仍保留。</p>
-          <template v-if="state.mode.mode !== 'online' || state.service?.id !== state.mode.service">
+          <div v-if="!onlineAvailable" class="routing-actions" aria-describedby="routing-online-blocked">
+            <button v-if="activateOnlineChannel" type="button" class="routing-primary" :disabled="activatingOnline || busy || disabled" @click="enableOnlineChannel">{{ activatingOnline ? '正在启用在线通道…' : '启用已配置的在线通道' }}</button>
+            <RouterLink v-else class="routing-settings-link" to="/settings">前往偏好设置启用在线通道</RouterLink>
+            <button v-if="currentMode === 'online'" :disabled="busy || disabled" @click="change('local')">改用本地模型</button>
+          </div>
+          <p v-if="!onlineAvailable && error" class="routing-warning routing-action-error" role="alert" data-testid="routing-online-activation-error">{{ error }}</p>
+          <template v-else-if="state.mode.mode !== 'online' || state.service?.id !== state.mode.service">
             <label><input v-model="acknowledge" type="checkbox" /> 我理解日常消息会发送给上述服务，离开本机后无法收回。开启在线不携带受保护旧历史。</label>
-            <button class="routing-primary" :disabled="!acknowledge || !state.service?.external || busy || disabled" @click="change('online')">启用在线理解</button>
+            <div class="routing-actions"><button class="routing-primary" :disabled="!acknowledge || !state.service?.external || busy || disabled" @click="change('online')">启用在线模型</button><button v-if="currentMode === 'online'" :disabled="busy || disabled" @click="change('local')">改用本地模型</button></div>
           </template>
-          <button v-else :disabled="busy || disabled" @click="change('local')">{{ conversationId ? '整段仅本地' : '新对话默认本地' }}</button>
+          <button v-else :disabled="busy || disabled" @click="change('local')">{{ conversationId ? '切换为本地模型' : '新对话默认使用本地模型' }}</button>
         </section>
         <section v-if="state" class="routing-group">
-          <div class="routing-setting-title"><h3><ShieldCheck :size="17" aria-hidden="true" /> 默认授权相关文字</h3><button class="routing-switch" role="switch" aria-label="默认授权相关文字" :aria-checked="!!policy?.active" :disabled="busy || !state.service?.external" @click="toggleDefault"><span /></button></div>
-          <p>开启后，本设备各在线对话及后台理解任务，自动使用所需的对话、个人理解、判断和复盘文字。包括今后新增或修改的相关内容；只发送实际需要的部分。</p>
+          <div class="routing-setting-title"><h3><ShieldCheck :size="17" aria-hidden="true" /> 资料来源默认授权</h3><button class="routing-switch" role="switch" aria-label="资料来源默认授权" :aria-checked="!!policy?.active" :disabled="busy || !state.service?.external" @click="toggleDefault"><span /></button></div>
+          <p>开启后，本设备各在线对话及后台理解任务可自动使用所需的对话、个人理解、判断和复盘文字，包括今后新增或修改的相关内容；只发送实际需要的部分。</p>
+          <p class="routing-fine">此开关减少同一服务和用途下的资料来源授权询问。设备安全通道仍可能要求核对每次在线发送的输入、系统提示和完整来源范围。</p>
           <p v-if="policy?.active">已开启 · {{ policy.serviceName }} · {{ policy.includeFiles ? '包括引用的文件提取文字' : '文件文字仍单独询问' }} · {{ policy.includeCharter ? '包括人生章程与草稿' : '章程与草稿仍单独询问' }} <button class="routing-link" @click="editDefault">修改范围</button></p>
+          <div v-if="policy?.active" class="routing-setting-title"><h3>符合范围时不再逐次确认</h3><button class="routing-switch" role="switch" aria-label="符合范围时不再逐次确认" :aria-checked="!!policy?.autoEgress" :disabled="busy" @click="toggleAutoEgress"><span /></button></div>
+          <p v-if="policy?.active" class="routing-fine">{{ policy.autoEgress ? '已开启。知君会在每次发送前复核服务、配置、用途和资料范围；范围变化时仍需重新核对。' : '未开启。当前仍会在每次向在线模型发送前显示完整范围。' }}</p>
           <p v-if="policy?.serviceChanged" class="routing-warning">服务已变化。之前对 {{ policy.serviceName }} 的默认授权不适用于当前服务，请重新确认。</p>
           <div v-if="configureDefault" class="routing-consent-form">
             <p><strong>授权给 {{ state.service?.name }}</strong></p>
-            <p>用途：日常对话、回复辅助、判断草稿与候选、个人理解与校准、情境推演及复盘、摘要、今日来信和理解整理。此开关不授权上传原文件、通用导出或训练个人模型；外部服务的数据保留规则以该服务说明为准。</p>
+            <p>用途：日常对话、回复辅助、判断草稿与候选、个人理解与校准、跨时间照见、情境推演及复盘、摘要、今日来信和理解整理。此开关不授权上传原文件、通用导出或训练个人模型；外部服务的数据保留规则以该服务说明为准。</p>
             <label><input v-model="includeFiles" type="checkbox" /> 也默认允许引用的文件提取文字及其派生内容（包括今后新增或更新的文件）</label>
             <label><input v-model="includeCharter" type="checkbox" /> 也默认允许人生章程与章程草稿（含必要的历史版本），用于上述对话和理解任务</label>
+            <label><input v-model="autoEgress" type="checkbox" /> 符合上述服务、用途和资料范围时，不再逐次显示在线发送确认</label>
             <p class="routing-fine">章程默认不包含在旧授权里，需你明确选择。章程引用的文件仍按文件权限核对，不能绕过撤销、删除或失效的来源。</p>
-            <label><input v-model="consentAcknowledge" type="checkbox" /> 我同意把上述范围的必要文字发给此服务，不再逐次询问；已发送的内容无法收回。</label>
+            <label><input v-model="consentAcknowledge" type="checkbox" /> 我同意在上述范围内默认授权资料来源{{ autoEgress ? '，并默认发送本轮输入、必要系统提示及这些资料' : '' }}；已发送的内容无法收回。</label>
             <div class="routing-actions"><button class="routing-primary" :disabled="!consentAcknowledge || busy" @click="saveDefault(true)">确认开启默认授权</button><button :disabled="busy" @click="configureDefault = false">暂不开启</button></div>
           </div>
           <p class="routing-fine">仅本地对话不受影响。换服务需重新确认，来源不明或已删除的内容仍被拦截。关闭开关即停止默认授权；逐次批准的权限可另行撤销。</p>
@@ -198,21 +345,42 @@ defineExpose({ refresh })
         </section>
         <section v-if="state?.pending?.length" class="routing-group">
           <h3>尚未完成的整理 · {{ state.pending.length }} 类</h3><p>聊天仍可继续。这里区分处理失败与等待授权；恢复时重新核验来源，不会把普通回复当成已经记入本体。</p>
-          <div v-for="task in state.pending" :key="task.task_key" class="routing-task"><div><strong>{{ taskLabel(task.task_key) }}</strong><span v-if="taskCount(task)"> · {{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span><p v-if="task.detail" class="routing-fine">{{ task.detail }}</p><p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p></div><button :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button></div>
+          <div v-for="task in state.pending" :key="task.task_key" class="routing-task">
+            <div class="routing-task__content">
+              <div class="routing-task__title">
+                <strong>{{ taskLabel(task.task_key) }}</strong>
+                <span v-if="taskCount(task)" class="routing-task__count">{{ taskCount(task) }} {{ task.task_key === 'extract_turn' ? '轮待整理' : '项待处理' }}</span>
+              </div>
+              <p v-if="task.detail" class="routing-fine">{{ task.detail }}</p>
+              <p v-if="task.previewExpired && !task.failedCount" class="routing-fine">原预览已过期，先重新准备待办，再核对需要的授权。</p>
+            </div>
+            <button type="button" class="routing-task__action" :disabled="busy || disabled" @click="pending(task, !!task.previewExpired || !!task.failedCount)">{{ task.failedCount ? '重新整理' : task.previewExpired ? '重新准备待办' : '核对并继续' }}</button>
+          </div>
         </section>
         <details v-if="state" class="routing-group"><summary>撤销已批准的授权</summary><p>停止本设备后续使用资料，关闭默认授权。日常在线消息仍按对话处理方式发送；已经发送的内容无法收回。</p><button :disabled="busy" @click="revoke">撤销本设备资料用途授权</button></details>
-        <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="error || state?.error" class="routing-warning" role="alert">{{ error || state.error }}</p>
+        <p v-if="notice" class="routing-notice" role="status">{{ notice }}</p><p v-if="state?.error || (error && onlineAvailable)" class="routing-warning" role="alert">{{ state?.error || error }}</p>
       </div>
     </SideDrawer>
   </section>
 </template>
 <style scoped>
 .routing-panel { display:flex; flex-wrap:wrap; align-items:center; gap:8px; min-width:0; font-size:12px; color:var(--ws-text-secondary-color,#686b66); }
-.routing-trigger,.routing-attention { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font:inherit; background:transparent; color:inherit; border:1px solid var(--ws-border-color-3,#ebe7de); padding:6px 9px; border-radius:20px; cursor:pointer; }
-.routing-attention { color:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-dot { width:6px; height:6px; border-radius:50%; background:#9b978e; }.routing-dot.online { background:#4a7c59; }.routing-default { border-left:1px solid #8883; padding-left:6px; }
+.routing-mode { display:inline-flex; align-items:stretch; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; overflow:hidden; background:var(--ws-card-bg,#fff); }
+.routing-mode__label { display:flex; align-items:center; padding:6px 9px; color:var(--ws-text-secondary-color,#686b66); background:var(--ws-surface-2,#fbf8f1); border-right:1px solid var(--ws-border-color,#d8d3c8); white-space:nowrap; }
+.routing-mode__choice { display:inline-flex; align-items:center; gap:5px; border:0; border-right:1px solid var(--ws-border-color,#d8d3c8); padding:6px 10px; background:transparent; color:var(--ws-text-primary-color,#1d211f); font:inherit; cursor:pointer; white-space:nowrap; }
+.routing-mode__choice:last-child { border-right:0; }.routing-mode__choice[aria-pressed=true] { color:#fff; background:var(--ws-primary-color,#a6452e); }.routing-mode__choice small { max-width:110px; overflow:hidden; text-overflow:ellipsis; font-size:10px; opacity:.82; }.routing-mode__choice.is-unavailable:not([aria-pressed=true]) { color:var(--ws-text-tertiary-color,#8a867e); }
+.routing-manage,.routing-attention { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; font:inherit; background:transparent; color:inherit; border:1px solid var(--ws-border-color-3,#ebe7de); padding:6px 9px; border-radius:20px; cursor:pointer; }
+.routing-attention { color:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-default { border-left:1px solid #8883; padding-left:6px; }
 .routing-settings { font-size:14px; line-height:1.75; }.routing-group { padding-bottom:24px; margin-bottom:24px; border-bottom:1px solid var(--ws-border-color-3,#ebe7de); }.routing-group h3 { display:flex; align-items:center; gap:8px; font-size:16px; color:var(--ws-text-primary-color,#1d211f); margin:0 0 10px; }.routing-group p { margin:10px 0; }.routing-service { color:var(--ws-text-primary-color,#1d211f); overflow-wrap:anywhere; }.routing-service span { color:var(--ws-text-secondary-color,#686b66); }.routing-group label { display:flex; align-items:flex-start; gap:9px; margin:14px 0; }.routing-group input { margin-top:6px; flex-shrink:0; accent-color:var(--ws-primary-color,#a6452e); }
 .routing-settings button { font:inherit; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:8px; background:transparent; color:inherit; padding:7px 12px; cursor:pointer; }.routing-settings button.routing-primary { color:#fff; background:var(--ws-primary-color,#a6452e); border-color:transparent; }.routing-settings button.routing-link { border:0; text-decoration:underline; padding:0 5px; color:var(--ws-primary-color,#a6452e); }button:disabled { opacity:.45; cursor:not-allowed; }
+.routing-settings-link { display:inline-flex; align-items:center; min-height:34px; box-sizing:border-box; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:8px; padding:7px 12px; color:var(--ws-primary-color,#a6452e); text-decoration:none; }
 .routing-setting-title { display:flex; align-items:center; justify-content:space-between; gap:12px; }.routing-setting-title h3 { margin:0; }.routing-settings .routing-switch { width:40px; height:24px; padding:2px; border:0; border-radius:14px; background:#c8c3b9; flex-shrink:0; }.routing-switch span { display:block; width:20px; height:20px; background:#fff; border-radius:50%; }.routing-switch[aria-checked=true] { background:var(--ws-primary-color,#a6452e); }.routing-switch[aria-checked=true] span { transform:translateX(16px); }
-.routing-consent-form { padding:14px; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }.routing-fine { font-size:12px; color:var(--ws-text-secondary-color,#686b66); }.routing-actions { display:flex; flex-wrap:wrap; gap:8px; }.routing-task { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:10px 0; }.routing-warning { color:var(--ws-primary-color,#a6452e); }.routing-notice { padding:12px; background:#4a7c5910; border-radius:8px; }.routing-group summary { cursor:pointer; }
-@media(max-width:600px) { .routing-default { display:none; }.routing-task { flex-wrap:wrap; }.routing-task>div { min-width:0; overflow-wrap:anywhere; } }
+.routing-consent-form { padding:14px; border:1px solid var(--ws-border-color,#d8d3c8); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }.routing-fine { font-size:12px; color:var(--ws-text-secondary-color,#686b66); }.routing-actions { display:flex; flex-wrap:wrap; gap:8px; }.routing-warning { color:var(--ws-primary-color,#a6452e); }.routing-action-error { padding:10px 12px; border-radius:8px; background:var(--ws-primary-soft,#fbf1eb); }.routing-notice { padding:12px; background:#4a7c5910; border-radius:8px; }.routing-group summary { cursor:pointer; }
+.routing-task { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px 16px; margin:14px 0; padding:14px; border:1px solid var(--ws-border-color-3,#ebe7de); border-radius:10px; background:var(--ws-surface-2,#fbf8f1); }
+.routing-task__content { flex:1 1 16rem; min-width:0; overflow-wrap:anywhere; }
+.routing-task__title { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; color:var(--ws-text-primary-color,#1d211f); }
+.routing-task__count { font-size:12px; color:var(--ws-text-secondary-color,#686b66); white-space:nowrap; }
+.routing-task__content .routing-fine { margin:8px 0 0; }
+.routing-settings .routing-task__action { flex:0 0 auto; align-self:flex-start; white-space:nowrap; min-height:40px; line-height:1.5; }
+@media(max-width:600px) { .routing-panel,.routing-mode { width:100%; }.routing-mode__label { display:none; }.routing-mode__choice { flex:1; justify-content:center; }.routing-mode__choice small,.routing-default { display:none; } }
 </style>

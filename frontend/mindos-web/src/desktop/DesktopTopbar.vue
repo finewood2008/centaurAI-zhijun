@@ -1,0 +1,44 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import type { Phase } from '../../../shared/desktop-contract'
+import { LockKeyhole, Menu } from 'lucide-vue-next'
+import { useDesktopWorkspace } from './workspace'
+import { connectedDeviceLabel } from './deviceDisplay'
+const props = defineProps<{ workspaceReady: boolean }>()
+const emit = defineEmits<{ (e: 'toggle-menu'): void }>()
+const { controller, state } = useDesktopWorkspace()
+const route = useRoute()
+const phase = computed(() => state.value.snapshot?.phase)
+const labels: Record<Phase, string> = { signed_out: '尚未登录', authenticating: '正在登录', selecting_device: '请选择盒子', connecting: '正在连接盒子', authorizing: '正在验证权限', ready: '正在打开工作区', disconnecting: '正在断开', failed: '连接未就绪' }
+const connectionLabel = computed(() => props.workspaceReady ? '已连接盒子' : phase.value ? labels[phase.value] : '正在初始化')
+const deviceLabel = computed(() => connectedDeviceLabel(state.value.snapshot?.subject ?? null))
+const connectionPathLabel = computed(() => state.value.snapshot?.subject?.selectedPath === 'DIRECT' ? '直连'
+  : state.value.snapshot?.subject?.selectedPath === 'RELAY' ? '安全中继' : '')
+const secureConnection = computed(() => props.workspaceReady
+  && state.value.snapshot?.environment === 'production' && !!connectionPathLabel.value)
+const securityExplanation = computed(() => state.value.snapshot?.subject?.selectedPath === 'RELAY'
+  ? '电脑与盒子之间的通道已加密。中继转发加密数据；在线模型的资料外发仍需单独授权。'
+  : '电脑与盒子之间的通道已加密，业务数据通过直连传输。在线模型的资料外发仍需单独授权。')
+const canChoose = computed(() => !!phase.value && ['ready', 'failed'].includes(phase.value) && !state.value.controlPending)
+const title = computed(() => typeof route.meta.title === 'string' ? route.meta.title : '知君')
+</script>
+<template>
+  <header class="product-topbar">
+    <button class="product-menu ws-topbar__menu" aria-label="打开导航菜单" @click="emit('toggle-menu')"><Menu :size="20" /></button>
+    <h1>{{ title }}</h1>
+    <div class="product-connection" role="status"><span class="product-dot" :class="{ connected: workspaceReady }" />
+      <LockKeyhole v-if="secureConnection" :size="14" role="img" aria-label="已建立加密连接" :title="securityExplanation" />{{ connectionLabel }}
+      <span v-if="deviceLabel" class="product-device" :title="deviceLabel">{{ deviceLabel }}</span>
+      <span v-if="connectionPathLabel" class="product-path" data-testid="connection-path" :title="secureConnection ? securityExplanation : undefined">{{ connectionPathLabel }}</span>
+    </div>
+    <button v-if="phase !== 'selecting_device'" :disabled="!canChoose" @click="controller.control('disconnect')">{{ phase === 'failed' ? '重新选择盒子' : '切换盒子' }}</button>
+    <button v-else :disabled="state.controlPending || state.devicesLoading" @click="controller.loadDevices()">刷新盒子</button>
+    <button data-testid="sign-out" :disabled="state.controlPending" @click="controller.control('signOut')">退出登录</button>
+  </header>
+</template>
+<style scoped>
+.product-topbar{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 24px;border-bottom:1px solid var(--ws-border-color-3);background:var(--ws-body-bg);flex-shrink:0}
+h1{margin:0;font-size:16px;font-family:var(--ws-font-display);white-space:nowrap}.product-connection{display:flex;align-items:center;gap:7px;margin-left:auto;font-size:12px;color:var(--ws-text-secondary-color);min-width:0}.product-dot{width:7px;height:7px;border-radius:50%;background:#aaa49a;flex-shrink:0}.product-dot.connected{background:#42835a}.product-device{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.product-path{flex-shrink:0;padding:2px 6px;border-radius:999px;background:var(--ws-surface-2);color:var(--ws-text-color)}button{font:inherit;font-size:12px;cursor:pointer;background:transparent;border:1px solid var(--ws-border-color-3);border-radius:5px;padding:6px 10px;color:var(--ws-text-color);white-space:nowrap}button:disabled{opacity:.5}.product-menu{display:none}
+@media(max-width:900px){.product-device{display:none}.product-topbar{padding:8px 12px;gap:8px}}@media(max-width:767px){.product-menu{display:flex}.product-connection{font-size:11px}}
+</style>

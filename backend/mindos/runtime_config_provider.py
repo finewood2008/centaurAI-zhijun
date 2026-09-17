@@ -13,9 +13,10 @@
 from __future__ import annotations
 
 import config
+import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from urllib.parse import urlsplit
 
 from .secret_store import (
@@ -43,6 +44,10 @@ _MODEL_MAX_LEN = 128
 _MODEL_ALLOWED_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:/+-"
 )
+GPU_ENVIRONMENT = {"ZHIJUN_LOCAL_GPU_ENABLED": "1", "ZHIJUN_LOCAL_GPU_BASE_URL": "http://127.0.0.1:11435",
+                   "ZHIJUN_LOCAL_GPU_MODEL": "qwen3:1.7b", "ZHIJUN_LOCAL_GPU_CONTEXT_WINDOW": "4096",
+                   "ZHIJUN_LOCAL_GPU_MAX_OUTPUT_TOKENS": "512", "ZHIJUN_LOCAL_GPU_NUM_THREAD": "1",
+                   "ZHIJUN_LOCAL_GPU_KEEP_ALIVE": "300"}
 
 
 class RuntimeConfigError(ValueError):
@@ -67,6 +72,10 @@ class LocalOllamaSnapshot:
     timeout_seconds: int
     keep_alive: int
     context_window: int
+    backend: str = "ollama"
+    num_thread: int | None = None
+    max_output_tokens: int | None = None
+    configuration_error: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +208,17 @@ def _default_local_snapshot() -> LocalOllamaSnapshot:
     )
 
 
+def _workspace_gpu_snapshot() -> LocalOllamaSnapshot | None:
+    values = {key: value for key, value in os.environ.items() if key.startswith("ZHIJUN_LOCAL_GPU_")}
+    if not values:
+        return None
+    if values != GPU_ENVIRONMENT or any(os.environ.get(name) for name in ("ZHIJUN_LOCAL_NPU_BASE_URL", "ZHIJUN_LOCAL_NPU_MODEL")):
+        raise ValidationError("LOCAL_GPU_DEPLOYMENT_INVALID")
+    return LocalOllamaSnapshot(base_url="http://127.0.0.1:11435", model="qwen3:1.7b", timeout_seconds=120,
+                               keep_alive=300, context_window=4096, backend="ollama_gpu", num_thread=1,
+                               max_output_tokens=512)
+
+
 def _default_chat_snapshot() -> ChatProviderSnapshot:
     return ChatProviderSnapshot(
         provider=config.QA_AI_PROVIDER,
@@ -251,14 +271,35 @@ def _chat_from_payload(
 
 class RuntimeConfigProvider:
     def __init__(self, store=None, secret_store=None) -> None:
+        # A worker belongs to one workspace for its entire process lifetime.
+        # Deployment/DE credentials are never a default for that user's chat.
+        self.workspace_scoped = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
         self._store = store or RuntimeSettingsStore.instance()
         self._secret_store = secret_store or get_default_secret_store()
         self._secret_store_available = not isinstance(
             self._secret_store, UnavailableSecretStore
         )
         self._lock = threading.RLock()
+        self._gpu_local = _workspace_gpu_snapshot() if self.workspace_scoped else None
         self._local = _default_local_snapshot()
-        self._chat = _default_chat_snapshot()
+        if self.workspace_scoped:
+            # No implicit CPU Ollama destination/model in a workspace. An
+            # explicitly deployed local service or persisted workspace setting
+            # must supply both values before local inference is possible.
+            self._local = replace(
+                self._local,
+                base_url=os.environ.get("ZHIJUN_LOCAL_NPU_BASE_URL", "").rstrip("/"),
+                model=os.environ.get("ZHIJUN_LOCAL_NPU_MODEL", ""),
+            )
+            if self._gpu_local is not None:
+                self._local = self._gpu_local
+        self._chat = (
+            ChatProviderSnapshot(
+                provider="ollama", external_enabled=False, base_url=None, model=None,
+                api_key_configured=False, secret_ref=None, timeout_seconds=60,
+                total_budget_seconds=90, fallback_ollama=False, local=self._local,
+            ) if self.workspace_scoped else _default_chat_snapshot()
+        )
         self._reload()
 
     # ---- 内部 ----
@@ -266,11 +307,34 @@ class RuntimeConfigProvider:
     def _reload(self) -> None:
         # 先解析材料通道（问答本地回退复用其快照），再构建问答快照。
         material = self._store.get_section(SECTION_MATERIAL)
-        if material:
+        if self._gpu_local is not None:
+            self._local = self._gpu_local
+            if material:
+                payload = material["payload"]
+                if (type(payload) is not dict or set(payload) != {"baseUrl", "model", "timeoutSeconds"}
+                        or payload.get("baseUrl") != self._gpu_local.base_url or payload.get("model") != self._gpu_local.model):
+                    # Preserve the conflicting database for explicit repair.
+                    # Local inference fails closed, while an independently
+                    # selected cloud provider can still serve the workspace.
+                    self._local = replace(self._gpu_local, configuration_error="LOCAL_GPU_DEPLOYMENT_CONFLICT")
+                else:
+                    try:
+                        self._local = replace(self._gpu_local, timeout_seconds=validate_timeout(payload["timeoutSeconds"], 10, 600))
+                    except ValidationError:
+                        self._local = replace(self._gpu_local, configuration_error="LOCAL_GPU_DEPLOYMENT_CONFLICT")
+        elif material:
             self._local = _local_from_payload(material["payload"])
         chat = self._store.get_section(SECTION_CHAT)
         if chat:
             self._chat = _chat_from_payload(chat["payload"], chat.get("secret_ref"), self._local)
+            if self.workspace_scoped:
+                # A restored settings DB may reference a credential absent from
+                # this workspace's secret root. Never import it from the DE.
+                self._chat = replace(self._chat, api_key_configured=bool(
+                    self._chat.secret_ref and self._secret_store.get_secret(self._chat.secret_ref)
+                ))
+        else:
+            self._chat = self._chat_with_local(self._local)
 
     def _chat_with_local(self, local: LocalOllamaSnapshot) -> ChatProviderSnapshot:
         """按最新材料快照重建问答快照的 local（本地回退跟随材料配置）。"""
@@ -301,6 +365,8 @@ class RuntimeConfigProvider:
     def resolve_api_key(self, snapshot: ChatProviderSnapshot) -> str | None:
         if snapshot.secret_ref:
             return self._secret_store.get_secret(snapshot.secret_ref)
+        if self.workspace_scoped:
+            return None
         # 默认（未持久化覆盖）路径：密钥由部署环境变量提供。
         return config.QA_AI_API_KEY or None
 
@@ -324,8 +390,11 @@ class RuntimeConfigProvider:
     def external_profile_projection(self, row):
         current = self._store.get_section(SECTION_CHAT) or {}
         active = (current.get("payload") or {}).get("externalProviderId") == row["id"]
+        configured = bool(row["secret_ref"])
+        if self.workspace_scoped and configured:
+            configured = bool(self._secret_store.get_secret(row["secret_ref"]))
         return {"id": row["id"], "revision": row["revision"], **row["payload"],
-                "apiKeyConfigured": bool(row["secret_ref"]), "active": active,
+                "apiKeyConfigured": configured, "active": active,
                 "pendingActivation": active and (current["payload"].get("externalProviderRevision") != row["revision"])}
 
     def list_external_providers(self):
@@ -441,6 +510,8 @@ class RuntimeConfigProvider:
         base_url = validate_ollama_base_url(base_url)
         model = validate_model_name(model)
         timeout_seconds = validate_timeout(timeout_seconds, 10, 600)
+        if self._gpu_local is not None and (base_url != self._gpu_local.base_url or model != self._gpu_local.model):
+            raise ValidationError("LOCAL_GPU_DEPLOYMENT_CONFLICT")
         payload = {"baseUrl": base_url, "model": model, "timeoutSeconds": timeout_seconds}
         row = self._store.put_section(
             SECTION_MATERIAL, expected_revision, payload, secret_ref=None
@@ -490,6 +561,9 @@ class RuntimeConfigProvider:
             effective_ref = "__new__"
         else:
             effective_ref = old_ref
+        if (self.workspace_scoped and effective_ref and effective_ref != "__new__"
+                and not self._secret_store.get_secret(effective_ref)):
+            effective_ref = None
         if provider == "openai" and external_enabled and not effective_ref:
             raise ValidationError("启用外部问答时必须配置 API Key")
 
@@ -570,6 +644,10 @@ class RuntimeConfigProvider:
         timeout = validate_timeout(
             current.timeout_seconds if timeout_seconds is None else timeout_seconds, 10, 600
         )
+        if self._gpu_local is not None:
+            if base != self._gpu_local.base_url or mdl != self._gpu_local.model:
+                raise ValidationError("LOCAL_GPU_DEPLOYMENT_CONFLICT")
+            return replace(self._gpu_local, timeout_seconds=timeout)
         return LocalOllamaSnapshot(
             base_url=base, model=mdl, timeout_seconds=timeout,
             keep_alive=current.keep_alive, context_window=current.context_window,
@@ -603,6 +681,10 @@ class RuntimeConfigProvider:
             enabled = False  # ollama 强制关闭外发
             base = None
             mdl = None
+            if self.workspace_scoped and not (self._local.base_url and self._local.model):
+                raise ValidationError("当前工作区尚未配置本地模型服务，请先配置聊天服务")
+            if self._local.configuration_error:
+                raise ValidationError(self._local.configuration_error)
         timeout = validate_timeout(
             current.timeout_seconds if timeout_seconds is None else timeout_seconds, 1, 300
         )

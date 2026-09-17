@@ -151,6 +151,8 @@ onBeforeUnmount(() => {
       <time>{{ dateLine }}</time>
     </header>
 
+    <MattersHome class="zj-today__matters" />
+
     <div v-if="loading" class="zj-today__skeleton" aria-label="正在打开共同地图">
       <span />
       <span />
@@ -159,7 +161,6 @@ onBeforeUnmount(() => {
     <ErrorState v-else-if="!overview" :message="error || '共同地图暂时没有打开'" recover-on-reconnect @retry="loadHome()" />
 
     <template v-else>
-      <MattersHome class="zj-today__matters" />
       <div class="zj-today__grid">
         <article class="zj-letter" aria-label="知君写给你的今日来信">
           <header class="zj-letter__identity">
@@ -211,6 +212,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <RouterLink to="/reflections" class="zj-reflections-entry"><span>照见</span><span>回看我们一起核对过的理解</span><ArrowRight :size="16" aria-hidden="true" /></RouterLink>
       <RelationshipTimeline :items="overview.timeline" @open="openSource" />
 
       <p v-if="overview.state === 'first_meet'" class="zj-today__first-note">
@@ -221,6 +223,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.zj-reflections-entry { display:flex; align-items:center; flex-wrap:wrap; gap:12px; padding:16px 20px; border:1px solid #e0e4d9; border-radius:12px; color:#54654a; font-size:14px; text-decoration:none; }
+.zj-reflections-entry span:nth-child(2) { color:#858c7d; font-size:12px; flex:1; }
 .zj-today {
   display: grid;
   gap: 22px;

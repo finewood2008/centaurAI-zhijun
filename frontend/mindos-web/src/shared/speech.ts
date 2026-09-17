@@ -1,6 +1,10 @@
+import { isDesktopProduct } from './productScope.ts'
+
 // 语音输入的纯逻辑：只在浏览器有 SpeechRecognition 时启用；永远不自动发送。
 export function speechSupported(): boolean {
-  if (typeof window === 'undefined') return false
+  // Electron may expose the constructor without a working recognition service.
+  // This desktop app provides box-side audio processing, not a Web Speech backend.
+  if (isDesktopProduct() || typeof window === 'undefined') return false
   const w = window as unknown as { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }
   return Boolean(w.SpeechRecognition || w.webkitSpeechRecognition)
 }

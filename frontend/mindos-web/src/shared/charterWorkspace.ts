@@ -1,3 +1,4 @@
+import { saveProductText } from '../services/productFiles.ts'
 import type { CharterClause, CharterWorkspace, GrowthCharter } from '../services/api'
 
 export const charterKinds: Record<CharterClause['kind'], string> = {
@@ -33,17 +34,14 @@ export function renderCharterClauses(clauses: CharterClause[]): string {
   }
   return [...sections].map(([section, texts]) => `## ${section}\n\n${texts.join('\n\n')}`).join('\n\n')
 }
-export function downloadCharterMarkdown(text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }))
-  const anchor = document.createElement('a')
-  anchor.href = url; anchor.download = '人生章程.md'; anchor.click()
-  URL.revokeObjectURL(url)
+export function downloadCharterMarkdown(text: string): Promise<void> {
+  return saveProductText('人生章程.md', text, 'text/markdown;charset=utf-8')
 }
 export function cloneClauses(clauses: CharterClause[]): CharterClause[] {
   return JSON.parse(JSON.stringify(clauses))
 }
 export function charterSourceLabel(kind: string): string {
-  return ({ charter: '已确认章程', charter_workspace: '章程工作稿', charter_draft: '章程草稿', message: '对话消息', material: '本机资料', claim: '本体理解', alignment: '自我校准', summary: '对话小结', decision: '历史判断', episode: '情境复盘' } as Record<string, string>)[kind] || kind
+  return ({ charter: '已确认章程', charter_workspace: '章程工作稿', charter_draft: '章程草稿', message: '对话消息', material: '本机资料', claim: '本体理解', alignment: '自我校准', summary: '对话小结', decision: '历史判断', episode: '情境复盘', reflection: '照见' } as Record<string, string>)[kind] || kind
 }
 export function newCharterClause(): CharterClause {
   return { id: crypto.randomUUID(), section: '我的约定', text: '', kind: 'principle', scope: 'global', control: null, sources: [], origin: 'manual' }

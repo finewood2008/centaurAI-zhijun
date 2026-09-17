@@ -54,7 +54,7 @@ REVIEW_ACTIONS = (
     "create",
 )
 SURFACES = ("conversation", "ontology_page", "onboarding", "today", "decision_panel", "import", "system")
-JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft")
+JOB_KINDS = ("extract_turn", "extract_material", "summarize_conversation", "consolidate", "project", "nudge_scan", "draft_turn", "first_observation", "home_brief", "alignment", "charter_draft", "reflection")
 JOB_STATES = ("queued", "running", "done", "failed")
 
 # 受控谓词词表：抽取器只能在分区对应的词表内选，越界整条丢弃。
@@ -422,6 +422,8 @@ class OntologyStore:
                 conn.executescript(learning_schema)
                 from .alignment_store import SCHEMA as alignment_schema
                 conn.executescript(alignment_schema)
+                from .reflection_store import SCHEMA as reflection_schema
+                conn.executescript(reflection_schema)
                 if "current_token" not in {r[1] for r in conn.execute("PRAGMA table_info(alignment_grants)")}:
                     conn.execute("ALTER TABLE alignment_grants ADD COLUMN current_token TEXT NOT NULL DEFAULT ''")
                 conn.execute("UPDATE alignment_conversations SET status='paused', detail='服务已重启，自动提议暂停；可手动校准或重试' WHERE status='queued'")
@@ -765,6 +767,24 @@ class OntologyStore:
     def get_claim(self, claim_id: str, *, with_evidence: bool = True) -> dict | None:
         with self._connect() as conn:
             return self._fetch_claim(conn, claim_id, with_evidence)
+
+    def get_claims(self, claim_ids: list[str], *, with_evidence: bool = True) -> list[dict]:
+        """Load claims in caller order with a bounded number of DB connections."""
+        ordered = list(dict.fromkeys(claim_ids))
+        if not ordered:
+            return []
+        found: dict[str, dict] = {}
+        with self._connect() as conn:
+            # Stay below SQLite builds whose host-parameter limit is 999.
+            for offset in range(0, len(ordered), 500):
+                chunk = ordered[offset:offset + 500]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(_CLAIM_SELECT + f" WHERE c.id IN ({placeholders})", chunk).fetchall()
+                for row in rows:
+                    evidence = self._evidence_for(conn, row["id"]) if with_evidence else []
+                    claim = self._claim(row, evidence)
+                    found[claim["id"]] = claim
+        return [found[claim_id] for claim_id in ordered if claim_id in found]
 
     @staticmethod
     def _validate_claim_payload(payload: dict) -> dict:
@@ -1424,7 +1444,18 @@ class OntologyStore:
         """入队一个后台任务；同 kind+owner 已有活跃任务时返回 None（幂等）。"""
         if kind not in JOB_KINDS:
             raise OntologyError(f"任务类型不合法：{kind}")
+        with self._connect() as db:
+            if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (kind, owner_id)).fetchone():
+                return None
         job_id = f"ojob_{uuid.uuid4().hex[:12]}"
+        from zhijun_worker.background import register, BackgroundEnqueueError
+        registration_error = None
+        try:
+            register(job_id, kind)
+        except Exception as exc:
+            # Never queue a task whose execution origin was not authorized.
+            # Keep a failed record so existing manual recovery can recheck it.
+            registration_error = BackgroundEnqueueError(job_id, exc)
         now = time.time()
         with self._lock, self._connect() as conn:
             try:
@@ -1432,12 +1463,17 @@ class OntologyStore:
                     """
                     INSERT INTO ontology_jobs
                         (job_id, kind, owner_id, state, priority, attempts, input_hash, payload_json, created_at, updated_at)
-                    VALUES (?, ?, ?, 'queued', ?, 0, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
                     """,
-                    (job_id, kind, owner_id, int(priority), input_hash or "", _json(payload or {}), now, now),
+                    (job_id, kind, owner_id, 'failed' if registration_error else 'queued', int(priority), input_hash or "", _json(payload or {}), now, now),
                 )
+                if registration_error:
+                    conn.execute("UPDATE ontology_jobs SET failure_class='registration', error_code=?, error_detail=?, finished_at=? WHERE job_id=?",
+                                 (registration_error.code, '后台整理未能登记，原消息已保留；重试前需重新核对授权。', now, job_id))
             except sqlite3.IntegrityError:
                 return None
+        if registration_error:
+            raise registration_error
         return job_id
 
     def claim_next_job(self, owner: str, lease_seconds: float = 120.0) -> dict | None:
@@ -1833,7 +1869,7 @@ class OntologyStore:
             }
             conn.execute("BEGIN IMMEDIATE")
             try:
-                for table in ("alignment_conversations", "claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
+                for table in ("reflection_reviews", "reflections", "alignment_conversations", "claim_conflicts", "entity_merge_proposals", "claim_evidence", "review_events", "claims", "ontology_jobs"):
                     conn.execute(f"DELETE FROM {table}")
                 conn.execute("DELETE FROM entity_aliases WHERE entity_id != ?", (ME_ENTITY_ID,))
                 conn.execute("DELETE FROM entities WHERE id != ?", (ME_ENTITY_ID,))

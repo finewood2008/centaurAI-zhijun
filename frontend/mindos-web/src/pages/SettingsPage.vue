@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import DataHubBackLink from '@/components/ui/DataHubBackLink.vue'
 // P1（§4）：设置页「模型与运行时」。
 // 复用双通道划分：材料处理固定本地 Ollama；对话问答可显式配置并授权的外部 OpenAI 兼容 API。
 // 契约：/api/system/models/*（require_local + revision 乐观锁）；test 提交表单暂存值不持久化。
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { createVisiblePoller } from '@/composables/visiblePolling'
 import RoutingPanel from '@/components/conversation/RoutingPanel.vue'
 import ExternalProvidersPanel from '@/components/conversation/ExternalProvidersPanel.vue'
+import SensitiveRulesPanel from '@/components/settings/SensitiveRulesPanel.vue'
 import {
   Activity,
   Check,
@@ -137,7 +140,8 @@ const mAvailableModels = ref<string[]>([])
 
 // ---- 对话问答（外部 LLM）----
 const cRevision = ref<number | null>(null)
-const cSource = ref<'defaults' | 'runtime_settings'>('defaults')
+const cSource = ref<ChatProviderConfig['source']>('defaults')
+const cConfigurationMessage = ref('')
 const cProvider = ref<'ollama' | 'openai'>('ollama')
 const cExternal = ref(false)
 const cBaseUrl = ref('')
@@ -150,6 +154,10 @@ const cTesting = ref(false)
 const cSaving = ref(false)
 const cTest = ref<ChatProviderTestResult | null>(null)
 const cProviderBusy = ref(false)
+const routingPanel = ref<InstanceType<typeof RoutingPanel> | null>(null)
+const externalProvidersPanel = ref<InstanceType<typeof ExternalProvidersPanel> | null>(null)
+let routingRefreshPromise: Promise<boolean> | null = null
+let routingRefreshRevision: number | null = null
 
 const healthReachable = computed(() =>
   mHealth.value ? mHealth.value.reachable : false,
@@ -202,6 +210,7 @@ function applyMaterial(cfg: MaterialRuntimeConfig) {
 function applyChat(cfg: ChatProviderConfig, preserveTiming = false) {
   cRevision.value = cfg.revision
   cSource.value = cfg.source
+  cConfigurationMessage.value = cfg.configurationRequired ? (cfg.configurationMessage || '请先配置当前工作区的聊天模型。') : ''
   cProvider.value = cfg.provider
   cExternal.value = cfg.externalEnabled
   cBaseUrl.value = cfg.baseUrl ?? ''
@@ -213,6 +222,44 @@ function applyChat(cfg: ChatProviderConfig, preserveTiming = false) {
   }
   cEffective.value = cfg.effectiveProvider
   cTest.value = null
+}
+
+function refreshRoutingReliably(chatRevision: number): Promise<boolean> {
+  if (routingRefreshPromise && routingRefreshRevision === chatRevision) return routingRefreshPromise
+  const previous = routingRefreshPromise
+  const next = (async () => {
+    // A newer provider activation must get a trailing authoritative read; it
+    // cannot reuse an older activation's already-started GET.
+    if (previous) await previous.catch(() => false)
+    await nextTick()
+    if (await routingPanel.value?.refresh()) return true
+    await new Promise(resolve => setTimeout(resolve, 150))
+    return Boolean(await routingPanel.value?.refresh())
+  })()
+  const tracked = next.finally(() => {
+    if (routingRefreshPromise === tracked) {
+      routingRefreshPromise = null
+      routingRefreshRevision = null
+    }
+  })
+  routingRefreshRevision = chatRevision
+  routingRefreshPromise = tracked
+  return routingRefreshPromise
+}
+
+async function handleProviderActivated(config: ChatProviderConfig) {
+  applyChat(config, true)
+  if (!await refreshRoutingReliably(config.revision)) {
+    toast({ type: 'error', message: '在线通道已保存，但模型切换状态未能刷新，请重新读取后再试。' })
+  }
+}
+
+async function activateOnlineChannelFromRouting(): Promise<boolean> {
+  const panel = externalProvidersPanel.value
+  if (!panel) throw new Error('在线供应商设置尚未加载，请稍候后重试。')
+  const config = await panel.activateFromRouting()
+  applyChat(config, true)
+  return refreshRoutingReliably(config.revision)
 }
 
 // ---- 乐观锁冲突保留草稿交互：冲突时不静默重置两表，而是提示用户再决定 ----
@@ -314,11 +361,16 @@ function refreshMaterial() {
 
 // ---- 对话问答 ----
 async function disableExternalChatImmediately() {
-  // 关闭外发是安全动作，不能要求用户再点击一次“保存”。先读取服务端当前值，
-  // 仅变更 externalEnabled，避免把页面里尚未确认的 URL/模型草稿一并持久化。
+  // 先把新对话默认方式持久化为本地，再关闭在线通道。顺序不能反过来：
+  // 第二步即使失败也只会留下“本地 + 在线通道仍可用”的安全状态。
   if (cSaving.value) return
   cSaving.value = true
   try {
+    const localDefault = await routingPanel.value?.ensureLocal()
+    if (!localDefault) {
+      toast({ type: 'error', message: '未能切换新对话默认方式；在线通道没有关闭，请重试' })
+      return
+    }
     const current = await api.getChatProvider()
     await api.putChatProvider({
       provider: current.provider,
@@ -331,7 +383,10 @@ async function disableExternalChatImmediately() {
       revision: current.revision,
     })
     applyChat(await api.getChatProvider())
-    toast({ type: 'success', message: '已关闭外部问答，后续请求将使用本地 Ollama' })
+    const confirmedLocal = await routingPanel.value?.ensureLocal()
+    toast({ type: confirmedLocal ? 'success' : 'error', message: confirmedLocal
+      ? '已暂停在线通道；新对话默认使用本地模型。已打开的对话保留原选择，可在对话顶部切换。'
+      : '在线通道已暂停，但新对话默认方式同时发生了变化；请在上方重新选择“本地模型”。' })
   } catch (e) {
     // 失败后重新读取权威状态，不能让 UI 显示“已关闭”而后端实际仍在外发。
     try {
@@ -534,7 +589,7 @@ async function m2LoadJobs() {
 }
 
 async function m2RefreshAll() {
-  await Promise.allSettled([m2LoadModels(), m2MonitorTick(), m2MindosPipelineTick(), m2LoadJobs()])
+  await runtimePoller.invalidate()
 }
 
 async function m2RunAction(type: ModelJobType, model: string) {
@@ -577,32 +632,47 @@ async function m2Cancel(job: ModelJob) {
   }
 }
 
-// 一次性模型列表在挂载时加载；聚合监控与任务列表开启 6 秒轮询（后端采样缓存 2s）。
-let m2TimerHandle: number | null = null
+// The collapsed advanced console must not consume the box's shared request budget.
+const runtimeExpanded = ref(false)
+const runtimeDetails = ref<HTMLDetailsElement | null>(null)
+const runtimePoller = createVisiblePoller(async includeModels => {
+  await Promise.allSettled([
+    ...(includeModels ? [m2LoadModels()] : []),
+    m2MonitorTick(), m2MindosPipelineTick(), m2LoadJobs(),
+  ])
+}, 6000)
+
+function syncRuntimeVisibility() {
+  runtimePoller.setActive(runtimeExpanded.value && document.visibilityState === 'visible')
+}
+
+function toggleRuntime(event: Event) {
+  runtimeExpanded.value = (event.currentTarget as HTMLDetailsElement).open
+  syncRuntimeVisibility()
+}
+
+// Reloading model configuration temporarily removes this subtree as well.
+watch(runtimeDetails, element => {
+  runtimeExpanded.value = element?.open ?? false
+  syncRuntimeVisibility()
+})
 
 onMounted(() => {
   void loadNudgePolicy()
   void loadMemoryPolicy()
   loadAll()
-  void m2LoadModels()
-  void m2RefreshAll()
-  m2TimerHandle = window.setInterval(() => {
-    void m2MonitorTick()
-    void m2MindosPipelineTick()
-    void m2LoadJobs()
-  }, 6000)
+  document.addEventListener('visibilitychange', syncRuntimeVisibility)
 })
 
 onUnmounted(() => {
-  if (m2TimerHandle != null) {
-    window.clearInterval(m2TimerHandle)
-    m2TimerHandle = null
-  }
+  document.removeEventListener('visibilitychange', syncRuntimeVisibility)
+  runtimePoller.dispose()
 })
 </script>
 
 <template>
   <div class="page">
+    <DataHubBackLink />
     <div class="page-head">
       <h1>偏好</h1>
       <p>关系怎么处、用哪个模型、什么能出设备。改动只对之后的对话生效。</p>
@@ -662,6 +732,8 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <SensitiveRulesPanel class="rt-section" />
+
     <ErrorState v-if="loadError" :message="loadError" retry-label="重试" @retry="loadAll" />
     <div v-else-if="loading" class="loading-state">正在加载模型配置…</div>
 
@@ -674,16 +746,24 @@ onUnmounted(() => {
             <h2>日常对话与理解</h2>
           </div>
           <span class="rt-section__source" :class="cSource === 'defaults' ? 'is-default' : 'is-custom'">
-            {{ cSource === 'defaults' ? '部署默认值' : '运行时设置' }}
+            {{ cSource === 'admin-managed' ? '平台托管' : cSource === 'defaults' ? '部署默认值' : '运行时设置' }}
           </span>
         </header>
 
         <div class="rt-form">
-          <RoutingPanel />
-          <ExternalProvidersPanel :chat-revision="cRevision" :disabled="cSaving || cTesting" @activated="applyChat($event, true)" @busy="cProviderBusy = $event" />
-          <p class="rt-note">{{ cExternal ? '在线通道已启用；仅在对话选择在线理解后使用。' : '在线通道已暂停；本地处理仍可用。' }}<button v-if="cExternal" type="button" class="rt-link" :disabled="cSaving || cProviderBusy" @click="disableExternalChatImmediately">暂停在线通道，使用本地</button></p>
+          <div class="rt-routing-card" role="group" aria-label="新对话模型与资料授权">
+            <div class="rt-routing-card__copy">
+              <strong>新对话使用哪个模型</strong>
+              <span>直接选择本地模型或在线模型；在线模式的资料授权在“模型与授权”中管理。</span>
+            </div>
+            <RoutingPanel ref="routingPanel" :activate-online-channel="activateOnlineChannelFromRouting" />
+          </div>
+          <p v-if="cConfigurationMessage" class="rt-note" role="status" data-testid="workspace-model-configuration-notice">{{ cConfigurationMessage }}</p>
+          <p v-if="cSource === 'admin-managed'" class="rt-note" data-testid="managed-cloud-model-notice">云模型由平台统一配置，盒端安全获取，您无需填写 API Key。仍可选择本地模型或自行配置在线服务；资料出域仍需按“模型与授权”中的选择确认。</p>
+          <ExternalProvidersPanel ref="externalProvidersPanel" :chat-revision="cRevision" :external-enabled="cExternal" :disabled="cSaving || cTesting" @activated="handleProviderActivated" @busy="cProviderBusy = $event" />
+          <p class="rt-note">{{ cExternal ? '在线通道已启用；只有选择“在线模型”的对话才会使用。' : '在线通道已暂停；新对话请选择上方“本地模型”，已打开的对话可在对话顶部切换。' }}<button v-if="cExternal" type="button" class="rt-link" :disabled="cSaving || cProviderBusy" @click="disableExternalChatImmediately">暂停在线通道，新对话改用本地</button></p>
           <div class="rt-field is-none-label">
-            <span class="rt-hint">外部关闭时，对话用本机模型 <code>{{ chatLocalModel }}</code>。</span>
+            <span class="rt-hint">本地模型运行在盒子上，当前为 <code>{{ chatLocalModel }}</code>。</span>
           </div>
 
           <details class="rt-more">
@@ -726,7 +806,7 @@ onUnmounted(() => {
 
 
       <!-- ============ 高级 · 运行时管理台 ============ -->
-      <details class="rt-adv">
+      <details ref="runtimeDetails" class="rt-adv" @toggle="toggleRuntime">
         <summary>高级 · 运行时管理台</summary>
         <p class="rt-note">材料处理用哪个本机模型、机器资源、模型任务。平时不用碰。</p>
       <!-- ============ 材料处理（本地 Ollama） ============ -->
@@ -1083,6 +1163,35 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.rt-routing-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--ws-border-color-2, #e2ded4);
+  border-radius: var(--ws-radius, 6px);
+  background: var(--ws-surface-2, #fbf8f1);
+}
+.rt-routing-card__copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.rt-routing-card__copy strong {
+  color: var(--ws-text-primary-color, #1d211f);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rt-routing-card :deep(.routing-panel) {
+  flex-shrink: 0;
+  justify-content: flex-end;
 }
 .rt-form__row {
   display: flex;

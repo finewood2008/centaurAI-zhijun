@@ -1,0 +1,26 @@
+appId: com.qeeshu.zhijun.provisioning-test
+productName: 知君配网测试版
+extends: ./electron-builder.base.yml
+
+directories:
+  output: release-test
+
+files:
+  - package.json
+  - main.js
+  - preload.cjs
+  - app-icon.cjs
+  - security.cjs
+  - provisioning-window.cjs
+  - provisioning-broker.cjs
+  - provisioning/**/*
+  - '!provisioning/preload-formal.mjs'
+  - production/**/*.cjs
+  - runtime/**/*.cjs
+  - assets/centaur.png
+  - '!**/*.map'
+
+extraMetadata:
+  zhijunProvisioningTestBuild: true
+
+artifactName: 'Zhijun-Provisioning-Test-${version}-${os}-${arch}.${ext}'

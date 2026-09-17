@@ -28,6 +28,14 @@ class ConversationStoreTests(unittest.TestCase):
         with self.assertRaises(ConversationError):
             self.store.create_conversation(mode="weird")
 
+    def test_get_conversation_optional_scope_preserves_legacy_callers(self) -> None:
+        conv = self.store.create_conversation(device_scope="device:a")
+        self.assertEqual(self.store.get_conversation(conv["id"]), conv)
+        self.assertEqual(self.store.get_conversation(conv["id"], device_scope="device:a"), conv)
+        for scope in ("device:b", "global", ""):
+            self.assertIsNone(self.store.get_conversation(conv["id"], device_scope=scope))
+        self.assertIsNone(self.store.get_conversation("conv_missing", device_scope="device:a"))
+
     def test_messages_seq_title_and_recent(self) -> None:
         conv = self.store.create_conversation()
         with self.assertRaises(ConversationNotFoundError):
@@ -90,6 +98,15 @@ class ConversationStoreTests(unittest.TestCase):
             prompt_chars=1300,
         )
         self.assertEqual(again["workingClaimIds"], ["clm_c"])
+        self.assertEqual(self.store.list_receipts(conv["id"]), {msg["id"]: again})
+        other = self.store.create_conversation()
+        other_msg = self.store.append_message(other["id"], "assistant", "y")
+        self.store.save_receipt(
+            message_id=other_msg["id"], conversation_id=other["id"], provider="fake", model="fake-zhijun",
+            external=False, confirmed_claim_ids=[], working_claim_ids=[], material_chunk_keys=[],
+            retracted_notice_count=0, prompt_chars=10,
+        )
+        self.assertEqual(set(self.store.list_receipts(conv["id"])), {msg["id"]})
         self.assertTrue(self.store.delete_conversation(conv["id"]))
         self.assertIsNone(self.store.get_conversation(conv["id"]))
         self.assertIsNone(self.store.get_message(msg["id"]))

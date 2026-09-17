@@ -357,6 +357,57 @@ class MattersTests(unittest.TestCase):
                          {"matterId": matter["id"], "revision": 1})
         self.assertNotIn("团队三人", following.preview["request"]["system"])
 
+    def test_self_contained_unrelated_request_suspends_course_matter(self):
+        matter, _ = self.create(title="准备做一个机器学习的课程设计", goal="完成课程实验", context="课程采用手写数字数据集", nextStep="比较模型")
+        self.save_turn("先讨论课程实验", "先准备课程数据。")
+        changed, _ = self.save_turn("我想准备与产品搭档的分歧沟通，帮我梳理谈话提纲", "先说说分歧。")
+        marker = {"matterId": matter["id"], "revision": 1}
+        self.assertEqual(changed.assembled.provenance["contextPlan"]["matterSuspended"], marker)
+        self.assertNotIn("手写数字数据集", changed.preview["request"]["system"])
+        self.assertNotIn("先准备课程数据", str(changed.preview["request"]))
+        assistant = self.convs.list_messages(self.cid)[-1]
+        self.convs.update_message(assistant["id"], status="error")
+        following, _ = self.save_turn("主要是分工不同")
+        self.assertEqual(following.assembled.provenance["contextPlan"]["matterSuspended"], marker)
+        self.assertEqual(self.work.binding(self.cid, "global")["matter"]["id"], matter["id"], "topic detection must never change the saved binding")
+
+    def test_generic_followup_and_examples_do_not_suspend_matter(self):
+        self.create(title="机器学习课程设计")
+        for content in ("下一步怎么安排？", "请帮我准备一份沟通提纲", "我想和同学讨论这个项目的职责", "我想举个例子，比如与产品搭档沟通", "我想比较机器学习模型"):
+            plan = build_context_plan(Router(self.onto, self.convs, self.cid), content, [], provider=self.local)
+            self.assertIsNone(plan["matterSuspended"], content)
+
+    def test_replace_binding_is_atomic_revision_checked_and_retains_old_matter(self):
+        first, _ = self.create()
+        payload = {"requestId": "create-replacement", "title": "机器学习课程设计", "conversationId": self.cid, "expectedBindingRevision": 1}
+        changed = self.client.post(self.base, json=payload)
+        self.assertEqual(changed.status_code, 200, changed.text)
+        second = changed.json()
+        self.assertNotEqual(second["id"], first["id"])
+        self.assertEqual(self.work.binding(self.cid, "global")["bindingRevision"], 2)
+        self.assertEqual(self.client.post(self.base, json=payload).json(), second)
+        stale = self.client.post(self.base, json={**payload, "requestId": "parallel-replacement", "title": "另一个客户端的新事情"})
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(len(self.work.list("global", "all")), 2, "a conflict must not leave an unbound duplicate matter")
+        self.assertIsNotNone(self.work.get(first["id"], "global"))
+
+    def test_artifact_save_checks_binding_revision_and_topic_origin(self):
+        first, _ = self.create()
+        self.save_turn("换个话题，我想聊学校", "新的课程计划")
+        new_reply = self.convs.list_messages(self.cid)[-1]
+        payload = {"requestId": "save-topic-reply", "conversationId": self.cid, "messageId": new_reply["id"], "expectedBindingRevision": 1}
+        old_path = self.base + f"/{first['id']}/artifacts"
+        self.assertEqual(self.client.post(old_path, json=payload).status_code, 409)
+        second = self.work.create("global", {"title": "课程计划"}, "replace-course-plan", self.cid, 1)
+        new_path = self.base + f"/{second['id']}/artifacts"
+        self.assertEqual(self.client.post(new_path, json=payload).status_code, 409, "the stale client must acknowledge the new binding revision")
+        payload["expectedBindingRevision"] = 2
+        saved = self.client.post(new_path, json=payload)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(self.client.post(new_path, json=payload).json(), saved.json())
+        self.assertEqual(self.work.artifacts(first["id"], "global"), [])
+        self.assertEqual(saved.json()["matterId"], second["id"])
+
     def test_inactive_explicit_review_uses_outcome_but_never_bypasses_authorization(self):
         self.enable()
         matter, _ = self.create()

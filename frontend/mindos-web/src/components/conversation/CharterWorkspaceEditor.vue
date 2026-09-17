@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { createProductSessionStorage } from '@/shared/productScope'
+const productStorage = createProductSessionStorage()
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { CharterWorkspace, GrowthCharter } from '@/services/api'
 import { routedTask, routingRequest } from '@/services/taskRouting'
@@ -33,7 +35,7 @@ const bufferKey = (id: string) => `zhijun-charter-markdown:${id}`
 
 function restoreBuffer() {
   try {
-    const saved = JSON.parse(sessionStorage.getItem(bufferKey(base.value.id)) || 'null')
+    const saved = JSON.parse(productStorage.getItem(bufferKey(base.value.id)) || 'null')
     if (saved && typeof saved.markdown === 'string') {
       legacySource.value = typeof saved.legacySource === 'string' ? saved.legacySource : ''
       if (typeof saved.baseRevision === 'number' && typeof saved.baseMarkdown === 'string') {
@@ -45,7 +47,7 @@ function restoreBuffer() {
     } else {
       // Preserve unsaved edits from the former multi-field editor, without
       // automatically publishing its separate original-thoughts field.
-      const legacy = JSON.parse(sessionStorage.getItem(`zhijun-charter-buffer:${base.value.id}`) || 'null')
+      const legacy = JSON.parse(productStorage.getItem(`zhijun-charter-buffer:${base.value.id}`) || 'null')
       if (legacy && Array.isArray(legacy.clauses) && typeof legacy.sourceText === 'string') {
         legacySource.value = legacy.sourceText
         const text = renderCharterClauses(legacy.clauses) || legacy.sourceText
@@ -61,12 +63,12 @@ function restoreBuffer() {
 restoreBuffer()
 function persistBuffer() {
   try {
-    if ((dirty.value || legacySource.value) && editable.value) sessionStorage.setItem(bufferKey(base.value.id), JSON.stringify({
+    if ((dirty.value || legacySource.value) && editable.value) productStorage.setItem(bufferKey(base.value.id), JSON.stringify({
       baseRevision: base.value.revision, baseMarkdown: baseMarkdown.value, markdown: markdown.value, legacySource: legacySource.value,
     }))
-    else sessionStorage.removeItem(bufferKey(base.value.id))
+    else productStorage.removeItem(bufferKey(base.value.id))
     // Only retire the former buffer after its replacement is safely stored.
-    if (sessionStorage.getItem(bufferKey(base.value.id)) || !dirty.value) sessionStorage.removeItem(`zhijun-charter-buffer:${base.value.id}`)
+    if (productStorage.getItem(bufferKey(base.value.id)) || !dirty.value) productStorage.removeItem(`zhijun-charter-buffer:${base.value.id}`)
   } catch { /* Never block typing if local draft storage is unavailable. */ }
 }
 watch([markdown, base, legacySource], persistBuffer, { deep: true })

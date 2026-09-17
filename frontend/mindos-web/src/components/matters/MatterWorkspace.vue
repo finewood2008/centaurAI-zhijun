@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { saveProductText } from '@/services/productFiles'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
 import { useToast } from '@/composables/useToast'
@@ -7,12 +8,13 @@ import { artifactLabels, bindMatter, createMatter, getMatterBinding, listArtifac
   type ArtifactKind, type Matter, type MatterArtifact, type MatterStatus } from '@/services/matters'
 import { artifactPrompts, cleanFilename, matterDraft } from '@/shared/matters'
 
-const props = defineProps<{ conversationId: string; disabled?: boolean; suspension?: { matterId: string; revision: number } | null }>()
+const props = defineProps<{ conversationId?: string | null; ensureConversation?: () => Promise<string>; disabled?: boolean; suspension?: { matterId: string; revision: number } | null }>()
 const emit = defineEmits<{ (e: 'prepare', text: string): void }>()
 const toast = useToast()
 const open = ref(false), busy = ref(false), loading = ref(false), error = ref(''), notice = ref('')
 const matter = ref<Matter | null>(null), all = ref<Matter[]>([]), artifacts = ref<MatterArtifact[]>([])
 const bindingRevision = ref(0), selectedId = ref(''), newTitle = ref('')
+const bindingReady = ref(false), opening = ref(false)
 const suspended = computed(() => props.suspension?.matterId === matter.value?.id && props.suspension?.revision === bindingRevision.value)
 const fields = reactive({ title: '', goal: '', context: '', nextStep: '', outcome: '', status: 'active' as MatterStatus })
 const dirty = computed(() => matter.value && JSON.stringify(fields) !== JSON.stringify(matterDraft(matter.value)))
@@ -20,6 +22,7 @@ const selectedArtifact = ref<MatterArtifact | null>(null), documentTitle = ref('
 const documentDirty = computed(() => selectedArtifact.value && (documentTitle.value !== selectedArtifact.value.title || markdown.value !== selectedArtifact.value.markdown))
 const pendingMessage = ref<{ id: string; content: string } | null>(null), kind = ref<ArtifactKind>('freeform')
 let epoch = 0, loadSequence = 0, alive = true
+let loadingRequest: { cid: string; promise: Promise<void> } | null = null
 const operationKeys = new Map<string, string>()
 function key(operation: string, value: unknown) {
   const signature = props.conversationId + ':' + operation + ':' + JSON.stringify(value)
@@ -33,13 +36,25 @@ function rememberDraft() {
   if (matter.value && (dirty.value || documentDirty.value)) drafts.set(matter.value.id, { base: matter.value, fields: { ...fields }, artifact: selectedArtifact.value, title: documentTitle.value, markdown: markdown.value })
 }
 async function load() {
+  const cid = props.conversationId
+  if (!cid) return
+  if (loadingRequest?.cid === cid) return loadingRequest.promise
+  const promise = loadBinding()
+  loadingRequest = { cid, promise }
+  try { await promise }
+  finally { if (loadingRequest?.promise === promise) loadingRequest = null }
+}
+async function loadBinding() {
   const ticket = epoch, sequence = ++loadSequence, cid = props.conversationId
+  if (!cid) return
   loading.value = true; error.value = ''
   try {
     const binding = await getMatterBinding(cid)
     const result = binding.matter ? await listArtifacts(binding.matter.id) : { items: [] }
     if (!alive || ticket !== epoch || sequence !== loadSequence) return
+    if (matter.value?.id !== binding.matter?.id) selectedArtifact.value = null
     assign(binding.matter); bindingRevision.value = binding.bindingRevision; artifacts.value = result.items
+    bindingReady.value = true
     const saved = binding.matter && drafts.get(binding.matter.id)
     if (saved) {
       matter.value = saved.base // Retain the edit's original revision; do not silently rebase over newer edits.
@@ -51,18 +66,37 @@ async function load() {
 }
 watch(() => props.conversationId, () => {
   rememberDraft(); epoch++; busy.value = false; open.value = false; assign(null); artifacts.value = []; all.value = []
+  bindingReady.value = false; bindingRevision.value = 0; loading.value = false; loadingRequest = null; error.value = ''
   selectedArtifact.value = null; pendingMessage.value = null; notice.value = ''; selectedId.value = ''; newTitle.value = ''; operationKeys.clear()
   void load()
 }, { immediate: true })
 onBeforeUnmount(() => { alive = false; epoch++ })
 async function show() {
+  if (opening.value) return
+  opening.value = true
   open.value = true
   const ticket = epoch
-  try { const result = await listMatters('all'); if (ticket === epoch) all.value = result.items }
+  try {
+    let cid = props.conversationId
+    if (!cid) {
+      if (!props.ensureConversation) throw new Error('请先创建对话，再关联事情')
+      cid = await props.ensureConversation()
+      await nextTick()
+      if (!alive || props.conversationId !== cid) return
+      open.value = true
+    } else if (ticket !== epoch) return
+    const activeEpoch = epoch
+    rememberDraft()
+    await load()
+    if (!alive || activeEpoch !== epoch) return
+    const result = await listMatters('all')
+    if (alive && activeEpoch === epoch) all.value = result.items
+  }
   catch (e) { if (ticket === epoch) error.value = e instanceof Error ? e.message : '事情列表读取失败' }
+  finally { opening.value = false }
 }
 async function run(operation: (valid: () => boolean) => Promise<void>) {
-  if (busy.value || props.disabled) return
+  if (busy.value || props.disabled || loading.value || !bindingReady.value || !props.conversationId) return
   const ticket = epoch
   busy.value = true; error.value = ''; notice.value = ''
   try { await operation(() => alive && ticket === epoch) }
@@ -71,13 +105,12 @@ async function run(operation: (valid: () => boolean) => Promise<void>) {
 }
 async function connect(create = false) {
   if (dirty.value || documentDirty.value) { error.value = '请先保存编辑，或明确放弃编辑后再更换事情。'; return }
-  if (create && matter.value) { error.value = '请先解除本段关联，再新建另一件事；原来的事情和文稿会保留。'; return }
   await run(async valid => {
-    const cid = props.conversationId
+    const cid = props.conversationId!
     if (create) {
       const title = newTitle.value.trim()
       if (!title) throw new Error('请给这件事起一个简短名称')
-      await createMatter({ requestId: key('create', title), title, conversationId: cid })
+      await createMatter({ requestId: key('create', [title, bindingRevision.value]), title, conversationId: cid, expectedBindingRevision: bindingRevision.value })
     } else {
       await bindMatter(cid, selectedId.value || null, bindingRevision.value, key('bind', [selectedId.value, bindingRevision.value]))
     }
@@ -99,9 +132,11 @@ async function saveDetails() {
 }
 async function saveReply() {
   if (!matter.value || !pendingMessage.value) return
+  if (suspended.value) { error.value = '已切换话题，旧事情暂不参考。请先选择当前事情，不能把新话题文稿写入旧事情。'; return }
+  if (documentDirty.value) { error.value = '请先保存当前文稿，或明确放弃编辑后再保存另一条回复。'; return }
   const id = matter.value.id, messageId = pendingMessage.value.id, selectedKind = kind.value
   await run(async valid => {
-    const result = await saveArtifact(id, { conversationId: props.conversationId, messageId, kind: selectedKind, requestId: key('reply', [id, messageId, selectedKind]) })
+    const result = await saveArtifact(id, { conversationId: props.conversationId!, messageId, kind: selectedKind, expectedBindingRevision: bindingRevision.value, requestId: key('reply', [id, messageId, selectedKind, bindingRevision.value]) })
     if (!valid()) return
     artifacts.value = [result, ...artifacts.value.filter(a => a.id !== result.id)]
     editDocument(result); pendingMessage.value = null; notice.value = '已留下本地文稿，可编辑、复制或下载；原有来源限制继续保留。'
@@ -132,13 +167,14 @@ async function resumeReference() {
   if (!matter.value || dirty.value || documentDirty.value) { error.value = '请先保存尚未保存的编辑。'; return }
   const id = matter.value.id
   await run(async valid => {
-    const result = await bindMatter(props.conversationId, id, bindingRevision.value, key('resume', [id, bindingRevision.value]))
+    const result = await bindMatter(props.conversationId!, id, bindingRevision.value, key('resume', [id, bindingRevision.value]))
     if (!valid()) return
     bindingRevision.value = result.bindingRevision
     notice.value = '下一轮将重新参考这件事，在线使用仍会检查授权。'
   })
 }
 function review() {
+  if (suspended.value) { error.value = '已切换话题，请先明确选择继续旧事情，再回顾。'; return }
   if (dirty.value || documentDirty.value) { error.value = '请先保存结果或文稿，再开始回顾。'; return }
   emit('prepare', '我想回顾这件事：请结合已记录的目标、决定和实际结果，看看哪些与预期不同，哪些经验值得保留。未知结果请先说明，不替我把一次经历认定为长期原则。')
   open.value = false
@@ -148,26 +184,25 @@ async function copyDocument() {
   catch { error.value = '复制未完成，可以在正文中选中复制，或下载 Markdown。' }
 }
 function download() {
-  const url = URL.createObjectURL(new Blob([markdown.value], { type: 'text/markdown;charset=utf-8' }))
-  const link = document.createElement('a'); link.href = url; link.download = cleanFilename(documentTitle.value); link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  void saveProductText(cleanFilename(documentTitle.value), markdown.value, 'text/markdown;charset=utf-8')
+    .catch(e => toast({ type: 'error', message: e instanceof Error ? e.message : '保存失败' }))
 }
 function saveFromReply(message: { id: string; content: string }) { pendingMessage.value = message; kind.value = 'freeform'; void show() }
 defineExpose({ saveFromReply, show })
 </script>
 
 <template>
-  <button type="button" class="matter-trigger" aria-haspopup="dialog" :aria-expanded="open" @click="show"><span>{{ matter ? '这件事 · ' + matter.title : '事情与成果' }}</span></button>
+  <button type="button" class="matter-trigger" aria-haspopup="dialog" :aria-expanded="open" :disabled="opening" @click="show"><span>{{ suspended ? '事情与成果 · 已换题' : matter ? '这件事 · ' + matter.title : '事情与成果' }}</span></button>
   <SideDrawer :open="open" title="事情与成果" @close="open = false">
     <div class="matter-workspace" :aria-busy="busy || loading">
       <p class="muted">把同一件事跨对话接着推进。你选择保存什么；事情、文稿与结果不自动变成长期个人理解。</p>
-      <p v-if="loading" role="status">正在读取…</p>
+      <p v-if="loading || opening" role="status">正在读取…</p>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-      <button v-if="error && !matter" type="button" @click="load">重新读取</button>
+      <button v-if="error" type="button" :disabled="loading || busy" @click="rememberDraft(); load()">刷新当前关联（保留编辑）</button>
       <template v-if="matter">
         <div class="matter-title"><h3>{{ matter.title }}</h3><span>{{ matter.status === 'active' ? '正在推进' : matter.status === 'paused' ? '暂时放下' : '已有结果' }}</span></div>
-        <p v-if="suspended" class="muted">换题后已暂不参考这件事。<button :disabled="busy || disabled" @click="resumeReference">重新参考这件事</button></p>
+        <p v-if="suspended" class="notice" role="status">已切换话题，旧事情暂不参考。<button :disabled="busy || disabled" @click="resumeReference">继续旧事情</button>也可以在下方新建并关联当前事情，或关联已有事情；旧记录会保留。</p>
         <p v-else-if="matter.status !== 'active'" class="muted">不自动带入普通聊天。需要时可一起回顾，或将状态改回“正在推进”。</p>
         <details>
           <summary>背景与进展<span v-if="dirty"> · 有未保存修改</span></summary>
@@ -184,10 +219,10 @@ defineExpose({ saveFromReply, show })
         <section class="prepare"><h3>一起准备一份可用的成果</h3><p class="muted">只填入对话请求，可修改再发送。不会现在就调用模型。</p><div class="actions"><button v-for="(prompt, id) in artifactPrompts" :key="id" type="button" :disabled="busy || disabled" @click="prepare(id)">{{ artifactLabels[id] }}</button></div></section>
         <div class="actions"><button :disabled="busy || disabled" @click="review">一起回顾这件事</button><RouterLink v-if="matter.decisionId" :to="{ path: '/judgments', query: { decisionId: matter.decisionId } }">查看关联判断</RouterLink></div>
       </template>
-      <section v-if="pendingMessage" class="pending"><h3>将这条回复留下来</h3><p>{{ pendingMessage.content.slice(0, 180) }}{{ pendingMessage.content.length > 180 ? '…' : '' }}</p><p v-if="!matter" class="muted">先在下方新建或选择一件事，随后保存这份文稿。</p><label>文稿类型<select v-model="kind" :disabled="busy"><option v-for="(label, id) in artifactLabels" :key="id" :value="id">{{ label }}</option></select></label><div class="actions"><button class="primary" :disabled="!matter || busy || disabled" @click="saveReply">保存为可编辑文稿</button><button :disabled="busy" @click="pendingMessage = null">暂不保存</button></div></section>
+      <section v-if="pendingMessage" class="pending"><h3>将这条回复留下来</h3><p>{{ pendingMessage.content.slice(0, 180) }}{{ pendingMessage.content.length > 180 ? '…' : '' }}</p><p v-if="!matter || suspended" class="muted">先在下方新建或选择当前事情，随后保存这份文稿；不会保存到已暂停参考的旧事情。</p><label>文稿类型<select v-model="kind" :disabled="busy"><option v-for="(label, id) in artifactLabels" :key="id" :value="id">{{ label }}</option></select></label><div class="actions"><button class="primary" :disabled="!matter || suspended || busy || disabled || !bindingReady" @click="saveReply">保存为可编辑文稿</button><button :disabled="busy" @click="pendingMessage = null">暂不保存</button></div></section>
       <section v-if="matter"><h3>留下的文稿 <small>{{ artifacts.length }}</small></h3><p v-if="!artifacts.length" class="muted">在知君完整回复下点“留下文稿”，即可在这里继续修改。</p><div v-else class="artifact-list"><button v-for="item in artifacts" :key="item.id" :aria-pressed="selectedArtifact?.id === item.id" :disabled="busy || !!documentDirty" @click="editDocument(item)">{{ item.title }}<small>{{ artifactLabels[item.kind] }} · 第 {{ item.revision }} 版</small></button></div></section>
       <section v-if="selectedArtifact" class="document"><label>文稿名称<input v-model="documentTitle" maxlength="120" :disabled="busy" /></label><div class="actions"><button :aria-pressed="!preview" @click="preview = false">编辑 Markdown</button><button :aria-pressed="preview" @click="preview = true">阅读</button></div><MessageBubble v-if="preview" role="assistant" :content="markdown" /><label v-else>完整正文<textarea v-model="markdown" class="document-text" rows="16" maxlength="50000" :disabled="busy" /></label><div class="actions"><button class="primary" :disabled="busy || disabled || !documentDirty || !markdown.trim() || !documentTitle.trim()" @click="saveDocument">保存文稿</button><button @click="copyDocument">复制</button><button @click="download">下载 .md</button></div><p class="muted">{{ documentDirty ? '有尚未保存的编辑；复制和下载使用当前正文。' : '本地已保存。' }} {{ selectedArtifact.userEdited ? '你修改过这份文稿。' : '来自知君回复，仍需你核对。' }}</p><details><summary>来源与版本</summary><p>从原回复保存后，编辑仍保留原始来源限制。</p><RouterLink :to="'/c/' + selectedArtifact.sourceConversationId">查看来源对话</RouterLink><p>文稿修订 {{ selectedArtifact.revision }} · {{ selectedArtifact.updatedAt }}</p></details><button v-if="documentDirty" :disabled="busy" @click="discardAndReload">放弃本地编辑，载入最新版</button></section>
-      <details :open="!matter" class="connect"><summary>{{ matter ? '更换或解除本段关联' : '从一件事开始' }}</summary><p v-if="matter" class="muted">若要新建另一件事，请先解除本段关联。原来的事情与文稿会保留。</p><label>新事情的名称<input v-model="newTitle" maxlength="120" :disabled="busy || disabled || !!matter" placeholder="例如：准备与合伙人的职责沟通" @keyup.enter="connect(true)" /></label><button :disabled="busy || disabled || !!matter || !newTitle.trim() || !!dirty || !!documentDirty" @click="connect(true)">新建并关联本段对话</button><label>或选择已有事情<select v-model="selectedId" :disabled="busy || disabled"><option value="">不关联事情</option><option v-for="item in all" :key="item.id" :value="item.id">{{ item.title }}{{ item.status === 'completed' ? '（已有结果）' : item.status === 'paused' ? '（暂时放下）' : '' }}</option></select></label><button :disabled="busy || disabled || !!dirty || !!documentDirty" @click="connect(false)">{{ selectedId ? '关联所选事情' : '解除本段关联' }}</button><p class="muted">只改变本段对话的参考范围，不删除事情、文稿或聊天；外发仍需对应授权。</p></details>
+      <details :open="!matter || suspended" class="connect"><summary>{{ matter ? '更换或解除本段关联' : '从一件事开始' }}</summary><p v-if="matter" class="muted">新建并关联会替换本段的当前绑定，原来的事情与文稿会保留；其他设备修改过关联时会提示刷新。</p><label>新事情的名称<input v-model="newTitle" maxlength="120" :disabled="busy || disabled || !bindingReady" placeholder="例如：准备与合伙人的职责沟通" @keyup.enter="connect(true)" /></label><button :disabled="busy || disabled || !bindingReady || !newTitle.trim() || !!dirty || !!documentDirty" @click="connect(true)">新建并关联当前事情</button><label>或选择已有事情<select v-model="selectedId" :disabled="busy || disabled || !bindingReady"><option value="">不关联事情</option><option v-for="item in all" :key="item.id" :value="item.id">{{ item.title }}{{ item.status === 'completed' ? '（已有结果）' : item.status === 'paused' ? '（暂时放下）' : '' }}</option></select></label><button :disabled="busy || disabled || !bindingReady || !!dirty || !!documentDirty" @click="connect(false)">{{ selectedId ? '关联已有事情' : '解除本段关联' }}</button><p class="muted">只改变本段对话的参考范围，不删除事情、文稿或聊天；外发仍需对应授权。</p></details>
     </div>
   </SideDrawer>
 </template>

@@ -212,6 +212,7 @@ class MarkdownApiTests(unittest.TestCase):
         ws = store.edit_workspace(ws["id"], scope="global", cid=self.cid, revision=1,
             request_id="chat-draft-edit", document=DOCUMENT)["workspace"]
         local_plan = prepare_chat(Router(self.onto, self.convs, self.cid), "请帮我完善这份章程")
+        self.assertEqual(local_plan.preview["request"]["max_tokens"], 4096)
         self.assertIn(DOCUMENT, local_plan.preview["request"]["system"])
         self.assertTrue(any(ref["kind"] == "charter_workspace" for ref in local_plan.refs))
         self.enable()
@@ -231,6 +232,13 @@ class MarkdownApiTests(unittest.TestCase):
             list(GuardedProvider(router, self.online, "chat", allowed.refs, revision=allowed.preview["revision"]).stream(
                 ChatRequest(**allowed.preview["request"])))
         self.assertEqual(self.online.requests, [])
+
+    def test_charter_chat_gets_reasoning_budget_without_expanding_ordinary_chat(self):
+        router = Router(self.onto, self.convs, self.cid)
+        ordinary = prepare_chat(router, "水煮蛋需要几分钟", local=True)
+        charter = prepare_chat(router, "我想继续完善人生章程", local=True)
+        self.assertEqual(ordinary.preview["request"]["max_tokens"], 1024)
+        self.assertEqual(charter.preview["request"]["max_tokens"], 4096)
 
     def test_omit_draft_does_not_send_markdown_or_claim_it_was_read(self):
         self.enable()

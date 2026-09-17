@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'none'; connect-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <title>添加 AI 盒子</title>
+  <link rel="stylesheet" href="./setup.css">
+</head>
+<body>
+  <p id="test-build-warning" class="environment-banner" hidden>
+    <strong>内部配网测试版</strong>
+    <span>当前兼容配网协议 v1，请勿分发为正式版本</span>
+  </p>
+  <main class="provisioning-shell">
+    <header class="page-heading">
+      <p class="eyebrow">本地安全设置</p>
+      <h1>添加 AI 盒子</h1>
+      <p id="mode-description" class="intro">打开盒子的配网模式，再由你选择附近的 <strong>CentaurOS-Setup</strong> 设备。蓝牙临时标识只用于本次发现，不会当作设备账号。</p>
+    </header>
+
+    <section class="panel">
+      <div class="section-heading">
+        <span class="step" aria-hidden="true">1</span>
+        <div>
+          <h2>发现并连接</h2>
+          <p>扫描仅在你点击后开始，选择前请核对盒子名称。</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="scan" class="primary">扫描附近盒子</button>
+        <button id="cancel-scan" type="button" disabled>取消扫描</button>
+        <button id="disconnect" type="button" disabled>断开蓝牙</button>
+      </div>
+      <p id="availability" class="hint"></p>
+      <p id="scan-status" class="hint" role="status" aria-live="polite" hidden></p>
+      <ul id="candidates" class="candidates" aria-live="polite"></ul>
+      <pre id="device-info" class="device-info" hidden></pre>
+    </section>
+
+    <section id="device-actions" class="panel" hidden>
+      <div class="section-heading">
+        <span class="step success" aria-hidden="true">2</span>
+        <div>
+          <h2>核对已连接盒子</h2>
+          <p>确认设备短码和指纹，再继续设置网络。</p>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="read-status" type="button">查看状态</button>
+        <button id="scan-networks" type="button">让盒子扫描 Wi-Fi</button>
+      </div>
+      <ul id="networks" class="networks"></ul>
+    </section>
+
+    <section id="physical-confirmation-panel" class="panel" hidden>
+      <div class="section-heading">
+        <span class="step success" aria-hidden="true">2</span>
+        <div>
+          <h2>确认眼前的盒子</h2>
+          <p>输入盒身显示的 6 位数字，防止连到附近其他设备。</p>
+        </div>
+      </div>
+      <form id="physical-confirmation" class="compact-form">
+        <label class="field-wide">盒身确认码<input id="physical-code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" required placeholder="请输入盒身 6 位数字"></label>
+        <div class="form-actions"><button id="confirm-physical" class="primary" type="submit">确认是这台盒子</button></div>
+      </form>
+    </section>
+
+    <section id="wifi-panel" class="panel wifi-panel">
+      <div class="section-heading">
+        <span class="step" aria-hidden="true">3</span>
+        <div>
+          <h2>连接 Wi-Fi</h2>
+          <p>网络凭据只用于本次配网，不会保存在知君中。</p>
+        </div>
+      </div>
+      <p id="secure-notice" class="warning">正式包仅允许经认证的加密指令。如盒子固件尚未支持，桌面端会拒绝发送 Wi-Fi 密码。</p>
+      <label id="legacy-row" class="legacy" hidden>
+        <input id="legacy" type="checkbox">
+        <span><strong>仅限内部兼容验收</strong>允许使用明文 GATT 指令（Wi-Fi 密码不加密）</span>
+      </label>
+      <form id="wifi">
+        <label class="field-wide">Wi-Fi 名称<input id="ssid" maxlength="32" required autocomplete="off" placeholder="请输入网络名称"></label>
+        <label>安全类型<select id="security"><option value="wpa-personal">WPA/WPA2 个人</option><option value="open">开放网络</option></select></label>
+        <label>密码<input id="password" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="请输入 Wi-Fi 密码"></label>
+        <div class="form-actions"><button id="submit-wifi" class="primary" type="submit" disabled>将网络设置发给盒子</button></div>
+      </form>
+    </section>
+
+    <section id="ownership-panel" class="panel" hidden>
+      <div class="section-heading">
+        <span class="step success" aria-hidden="true">4</span>
+        <div>
+          <h2>确认绑定到当前账号</h2>
+          <p>盒子已经联网。确认后，它会出现在知君的已绑定盒子列表中。</p>
+        </div>
+      </div>
+      <div class="form-actions"><button id="confirm-ownership" class="primary" type="button">确认绑定</button></div>
+    </section>
+
+    <section id="v2-progress" class="progress-card" aria-live="polite" hidden>
+      <span class="status-dot" aria-hidden="true"></span>
+      <div class="progress-copy">
+        <strong id="v2-state">准备开始</strong>
+        <p id="v2-guidance">配网过程会在本机完成认证，并安全清除网络密码。</p>
+      </div>
+      <button id="refresh-state" type="button">刷新状态</button>
+    </section>
+    <p id="result" class="result" role="status" aria-live="polite"></p>
+  </main>
+  <script src="./renderer.js"></script>
+</body>
+</html>

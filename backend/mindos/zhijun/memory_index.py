@@ -9,6 +9,7 @@ import hashlib
 import importlib
 import logging
 import math
+import os
 import sys
 import threading
 
@@ -42,6 +43,37 @@ def scores(namespace, query, documents, source_versions=None):
         with _LOCK:
             CACHE.pop(namespace, None)
         return {}
+    # Versions can contain complete evidence/authorization metadata. The worker
+    # capability accepts a bounded opaque version, not that metadata document.
+    # Match the local cache identity and hash before truncating transport text.
+    versions = {ident: hashlib.sha256((str((source_versions or {}).get(ident, "")) + "\0" + text).encode()).hexdigest()
+                for ident, text in documents.items()}
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require, CapabilityError
+        result = {}
+        batches, batch, used = [], {}, 0
+        for key, text in documents.items():
+            value = text[:8000]
+            size = len(value.encode())
+            if batch and (len(batch) >= _BATCH or used + size > 250 * 1024):
+                batches.append(batch)
+                batch, used = {}, 0
+            batch[key], used = value, used + size
+        if batch:
+            batches.append(batch)
+        try:
+            for batch in batches:
+                values = require().call("retrieval.score", {"query": query[:1000], "documents": batch,
+                    "sourceVersions": {key: versions[key] for key in batch}})
+                if type(values) is not dict or any(key not in batch or type(value) not in (int, float) or not math.isfinite(value) for key, value in values.items()):
+                    raise CapabilityError("CAPABILITY_RETRIEVAL_CONTRACT", 502)
+                result.update(values)
+            return result
+        except CapabilityError as exc:
+            if exc.code not in {"EMBEDDER_UNAVAILABLE", "RETRIEVAL_UNAVAILABLE", "CAPABILITY_UNAVAILABLE"}:
+                raise
+            # Existing lexical recall is still real; never load another encoder in this worker.
+            return {}
     module, model = _local_encoder()
     with _LOCK:
         if model is None:
@@ -50,8 +82,6 @@ def scores(namespace, query, documents, source_versions=None):
         index = CACHE.get(namespace)
         if index is None or index["model"] is not model:
             index = {"model": model, "rows": {}, "queries": OrderedDict()}
-        versions = {ident: hashlib.sha256((str((source_versions or {}).get(ident, "")) + "\0" + text).encode()).hexdigest()
-                    for ident, text in documents.items()}
         # Drop obsolete vectors before any possibly failing encode operation.
         index["rows"] = {ident: row for ident, row in index["rows"].items()
                          if versions.get(ident) == row[0]}

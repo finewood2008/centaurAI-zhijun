@@ -3,12 +3,15 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-const router = await readFile(new URL('../src/router/index.ts', import.meta.url), 'utf8')
+const router = (await Promise.all(['routes.ts', 'guards.ts'].map(file => readFile(new URL('../src/router/' + file, import.meta.url), 'utf8')))).join('\n')
 const sidebar = await readFile(new URL('../src/layouts/AppSidebar.vue', import.meta.url), 'utf8')
 const api = await readFile(new URL('../src/services/api.ts', import.meta.url), 'utf8')
 const sse = await readFile(new URL('../src/services/sse.ts', import.meta.url), 'utf8')
 const chatStream = await readFile(new URL('../src/services/chatStream.ts', import.meta.url), 'utf8')
 const conversation = await readFile(new URL('../src/pages/ConversationPage.vue', import.meta.url), 'utf8')
+const alignmentPrivacy = await readFile(new URL('../src/components/conversation/AlignmentPrivacy.vue', import.meta.url), 'utf8')
+const routingPanel = await readFile(new URL('../src/components/conversation/RoutingPanel.vue', import.meta.url), 'utf8')
+const chatImports = await readFile(new URL('../src/composables/useChatImports.ts', import.meta.url), 'utf8')
 const conversationList = await readFile(new URL('../src/components/conversation/ConversationList.vue', import.meta.url), 'utf8')
 const onboarding = await readFile(new URL('../src/pages/OnboardingPage.vue', import.meta.url), 'utf8')
 const relationshipMap = await readFile(new URL('../src/components/today/RelationshipMap.vue', import.meta.url), 'utf8')
@@ -62,6 +65,21 @@ assert.match(homeNodePanel, /createConversation\(\{ mode: 'review', decisionId: 
 assert.match(conversation, /route\.query\.say/)
 assert.match(conversation, /route\.query\.deliberate/)
 assert.match(conversation, /route\.query\.onboarding/)
+assert.match(conversation, /setPrefillLocalOnly\(route\.query\.localOnly === '1'\)/)
+assert.match(conversation, /@mode="onRoutingMode" @mode-selected="onRoutingModeSelected"/)
+const selectedModeHandler = conversation.slice(conversation.indexOf('function onRoutingModeSelected'), conversation.indexOf('// 从今日页 / 其它页带着话头过来'))
+assert.match(selectedModeHandler, /mode === 'online'[\s\S]*setPrefillLocalOnly\(false\)/)
+const streamTurn = conversation.slice(conversation.indexOf('async function streamTurn'), conversation.indexOf('async function retryMessage'))
+assert.match(streamTurn, /const systemPromptLocalOnly = prefillLocalOnly\.value[\s\S]*localOnly: systemPromptLocalOnly \|\|[\s\S]*meta: \(d\) => \{[\s\S]*if \(systemPromptLocalOnly\) consumePrefillLocalOnly\(systemPromptRevision\)/)
+assert.ok(streamTurn.indexOf('consumePrefillLocalOnly(systemPromptRevision)') > streamTurn.indexOf('meta: (d)'), '系统话头限制只能在服务端确认接收该轮后消费')
+const importSend = conversation.slice(conversation.indexOf('if (imports.staged.length)'), conversation.indexOf('// The task router checks'))
+assert.match(importSend, /imports\.send\(content, origin, systemPromptLocalOnly\)[\s\S]*if \(sent && systemPromptLocalOnly\) consumePrefillLocalOnly\(systemPromptRevision\)/)
+assert.match(chatImports, /accepted = true[\s\S]*if \(!accepted && \(!id \|\| !batches\.value\.some/)
+assert.match(conversation, /const creatingPrefilledConversation = id && skipLoadFor === id && current\.value\?\.id === id/)
+assert.match(conversation, /if \(creatingPrefilledConversation\) \{[\s\S]*?scheduleConversationAuxiliary\(id\)/, 'lazy matter creation and first send initialize auxiliaries without refetching the conversation')
+assert.match(conversation, /previousId !== undefined && id !== previousId && !creatingPrefilledConversation && !receivingPrefilledPrompt[\s\S]*setPrefillLocalOnly\(false\)/)
+assert.match(routingPanel, /emit\('mode-selected', state\.value\.mode\.mode\)/)
+assert.match(routingPanel, /currentMode\.value === 'online'[\s\S]*emit\('mode-selected', 'online'\)/)
 assert.match(conversation, /updateOnboarding\('profile_ready'/)
 assert.match(conversation, /updateOnboarding\('skip'/)
 assert.match(conversation, /暂时跳过，先随便聊聊/)
@@ -78,7 +96,8 @@ assert.doesNotMatch(conversation, /streamTurn\(conv, '你好，我们开始吧'/
 assert.doesNotMatch(conversation, /import (NudgeStrip|NextStepsPanel) from/)
 assert.doesNotMatch(conversation, /router\.(push|replace)\('\/'\)/)
 // 成果回执能跨页面重开；本体边界说明移出图内，避免顶端碰撞。
-assert.match(conversation, /turnOutcomes\.value = null[\s\S]*refreshOutcomes\(id, true\)/)
+assert.match(conversation, /async function refreshConversationBackground\(conversationId: string\)[\s\S]*refreshOutcomes\(conversationId, true\)/)
+assert.match(conversation, /schedule\(5, 3000, \(\) => void refreshConversationBackground\(conversationId\)\)/)
 assert.match(selfMap, /v-if="compact"[\s\S]*zj-map__ring-label--boundary/)
 assert.match(selfMap, /class="zj-map__boundary-note"/)
 assert.match(selfMap, /已确认且已校准/)
@@ -99,8 +118,8 @@ for (const gone of ["'/qa'", "'/generate'", "'/governance'", "'/corrections'", '
   assert.ok(!router.includes(gone), `router 不应再引用 ${gone}`)
 }
 
-// 侧栏：单组五项，今日在最上
-for (const label of ["label: '今日来信'", "label: '对话'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
+// 侧栏：单组六项，今日在最上
+for (const label of ["label: '今日来信'", "label: '对话'", "label: '照见'", "label: '我的本体'", "label: '判断'", "label: '资料与边界'"]) {
   assert.ok(sidebar.includes(label), `sidebar 缺少 ${label}`)
 }
 assert.doesNotMatch(sidebar, /问知君|本体治理|logo\.jpg/)
@@ -162,6 +181,8 @@ for (const endpoint of [
 }
 assert.match(api, /export function buildHeaders/)
 assert.match(api, /export async function throwApiError/)
+assert.match(api, /部分资料仍在完成隐私处理，请稍后重试/)
+assert.match(api, /这份资料仍在完成隐私处理，请稍后重试/)
 assert.match(api, /export function reviewClaim/)
 assert.match(api, /export type ReviewSurface = 'conversation' \| 'ontology_page' \| 'onboarding' \| 'today'/)
 
@@ -178,6 +199,10 @@ assert.match(sse, /buildHeaders\(\)/)
 assert.match(sse, /getReader\(\)/)
 assert.doesNotMatch(sse, /new EventSource/)
 assert.match(conversation, /streamChat\(/)
+assert.match(conversation, /extraction:[\s\S]*alignmentPrivacy\.value\?\.refresh\(\)/)
+assert.match(alignmentPrivacy, /transitional\.has\(result\.state\.status\)/)
+assert.doesNotMatch(alignmentPrivacy, /setTimeout\(poll, 5000\)/)
+assert.doesNotMatch(routingPanel, /setInterval\(/)
 assert.match(chatStream, /streamPost\(/)
 assert.match(chatStream, /prepareChatRoute\(conversationId, request, signal\)/)
 assert.match(conversation, /surface: current\.value\.mode === 'onboarding' \? 'onboarding' : 'conversation'/)

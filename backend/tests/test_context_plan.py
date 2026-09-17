@@ -262,14 +262,39 @@ class ContextPlanTests(unittest.TestCase):
         self.assertIsNone(context_sources._material_item(router, record, snapshot, body, "旧索引内容或AI总结", .9))
         with patch("mindos.zhijun.context_sources.material_candidates", return_value=[item]), \
                 patch("mindos.zhijun.routing.read_ref", return_value=(record, snapshot, body)):
-            plan = build_context_plan(router, "星桥项目合作", [], provider=self.local)
+            plan = build_context_plan(router, "星桥项目合作资料", [], provider=self.local)
             self.assertIn(body, plan["system"])
             material = next(i["material"] for i in plan["evidence"] if i["kind"] == "material")
             self.assertEqual(material["locator"]["offset"], 0)
             self.assertEqual(material["snapshotId"], snapshot["snapshot_id"])
-            excluded = build_context_plan(router, "星桥项目合作", [], provider=self.local,
+            excluded = build_context_plan(router, "星桥项目合作资料", [], provider=self.local,
                 material_refs=[{"materialId": record["materialId"], "version": 2}])
             self.assertFalse(any(i["kind"] == "material" for i in excluded["evidence"]))
+
+    def test_ordinary_brief_chat_does_not_scan_all_workspace_materials(self):
+        router = Router(self.onto, self.convs, self.cid)
+        with patch("mindos.zhijun.context_sources.material_candidates") as materials:
+            build_context_plan(router, "我在考虑一件事：人生的价值是什么？", [], provider=self.online)
+        materials.assert_not_called()
+
+    def test_explicit_material_question_keeps_workspace_rag_enabled(self):
+        router = Router(self.onto, self.convs, self.cid)
+        with patch("mindos.zhijun.context_sources.material_candidates", return_value=[]) as materials:
+            build_context_plan(router, "我上传的资料里怎么描述项目预算？", [], provider=self.online)
+        materials.assert_called_once()
+
+    def test_material_grounded_followup_keeps_workspace_rag_enabled(self):
+        router = Router(self.onto, self.convs, self.cid)
+        history = [self.convs.append_message(self.cid, "user", "星桥项目是什么？", meta={
+            "routingSources": [],
+        }), self.convs.append_message(self.cid, "assistant", "资料里的预算是五万元。", meta={
+            "materialRefs": [{"materialId": "synthetic-file", "version": 1}],
+            "routingSources": [],
+        })]
+        with patch.dict("os.environ", {"ZHIJUN_WORKSPACE_ID": "synthetic-workspace"}), \
+                patch("mindos.zhijun.context_sources.material_candidates", return_value=[]) as materials:
+            build_context_plan(router, "它有哪些核心功能？", history, provider=self.local)
+        materials.assert_called_once()
 
     def test_current_conversation_cutoff_blocks_history_and_summary_but_not_independent_memory(self):
         self.enable()
@@ -437,7 +462,7 @@ class ContextPlanTests(unittest.TestCase):
         items = [context_sources._material_item(router, record, snapshot, body, snippet, 1 - n * .1) for n, snippet in enumerate(snippets)]
         with patch("mindos.zhijun.context_sources.material_candidates", return_value=items), \
                 patch("mindos.zhijun.routing.read_ref", return_value=(record, snapshot, body)):
-            plan = build_context_plan(router, "预算和截止日期", [], provider=self.local)
+            plan = build_context_plan(router, "资料里的预算和截止日期", [], provider=self.local)
         self.assertEqual(len(plan["evidence"]), 2)
         self.assertIn(snippets[0], plan["system"])
         self.assertIn(snippets[1], plan["system"])
@@ -456,7 +481,7 @@ class ContextPlanTests(unittest.TestCase):
             db.commit()
         with patch("mindos.zhijun.memory_retrieval.retrieve_claims", return_value=[{**claim, "score": .9}]), \
              patch("mindos.zhijun.memory_retrieval.confirmed_background", return_value=[background]):
-            plan = build_context_plan(router, "星桥项目", [], provider=self.local)
+            plan = build_context_plan(router, "星桥项目资料", [], provider=self.local)
         self.assertFalse(plan["background"])
         self.assertFalse(plan["evidence"])
         self.assertNotIn("旧秘密", plan["system"])

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { routeQuestion } from '@/services/taskRouting'
+import { needsDeConsent, routeQuestion } from '@/services/taskRouting'
 const dialog = ref<HTMLDialogElement | null>(null)
 const keys = ref<string[]>([])
 const question = computed(() => routeQuestion.value)
-const grantable = computed(() => question.value?.preview.sources.filter(s => !s.blocked && question.value!.preview.missing.includes(s.key)) || [])
+const deConsent = computed(() => !!question.value && needsDeConsent(question.value.preview))
+const grantable = computed(() => question.value?.preview.sources.filter(s => !s.blocked && (deConsent.value || question.value!.preview.missing.includes(s.key))) || [])
 const unavailable = computed(() => question.value?.preview.sources.filter(s => s.blocked) || [])
 watch(question, async value => {
   keys.value = value?.preview.sources.filter(s => !s.blocked && value.preview.missing.includes(s.key)).map(s => s.key) || []
@@ -29,18 +30,20 @@ watch(question, async value => {
       </footer>
     </template>
     <template v-else-if="question">
-      <h2 id="route-title">{{ grantable.length ? '这次要让在线模型使用哪些内容？' : '选用的内容暂时不能交给在线模型' }}</h2>
+      <h2 id="route-title">{{ deConsent ? '是否将本次内容交给在线模型？' : grantable.length ? '这次要让在线模型使用哪些内容？' : '选用的内容暂时不能交给在线模型' }}</h2>
       <p>{{ question.preview.service.name }} · {{ question.preview.service.model }} · {{ question.preview.purposeLabel }}</p>
-      <p>原文件留在本机。下方显示实际拟发送的文字；已发送的内容无法通过撤销授权收回。</p>
-      <p class="route-tip">相同服务、版本和用途已批准的内容不再询问。在「模型与授权」中可分别设置默认授权，或记住资料受限时的处理方式。</p>
+      <p>{{ deConsent ? '原文件留在盒子。' : '原文件留在本机。' }}下方显示实际拟发送的文字；已发送的内容无法通过撤销授权收回。</p>
+      <p v-if="deConsent" class="route-tip">本次确认仅适用于当前任务、输入、来源版本和接收服务。可在「模型与授权」中明确开启“符合范围时不再逐次确认”；旧的资料来源授权不会自动扩大为免确认外发。</p>
+      <p v-else class="route-tip">相同服务、版本和用途已批准的内容不再询问。在「模型与授权」中可分别设置默认授权，或记住资料受限时的处理方式。</p>
       <p v-if="question.preview.charterBasis?.version" class="route-tip">本轮参考人生章程第 {{ question.preview.charterBasis.version }} 版 · {{ question.preview.charterBasis.clauseIds.length }} 条约定。确认章程不等于允许外发。</p>
       <details v-if="question.preview.charterUnresolved?.length"><summary>有 {{ question.preview.charterUnresolved.length }} 条约定尚需澄清执行方式</summary><p v-for="clause in question.preview.charterUnresolved" :key="clause.id">{{ clause.text }}：{{ clause.reason }}</p></details>
-      <fieldset v-if="grantable.length"><legend>本次可以授权的来源</legend>
+      <p v-if="deConsent">本次范围：{{ question.preview.request.messages.length }} 条消息、系统提示，以及 {{ question.preview.sources.length }} 项来源。{{ question.preview.sources.length ? '所列来源将一起用于本次任务。' : '此次未引用资料，仍会发送下方的输入与系统提示。' }}</p>
+      <fieldset v-if="grantable.length"><legend>{{ deConsent ? '本次将发送的全部来源' : '本次可以授权的来源' }}</legend>
         <label v-for="source in grantable" :key="source.key + source.version" class="route-source">
-          <input v-model="keys" type="checkbox" :value="source.key" :disabled="!!source.blocked || !question.preview.missing.includes(source.key)" />
+          <input v-if="!deConsent" v-model="keys" type="checkbox" :value="source.key" :disabled="!!source.blocked || !question.preview.missing.includes(source.key)" />
           <span>{{ source.title }} <small>版本 {{ source.version.slice(0, 8) }}</small>
             <strong v-if="source.blocked">{{ source.blocked }}</strong>
-            <small v-else-if="!question.preview.missing.includes(source.key)">本服务、版本及用途已获授权</small>
+            <small v-else-if="!deConsent && !question.preview.missing.includes(source.key)">本服务、版本及用途已获授权</small>
           </span>
         </label>
       </fieldset>
@@ -55,7 +58,8 @@ watch(question, async value => {
       </details>
       <p v-if="question.preview.excluded.length">有 {{ question.preview.excluded.length }} 条历史或资料未纳入本轮；知君需要时会请你补充，不会猜测。</p>
       <footer>
-        <button v-if="grantable.length" :disabled="!keys.length" @click="question.done({ action: 'allow', keys: [...keys] })">允许所选内容用于该服务和用途</button>
+        <button v-if="deConsent" :disabled="unavailable.length > 0" @click="question.done({ action: 'allow', keys: question.preview.sources.map(source => source.key) })">允许本次内容发送到 {{ question.preview.service.name }}</button>
+        <button v-else-if="grantable.length" :disabled="!keys.length" @click="question.done({ action: 'allow', keys: [...keys] })">允许所选内容用于该服务和用途</button>
         <button @click="question.done({ action: 'local' })">仅本地处理</button>
         <button v-if="question.allowOmit" @click="question.done({ action: 'omit' })">不使用这些资料继续</button>
         <button @click="question.done({ action: 'cancel' })">取消</button>

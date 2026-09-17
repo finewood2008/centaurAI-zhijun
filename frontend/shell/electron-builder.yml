@@ -1,0 +1,26 @@
+appId: com.qeeshu.zhijun
+productName: 知君
+extends: ./electron-builder.base.yml
+
+directories:
+  output: release
+
+files:
+  - package.json
+  - main.js
+  - preload.cjs
+  - app-icon.cjs
+  - security.cjs
+  - provisioning-window.cjs
+  - provisioning-broker.cjs
+  - provisioning/**/*
+  - '!provisioning/preload.mjs'
+  - '!provisioning/preload-formal.mjs'
+  - '!node_modules/@nexusaos/device-provisioning-electron/**/*'
+  - '!node_modules/@nexusaos/device-provisioning-uni/**/*'
+  - production/**/*.cjs
+  - runtime/**/*.cjs
+  - assets/centaur.png
+  - '!**/*.map'
+
+artifactName: 'Zhijun-${version}-${os}-${arch}.${ext}'

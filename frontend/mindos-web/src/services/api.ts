@@ -1,3 +1,6 @@
+import { hasProductScope, isDesktopProduct, onProductScopeReset } from '../shared/productScope.ts'
+import { createNavigationProgressReader } from './navigationProgress.ts'
+import { transportRequest, type ProductRequestInit } from './transport.ts'
 // 类型化 API Service：MindOS 浏览器页面统一通过此模块访问 /api/...，
 // 不依赖 window.api / Electron preload / ipcRenderer。
 import type { HealthInfo } from '@/types'
@@ -11,12 +14,13 @@ const CSRF_HEADERS = { 'X-Requested-By': 'centaur-vdb' }
 // localStorage 等可持久化存储——避免静态/持久化 Bearer 会话凭证泄露后可直接访问
 // MindOS，也符合「MindOS 不承担账号/Owner/认领控制面」。
 const SESSION_HEADER = 'X-MindOS-Session'
+const SAFE_SENSITIVE_RULE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/
 
 // 会话凭证仅本次页面生命周期存活，刷新即失效，须由宿主重新注入。
 let sessionToken: string | null = null
 
 export function setMindosSessionToken(token: string | null): void {
-  sessionToken = token || null
+  sessionToken = isDesktopProduct() ? null : token || null
 }
 
 export function getMindosSessionToken(): string | null {
@@ -28,14 +32,23 @@ export class ApiError extends Error {
   readonly code?: string
   readonly details?: string[]
   readonly preview?: import('./taskRouting').RoutePreview
+  readonly ragV2?: import('./taskRouting').RagV2Prompt
+  readonly similarRuleId?: string
+  readonly retryAfter?: number
+  readonly traceId?: string
 
-  constructor(message: string, status: number, code?: string, details?: string[], preview?: import('./taskRouting').RoutePreview) {
+  constructor(message: string, status: number, code?: string, details?: string[], preview?: import('./taskRouting').RoutePreview,
+              ragV2?: import('./taskRouting').RagV2Prompt, similarRuleId?: string, retryAfter?: number, traceId?: string) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.details = details
     this.preview = preview
+    this.ragV2 = ragV2
+    this.similarRuleId = similarRuleId
+    this.retryAfter = retryAfter
+    this.traceId = traceId
   }
 }
 
@@ -50,6 +63,20 @@ export interface MindosAccessContext {
 
 /** API 根路径；SSE 流式客户端（services/sse.ts）与 request 共用。 */
 export const API_BASE = BASE
+
+const API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  RAG_QUERY_CLARIFICATION_REQUIRED: '请补充要检索的资料名称或主题。',
+  RAG_RETRIEVAL_ONLY: '请在「资料与边界 → 原材料」导入，Data Engine 处理完成后回到对话检索并确认使用。',
+  RAG_RISK_RESULT_UNKNOWN: '风险放行结果未能确认，不能重复领取；请重新发送问题，重新检索并确认。',
+  REDACTION_NOT_READY: '部分资料仍在完成隐私处理，请稍后重试。',
+  MATERIAL_PRIVACY_NOT_READY: '这份资料仍在完成隐私处理，请稍后重试。',
+  outbound_governance_disabled: '盒子的在线理解授权服务尚未启用，请更新盒子配置后重试。',
+  remote_model_target_not_allowlisted: '在线模型地址未通过盒子的网络安全校验，请检查供应商服务地址。',
+  MODEL_STREAM_INCOMPLETE: '在线模型响应提前中断，请稍后重试。',
+  MODEL_STREAM_MEDIA_TYPE_INVALID: '在线模型服务地址返回了网页而不是模型数据，请检查地址是否包含正确的 API 路径。',
+  UNSUPPORTED_MEDIA_TYPE: '请求的媒体类型不受支持，请检查文件或请求格式。',
+  WORKSPACE_MEDIA_TYPE_INVALID: '盒子返回的媒体类型不符合接口要求，请更新盒端服务后重试。',
+}
 
 /**
  * 统一请求头：system-models 的读取与写入接口均要求 X-Requested-By——它让跨站请求
@@ -66,18 +93,35 @@ export function buildHeaders(init?: RequestInit): Headers {
 
 /** 把非 2xx 响应解析成 ApiError 并抛出（支持三种后端错误体形状）。 */
 export async function throwApiError(res: Response): Promise<never> {
-  let message = `请求失败（${res.status}）`
+  const fallbackMessage = `请求失败（${res.status}）`
+  let message = fallbackMessage
   let code: string | undefined
   let details: string[] | undefined
   let preview: import('./taskRouting').RoutePreview | undefined
+  let ragV2: import('./taskRouting').RagV2Prompt | undefined
+  let similarRuleId: string | undefined
+  let retryAfter: number | undefined
+  let traceId: string | undefined
+  const retryHeader = res.headers.get('Retry-After')
+  if (retryHeader && /^\d+$/.test(retryHeader.trim())) retryAfter = Number(retryHeader)
+  else if (retryHeader && Number.isFinite(Date.parse(retryHeader))) retryAfter = Math.max(0, Math.ceil((Date.parse(retryHeader) - Date.now()) / 1000))
   try {
     const body = await res.json()
+    const metadata = body?.detail && typeof body.detail === 'object' ? body.detail : body?.error && typeof body.error === 'object' ? body.error : body
+    if (typeof metadata?.retryAfter === 'number' && Number.isFinite(metadata.retryAfter) && metadata.retryAfter >= 0) {
+      retryAfter = Math.max(retryAfter ?? 0, Math.ceil(metadata.retryAfter))
+    }
+    if (typeof metadata?.traceId === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(metadata.traceId)) traceId = metadata.traceId
     if (body && typeof body.detail === 'string') message = body.detail
     else if (body && body.detail && typeof body.detail === 'object') {
       if (typeof body.detail.detail === 'string') message = body.detail.detail
       else if (typeof body.detail.message === 'string') message = body.detail.message
       code = typeof body.detail.code === 'string' ? body.detail.code : undefined
       if (body.detail.preview && typeof body.detail.preview === 'object') preview = body.detail.preview
+      if (body.detail.ragV2 && typeof body.detail.ragV2 === 'object') ragV2 = body.detail.ragV2
+      if (typeof body.detail.similarRuleId === 'string' && SAFE_SENSITIVE_RULE_ID.test(body.detail.similarRuleId)) {
+        similarRuleId = body.detail.similarRuleId
+      }
       const parsedDetails = Array.isArray(body.detail.details)
         ? body.detail.details.filter((item: unknown): item is string => typeof item === 'string')
         : []
@@ -92,16 +136,29 @@ export async function throwApiError(res: Response): Promise<never> {
       details = parsedDetails.length ? parsedDetails : undefined
       message = parsedDetails.length ? `${body.message}（${parsedDetails.join('；')}）` : body.message
     }
+    else if (body && body.error && typeof body.error === 'object') {
+      if (typeof body.error.message === 'string') message = body.error.message
+      code = typeof body.error.code === 'string' ? body.error.code : undefined
+      if (typeof body.error.similarRuleId === 'string' && SAFE_SENSITIVE_RULE_ID.test(body.error.similarRuleId)) {
+        similarRuleId = body.error.similarRuleId
+      }
+    }
     if (!code && body && typeof body.code === 'string') code = body.code
+    if (!similarRuleId && body && typeof body.similarRuleId === 'string' && SAFE_SENSITIVE_RULE_ID.test(body.similarRuleId)) {
+      similarRuleId = body.similarRuleId
+    }
+    if (message === fallbackMessage && code && API_ERROR_MESSAGES[code]) message = API_ERROR_MESSAGES[code]
   } catch {
     // 忽略非 JSON 响应体
   }
-  throw new ApiError(message, res.status, code, details, preview)
+  if (!Number.isFinite(retryAfter)) retryAfter = undefined
+  if ((res.status === 503 || res.status === 429) && retryAfter) message += ` 请在 ${retryAfter} 秒后重试。`
+  throw new ApiError(message, res.status, code, details, preview, ragV2, similarRuleId, retryAfter, traceId)
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: ProductRequestInit): Promise<T> {
   const headers = buildHeaders(init)
-  const res = await fetch(`${BASE}${path}`, { ...init, headers })
+  const res = await transportRequest(`${BASE}${path}`, { ...init, headers })
   if (!res.ok) await throwApiError(res)
   return res.json() as Promise<T>
 }
@@ -114,10 +171,19 @@ export interface ImportValidationResult {
 
 // MindOS 上传/处理状态（uploaded 上传中 / queued 等待处理 / processing 处理中 / available 已完成）
 // 文案与语义色统一映射见 src/shared/status.ts
-export type MaterialStatus = 'uploaded' | 'queued' | 'processing' | 'available' | 'failed' | 'deleted'
-export type MaterialKnowledgeCardState = 'waiting' | 'generating' | 'draft' | 'confirming' | 'indexing' | 'available' | 'failed' | 'recycled' | 'unknown'
+export type MaterialStatus = 'uploaded' | 'queued' | 'processing' | 'available' | 'failed' | 'recycled' | 'restoring' | 'purging' | 'deleted'
+export interface MaterialSensitiveScanProgress {
+  state: 'queued' | 'processing' | 'completed' | 'failed' | 'canceled'
+  completedFields: number
+  totalFields: number
+  retryable: boolean
+  errorCode?: string | null
+  updatedAt?: number | null
+}
+export type MaterialKnowledgeCardState = 'waiting' | 'generating' | 'draft' | 'confirming' | 'indexing' | 'available' | 'failed' | 'recycled' | 'unknown' | 'draft_failed' | 'index_failed' | 'state_conflict' | 'recycling' | 'restoring' | 'purging' | 'purged' | 'merged'
 
 export interface UploadResult {
+  sensitiveScan?: MaterialSensitiveScanProgress | null
   materialId: string
   fileName: string
   fileType: 'document' | 'image' | 'audio'
@@ -346,6 +412,9 @@ export interface MaterialSummary {
   text: string
   status: SummaryStatus
   generatedAt: string | null
+  errorCode?: string | null
+  processingStage?: string | null
+  reasonCode?: string | null
 }
 
 // P14-04：派生分析（标签候选 / 实体抽取）共用派生状态词
@@ -449,9 +518,18 @@ export interface MaterialTagSuggestions {
 }
 
 export interface MaterialDetail extends UploadResult {
+  privacyRequired?: boolean
+  privacyStatus?: {
+    state: 'not_required' | 'processing' | 'review_required' | 'ready' | 'failed'
+    reasonCode: string | null
+  }
   previewUrl: string
   folderPath: string
   metadata: { fileSize: number | null; modifiedAt: string | null }
+  parsing: {
+    status: 'pending' | 'ok' | 'empty' | 'failed' | 'unavailable'
+    contentFormat: 'text' | 'ocr' | 'transcript' | 'mixed' | 'empty' | 'unavailable'
+  }
   summary: MaterialSummary
   // 纯文本预览（截断），仅作预览展示，不代表 AI 摘要
   excerpt: string
@@ -995,6 +1073,8 @@ export interface RuntimeTestResult {
 }
 
 export interface ChatProviderConfig {
+  configurationRequired?: boolean
+  configurationMessage?: string | null
   revision: number
   provider: 'ollama' | 'openai'
   externalEnabled: boolean
@@ -1005,7 +1085,7 @@ export interface ChatProviderConfig {
   timeoutSeconds: number
   totalBudgetSeconds: number
   fallbackOllama: boolean
-  source: 'defaults' | 'runtime_settings'
+  source: 'defaults' | 'runtime_settings' | 'admin-managed'
   effectiveProvider: 'ollama' | 'openai'
 }
 
@@ -1018,11 +1098,15 @@ export interface ExternalProviderProfile {
   apiKeyConfigured: boolean
   active: boolean
   pendingActivation?: boolean
+  source?: 'admin-managed' | 'runtime_settings'
+  providerRevision?: string
 }
 export interface ExternalProvidersResponse {
   providers: ExternalProviderProfile[]
   activeProviderId: string | null
   chatRevision: number
+  platformStatus?: 'available' | 'unavailable' | 'not_configured'
+  platformErrorCode?: string | null
 }
 export interface ExternalProviderDraft {
   name: string
@@ -1179,7 +1263,117 @@ export interface ModelActionResponse {
   deduplicated: boolean
 }
 
+export interface RedactionStatus {
+  state: string
+  versionId: string | null
+  policy?: string
+  canReadOriginal: boolean
+  canReview: boolean
+  attempts: { attempt_id: string; kind: 'body' | 'summary'; state: string; error_code: string | null }[]
+}
+
+export type SensitiveRuleSource = 'built_in' | 'custom'
+export type SensitiveRuleDeliveryMode = 'confirm' | 'always_mask' | 'block'
+export type SensitiveRuleMasking = Readonly<Record<string, unknown>>
+
+export interface SensitiveRule {
+  ruleId: string
+  source: SensitiveRuleSource
+  immutable: boolean
+  revision: number
+  name: string
+  description: string
+  examples: string[]
+  counterExamples: string[]
+  enabled: boolean
+  deliveryMode: SensitiveRuleDeliveryMode
+  allowOriginalAfterConfirm: boolean
+  masking: SensitiveRuleMasking
+}
+
+export interface SensitiveRulesResponse {
+  items: SensitiveRule[]
+  total: number
+  builtinCount: number
+  customCount: number
+  maxCustomRules: number
+  enabledRuleCount: number
+  detectorPromptTokens: number
+  detectorPromptTokenLimit: number
+  detectorPromptWithinLimit: boolean
+  detectorPromptTokensRemaining: number
+  epoch: number
+  detectorRevision: string
+}
+
+export interface SensitiveRuleDraft {
+  name: string
+  description: string
+  examples: string[]
+  counterExamples: string[]
+  enabled: boolean
+  deliveryMode: SensitiveRuleDeliveryMode
+  allowOriginalAfterConfirm: boolean
+}
+
+export interface SensitiveRuleCreatePayload extends SensitiveRuleDraft {
+  requestId: string
+  acknowledgeSimilarRuleId?: string
+}
+
+export interface SensitiveRuleUpdatePayload extends SensitiveRuleCreatePayload {
+  expectedRevision: number
+}
+
 export const api = {
+  getRedactionStatus: (id: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction`),
+  getRedactionReview: (id: string, kind: string) => request<{
+    text: string
+    originalText: string
+    reasons: string[]
+    inputHash: string
+    replacements: Array<{ start: number; end: number; type: string; required: boolean }>
+    versionId: string
+    attemptId: string
+    kind: string
+    canCorrect: boolean
+  }>(`/mindos/materials/${encodeURIComponent(id)}/redaction/review?kind=${encodeURIComponent(kind)}`),
+  reviewRedaction: (id: string, payload: { versionId: string; attemptId: string; decision: 'approve' | 'reject'; reason: string }) =>
+    postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/review`, payload),
+  correctRedaction: (id: string, payload: {
+    versionId: string
+    attemptId: string
+    kind: string
+    expectedInputHash: string
+    spans: Array<{ start: number; end: number; type: string }>
+    reason: string
+  }, idempotencyKey: string) => request<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/correct`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS, 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify(payload),
+  }),
+  retryRedaction: (id: string, payload: { versionId: string; kind: string }) =>
+    postJson<RedactionStatus>(`/mindos/materials/${encodeURIComponent(id)}/redaction/retry`, payload),
+  getSensitiveRules: (signal?: AbortSignal) =>
+    request<SensitiveRulesResponse>('/mindos/settings/sensitive-rules', { signal }),
+  getSensitiveRule: (ruleId: string, signal?: AbortSignal) =>
+    request<SensitiveRule>(`/mindos/settings/sensitive-rules/${encodeURIComponent(ruleId)}`, { signal }),
+  createSensitiveRule: (payload: SensitiveRuleCreatePayload) => {
+    const { requestId, ...rule } = payload
+    return postJson<SensitiveRule>('/mindos/settings/sensitive-rules/custom', { requestId, rule })
+  },
+  updateSensitiveRule: (ruleId: string, payload: SensitiveRuleUpdatePayload) => {
+    const { requestId, expectedRevision, ...rule } = payload
+    return putJson<SensitiveRule>(`/mindos/settings/sensitive-rules/custom/${encodeURIComponent(ruleId)}`, {
+      requestId, expectedRevision, rule,
+    })
+  },
+  deleteSensitiveRule: (ruleId: string, expectedRevision: number) =>
+    request<{ deleted: boolean; ruleId: string }>(`/mindos/settings/sensitive-rules/custom/${encodeURIComponent(ruleId)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', ...CSRF_HEADERS },
+      body: JSON.stringify({ expectedRevision }),
+    }),
   health: (signal?: AbortSignal) => request<HealthInfo>('/health', { signal }),
   mindosAccessContext: () => request<MindosAccessContext>('/mindos/access-context'),
   // 后端同一套导入校验规则（与 mindos.validation.validate_import 一致）。
@@ -1188,11 +1382,11 @@ export const api = {
     postJson<ImportValidationResult>('/mindos/validate', { filename, size }),
   // P2：真实上传 + 进入处理链路；校验失败由后端拒绝（不落盘、不建任务）
   // P14-06：folderId 为目录树节点 ID（null/省略 = 未分类）
-  uploadFile: (file: File, folderId?: number | null) => {
+  uploadFile: (file: File, folderId?: number | null, onUploadProgress?: ProductRequestInit['onUploadProgress']) => {
     const form = new FormData()
     form.append('file', file)
     if (folderId != null && folderId > 0) form.append('folderId', String(folderId))
-    return request<UploadResult>('/mindos/uploads', { method: 'POST', headers: CSRF_HEADERS, body: form })
+    return request<UploadResult>('/mindos/uploads', { method: 'POST', headers: CSRF_HEADERS, body: form, onUploadProgress })
   },
   // P2：轮询处理状态
   getUploadStatus: (materialId: string) => request<UploadResult>(`/mindos/uploads/${materialId}`),
@@ -1200,7 +1394,7 @@ export const api = {
   retryUpload: (materialId: string) => postJson<UploadResult>(`/mindos/uploads/${materialId}/retry`, {}),
   // 服务中断后显式继续持久化的暂停任务。
   resumeUpload: (materialId: string) => postJson<UploadResult>(`/mindos/uploads/${materialId}/resume`, {}),
-  listMaterials: (params: { type?: string; status?: string; keyword?: string; folderId?: number; folder?: string; tag?: string; recycled?: boolean } = {}) => {
+  listMaterials: (params: { type?: string; status?: string; keyword?: string; folderId?: number; folder?: string; tag?: string; recycled?: boolean; limit?: number; offset?: number } = {}) => {
     const query = new URLSearchParams()
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== '') query.set(key, String(value))
@@ -1228,11 +1422,13 @@ export const api = {
     return request<MaterialVersionUploadResult>(`/mindos/materials/${encodeURIComponent(materialId)}/versions`, { method: 'POST', headers: CSRF_HEADERS, body: form })
   },
   getMaterialVersionImpact: (materialId: string) => request<MaterialImpact>(`/mindos/materials/${encodeURIComponent(materialId)}/version-impact`),
-  getMaterialSummary: (materialId: string) => request<{ materialId: string; text: string; status: SummaryStatus; generatedAt: string | null }>(`/mindos/materials/${encodeURIComponent(materialId)}/summary`),
+  getMaterialSummary: (materialId: string) => request<MaterialSummary & { materialId: string }>(`/mindos/materials/${encodeURIComponent(materialId)}/summary`),
   // P14-04：聚合分析（摘要 / 标签候选 / 实体及其状态）
   getMaterialAnalysis: (materialId: string) => request<MaterialAnalysis>(`/mindos/materials/${encodeURIComponent(materialId)}/analysis`),
   reparseMaterial: (materialId: string) =>
     postJson<MaterialAnalysis>(`/mindos/materials/${encodeURIComponent(materialId)}/regenerate`, { item: 'parse' }),
+  regenerateMaterialDraft: (materialId: string) =>
+    postJson<MaterialDraftCard & { materialId: string; item: 'draft' }>(`/mindos/materials/${encodeURIComponent(materialId)}/regenerate`, { item: 'draft' }),
   // P14-04：读取异步缓存的标签候选；缺失时触发后台重算并返回 pending
   getMaterialTagSuggestions: (materialId: string) => request<MaterialTagSuggestions>(`/mindos/materials/${encodeURIComponent(materialId)}/tag-suggestions`),
   // P14-04：确认候选 → 写入正式标签（后端校验 suggestionId 归属并审计；幂等）
@@ -1390,8 +1586,8 @@ export const api = {
   getExternalProviders: (signal?: AbortSignal) => request<ExternalProvidersResponse>('/system/models/external-providers', { signal }),
   createExternalProvider: (payload: ExternalProviderDraft) => postJson<ExternalProviderProfile>('/system/models/external-providers', payload),
   updateExternalProvider: (id: string, payload: ExternalProviderDraft & { revision: number }) => putJson<ExternalProviderProfile>(`/system/models/external-providers/${encodeURIComponent(id)}`, payload),
-  getExternalProviderModels: (id: string, revision: number, signal?: AbortSignal) => request<{ models: string[]; providerId: string; revision: number }>(`/system/models/external-providers/${encodeURIComponent(id)}/models`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision }), signal }),
-  activateExternalProvider: (id: string, payload: { revision: number; model: string; chatRevision: number }) => postJson<{ provider: ExternalProviderProfile; chat: ChatProviderConfig }>(`/system/models/external-providers/${encodeURIComponent(id)}/activate`, payload),
+  getExternalProviderModels: (id: string, revision: number, signal?: AbortSignal, providerRevision?: string) => request<{ models: string[]; providerId: string; revision: number }>(`/system/models/external-providers/${encodeURIComponent(id)}/models`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revision, ...(providerRevision ? { providerRevision } : {}) }), signal }),
+  activateExternalProvider: (id: string, payload: { revision: number; model: string; chatRevision: number; providerRevision?: string }) => postJson<{ provider: ExternalProviderProfile; chat: ChatProviderConfig }>(`/system/models/external-providers/${encodeURIComponent(id)}/activate`, payload),
   deleteExternalProvider: (id: string, revision: number) => request<{ deleted: boolean }>(`/system/models/external-providers/${encodeURIComponent(id)}?revision=${revision}`, { method: 'DELETE' }),
   putChatProvider: (payload: ChatProviderPutPayload) =>
     putJson<ChatProviderConfig>('/system/models/chat-provider', payload),
@@ -1473,6 +1669,7 @@ export async function exchangeTicketForSession(ticket: string): Promise<SessionE
  * 本机调试模式或宿主未注入票据时返回 null，页面不阻塞、不弹错。
  */
 export async function provisionMindosSession(): Promise<{ deviceId: string } | null> {
+  if (isDesktopProduct()) return null
   const ctx = await api.mindosAccessContext()
   if (ctx.mode !== 'connectivity_ticket_required') return null
   const ticket = await readConnectivityTicket()
@@ -1560,11 +1757,12 @@ export interface ChatImportFile {
 }
 export interface ChatImportBatch {
   id: string; conversationId: string; messageId: string; state: string; error: string | null
-  localOnly: boolean; files: ChatImportFile[]
+  localOnly: boolean; ragV2: import('./taskRouting').RagV2Prompt | null; files: ChatImportFile[]
 }
 export interface ChatFileService { id: string; name: string; model: string; external: boolean }
 export interface ChatImportListing {
   items: ChatImportBatch[]; selection: { refs: ChatMaterialRef[]; localOnly: boolean }; service: ChatFileService | null
+  retrievalOnly?: boolean; uploadEnabled?: boolean; code?: string; message?: string
 }
 export interface ChatFilePreview { name: string; text: string; offset: number; totalChars: number; hasMore: boolean }
 const chatPath = (id: string) => `/mindos/conversations/${encodeURIComponent(id)}`
@@ -1583,6 +1781,8 @@ export const chatImports = {
   retry: (id: string, batch: string) => postJson<ChatImportBatch>(`${chatPath(id)}/imports/${batch}/retry`, {}),
   select: (id: string, refs: ChatMaterialRef[], localOnly: boolean) => putJson(`${chatPath(id)}/references`, { refs, localOnly }),
   consent: (id: string, refs: ChatMaterialRef[], localOnly: boolean, serviceId?: string) => postJson(`${chatPath(id)}/file-consent`, { refs, localOnly, serviceId }),
+  ragDecision: (id: string, interactionId: string, action: import('./taskRouting').RagV2Decision) =>
+    postJson(`${chatPath(id)}/rag-v2/decision`, { interactionId, action }),
   preview: (id: string, ref: ChatMaterialRef, offset = 0) => request<ChatFilePreview>(`${chatPath(id)}/files/${encodeURIComponent(ref.materialId)}/preview?version=${ref.version}&offset=${offset}`),
 }
 
@@ -1637,7 +1837,7 @@ export interface DecisionDraft {
 
 export interface DecisionDraftEvent {
   // ready：演示模型同步整理好了；queued：真实模型下草稿是后台任务，fields 为空，前端轮询 GET /decision-draft
-  state?: 'ready' | 'queued'
+  state?: 'ready' | 'queued' | 'failed'
   jobId?: string | null
   draftId: string | null
   revision: number | null
@@ -1691,6 +1891,7 @@ export interface ConversationMemoryDraft {
 }
 
 export interface ConversationMemoryAttention {
+  reflection?: Reflection | null
   topicId: string
   candidate: Claim | null
   alignment: Claim | null
@@ -2143,9 +2344,12 @@ export interface ProvenanceEvent {
 export type ExtractionSkipReason = 'too_short' | 'pure_question' | 'disabled' | (string & {})
 
 export interface ExtractionEvent {
-  state: 'queued' | 'skipped'
-  jobId?: string
+  state: 'queued' | 'skipped' | 'failed'
+  jobId?: string | null
   reason?: ExtractionSkipReason | null
+  code?: string
+  message?: string
+  taskKind?: string
 }
 
 export interface MessageDoneEvent {
@@ -2164,6 +2368,7 @@ export interface StreamErrorEvent {
   userMessageId?: string
   messageId?: string
   stage?: 'initial' | 'supplemented'
+  ragV2?: import('./taskRouting').RagV2Prompt
 }
 
 export function createConversation(payload: { mode?: ConversationMode; title?: string; decisionId?: string; taskContext?: 'charter' } = {}) {
@@ -2276,8 +2481,8 @@ export function updateConversation(conversationId: string, payload: { expectedRe
   })
 }
 
-export function getConversation(conversationId: string) {
-  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`)
+export function getConversation(conversationId: string, signal?: AbortSignal) {
+  return request<ConversationDetail>(`/mindos/conversations/${encodeURIComponent(conversationId)}`, { signal })
 }
 
 export function getConversationOutcomes(conversationId: string) {
@@ -2347,11 +2552,31 @@ export function getOnboardingProgress() {
   return request<OnboardingProgress>('/mindos/zhijun/onboarding')
 }
 
-export function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
-  return postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
-    action,
-    ...(conversationId ? { conversationId } : {}),
-  })
+const navigationProgress = createNavigationProgressReader(
+  getOnboardingProgress,
+  () => isDesktopProduct() && hasProductScope(),
+)
+onProductScopeReset(navigationProgress.invalidate)
+
+export function getOnboardingProgressForNavigation() {
+  return navigationProgress.read()
+}
+
+export function onboardingNavigationRevision(): number {
+  return navigationProgress.revision()
+}
+
+export async function updateOnboarding(action: OnboardingAction, conversationId?: string | null) {
+  navigationProgress.invalidate()
+  try {
+    return await postJson<OnboardingProgress>('/mindos/zhijun/onboarding', {
+      action,
+      ...(conversationId ? { conversationId } : {}),
+    })
+  } finally {
+    // Also discard reads started during a write, including an ambiguous failure.
+    navigationProgress.invalidate()
+  }
 }
 
 // ---- P3：整合与裁决、导出 / 全量删除
@@ -2438,3 +2663,29 @@ export const suggestLearning = async (id: string, data: { claimId?: string; expe
 }
 export const proposeLearning = (id: string, data: LearningComparison & { expectedRevision: number }) => learningPost<LearningEpisode>(id, 'propose', data)
 export const resolveLearning = (id: string, data: { expectedRevision: number; action: 'apply' | 'keep' | 'defer'; content?: string; framing?: LearningFraming; exceptions?: string; note?: string }) => learningPost<LearningEpisode>(id, 'resolve', data)
+
+export type ReflectionFeedback = 'accepted' | 'contextual' | 'rejected' | 'observing' | 'retired'
+export interface Reflection {
+  id: string
+  type: 'pattern' | 'change'
+  title: string
+  observation: string
+  alternative: string
+  conversationId: string
+  messageId: string
+  status: 'candidate' | 'surfaced' | ReflectionFeedback
+  revision: number
+  createdAt: string
+  updatedAt: string
+  lastSurfacedAt: string | null
+  timeRange: { from: string; to: string }
+  evidence: Array<{ messageId: string; conversationId: string; date: string; quote: string }>
+  feedback: { action?: ReflectionFeedback; note?: string; at?: string }
+  history: Array<{ action: ReflectionFeedback; note: string; at: string }>
+}
+export function listReflections() {
+  return request<{ items: Reflection[] }>('/mindos/reflections')
+}
+export function reviewReflection(id: string, payload: { action: ReflectionFeedback; note: string; expectedRevision: number; requestId: string }) {
+  return postJson<Reflection>(`/mindos/reflections/${encodeURIComponent(id)}/feedback`, payload)
+}

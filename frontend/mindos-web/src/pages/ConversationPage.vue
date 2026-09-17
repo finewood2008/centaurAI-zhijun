@@ -49,16 +49,21 @@ import {
   type ZhijunStatus,
 } from '@/services/api'
 import { streamChat } from '@/services/chatStream'
+import { reconcileReply } from '@/shared/replyReconciliation'
+import { productScopeEpoch } from '@/shared/productScope'
 import { useToast } from '@/composables/useToast'
 import { useChatImports } from '@/composables/useChatImports'
 import ChatFilesPanel from '@/components/conversation/ChatFilesPanel.vue'
 import ImportBatchCard from '@/components/conversation/ImportBatchCard.vue'
 import { createSessionGate } from '@/composables/sessionGate'
+import { createMemoryAttentionPoller } from '@/composables/useMemoryAttentionPolling'
+import { createInFlightReads } from '@/composables/inFlightReads'
 import { reviewNote } from '@/shared/ontology'
 import { MODEL_UNAVAILABLE_TEXT, modelUnavailable } from '@/shared/model'
 import { extractionSkipNote, hasConversationOutcomes } from '@/shared/labels'
 import { placeMemoryAttention } from '@/shared/memoryAttention'
 import MessageBubble from '@/components/conversation/MessageBubble.vue'
+import ReflectionCard from '@/components/reflection/ReflectionCard.vue'
 import ClaimCandidateChip from '@/components/conversation/ClaimCandidateChip.vue'
 import ReplyAssistance from '@/components/conversation/ReplyAssistance.vue'
 import CharterConversation from '@/components/conversation/CharterConversation.vue'
@@ -80,7 +85,7 @@ import AlignmentCard from '@/components/ontology/AlignmentCard.vue'
 import AlignmentPrivacy from '@/components/conversation/AlignmentPrivacy.vue'
 import RoutingPanel from '@/components/conversation/RoutingPanel.vue'
 import MemoryPending from '@/components/conversation/MemoryPending.vue'
-import { prepareChatRoute, routingRequest, routePath } from '@/services/taskRouting'
+import { chatPreparation, prepareChatRoute, routingRequest, routePath } from '@/services/taskRouting'
 import { contextNeedsReview, contextRetryBody, isContextReviewError } from '@/shared/contextRecovery'
 import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
@@ -93,6 +98,9 @@ interface UiMessage extends Message {
   streaming?: boolean
   // 抽取被跳过 / 还在整理时，这条回复下方的一行灰字
   extractionNote?: string
+  backgroundFailures?: string[]
+  replySyncFailed?: boolean
+  replySyncing?: boolean
 }
 
 const route = useRoute()
@@ -138,6 +146,7 @@ const alignmentLocalOnly = ref(false)
 const routingMode = ref('legacy')
 const routingPanel = ref<InstanceType<typeof RoutingPanel> | null>(null)
 const prefillLocalOnly = ref(false)
+let prefillLocalOnlyRevision = 0
 const alignmentPrivacy = ref<InstanceType<typeof AlignmentPrivacy> | null>(null)
 function onAlignmentUpdated(claim: Claim, saved = true) {
   toast({ type: saved ? 'success' : 'error', message: saved ? '自我校准已更新，事实记录保留' : '校准未保存，已读取最新记录；请重新核对' })
@@ -157,7 +166,9 @@ const reviewBusy = reactive<Record<string, boolean>>({})
 const listRef = ref<HTMLElement | null>(null)
 const composerRef = ref<InstanceType<typeof Composer> | null>(null)
 const matterWorkspace = ref<InstanceType<typeof MatterWorkspace> | null>(null)
-const matterSuspension = computed(() => messages.value.filter(m => m.role === 'assistant' && m.status === 'complete').at(-1)?.provenance?.contextPlan?.matterSuspended)
+// Failed/prepared replies also carry a topic boundary. Do not restore the old
+// matter merely because the latest answer failed or has not streamed yet.
+const matterSuspension = computed(() => messages.value.filter(m => m.role === 'assistant' && m.provenance?.contextPlan && 'matterSuspended' in m.provenance.contextPlan).at(-1)?.provenance?.contextPlan?.matterSuspended)
 
 // P2：判断草稿（商量模式）与回访会话
 const draft = ref<DecisionDraft | null>(null)
@@ -183,6 +194,8 @@ const isReview = computed(() => current.value?.mode === 'review')
 const isOnboarding = computed(() => current.value?.mode === 'onboarding')
 const showDraftPanel = computed(() => (!!draft.value && draft.value.status !== 'discarded') || draftPending.value || draftTimedOut.value)
 const workspaceOpen = ref(false)
+const workspaceVisited = ref(false)
+watch(workspaceOpen, open => { if (open) workspaceVisited.value = true })
 const workspaceTab = ref<'draft' | 'map' | 'review' | 'memory'>('draft')
 function openWorkspace(tab: 'draft' | 'map' | 'review' | 'memory') {
   workspaceTab.value = tab
@@ -197,7 +210,7 @@ function workspaceKey(event: KeyboardEvent) {
   const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
   tabs[next]?.click(); tabs[next]?.focus()
 }
-watch(() => current.value?.id, () => { workspaceOpen.value = false })
+watch(() => current.value?.id, () => { workspaceOpen.value = false; workspaceVisited.value = false })
 
 // ---- 建档：一边聊，本体图一边亮起来
 const ONBOARDING_STEPS: { title: string; section: Section }[] = [
@@ -405,9 +418,10 @@ async function onSubmitReview(payload: { reflection: string; lessons: string[]; 
 
 // 这段对话留下了什么：刷新会话列表里该项的产出摘要（接口不存在时静默）；
 // showCard 为真且还停在这个会话时，同时更新消息流底部那张「这段对话留下的」小卡
+const pageReads = createInFlightReads()
 async function refreshOutcomes(conversationId: string, showCard = false) {
   try {
-    const o = await getConversationOutcomes(conversationId)
+    const o = await pageReads.run(`outcomes:${conversationId}`, () => getConversationOutcomes(conversationId))
     if (!alive || !o) return
     if (showCard && current.value?.id === conversationId) turnOutcomes.value = o
     const brief = {
@@ -425,22 +439,76 @@ async function refreshOutcomes(conversationId: string, showCard = false) {
 const showOutcomesCard = computed(() => !streaming.value && !!current.value && hasConversationOutcomes(turnOutcomes.value))
 
 const loadGate = createSessionGate()
-const pollGate = createSessionGate()
+let conversationDetailAbort: AbortController | null = null
+const memoryPoller = createMemoryAttentionPoller({
+  isCurrent: conversationId => alive && currentId.value === conversationId && current.value?.id === conversationId,
+  onActiveChange: active => {
+    if (active) clearStatusTimer()
+    else scheduleStatusPoll()
+  },
+  poll: async (conversationId, jobIds) => {
+    // Paused/failed work is no longer pending, but still needs a visible status.
+    const [, resumed, nextStatus] = await Promise.all([
+      refreshMemoryAttention(conversationId),
+      routingPanel.value?.reconcileRecentExtractionJobs(conversationId, jobIds),
+      readStatus(),
+    ])
+    if (!alive || currentId.value !== conversationId || current.value?.id !== conversationId) return false
+    status.value = nextStatus
+    // Unavailable/busy routing is unknown, not a successful final-state read.
+    return resumed !== false || (nextStatus.pendingJobs ?? 1) > 0
+  },
+  onTimeout: conversationId => routingPanel.value?.reportMemoryPollingTimeout(conversationId),
+  onSettled: async conversationId => {
+    // Very fast jobs may finish without pendingJobs ever being observed > 0.
+    // Re-read after convergence rather than relying only on the count watcher.
+    // The settling tick already fetched attention; only derived summaries remain.
+    await Promise.all([refreshOutcomes(conversationId, true), loadStats()])
+  },
+})
 const memoryLoadGate = createSessionGate()
 const memoryAttention = ref<ConversationMemoryAttention | null>(null)
 const memoryDraftBusy = ref(false)
 const memoryDraftError = ref('')
 const memoryPlacement = computed(() => placeMemoryAttention(memoryAttention.value, messages.value, current.value?.id ?? null))
 const memoryDraft = computed(() => memoryAttention.value?.draft ?? null)
-let memoryTimer: ReturnType<typeof setTimeout> | undefined
 let abortController: AbortController | null = null
 // 新建会话后先本地替换路由，再由本页继续流式；此时跳过 watcher 的重新加载。
 let skipLoadFor: string | null = null
+let importingTurn = false
+let conversationCreation: Promise<Conversation> | null = null
+let conversationNavigation = 0
 
 const currentId = computed(() => {
   const id = route.params.conversationId
   return typeof id === 'string' && id ? id : null
 })
+const loadedConversationId = computed(() => !messagesLoading.value && current.value?.id === currentId.value ? currentId.value : null)
+const preparation = computed(() => chatPreparation.value?.conversationId === currentId.value ? chatPreparation.value : null)
+const conversationAuxPhase = ref(0)
+const importsConversationId = computed(() => conversationAuxPhase.value >= 1 ? loadedConversationId.value : null)
+let conversationAuxTimers: number[] = []
+function clearConversationAuxiliary() {
+  for (const timer of conversationAuxTimers) window.clearTimeout(timer)
+  conversationAuxTimers = []
+  conversationAuxPhase.value = 0
+}
+function scheduleConversationAuxiliary(conversationId: string) {
+  clearConversationAuxiliary()
+  const schedule = (phase: number, delay: number, task?: () => void) => {
+    conversationAuxTimers.push(window.setTimeout(() => {
+      if (!alive || loadedConversationId.value !== conversationId) return
+      conversationAuxPhase.value = phase
+      task?.()
+    }, delay))
+  }
+  // 直连通道按任务持久化和轮询。把非首屏读取错开，避免再次堵住下一次详情读取。
+  schedule(1, 600)
+  schedule(2, 1200)
+  schedule(3, 1800)
+  schedule(4, 2400)
+  schedule(5, 3000, () => void refreshConversationBackground(conversationId))
+}
 
 // 建档入口只由显式引导路由 / query 打开。正常 /chat 已由全局引导状态守卫放行，
 // 不能再根据「没有会话 / 本体为空」倒推出尚未完成引导（用户可能刚删完对话）。
@@ -472,7 +540,7 @@ const modelBlocked = computed(() => modelUnavailable(status.value))
 // 后台还没整理完的事（抽取 / 草稿 / 摘要），页头只用一句淡字提示
 const pendingJobs = computed(() => status.value?.pendingJobs ?? 0)
 
-// ---- 空白态的三张起手卡：点一下把话头放进输入框，不自动发送
+// ---- 空白态的四张起手卡：替换当前话头，不自动发送
 interface Starter { title: string; desc: string; text: string; deliberate?: boolean }
 const STARTERS: Starter[] = [
   { title: '一起想清楚一件事', desc: '理清目标与取舍，需要时形成判断，由你核对后保存', text: '我在考虑一件事：', deliberate: true },
@@ -482,7 +550,25 @@ const STARTERS: Starter[] = [
 ]
 function useStarter(s: Starter) {
   composerRef.value?.setDeliberate(!!s.deliberate)
-  composerRef.value?.appendText(s.text)
+  composerRef.value?.replaceText(s.text)
+}
+
+function setPrefillLocalOnly(value: boolean) {
+  prefillLocalOnly.value = value
+  prefillLocalOnlyRevision += 1
+}
+
+function consumePrefillLocalOnly(revision: number) {
+  if (prefillLocalOnly.value && prefillLocalOnlyRevision === revision) setPrefillLocalOnly(false)
+}
+
+function onRoutingMode(mode: string) {
+  routingMode.value = mode
+}
+
+function onRoutingModeSelected(mode: string) {
+  onRoutingMode(mode)
+  if (mode === 'online') setPrefillLocalOnly(false)
 }
 
 // 从今日页 / 其它页带着话头过来：?say=… → 放进输入框（?deliberate=1 时同时打开「商量」开关），然后把 query 清掉
@@ -490,7 +576,7 @@ watch(
   () => route.query.say,
   (v) => {
     if (typeof v !== 'string' || !v) return
-    prefillLocalOnly.value = route.query.localOnly === '1'
+    setPrefillLocalOnly(route.query.localOnly === '1')
     const d = route.query.deliberate
     const deliberate = d === '1' || d === 'true'
     void nextTick(() => {
@@ -525,23 +611,40 @@ function friendlyError(err: unknown, fallback: string): string {
 }
 
 let statusTimer: number | null = null
+let statusPollAttempts = 0
+function clearStatusTimer() {
+  if (statusTimer !== null) window.clearTimeout(statusTimer)
+  statusTimer = null
+}
+function scheduleStatusPoll() {
+  clearStatusTimer()
+  // The memory observer owns the status read while it is tracking this turn.
+  // Otherwise keep a slower, bounded catch-up for jobs already running on entry.
+  if (!alive || memoryPoller.isActive() || (status.value?.pendingJobs ?? 0) <= 0 || statusPollAttempts >= 8) return
+  statusTimer = window.setTimeout(() => {
+    statusTimer = null
+    statusPollAttempts++
+    void loadStatus()
+  }, 15_000)
+}
+function readStatus() {
+  return pageReads.run('status', getZhijunStatus)
+}
 async function loadStatus() {
   let next: ZhijunStatus | null = null
   try {
-    next = await getZhijunStatus()
+    next = await readStatus()
   } catch {
     next = null
   }
   if (!alive) return
   status.value = next
-  // 后台还在整理时每 8 秒看一眼，整理完就停
-  if (statusTimer) window.clearTimeout(statusTimer)
-  statusTimer = (status.value?.pendingJobs ?? 0) > 0 ? window.setTimeout(() => void loadStatus(), 8000) : null
+  scheduleStatusPoll()
 }
 
 async function loadStats() {
   try {
-    const next = await getOntologyStats()
+    const next = await pageReads.run('stats', getOntologyStats)
     if (!alive) return
     stats.value = next
   } catch {
@@ -612,6 +715,25 @@ async function refreshCurrentMetadata(conversationId: string) {
     if (!alive) return
     applyConversationMetadata(detail.conversation)
   } catch { /* a failed metadata refresh must not interrupt a successful turn */ }
+}
+
+async function refreshConversationBackground(conversationId: string) {
+  const reads: Promise<unknown>[] = [refreshOutcomes(conversationId, true)]
+  if (current.value?.mode === 'onboarding') reads.push(loadMapClaims())
+  await Promise.allSettled(reads)
+  if (!alive || streaming.value || currentId.value !== conversationId) return
+  await refreshMemoryAttention(conversationId)
+}
+
+async function refreshAfterTurn(conversationId: string) {
+  await Promise.allSettled([loadConversations(), refreshCurrentMetadata(conversationId)])
+  if (!alive || streaming.value || currentId.value !== conversationId) return
+  await Promise.allSettled([refreshOutcomes(conversationId, true),
+    // The observer will reconcile routing in its first tick; do not start a
+    // competing refresh that can abort/restart the same panel read.
+    memoryPoller.isActive() ? undefined : routingPanel.value?.refresh()])
+  if (!alive || streaming.value || currentId.value !== conversationId) return
+  await refreshMemoryAttention(conversationId)
 }
 
 async function manageConversation(conversation: Conversation, action: string) {
@@ -685,12 +807,27 @@ function toUi(m: Message): UiMessage {
 }
 
 async function loadConversation(id: string) {
+  conversationDetailAbort?.abort()
+  clearConversationAuxiliary()
+  const controller = new AbortController()
+  conversationDetailAbort = controller
   const session = loadGate.next()
   clearMemoryAttention()
   messagesLoading.value = true
   messagesError.value = ''
+  // 路由先于详情返回。立即移除上一段会话，避免以新 ID 挂载旧消息的附属读取，
+  // 也避免用户在等待时短暂看到另一段会话的内容。
+  current.value = null
+  messages.value = []
+  draft.value = null
+  decision.value = null
+  turnOutcomes.value = null
+  mapClaims.value = []
+  routingMode.value = 'unknown'
+  alignmentLocalOnly.value = false
+  let loaded = false
   try {
-    const detail = await getConversation(id)
+    const detail = await getConversation(id, controller.signal)
     if (!loadGate.isCurrent(session)) return
     current.value = rememberConversationMetadata(detail.conversation)
     messages.value = detail.messages.map(toUi)
@@ -705,10 +842,7 @@ async function loadConversation(id: string) {
     reviewSaveError.value = ''
     closingStreaming.value = false
     turnOutcomes.value = null
-    // 成果不是一次性提示：重新打开旧会话时也要能核对这段对话留下了什么。
-    void refreshOutcomes(id, true)
-    void loadMapClaims()
-    void refreshMemoryAttention(id)
+    loaded = true
     if (detail.conversation.mode === 'onboarding') {
       onboardingStep.value = stepFromMessages()
     } else {
@@ -718,6 +852,7 @@ async function loadConversation(id: string) {
     else await scrollToBottom()
   } catch (err) {
     if (!loadGate.isCurrent(session)) return
+    if (controller.signal.aborted) return
     if (err instanceof ApiError && err.status === 404) {
       toast({ type: 'error', message: '会话不存在' })
       router.replace(guidedOnboarding.value ? '/onboarding' : '/chat')
@@ -725,11 +860,18 @@ async function loadConversation(id: string) {
     }
     messagesError.value = friendlyError(err, '会话加载失败')
   } finally {
-    if (loadGate.isCurrent(session)) messagesLoading.value = false
+    if (conversationDetailAbort === controller) conversationDetailAbort = null
+    if (loadGate.isCurrent(session)) {
+      messagesLoading.value = false
+      if (loaded) scheduleConversationAuxiliary(id)
+    }
   }
 }
 
 function resetToLanding() {
+  conversationDetailAbort?.abort()
+  conversationDetailAbort = null
+  clearConversationAuxiliary()
   loadGate.invalidate()
   clearMemoryAttention()
   current.value = null
@@ -757,13 +899,21 @@ function resetToLanding() {
 
 watch(
   currentId,
-  (id) => {
+  (id, previousId) => {
+    // Leave an active response running, but never leave another conversation's
+    // pending material/egress confirmation alive after navigating away.
+    if (previousId && id !== previousId && chatPreparation.value?.conversationId === previousId) abortController?.abort()
     // 进了任何一个会话（含刚从强制建档态新建的），?onboarding=1 的强制就结束
     if (id) forceOnboarding.value = false
-    if (streaming.value && id && skipLoadFor === id) {
+    const creatingPrefilledConversation = id && skipLoadFor === id && current.value?.id === id
+    const receivingPrefilledPrompt = typeof route.query.say === 'string' && !!route.query.say
+    if (previousId !== undefined && id !== previousId && !creatingPrefilledConversation && !receivingPrefilledPrompt) setPrefillLocalOnly(false)
+    if (creatingPrefilledConversation) {
       skipLoadFor = null
+      scheduleConversationAuxiliary(id)
       return
     }
+    conversationNavigation++
     skipLoadFor = null
     if (id) loadConversation(id)
     else resetToLanding()
@@ -808,6 +958,8 @@ function selectConversation(id: string, messageId?: string) {
 
 function newConversation() {
   listOpen.value = false
+  // A second click on the blank page invalidates an in-flight lazy creation.
+  if (!currentId.value) conversationNavigation++
   if (guidedOnboarding.value) {
     void skipOnboarding()
     return
@@ -840,11 +992,25 @@ async function confirmDelete() {
 }
 
 async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversation> {
-  if (current.value) return current.value
+  if (current.value && current.value.id === currentId.value) return current.value
+  if (currentId.value) throw new Error('对话正在读取，请稍后再试')
+  if (conversationCreation) return conversationCreation
+  const navigation = conversationNavigation
+  const check = () => {
+    if (!alive || navigation !== conversationNavigation || currentId.value) throw new Error('已切换对话，本次创建不会关联到其他对话，请重新打开事情与成果')
+  }
+  const pending = createCurrentConversation(mode, check)
+  conversationCreation = pending
+  try { return await pending }
+  finally { if (conversationCreation === pending) conversationCreation = null }
+}
+
+async function createCurrentConversation(mode: 'chat' | 'onboarding', check: () => void): Promise<Conversation> {
   if (mode === 'onboarding') {
     const progress = await updateOnboarding('start')
     if (!progress.conversationId) throw new Error('建档会话没有创建成功')
     const detail = await getConversation(progress.conversationId)
+    check()
     const conv = detail.conversation
     current.value = rememberConversationMetadata(conv)
     messages.value = detail.messages.map(toUi)
@@ -857,6 +1023,10 @@ async function ensureConversation(mode: 'chat' | 'onboarding'): Promise<Conversa
     return conv
   }
   const conv = await createConversation({ mode })
+  check()
+  // Persist the blank input under its newly created conversation before the
+  // Composer's conversation watcher runs. Keep provenance and undo intact.
+  composerRef.value?.adoptLandingDraft(conv.id)
   current.value = rememberConversationMetadata(conv)
   conversations.value = [conv, ...conversations.value]
   skipLoadFor = conv.id
@@ -874,7 +1044,16 @@ async function send(content: string, depth: 'brief' | 'deep', mode: TurnMode = '
     highlightedMessage.value = null
   }
   if (imports.staged.length) {
-    await imports.send(content, origin)
+    const systemPromptLocalOnly = prefillLocalOnly.value
+    const systemPromptRevision = prefillLocalOnlyRevision
+    importingTurn = true
+    let sent = false
+    try {
+      sent = await imports.send(content, origin, systemPromptLocalOnly)
+    } finally {
+      importingTurn = false
+    }
+    if (sent && systemPromptLocalOnly) consumePrefillLocalOnly(systemPromptRevision)
     if (imports.staged.length) composerRef.value?.restoreSubmission(content, origin, submittedConversationId)
     if (current.value) void refreshCurrentMetadata(current.value.id)
     void loadConversations()
@@ -945,14 +1124,17 @@ async function finishLightOnboarding() {
 }
 
 async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 'deep', mode: TurnMode = 'chat', origin?: ReplyAssistanceInput) {
+  const ownerEpoch = productScopeEpoch()
   abortController = new AbortController()
   const signal = abortController.signal
   let sendBody: Record<string, unknown> | null
+  const systemPromptLocalOnly = prefillLocalOnly.value
+  const systemPromptRevision = prefillLocalOnlyRevision
   try {
     const routeState = await routingRequest(routePath(conv.id), 'GET', undefined, signal)
     routingMode.value = routeState.mode.mode
     sendBody = await prepareChatRoute(conv.id, { content, depth, mode, materialRefs: imports.references, replyAssistance: origin,
-      localOnly: prefillLocalOnly.value || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal)
+      localOnly: systemPromptLocalOnly || (routingMode.value === 'legacy' && (imports.localOnly || alignmentLocalOnly.value)) }, signal)
     if (!sendBody || !alive || currentId.value !== conv.id) {
       composerRef.value?.restoreSubmission(content, origin, conv.id)
       streaming.value = false; abortController = null; return
@@ -1006,6 +1188,13 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
       {
         decision_draft: (d) => {
           const e = d as DecisionDraftEvent
+          if (e.state === 'failed') {
+            draftPending.value = false
+            draftTimedOut.value = false
+            draftPollGate.invalidate()
+            draftError.value = '回答已保存，但判断草稿整理未完成，请稍后重新整理。'
+            return
+          }
           if (e.state === 'queued' || !e.fields || !e.draftId) {
             draftPending.value = true
             draftTimedOut.value = false
@@ -1031,6 +1220,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
         },
         meta: (d) => {
           const m = d as TurnMetaEvent
+          if (systemPromptLocalOnly) consumePrefillLocalOnly(systemPromptRevision)
           assistant.id = m.messageId
           userMsg.id = m.userMessageId
           assistant.meta = { ...assistant.meta, replyTo: m.userMessageId, turnMode: m.turnMode || mode, depth: m.depth }
@@ -1039,7 +1229,6 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           assistant.model = m.model
           assistant.external = m.external
           if (!alive) return
-          void refreshCurrentMetadata(conv.id)
           if (m.mode === 'onboarding') {
             onboardingStep.value = m.onboardingStep ?? stepFromMessages()
             closingStreaming.value = (onboardingStep.value ?? 0) >= ONBOARDING_STEPS.length + 1
@@ -1058,10 +1247,23 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           const e = d as ExtractionEvent
           if (!alive) return
           if (e.state === 'queued') {
-            pollMemoryAttention(conv.id)
+            pollMemoryAttention(conv.id, e.jobId ? [e.jobId] : [])
+            void alignmentPrivacy.value?.refresh()
             if (conv.mode === 'onboarding') void pollMap()
           } else if (e.state === 'skipped') {
-            assistant.extractionNote = extractionSkipNote(e.reason)
+            if (!assistant.backgroundFailures?.length) assistant.extractionNote = extractionSkipNote(e.reason)
+          } else if (e.state === 'failed') {
+            // Background bookkeeping failed after the answer was saved. Keep
+            // the answer intact and expose the separate, retryable task state.
+            const note = !e.jobId
+              ? '回答已保存，但整理任务未能保存；请稍后检查整理状态。'
+              : e.taskKind === 'charter_draft'
+                ? '回答已保存，但人生章程草稿整理未完成，请稍后重新整理。'
+                : '回答已保存，但个人理解整理未完成，可在“模型与授权”中重新整理。'
+            assistant.backgroundFailures = [...new Set([...(assistant.backgroundFailures || []), note])]
+            assistant.extractionNote = assistant.backgroundFailures.join('\n')
+            void refreshMemoryAttention(conv.id)
+            void routingPanel.value?.refresh()
           }
         },
         message_done: (d) => {
@@ -1102,6 +1304,9 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
       assistant.status = 'aborted'
       if (assistant.id.startsWith('local-')) rollback()
     } else {
+      if (await recoverSavedReply(assistant, conv.id, ownerEpoch, signal)) return
+      if (!alive || currentId.value !== conv.id || ownerEpoch !== productScopeEpoch()) return
+      if (signal.aborted) { assistant.status = 'aborted'; return }
       assistant.status = 'error'
       if (alive) {
         if (assistant.id.startsWith('local-')) rollback()
@@ -1111,6 +1316,10 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
           return
         }
         if (err instanceof ApiError && err.code === 'ATTACHMENT_CONSENT_REQUIRED') void imports.showConsent()
+        if (!assistant.id.startsWith('local-')) {
+          assistant.replySyncFailed = true
+          assistant.content ||= '回复同步中断，暂未核对到完整结果。原消息已保留，请先核对回复，不要重复发送。'
+        }
         toast({ type: 'error', message: friendlyError(err, '生成失败') })
       }
     }
@@ -1120,14 +1329,34 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
     closingStreaming.value = false
     abortController = null
     if (alive && currentId.value === conv.id) {
-      void loadConversations()
-      void refreshCurrentMetadata(conv.id)
-      void refreshOutcomes(conv.id, true)
-      void routingPanel.value?.refresh()
-      void refreshMemoryAttention(conv.id)
+      void refreshAfterTurn(conv.id)
       await scrollToBottom()
     }
   }
+}
+
+async function recoverSavedReply(message: UiMessage, cid: string, ownerEpoch: number, signal?: AbortSignal, manual = false): Promise<boolean> {
+  const identity = { conversationId: cid, messageId: message.id,
+    userMessageId: typeof message.meta?.replyTo === 'string' ? message.meta.replyTo : '',
+    requestId: typeof message.meta?.requestId === 'string' ? message.meta.requestId : '' }
+  const valid = () => alive && currentId.value === cid && current.value?.id === cid &&
+    ownerEpoch === productScopeEpoch() && message.id === identity.messageId &&
+    message.meta?.requestId === identity.requestId && (!manual || !streaming.value)
+  if (!valid() || signal?.aborted || !identity.userMessageId || !identity.requestId || identity.messageId.startsWith('local-')) return false
+  message.replySyncing = true
+  try {
+    const saved = await reconcileReply(identity, getConversation, valid, signal, manual ? [0] : undefined)
+    if (!saved || !valid() || signal?.aborted) return false
+    Object.assign(message, saved, { replySyncFailed: false })
+    return true
+  } finally { message.replySyncing = false }
+}
+
+async function checkSavedReply(message: UiMessage) {
+  if (streaming.value || message.replySyncing || !current.value) return
+  const cid = current.value.id
+  const recovered = await recoverSavedReply(message, cid, productScopeEpoch(), undefined, true)
+  if (alive && currentId.value === cid && !recovered) toast({ type: 'info', message: '暂未核对到完整回复，原消息仍保留；没有重新发送。' })
 }
 
 async function retryMessage(message: UiMessage, localOnly: boolean) {
@@ -1135,21 +1364,28 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
   const before = messages.value.slice(0, messages.value.findIndex(m => m.id === message.id))
   const user = messages.value.find(m => m.id === message.meta?.replyTo) || [...before].reverse().find(m => m.role === 'user')
   if (!user) return
+  const cid = current.value.id
+  const ownerEpoch = productScopeEpoch()
+  let retrySignal: AbortSignal | undefined
+  let receivedRetryMeta = false
+  let receivedBusinessError = false
   streaming.value = true
   try {
-    const cid = current.value.id
     abortController = new AbortController()
+    retrySignal = abortController.signal
     const body = await prepareChatRoute(cid, contextRetryBody(user, message, localOnly), abortController.signal)
     if (!body || !alive || currentId.value !== cid) return
     message.meta = { ...message.meta, requestId: body.requestId }
     message.streaming = true
+    message.replySyncFailed = false
     let started = false
     await streamChat(cid, body, {
-      meta: d => { const m = d as TurnMetaEvent; message.id = m.messageId; message.turnMeta = m; message.provider = m.provider; message.model = m.model; message.external = m.external; message.meta = { ...message.meta, replyTo: m.userMessageId, depth: m.depth, turnMode: m.turnMode || body.mode } },
+      meta: d => { const m = d as TurnMetaEvent; receivedRetryMeta = true; message.id = m.messageId; message.turnMeta = m; message.provider = m.provider; message.model = m.model; message.external = m.external; message.meta = { ...message.meta, replyTo: m.userMessageId, depth: m.depth, turnMode: m.turnMode || body.mode } },
       provenance: d => { message.provenance = d as ProvenanceEvent },
       token: d => { if (!started) { message.content = ''; started = true }; message.content += (d as { t: string }).t || '' },
       message_done: d => { const done = d as MessageDoneEvent; message.status = done.status; if (done.status === 'complete') message.meta = { ...message.meta, contextPending: undefined } },
       error: d => {
+        receivedBusinessError = true
         const e = d as StreamErrorEvent
         message.status = 'error'
         if (e.requestId) message.meta = { ...message.meta, requestId: e.requestId }
@@ -1159,12 +1395,20 @@ async function retryMessage(message: UiMessage, localOnly: boolean) {
         } else toast({ type: 'error', message: e.message })
       },
     }, abortController.signal, () => alive && currentId.value === cid)
-    if (alive && currentId.value === cid) await loadConversation(cid)
+    if (!receivedBusinessError && alive && currentId.value === cid && ownerEpoch === productScopeEpoch()) await loadConversation(cid)
   } catch (e) {
+    if (retrySignal?.aborted) { message.status = 'aborted'; return }
     if (e instanceof ApiError && isContextReviewError({ code: e.code || '', preview: e.preview })) {
       message.status = 'error'
       message.meta = { ...message.meta, contextStage: 'supplemented', contextPending: { code: e.code, stage: 'supplemented' } }
-    } else toast({ type: 'error', message: friendlyError(e, '重试失败，原消息仍然保留') })
+    } else if (!receivedRetryMeta || !await recoverSavedReply(message, cid, ownerEpoch, retrySignal)) {
+      if (!alive || currentId.value !== cid || ownerEpoch !== productScopeEpoch()) return
+      if (retrySignal?.aborted) { message.status = 'aborted'; return }
+      message.status = 'error'
+      message.replySyncFailed = receivedRetryMeta
+      message.content ||= '回复同步中断，暂未核对到完整结果。请先核对回复，原消息仍然保留。'
+      if (alive && currentId.value === cid) toast({ type: 'error', message: friendlyError(e, '重试失败，原消息仍然保留') })
+    }
   }
   finally { streaming.value = false; message.streaming = false; abortController = null }
 }
@@ -1175,10 +1419,11 @@ function stop() {
 }
 
 function clearMemoryAttention() {
-  pollGate.invalidate()
+  memoryPoller.stop()
+  statusPollAttempts = 0
+  scheduleStatusPoll()
+  pageReads.clear()
   memoryLoadGate.invalidate()
-  clearTimeout(memoryTimer)
-  memoryTimer = undefined
   memoryAttention.value = null
   memoryDraftError.value = ''
 }
@@ -1186,14 +1431,16 @@ function clearMemoryAttention() {
 // 只读取当前会话由服务端选定的一个核对位。不抢焦点、不滚动，也不把别的会话的候选挂过来。
 async function refreshMemoryAttention(conversationId = current.value?.id) {
   if (!conversationId || current.value?.id !== conversationId || currentId.value !== conversationId || !alive) return
-  const ticket = memoryLoadGate.next()
-  try {
-    const next = await getConversationMemoryAttention(conversationId)
-    if (!alive || !memoryLoadGate.isCurrent(ticket) || current.value?.id !== conversationId || currentId.value !== conversationId) return
-    memoryAttention.value = next
-  } catch {
-    // 整理状态不可用不影响聊天，也不使用全局 inbox 作为替代。
-  }
+  return pageReads.run(`attention:${conversationId}`, async () => {
+    const ticket = memoryLoadGate.next()
+    try {
+      const next = await getConversationMemoryAttention(conversationId)
+      if (!alive || !memoryLoadGate.isCurrent(ticket) || current.value?.id !== conversationId || currentId.value !== conversationId) return
+      memoryAttention.value = next
+    } catch {
+      // 整理状态不可用不影响聊天，也不使用全局 inbox 作为替代。
+    }
+  }).catch(() => { /* Navigation may cancel the read before dispatch. */ })
 }
 
 function onPendingMemoryChanged() {
@@ -1202,19 +1449,12 @@ function onPendingMemoryChanged() {
   if (current.value) void refreshOutcomes(current.value.id, true)
 }
 
-function pollMemoryAttention(conversationId: string) {
-  clearTimeout(memoryTimer)
-  const ticket = pollGate.next()
-  let attempts = 0
-  const tick = async () => {
-    if (!alive || !pollGate.isCurrent(ticket) || currentId.value !== conversationId) return
-    await refreshMemoryAttention(conversationId)
-    attempts += 1
-    if (!alive || !pollGate.isCurrent(ticket) || currentId.value !== conversationId || attempts >= 40) return
-    if (attempts >= 3 && pendingJobs.value === 0) return
-    memoryTimer = setTimeout(tick, 3000)
-  }
-  memoryTimer = setTimeout(tick, 3000)
+function pollMemoryAttention(conversationId: string, jobIds: string[] = []) {
+  statusPollAttempts = 0
+  memoryPoller.start(conversationId, jobIds)
+}
+function onMemoryJobsResumed(event: { conversationId: string; jobIds: string[] }) {
+  pollMemoryAttention(event.conversationId, event.jobIds)
 }
 
 async function dismissMemory(kind: 'claim' | 'alignment', id: string, discard = false) {
@@ -1263,7 +1503,7 @@ async function reviewMemoryDraft(action: 'save' | 'dismiss') {
 }
 
 watch(pendingJobs, (n, old) => {
-  if ((old ?? 0) > 0 && n === 0 && current.value) {
+  if ((old ?? 0) > 0 && n === 0 && current.value && !memoryPoller.isActive()) {
     void refreshMemoryAttention()
     // 「这段对话留下的」再刷一次：整理完的理解会补进来
     if (turnOutcomes.value) void refreshOutcomes(current.value.id, true)
@@ -1319,7 +1559,7 @@ function onCite(assistant: UiMessage, index: number) {
 }
 
 const imports = reactive(useChatImports({
-  conversationId: currentId,
+  conversationId: importsConversationId,
   ensure: async () => (await ensureConversation(showIntro.value ? 'onboarding' : 'chat')).id,
   refreshMessages: async id => {
     if (streaming.value || messagesLoading.value || currentId.value !== id) return false
@@ -1345,14 +1585,24 @@ async function askAboutFiles(message: UiMessage, prompt: string) {
   await send(prompt, 'brief')
 }
 
-onMounted(() => {
+async function loadPageSupportingData() {
+  // Ontology statistics only gate the blank/onboarding landing. Opening an
+  // existing conversation must not spend another start/poll pair on them.
+  const reads = [loadStatus()]
+  if (!currentId.value) reads.push(loadStats())
+  await Promise.allSettled(reads)
+}
+
+onMounted(async () => {
   mounted = true
-  void loadStatus()
-  void loadStats()
-  void loadConversations()
+  // Load visible navigation first, then cap non-critical startup reads at two.
+  await loadConversations()
+  if (!alive) return
+  await loadPageSupportingData()
 })
 
 onBeforeUnmount(() => {
+  if (preparation.value) abortController?.abort()
   // 不 abort 正在进行的流：服务端会把这轮生成完并落库，回来时从服务端重载
   alive = false
   conversationListGate.invalidate()
@@ -1360,10 +1610,13 @@ onBeforeUnmount(() => {
   clearTimeout(conversationSearchTimer)
   clearTimeout(highlightTimer)
   loadGate.invalidate()
+  conversationDetailAbort?.abort()
+  conversationDetailAbort = null
+  clearConversationAuxiliary()
   clearMemoryAttention()
   draftPollGate.invalidate()
   mapPollGate.invalidate()
-  if (statusTimer) window.clearTimeout(statusTimer)
+  clearStatusTimer()
   if (glowTimer) window.clearTimeout(glowTimer)
 })
 </script>
@@ -1435,8 +1688,8 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="zj-page__tools">
-          <RoutingPanel ref="routingPanel" :conversation-id="currentId || undefined" :disabled="streaming" @mode="routingMode = $event" />
-          <MatterWorkspace v-if="currentId && !guidedOnboarding" ref="matterWorkspace" :conversation-id="currentId" :suspension="matterSuspension" :disabled="streaming || messagesLoading" @prepare="text => composerRef?.appendText(text)" />
+          <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" @jobs-resumed="onMemoryJobsResumed" />
+          <MatterWorkspace v-if="(!currentId || loadedConversationId) && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :ensure-conversation="async () => (await ensureConversation('chat')).id" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
           <button v-if="decision" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('review')">观察与复盘</button>
@@ -1448,7 +1701,7 @@ onBeforeUnmount(() => {
 
       <div class="zj-page__body">
       <div class="zj-page__stream">
-      <AlignmentPrivacy v-if="currentId" ref="alignmentPrivacy" :conversation-id="currentId" :streaming="streaming" :managed="routingMode !== 'legacy'" @local-only="alignmentLocalOnly = $event" />
+      <AlignmentPrivacy v-if="loadedConversationId && conversationAuxPhase >= 2 && routingMode === 'legacy'" ref="alignmentPrivacy" :conversation-id="loadedConversationId" :streaming="streaming" :managed="false" @local-only="alignmentLocalOnly = $event" />
       <div ref="listRef" class="zj-page__messages">
         <div v-if="showIntro" class="zj-intro">
           <Sparkles :size="22" aria-hidden="true" />
@@ -1499,9 +1752,10 @@ onBeforeUnmount(() => {
             />
             <ImportBatchCard
               v-for="batch in imports.batches.filter(b => b.messageId === m.id)" :key="batch.id"
-              :batch="batch" :busy="imports.busyBatch === batch.id || imports.uploading"
+              :batch="batch" :busy="imports.busyBatch === batch.id || imports.ragBusyBatch === batch.id || imports.uploading"
               @preview="imports.showPreview($event)" @retry="imports.retry(batch, $event)"
               @consent="imports.showConsent($event)" @reference="imports.chooseReferences($event)"
+              @rag="imports.confirmSensitive($event)"
               @reupload="(item, file) => imports.reupload(batch, item, file)"
             />
             <div v-if="m.meta?.importId && m.role === 'assistant'" class="zj-file-followups">
@@ -1514,15 +1768,20 @@ onBeforeUnmount(() => {
             </div>
             <ProvenanceStrip v-if="m.role === 'assistant' && m.provenance" :provenance="m.provenance" :meta="m.turnMeta" />
             <p v-if="m.role === 'user' && m.meta?.replyAssistance" class="zj-turn__note">{{ (m.meta.replyAssistance as any).kind === 'assisted' ? '由 AI 候选辅助起草，你已发送' : '对话操作' }}</p>
-            <ReplyAssistance v-if="currentId && m.id === replyTarget" :conversation-id="currentId" :message-id="m.id" :disabled="streaming || messagesLoading"
+            <ReplyAssistance v-if="loadedConversationId && conversationAuxPhase >= 4 && m.id === replyTarget" :conversation-id="loadedConversationId" :message-id="m.id" :disabled="streaming"
               @insert="(text, origin) => composerRef?.insertReply(text, origin)" @write="composerRef?.focus()" />
             <div v-if="m.role === 'assistant' && !m.streaming && ['error', 'aborted'].includes(m.status)" class="zj-file-followups">
-              <span>{{ contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '消息已保留，未自动切换模型。' }}</span>
+              <span>{{ m.replySyncFailed ? '回复同步未完成，请先核对已保存结果；不会自动重新发送。' : contextNeedsReview(m) ? '补充信息需要核对；原消息已保留，不会重新发送一条。' : '消息已保留，未自动切换模型。' }}</span>
               <div>
+              <button v-if="m.replySyncFailed" :disabled="streaming || m.replySyncing" @click="checkSavedReply(m)">{{ m.replySyncing ? '正在核对…' : '核对已保存回复' }}</button>
               <button :disabled="streaming" @click="retryMessage(m, false)">{{ contextNeedsReview(m) ? '核对补充资料并继续' : '重试当前模式' }}</button>
               <button :disabled="streaming" @click="retryMessage(m, true)">改用本地</button>
               </div>
             </div>
+            <p v-if="m.replySyncing && m.streaming" class="zj-turn__note" role="status">连接读取中断，正在核对盒子已保存的回复…</p>
+            <ReflectionCard v-if="!charterAttention && !streaming && m.role === 'assistant' && m.status === 'complete' && memoryAttention?.reflection?.messageId === m.id && memoryAttention.reflection.conversationId === currentId && memoryAttention.reflection.status !== 'retired'"
+              :key="memoryAttention.reflection.id" :reflection="memoryAttention.reflection" :disabled="streaming"
+              @updated="item => { if (memoryAttention) memoryAttention.reflection = item }" />
             <AlignmentCard v-if="!charterAttention && !m.streaming && memoryPlacement?.kind === 'alignment' && memoryPlacement.messageId === m.id"
               :key="memoryPlacement.claim.id" :claim="memoryPlacement.claim" :conversation-id="currentId || undefined" :message-id="m.id"
               @updated="onAlignmentUpdated" @refreshed="c => onAlignmentUpdated(c, false)" />
@@ -1533,13 +1792,16 @@ onBeforeUnmount(() => {
               @dismiss="memoryPlacement && dismissMemory('claim', memoryPlacement.claim.id, true)" />
           </div>
         </template>
-        <CharterConversation v-if="currentId" :key="currentId" :conversation-id="currentId" :onboarding="guidedOnboarding"
+        <CharterConversation v-if="loadedConversationId && conversationAuxPhase >= 3" :key="loadedConversationId" :conversation-id="loadedConversationId" :onboarding="guidedOnboarding"
           :message-id="replyTarget" :disabled="streaming || messagesLoading" :claims="mapClaims" :requested="route.query.charter === '1'"
           @finished="finishLightOnboarding" @attention="charterAttention = $event" @topics="onboardingTopics = $event" @reviewed="loadMapClaims" />
         <OutcomesCard v-if="showOutcomesCard && turnOutcomes" :outcomes="turnOutcomes" />
       </div>
 
       <div class="zj-page__composer">
+        <p v-if="preparation" class="zj-turn__note" role="status" aria-live="polite" data-testid="chat-preparation">
+          {{ preparation.message }}
+        </p>
         <Composer
           ref="composerRef"
           :conversation-id="currentId"
@@ -1547,6 +1809,7 @@ onBeforeUnmount(() => {
           :disabled="messagesLoading"
           :has-attachments="imports.staged.length > 0"
           :uploading="imports.uploading"
+          :retrieval-only="imports.retrievalOnly"
           :allow-deliberate="!isReview && !guidedOnboarding && !showIntro"
           :notice="modelBlocked && !imports.staged.length && !imports.localOnly && !alignmentLocalOnly && !prefillLocalOnly ? MODEL_UNAVAILABLE_TEXT : undefined"
           notice-to="/settings"
@@ -1631,7 +1894,7 @@ onBeforeUnmount(() => {
         </section>
         </div>
         <div v-show="workspaceTab === 'review'" id="workspace-review" role="tabpanel" aria-labelledby="workspace-review-tab">
-        <LearningCard v-if="decision && currentId" :key="`learning-${currentId}-${decision.id}`" :conversation-id="currentId" :decision="decision" />
+        <LearningCard v-if="workspaceVisited && decision && loadedConversationId && conversationAuxPhase >= 4" :key="`learning-${loadedConversationId}-${decision.id}`" :conversation-id="loadedConversationId" :decision="decision" />
         <ReviewOutcomePanel
           v-if="isReview && decision"
           :decision="decision"

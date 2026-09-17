@@ -68,6 +68,12 @@ class RoutingStore:
             db.executescript(SCHEMA)
             if "include_charter" not in {row[1] for row in db.execute("PRAGMA table_info(routing_auto_consent)")}:
                 db.execute("ALTER TABLE routing_auto_consent ADD COLUMN include_charter INTEGER NOT NULL DEFAULT 0")
+            if "auto_egress" not in {row[1] for row in db.execute("PRAGMA table_info(routing_auto_consent)")}:
+                # Existing source policies never silently become permission to
+                # send future prompts without a visible per-request review.
+                db.execute("ALTER TABLE routing_auto_consent ADD COLUMN auto_egress INTEGER NOT NULL DEFAULT 0")
+            if "configuration_revision" not in {row[1] for row in db.execute("PRAGMA table_info(routing_auto_consent)")}:
+                db.execute("ALTER TABLE routing_auto_consent ADD COLUMN configuration_revision TEXT NOT NULL DEFAULT ''")
 
     def mode(self, owner):
         with self.ontology._connect() as db:
@@ -127,19 +133,23 @@ class RoutingStore:
             if key:
                 db.execute("DELETE FROM routing_grants WHERE scope=? AND source_key=?", (scope, key))
                 db.execute("INSERT OR IGNORE INTO routing_auto_exclusions SELECT scope,service,? FROM routing_auto_consent WHERE scope=?", (key, scope))
+                db.execute("UPDATE routing_auto_consent SET revision=revision+1,updated_at=? WHERE scope=?", (utc_now(), scope))
             else:
                 db.execute("DELETE FROM routing_grants WHERE scope=?", (scope,))
                 db.execute("UPDATE routing_auto_consent SET enabled=0,revision=revision+1,updated_at=? WHERE scope=?", (utc_now(), scope))
             self._policy_audit(db, scope)
+        return self.policy(scope)
 
     def policy(self, scope):
         with self.ontology._connect() as db:
             row = db.execute("SELECT * FROM routing_auto_consent WHERE scope=?", (scope,)).fetchone()
             if not row:
-                return {"enabled": False, "service": "", "serviceName": "", "includeFiles": False, "includeCharter": False,
+                return {"enabled": False, "service": "", "serviceName": "", "configurationRevision": "", "includeFiles": False, "includeCharter": False, "autoEgress": False,
                         "purposes": [], "revision": 0, "exclusions": []}
             return {"enabled": bool(row["enabled"]), "service": row["service"], "serviceName": row["service_name"],
-                    "includeFiles": bool(row["include_files"]), "includeCharter": bool(row["include_charter"]), "purposes": json.loads(row["purposes_json"]),
+                    "configurationRevision": row["configuration_revision"], "includeFiles": bool(row["include_files"]),
+                    "includeCharter": bool(row["include_charter"]), "autoEgress": bool(row["auto_egress"]),
+                    "purposes": json.loads(row["purposes_json"]),
                     "revision": row["revision"], "updatedAt": row["updated_at"],
                     "exclusions": [r[0] for r in db.execute("SELECT source_key FROM routing_auto_exclusions WHERE scope=? AND service=?", (scope, row["service"]))]}
 
@@ -151,7 +161,8 @@ class RoutingStore:
             snapshot["exclusions"] = [r[0] for r in db.execute("SELECT source_key FROM routing_auto_exclusions WHERE scope=? AND service=?", (scope, row["service"]))]
             db.execute("INSERT INTO routing_auto_history(scope,policy_json,created_at) VALUES(?,?,?)", (scope, json.dumps(snapshot), utc_now()))
 
-    def set_policy(self, scope, *, enabled, service, service_name, include_files, purposes, expected_revision, include_charter=False):
+    def set_policy(self, scope, *, enabled, service, service_name, include_files, purposes, expected_revision,
+                   include_charter=False, auto_egress=False, configuration_revision=""):
         # A stale settings tab must never silently re-enable a revoked policy.
         with self.ontology._lock, self.ontology._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -159,8 +170,9 @@ class RoutingStore:
             revision = row[0] if row else 0
             if revision != expected_revision:
                 raise ValueError("默认授权设置已变化，请刷新后核对")
-            db.execute("INSERT OR REPLACE INTO routing_auto_consent(scope,enabled,service,service_name,include_files,purposes_json,revision,updated_at,include_charter) VALUES(?,?,?,?,?,?,?,?,?)",
-                       (scope, int(enabled), service, service_name, int(include_files), json.dumps(purposes), revision + 1, utc_now(), int(include_charter)))
+            db.execute("INSERT OR REPLACE INTO routing_auto_consent(scope,enabled,service,service_name,include_files,purposes_json,revision,updated_at,include_charter,auto_egress,configuration_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                       (scope, int(enabled), service, service_name, int(include_files), json.dumps(purposes), revision + 1,
+                        utc_now(), int(include_charter), int(auto_egress), configuration_revision))
             self._policy_audit(db, scope)
         return self.policy(scope)
 
@@ -176,7 +188,14 @@ class RoutingStore:
         with self.ontology._connect() as db:
             row = db.execute("SELECT payload_json FROM routing_previews WHERE id=? AND conversation_id=? AND created_at>?",
                              (token, conversation_id, 0 if include_expired else time.time() - 3600)).fetchone()
-            return json.loads(row[0]) if row else None
+        return json.loads(row[0]) if row else None
+
+    def valid_preview_ids(self, conversation_id):
+        """Read expiry metadata once when presenting a potentially large backlog."""
+        with self.ontology._connect() as db:
+            return {row[0] for row in db.execute(
+                "SELECT id FROM routing_previews WHERE conversation_id=? AND created_at>?",
+                (conversation_id, time.time() - 3600))}
 
     @staticmethod
     def _conversation_jobs(db, conversation_id, task=None):
@@ -207,18 +226,28 @@ class RoutingStore:
     def recoverable_jobs(self, conversation_id, task=None):
         return [job for job in self.conversation_jobs(conversation_id, task) if self.recoverable_job(job)]
 
-    def resume_jobs(self, conversation_id, task, *, local_only=False):
+    def resume_jobs(self, conversation_id, task, *, local_only=False, job_id=None):
         """Requeue current pauses/failures once, retaining their original job IDs.
 
         This does not grant anything: the worker reconstructs and checks the
         current request again. The active-owner unique index and transaction
         keep concurrent clicks from creating another generation for one turn.
         """
+        from zhijun_worker.background import register
+        with self.ontology._connect() as db:
+            candidates = [self.ontology._job(row) for row in self._conversation_jobs(db, conversation_id, task)]
+        if job_id is not None:
+            candidates = [job for job in candidates if job["jobId"] == job_id]
+        for candidate in candidates:
+            if self.recoverable_job(candidate):
+                register(candidate["jobId"], task)
         now, resumed = time.time(), []
         with self.ontology._lock, self.ontology._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             for row in self._conversation_jobs(db, conversation_id, task):
                 job = self.ontology._job(row)
+                if job_id is not None and job["jobId"] != job_id:
+                    continue
                 if not self.recoverable_job(job):
                     continue
                 if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (task, job["ownerId"])).fetchone():

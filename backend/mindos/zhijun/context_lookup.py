@@ -59,6 +59,10 @@ def eligible(plan, content, depth, mode, *, request_id, omit=False, charter_exce
     if not request_id or omit or charter_exception_id or not plan.provider.external:
         return False
     context = plan.assembled.provenance.get("contextPlan") or {}
+    if context.get("retrieval", {}).get("userReviewRequired"):
+        # This turn already has a bounded reviewed retrieval. A second model
+        # planner must not silently add unreviewed search scope or latency.
+        return False
     if context.get("stage") in {"supplemented", "lookup_unavailable"}:
         return False
     if context.get("focus", {}).get("continuation") and len(content.strip()) < 24:

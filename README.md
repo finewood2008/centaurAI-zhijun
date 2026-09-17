@@ -1,100 +1,66 @@
-# 知君 · 有记忆边界的长期思考伙伴
+# 知君
 
-知君是一个通过对话逐渐认识你、并把这份「认识」交给你掌管的 AI。它记得你的人、事、原则和判断，在你要拿主意时陪你商量，在结果回来时陪你复盘，是一位有记忆边界、可核对、不会替你决定的长期思考伙伴。
+知君是一个有记忆边界、可核对、不会替用户决定的长期思考伙伴。它通过对话理解用户，把尚待确认的推测与用户已经确认的理解分开，并保留来源和模型使用回执。
 
-- **对话优先**：本体（知君对你的理解）主要通过对话建立；导入资料只是加速器。
-- **三层信任**：对话记录 → 工作理解（未确认，只能带保留语气用）→ 已确认本体（你亲口说的自动确认，其余一键确认）。
-- **来源永远标清**：回复里的每一句都标 `【你告诉我的】` `【资料里看到的】` `【我推测的】` `【知君的看法】`；纠正过的理解永不回流。
-- **本地优先**：数据都在设备上；调用外部模型时只发送必要片段，每轮有回执可查。
+当前文档从 [docs/README.md](docs/README.md) 开始。产品定义见 [PRODUCT.md](docs/product/PRODUCT.md)，系统边界见 [architecture.md](docs/development/architecture.md)。历史计划、部署回执和旧原型通过 Git 历史追溯，不再混入现行文档。
 
-产品定义与路线：`docs/product/ZHIJUN_REDESIGN_V2.md`；接口契约：`docs/development/zhijun-api-contract.md`；原则与行为规范沿用 `docs/product/ZHIJUN_PRD_V1.md` §4、§7、§11、§12。
+## 仓库结构
 
-## 四个入口
-
-| 入口 | 做什么 |
-|---|---|
-| 对话 | 一段持续的关系。首次使用先做一次 7 个问题的建档对话；之后每轮回复带出处条，知君新学到的理解以候选 chip 出现，一键 对 / 部分对 / 只适用于这件事 / 不对 / 先别存 |
-| 我的本体 | 一张「本体全景」图：中心是「我」，六个分区围一圈，越靠近中心越是我确认过的，朱砂虚线外是知君的推测，点一下就能确认或撤回；也可切到列表（我是谁 · 我的人 · 我的事 · 我的原则 · 我的做法 · 我的方向），加「知君最近学到的」待确认列表与「需要你裁决」（实体是否同一个、两条理解矛盾时留哪条）；可改、可撤、可手写补一条。整合器每天整理一次：多处提到的理解顶到前面，原则与最近做法有张力时以问句提醒 |
-| 判断 | 人生章程、判断簿、结果与复盘；在对话里打开「我在考虑…」即进入商量模式，知君边聊边整理判断草稿，一键记进判断簿；到期后提醒你回访，回访会话里记下结果并引导复盘 |
-| 资料与边界 | 导入资料（资料里的实体与关系会变成待确认的「资料里看到的」理解）、模型与隐私设置、回收站、本体投影预览、导出全部认识（JSON）、删除全部记忆、「可以带走的认识」（哪些理解会给其他 Agent、最近被谁以什么用途取走） |
-
-## 快速开始（本机开发）
-
-后端需要 Python 3.11；前端需要 Node 20+。
-
-```bash
-# 1) 后端依赖（首次）
-python3.11 -m venv backend/.venv
-backend/.venv/bin/pip install -r backend/requirements.txt   # Intel macOS 装不上 torch 时，可先略过 torch/sentence-transformers：对话与本体不依赖它们
-
-# 2) 前端构建（首次或改动后）
-cd frontend/mindos-web && npm ci && npm run build && cd ../..
-
-# 3) 启动后端（同时在 http://127.0.0.1:8618/mindos/ 提供前端）
-./start-backend.sh
+```text
+backend/                         FastAPI、领域逻辑、存储和盒端 worker
+frontend/mindos-web/             Vue 3 Web/桌面产品界面
+frontend/shell/                  Electron 宿主、连接、权限和打包
+frontend/shared/                 桌面公开合同与操作目录
+docs/                            当前产品、架构、功能和机器契约
 ```
 
-模型通道由环境变量 `ZHIJUN_PROVIDER` 选择：
+## 本机开发
 
-| 值 | 说明 |
-|---|---|
-| （默认） | 设置页的对话通道：外部问答开启且 provider=openai 时走 OpenAI 兼容接口，否则走本地 Ollama（`ZHIJUN_LOCAL_NUM_CTX` 默认 8192） |
-| `openai` | 强制 OpenAI 兼容通道（需在设置页配置 BaseURL / Key / Model） |
-| `anthropic` | 官方 Anthropic SDK（`ANTHROPIC_API_KEY`，模型默认 `claude-opus-5`，`ZHIJUN_ANTHROPIC_MODEL` 可改） |
-| `fake` | 演示模型：不调用任何模型服务，规则抽取，仅供联调与测试（生产环境拒绝启用） |
+后端使用 Python 3.11。前端和桌面打包使用 Node 22。
 
-其它开关：`ZHIJUN_EXTRACTION=0` 关闭对话抽取；`ZHIJUN_MATERIAL_EVIDENCE=0` 关闭资料片段检索。
+```bash
+python3.11 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.txt
+npm --prefix frontend/mindos-web ci
+bash zhijun.sh start
+```
+
+`zhijun.sh status` 查看状态，`zhijun.sh stop` 只停止该入口创建且身份仍匹配的进程。数据、端口和测试隔离说明见 [本机开发文档](docs/development/local-runtime.md)。
 
 ## 验证
 
 ```bash
-# 后端单元测试（强制隔离数据根，不碰 data/）
-backend/.venv/bin/python scripts/run_tests.py
-
-# 知君竖切端到端：起真实后端（演示模型）→ 对话/抽取/确认/撤回/投影 → 商量→草稿→判断簿 → 提醒 → 回访→结果 → 整合→裁决→张力提醒→导出 → 前端可服务
-backend/.venv/bin/python scripts/e2e_zhijun_phase1.py
-
-# 前端类型检查、构建、node 测试
-cd frontend/mindos-web && npm run typecheck && npm run build && npm run test:p14-frontend
+backend/.venv/bin/python scripts/run_tests.py --isolated-modules -- -q
+npm --prefix frontend/mindos-web run test:all
+npm --prefix frontend/mindos-web run typecheck
+npm --prefix frontend/mindos-web run build
 ```
 
-## 给其他 Agent 的上下文包
+## 桌面应用
 
-其他 Agent（例如万象）通过只读网关拿「知君对你的认识」：只包含你已确认、并逐条打开了「可带走」的理解，敏感或受限内容永远不出去；调用方必须说明用途，每次都有回执。
+开发启动、真实连接、安全边界和打包命令统一维护在 [frontend/shell/README.md](frontend/shell/README.md)。macOS ARM64 正式打包入口：
 
 ```bash
-export MINDOS_AGENT_GATEWAY_ENABLED=true          # 默认关闭
-# 本机签发带 zhijun.profile scope 的令牌
-curl -s -X POST http://127.0.0.1:8618/api/agent/clients -H 'X-Requested-By: centaur-vdb' -H 'Content-Type: application/json' -d '{"name":"wanx","scopes":["zhijun.profile"]}'
-# 取上下文包（REST）；MCP 工具名 mindos_context_pack
-curl -s -X POST http://127.0.0.1:8618/v1/agent/context-pack -H "Authorization: Bearer agk_…" -H 'Content-Type: application/json' -d '{"purpose":"帮用户整理本周计划"}'
+npm --prefix frontend/shell run package:mac-arm64
 ```
 
-## 桌面薄壳、安装到主屏、盒子部署
+该流水线执行测试、桌面构建、版本递增、资源准备、Developer ID 签名、DMG/ZIP 校验和搬迁启动冒烟测试。是否公证以 Electron Builder 当前配置为准，不从文件名推断。
 
-- 桌面：`cd frontend/shell && npm install && npm start`（只加载本机 `/mindos/`，没有 preload 与 IPC 桥）。
-- 手机 / 平板：浏览器打开 `/mindos/` 可「添加到主屏幕」（PWA 清单），语音输入在 Chromium 系浏览器可用。
-- 盒子：`deploy/box.env.example` 是环境变量样例（数据根、生产模式、本地模型、网关开关）。
+## Admin 与生产连接
 
-## 数据在哪
+Admin 已正式发布上线，是生产环境的账号、应用登记与授权控制面。知君桌面应用使用固定的 `applicationId=zhijun-desktop`、`purpose=zhijun.workspace` 和 `remote.p2p` 权限申请，通过 Electron main 中安装的 Connectivity/Consumer SDK 完成设备认领、短期连接票据和会话建立；Renderer 不直接调用 Admin 接口，也不持有长期凭据。
 
-所有可变数据都在 `CENTAURAI_DATABASE_DATA_ROOT`（默认 `./data`）下：`db/ontology.db`（实体 / 理解 / 证据 / 复核事件）、`db/conversations.db`（会话 / 消息 / 回执）、`db/growth.db`（章程 / 判断 / 复盘）、`memory/ZHIJUN_PROFILE.md`（已确认本体的可读投影）、`memory/USER.md`（允许导出的子集）。资料索引与向量在 `indexes/`、`chroma_data/`。删除数据目录即清空一切。
+Admin 上线只表示控制面已经可用，不等同于桌面安装包、盒端业务服务或 NPU 推理运行时完成同一次发布。这些发布单元必须分别核对版本与健康状态。
 
-## 架构一页
+## 模型与 NPU 边界
 
-```
-frontend/mindos-web/            Vue 3 + TypeScript + Vite；SSE 客户端 src/services/sse.ts
-backend/server.py               FastAPI 入口（仅绑定 127.0.0.1:8618，写路由要求 loopback + CSRF 头）
-backend/mindos/zhijun/          对话 agent：provider · gate · persona · context · extract · jobs · projection · turn · confirm
-backend/mindos/stores/          SQLite 存储：ontology_store · conversation_store · growth_store · …
-backend/mindos/conversations.py /api/mindos/conversations（SSE）
-backend/mindos/ontology.py      /api/mindos/ontology
-backend/mindos/agent/           给第三方 Agent 的只读网关（REST + MCP），与对话 agent 无关
-backend/{parser,embedder,watcher,vector_store}.py   资料摄取、解析、嵌入、索引（沿用）
-```
+桌面端负责让用户明确选择本地或在线模型，并执行资料授权；在线失败不会自动回落本地。某一轮实际使用的通道以消息回执的 `provider/model/external` 和盒端路由审计为准，不能以模型正文中的自称判断。
 
-## 现状与边界
+盒端推理服务、模型加载和 NPU-only 限制由 CentaurOS 管理。本仓库不应启动 CPU 推理服务，也不实现 CPU fallback。当前部署要求只使用 NPU 时，必须在 CentaurOS 的运行配置和健康检查中落实。
 
-- P1「能聊、能记、能认」、P2「能商量、会回访」、P3「像良师」、P4「可带走、可安装」已实现：多轮流式对话、从对话抽取理解、对话内一键确认、我的本体、建档对话、投影、商量模式与判断草稿、到期提醒、回访记结果与复盘引导、整合器与裁决、张力提醒、资料 → 理解、导出与全量删除、给其他 Agent 的上下文包、可带走开关、语音输入、PWA 清单、桌面薄壳、盒子 profile。**承诺提醒、议题线程、移动端离线采集、录音转写、盒子硬件通讯、旧面退役尚未实现**，见 `docs/product/ZHIJUN_REDESIGN_V2.md` §10–§11。
-- 真实模型（Ollama / OpenAI 兼容 / Anthropic）的通道代码有单元测试，但抽取质量需要在真实模型上评测后再放开默认。
-- 旧的资料管理、知识卡片、搜索、图谱页面仍可通过 URL 访问（`/materials`、`/knowledge`、`/search`、`/graph`），不再出现在侧栏；`/api/mindos/qa` 单轮问答接口保留给 Agent 网关。
+## 关键数据边界
+
+- 对话、理解、章程、判断、事项和成果使用各自的领域存储；不要用“清空一个数据根”代替正式清理流程。
+- Renderer 不直接持有密码、长期令牌或任意网络/文件系统能力。
+- 在线调用只允许使用当前服务、用途、版本和授权均匹配的必要内容。
+- 正式盒端按账号、设备、workspace 和所有权代次隔离。

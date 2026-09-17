@@ -6,8 +6,9 @@
   "scripts": {
     "web": "npm --prefix mindos-web run dev",
     "web:build": "npm --prefix mindos-web run build",
-    "desktop": "electron .",
-    "start": "node -e \"console.error('请选择 npm run web 或 npm run desktop'); process.exit(1)\""
+    "desktop": "bash ../start-desktop.sh",
+    "start": "node -e \"console.error('请选择 npm run web 或 npm run desktop'); process.exit(1)\"",
+    "desktop:simulation": "bash ../start-desktop.sh --simulation"
   },
   "devDependencies": {
     "electron": "^33.0.0"

@@ -47,21 +47,50 @@ def extraction_allowed(ontology, convs, cid, text):
 
 
 def process_candidates(valid, entities, *, store, conversation_id, message_id, user_text,
-                       routing_sources=None, input_origin=None, prev_assistant=None):
-    from .extract import admission, explicit_memory_request, persist
+                       routing_sources=None, input_origin=None, prev_assistant=None, request_message_id=None):
+    from .extract import admission, existing_candidate, explicit_memory_request, followup_memory_request, memory_source_message, memory_request_declined, persist
     convs = ConversationStore.instance()
     message = convs.get_message(message_id)
     empty = {"created": [], "reaffirmed": [], "promoted": [], "suppressed": len(valid)}
     if (not message or message["conversationId"] != conversation_id or message["role"] != "user"
             or message["status"] != "complete" or message["content"] != user_text):
         return empty
-    # Recheck after a possibly slow model call; a new preference is effective now.
-    if not extraction_allowed(store, convs, conversation_id, user_text):
+    request = message
+    if request_message_id:
+        request = convs.get_message(request_message_id)
+        if (not request or request["conversationId"] != conversation_id or request["role"] != "user"
+                or request["status"] != "complete" or not followup_memory_request(request["content"])):
+            return empty
+        history = convs.list_messages(conversation_id)
+        source = memory_source_message(history, request)
+        if not source or source["id"] != message_id:
+            return empty
+        if any(m["role"] == "user" and m["seq"] > request["seq"] and memory_request_declined(m["content"]) for m in history):
+            return empty
+    # Recheck the request's permission after the model call; the source remains
+    # the original assertion even when manual mode requires a later save command.
+    if not extraction_allowed(store, convs, conversation_id, request["content"]):
         return empty
     ledger = MemoryStore(store)
-    topic = topic_for(convs, conversation_id, message_id)
-    long_term, contextual = admission(valid, user_text, input_origin, prev_assistant=prev_assistant)
-    explicit = explicit_memory_request(user_text)
+    if request_message_id and any(row["message_id"] == message_id for row in ledger.admissions(conversation_id)):
+        return empty  # replay/rephrased model output cannot create another candidate
+    topic = topic_for(convs, conversation_id, request["id"])
+    # Known identities must not consume the proposal slot before a new identity
+    # is considered. Read only: no evidence refresh or automatic confirmation.
+    scope = scope_for(conversation_id, convs)
+    novel = []
+    duplicate_count = tombstone_count = 0
+    for claim in valid:
+        if claim.subject in ("me", "我", "本人", "我自己", "用户"):
+            if existing_candidate(store, claim, ME_ENTITY_ID, convs, scope):
+                duplicate_count += 1
+                continue
+            if store.find_tombstone_by_hash(ME_ENTITY_ID, claim.predicate, claim.content, device_scope=scope):
+                tombstone_count += 1
+                continue
+        novel.append(claim)
+    long_term, contextual = admission(novel, user_text, input_origin, prev_assistant=prev_assistant)
+    explicit = explicit_memory_request(request["content"])
     # Every new extracted interpretation is a candidate, even in the legacy path.
     # [] still marks local-derived ancestry, never invents an external grant.
     sources = routing_sources if routing_sources is not None else []
@@ -79,6 +108,9 @@ def process_candidates(valid, entities, *, store, conversation_id, message_id, u
         outline = ledger.merge_draft(conversation_id, topic, entries)
         result["draftId"] = outline["id"]
     result["suppressed"] += max(0, len(valid) - len(selected) - len(contextual))
+    result["filterReasons"] = {"existing": duplicate_count, "retracted": tombstone_count,
+                              "admission": max(0, len(novel) - len(selected) - len(contextual)),
+                              "contextOnly": len(contextual)}
     return result
 
 
@@ -150,13 +182,24 @@ def _attention(ontology, convs, cid):
                         alignment_seq[claim["id"]] = max((m["seq"] for m in user_messages if m["seq"] < message["seq"]), default=0)
     if selected and not selected["shown_user_turn"] and user_turn:
         selected = ledger.initialize_clock(cid, topic, message_seq=message_seq, user_turn=user_turn)
+    from ..stores.reflection_store import ReflectionStore
+    from .reflections import valid, public, automatic_allowed as reflection_allowed
+    from .routing import Router
+    reflection_store = ReflectionStore(ontology)
+    observations = [r for r in reflection_store.list(scope) if automatic and reflection_allowed(ontology, convs, cid)
+                    and r["conversationId"] == cid and r["status"] in ("candidate", "surfaced")
+                    and topic_for(convs, cid, r["messageId"]) == topic
+                    and valid(Router(ontology, convs, cid), r)]
     if selected is None:
-        if claims:
+        if observations:
+            selected = ledger.reserve(cid, topic, "reflection", observations[0]["id"], message_seq=message_seq, user_turn=user_turn)
+        elif claims:
             selected = ledger.reserve(cid, topic, "claim", claims[0]["id"], message_seq=message_seq, user_turn=user_turn)
         elif alignments:
             selected = ledger.reserve(cid, topic, "alignment", alignments[0]["id"], message_seq=message_seq, user_turn=user_turn)
     elif selected["consumed"] and user_turn - selected["shown_user_turn"] >= REMINDER_USER_TURN_GAP:
-        fresh = [("claim", c) for c in claims if source_seq.get(c["id"], 0) > selected["shown_message_seq"]]
+        fresh = [("reflection", r) for r in observations if (convs.get_message(r["messageId"]) or {}).get("seq", 0) > selected["shown_message_seq"]]
+        fresh += [("claim", c) for c in claims if source_seq.get(c["id"], 0) > selected["shown_message_seq"]]
         fresh += [("alignment", c) for c in alignments if alignment_seq.get(c["id"], 0) > selected["shown_message_seq"]]
         # A dismissed proposal itself is not fresh evidence, even if a later
         # assistant repeats it. Historical unseen items stay in the manual queue.
@@ -164,19 +207,25 @@ def _attention(ontology, convs, cid):
         if fresh:
             kind, item = fresh[0]
             selected = ledger.renew(cid, topic, selected, kind, item["id"], message_seq=message_seq, user_turn=user_turn)
-    candidate = alignment = None
+    candidate = alignment = reflection = None
     if selected and not selected["consumed"]:
-        choices = claims if selected["kind"] == "claim" else alignments
+        choices = observations if selected["kind"] == "reflection" else claims if selected["kind"] == "claim" else alignments
         found = next((c for c in choices if c["id"] == selected["target_id"]), None)
         if found:
-            if selected["kind"] == "claim":
+            if selected["kind"] == "reflection":
+                reflection = public(reflection_store.surface(found["id"]), reflection_store)
+            elif selected["kind"] == "claim":
                 candidate = found
             else:
                 alignment = found
         else:
             ledger.consume(cid, topic, selected["kind"], selected["target_id"])
+    if selected and selected["kind"] == "reflection" and selected["consumed"]:
+        reviewed = reflection_store.get(selected["target_id"])
+        if reviewed and reviewed["status"] not in ("candidate", "surfaced", "retired") and valid(Router(ontology, convs, cid), reviewed):
+            reflection = public(reviewed, reflection_store)
     draft = ledger.draft(cid, topic)
-    return {"topicId": topic, "policy": policy, "candidate": candidate, "alignment": alignment,
+    return {"topicId": topic, "policy": policy, "candidate": candidate, "alignment": alignment, "reflection": reflection,
             "draft": public_draft(draft), "pendingCount": pending(ontology, convs, cid)["total"]}
 
 

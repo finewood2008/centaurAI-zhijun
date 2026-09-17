@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -402,12 +403,17 @@ class OllamaProvider:
     name = "ollama"
     external = False
 
-    def __init__(self, base_url: str, model: str, *, timeout: float, keep_alive: int = 0, num_ctx: int = DEFAULT_LOCAL_NUM_CTX) -> None:
+    def __init__(self, base_url: str, model: str, *, timeout: float, keep_alive: int = 0, num_ctx: int = DEFAULT_LOCAL_NUM_CTX,
+                 gpu_policy: bool = False) -> None:
         self._base_url = base_url.rstrip("/")
         self.model = model
         self._timeout = timeout
         self._keep_alive = keep_alive
         self._num_ctx = int(num_ctx)
+        self._gpu_policy = gpu_policy
+        if gpu_policy and (self._base_url != "http://127.0.0.1:11435" or model != "qwen3:1.7b"
+                           or self._num_ctx != 4096 or keep_alive != 300):
+            raise ProviderError("GPU 部署配置不符合已签约的本地模型服务", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
 
     def _body(self, req: ChatRequest, *, stream: bool) -> dict:
         body = {
@@ -420,6 +426,10 @@ class OllamaProvider:
         }
         if req.json_schema is not None:
             body["format"] = "json"
+        if self._gpu_policy:
+            if type(req.max_tokens) is not int or req.max_tokens < 1:
+                raise ProviderError("GPU 输出预算必须为正整数", code="MODEL_REQUEST_INVALID", retryable=False)
+            body["options"].update(num_predict=min(req.max_tokens, 512), num_ctx=4096, num_thread=1, num_gpu=99)
         return body
 
     def stream(self, req: ChatRequest) -> Iterator[ChatEvent]:
@@ -651,12 +661,14 @@ def _fake_allowed() -> bool:
 def build_provider(snapshot=None) -> ChatProvider:
     """按环境变量与设置页快照选择模型通道。
 
+    工作区 worker 与 Web 复用 HTTP 通道，但配置只能来自工作区设置快照。
     - ``ZHIJUN_PROVIDER=fake``：演示模型（生产环境拒绝）。
     - ``ZHIJUN_PROVIDER=anthropic``：本机网络边界禁止，明确报错。
     - ``ZHIJUN_PROVIDER=openai`` 或设置页「外部问答」已开启且 provider=openai：OpenAI 兼容通道。
     - 其余：本地 Ollama（沿用材料通道快照的地址与模型）。
     """
-    override = os.environ.get("ZHIJUN_PROVIDER", "").strip().lower()
+    workspace = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
+    override = "" if workspace else os.environ.get("ZHIJUN_PROVIDER", "").strip().lower()
     if override == "fake":
         if not _fake_allowed():
             raise ProviderError("演示模型不能在生产环境启用", status_code=503, code="FAKE_FORBIDDEN", retryable=False)
@@ -669,10 +681,11 @@ def build_provider(snapshot=None) -> ChatProvider:
                   else (override == "openai" or (not override and snap.provider == "openai" and snap.external_enabled)))
     if use_openai:
         # 用户已选定的供应商必须整体生效，不能把新端点与旧环境变量密钥混用。
-        # 没有已保存供应商时，仍保留联调 / 评测的环境变量兼容路径。
-        base_url = snap.base_url if selected else (os.environ.get("ZHIJUN_OPENAI_BASE_URL", "").strip() or snap.base_url)
-        model = snap.model if selected else (os.environ.get("ZHIJUN_OPENAI_MODEL", "").strip() or snap.model)
-        key = get_provider().resolve_api_key(snap) if selected else (os.environ.get("ZHIJUN_OPENAI_API_KEY", "").strip() or get_provider().resolve_api_key(snap))
+        # 只有非工作区且没有已保存供应商时，保留联调 / 评测的环境变量兼容路径。
+        isolated = workspace or selected
+        base_url = snap.base_url if isolated else (os.environ.get("ZHIJUN_OPENAI_BASE_URL", "").strip() or snap.base_url)
+        model = snap.model if isolated else (os.environ.get("ZHIJUN_OPENAI_MODEL", "").strip() or snap.model)
+        key = get_provider().resolve_api_key(snap) if isolated else (os.environ.get("ZHIJUN_OPENAI_API_KEY", "").strip() or get_provider().resolve_api_key(snap))
         if not base_url or not model or not key:
             raise ProviderError(
                 "外部模型配置不完整：请在设置里填写 BaseURL、API Key 与 Model",
@@ -681,22 +694,35 @@ def build_provider(snapshot=None) -> ChatProvider:
                 retryable=False,
             )
         try:
-            timeout = float(os.environ.get("ZHIJUN_OPENAI_TIMEOUT", "") or snap.timeout_seconds)
+            timeout = float(snap.timeout_seconds if workspace else (os.environ.get("ZHIJUN_OPENAI_TIMEOUT", "") or snap.timeout_seconds))
         except ValueError:
             timeout = float(snap.timeout_seconds)
-        task_model = None if selected else (os.environ.get("ZHIJUN_OPENAI_TASK_MODEL", "").strip() or None)
-        thinking = os.environ.get("ZHIJUN_OPENAI_THINKING", "").strip() or None
+        task_model = None if isolated else (os.environ.get("ZHIJUN_OPENAI_TASK_MODEL", "").strip() or None)
+        thinking = None if workspace else (os.environ.get("ZHIJUN_OPENAI_THINKING", "").strip() or None)
         result = OpenAICompatibleProvider(base_url, model, key, timeout=timeout, task_model=task_model, thinking=thinking)
         # Internal-only identity lets the dispatch guard notice a saved account
         # change even when the endpoint and model stay identical. Never a token.
-        result.configuration_revision = (snap.external_provider_id, snap.secret_ref) if selected else None
+        result.configuration_revision = hashlib.sha256(json.dumps(
+            [base_url, model, getattr(snap, "external_provider_id", None), getattr(snap, "secret_ref", None)],
+            ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest() if isolated else None
         return result
     local = snap.local
+    if getattr(local, "configuration_error", None):
+        raise ProviderError("本地 GPU 配置与部署合同冲突，请修复工作区设置", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
+    if workspace and (not local or not local.base_url or not local.model):
+        raise ProviderError("本地模型配置不完整：请先配置盒端已有的本地模型服务",
+                            code="PROVIDER_MISCONFIGURED", retryable=False)
     try:
-        num_ctx = int(os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX)
+        num_ctx = int((getattr(local, "context_window", None) or DEFAULT_LOCAL_NUM_CTX) if workspace
+                      else (os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX))
     except ValueError:
         num_ctx = DEFAULT_LOCAL_NUM_CTX
-    return OllamaProvider(local.base_url, local.model, timeout=float(local.timeout_seconds), keep_alive=local.keep_alive, num_ctx=num_ctx)
+    gpu_policy = getattr(local, "backend", None) == "ollama_gpu"
+    if gpu_policy and (getattr(local, "max_output_tokens", None) != 512 or getattr(local, "num_thread", None) != 1):
+        raise ProviderError("GPU 推理预算与部署合同冲突", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
+    return OllamaProvider(local.base_url, local.model, timeout=float(local.timeout_seconds), keep_alive=local.keep_alive,
+                          num_ctx=num_ctx, gpu_policy=gpu_policy)
 
 
 def provider_status() -> dict:

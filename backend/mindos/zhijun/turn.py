@@ -15,7 +15,8 @@ from ..stores.ontology_store import OntologyStore
 from . import context as context_module
 from . import deliberate, extract, jobs, memory
 from .gate import conversation_locks, provider_gate
-from .provider import ONBOARDING_QUESTIONS, ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
+from .provider import ChatProvider, ChatRequest, Done, ProviderError, TextDelta, Usage, build_provider
+from .request_budget import normalize_request_budget
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,21 @@ MAX_CONTENT_CHARS = 4000
 BRIEF_MAX_TOKENS = 1024
 DEEP_MAX_TOKENS = 4096
 INTERACTIVE_GATE_TIMEOUT = 2.0
+
+
+def _enqueue_followup(action):
+    """A saved answer stays complete when optional organization cannot enqueue."""
+    from zhijun_worker.background import BackgroundEnqueueError
+    try:
+        job_id = action()
+        return {"state": "queued" if job_id else "skipped", "jobId": job_id,
+                "reason": None if job_id else "duplicate_or_not_required"}
+    except Exception as exc:
+        error = exc if isinstance(exc, BackgroundEnqueueError) else BackgroundEnqueueError(None, exc)
+        logger.warning("chat followup enqueue failed: %s", error.code)
+        return {"state": "failed", "jobId": error.job_id, "code": error.code,
+                "message": "回答已保存，但后续整理未完成；请在模型与授权中查看并重新整理。" if error.job_id else
+                           "回答已保存，但整理任务未能保存；请稍后检查整理状态。"}
 
 
 class TurnError(Exception):
@@ -192,12 +208,24 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
         raise TurnError(429, "PROVIDER_BUSY", "模型正忙，请稍后重试；没有切换服务")
     try:
         current_refs = [] if omit else refs
+        user_sources = list(expression_refs)
+        reviewed_turn = bool(plan.assembled.provenance.get("contextPlan", {}).get("retrieval", {}).get("userReviewRequired"))
+        if reviewed_turn:
+            selected_refs = [item["ref"] for item in plan.assembled.provenance["contextPlan"]["evidence"]
+                             if item["kind"] == "material" and item["ref"].get("ragInteractionId")]
+            selected_refs = list({digest(ref): ref for ref in selected_refs}.values())
+            current_refs = list({(ref["id"], ref["materialVersion"]):
+                                 {"materialId": ref["id"], "version": ref["materialVersion"]}
+                                 for ref in selected_refs}.values())
+            user_sources.extend(selected_refs)
+        # Requested files are UI state, not proof that their content was used.
+        requested_files = {"requestedMaterialRefs": refs} if reviewed_turn else {}
         origin = {"service": plan.preview["service"]["id"] if guarded.external else "", "modeRevision": router.mode["revision"]}
         if old_user and import_id:
             old_user = conv_store.update_message(old_user["id"], meta={**(old_user.get("meta") or {}),
-                "materialRefs": current_refs, "routingOrigin": origin, "routingSources": expression_refs})
+                "materialRefs": current_refs, "routingOrigin": origin, "routingSources": user_sources, **requested_files})
         user = old_user or conv_store.append_message(cid, "user", content, message_id=user_id,
-                    meta={"materialRefs": current_refs, "routingOrigin": origin, "routingSources": expression_refs,
+                    meta={"materialRefs": current_refs, "routingOrigin": origin, "routingSources": user_sources, **requested_files,
                           **({"replyAssistance": expression} if expression else {})})
         user_id = user["id"]
         def receipt_meta():
@@ -272,6 +300,11 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
                    "retryable": True}
             if detail.get("preview"):
                 err["preview"] = detail["preview"]
+            if detail.get("ragV2"):
+                # data_agent_rag has already reduced this to redacted previews,
+                # counts and an opaque interaction id. Tokens and evidence text
+                # never cross the SSE boundary.
+                err["ragV2"] = detail["ragV2"]
             if meta["contextStage"] == "supplemented":
                 err["stage"] = "supplemented"
                 meta["contextPending"] = {"code": err["code"], "stage": "supplemented"}
@@ -297,17 +330,23 @@ def _run_routed(conversation, content, depth, mode, ontology, conv_store, refs, 
             return
         yield "provenance", plan.assembled.provenance
         if mode == "deliberate":
-            job_id = jobs.enqueue_draft(cid, assistant_id, store=ontology)
-            yield "decision_draft", {"state": "queued", "jobId": job_id, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []}
+            result = _enqueue_followup(lambda: jobs.enqueue_draft(cid, assistant_id, store=ontology))
+            yield "decision_draft", {**result, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []}
         if not current_refs and (not expression or expression["kind"] != "control"):
             from .charter import enqueue as enqueue_charter
-            enqueue_charter(cid, user_id, content, ontology=ontology, local_only=not guarded.external)
+            charter_result = _enqueue_followup(lambda: enqueue_charter(cid, user_id, content, ontology=ontology, local_only=not guarded.external))
+            if charter_result["state"] == "failed":
+                yield "extraction", {**charter_result, "taskKind": "charter_draft"}
         memory_allowed = memory.extraction_allowed(ontology, conv_store, cid, content)
         preceding = [m for m in conv_store.list_messages(cid) if m["role"] == "assistant" and m["seq"] < conv_store.get_message(user_id)["seq"] and m["status"] == "complete"]
         extraction_ok, extraction_reason = extract.should_extract(content, preceding[-1]["content"] if preceding else None)
         if not current_refs and (not expression or expression["kind"] != "control") and jobs.extraction_enabled() and extraction_ok and memory_allowed:
-            job_id = jobs.enqueue_extraction(cid, user_id, store=ontology)
-            yield "extraction", {"state": "queued", "jobId": job_id}
+            if memory.automatic_allowed(ontology, conv_store, cid):
+                reflection_job = _enqueue_followup(lambda: ontology.enqueue_job("reflection", user_id,
+                    payload={"conversationId": cid, "messageId": user_id, "assistantId": assistant_id,
+                             "localOnly": not guarded.external}, priority=7))
+                yield "extraction", {**reflection_job, "taskKind": "reflection"}
+            yield "extraction", _enqueue_followup(lambda: jobs.enqueue_extraction(cid, user_id, store=ontology))
         else:
             yield "extraction", {"state": "skipped", "reason": "file_discussion" if current_refs else "memory_policy" if not memory_allowed else extraction_reason if not extraction_ok else "disabled", "jobId": None}
         yield "message_done", {"messageId": assistant_id, "status": "complete", "usage": usage, "receiptId": assistant_id, "seq": message["seq"]}
@@ -418,6 +457,7 @@ def _run_locked(
         effort="medium" if (depth == "deep" or mode == "deliberate" or conversation.get("mode") == "review") else "low",
         debug=assembled.debug,
     )
+    request = normalize_request_budget(request, provider)
     buffer: list[str] = []
     usage: dict | None = None
     stop_reason: str | None = None
@@ -521,21 +561,14 @@ def _run_locked(
             except Exception as exc:  # noqa: BLE001
                 logger.warning("判断草稿整理失败：%s", type(exc).__name__)
         else:
-            job_id = jobs.enqueue_draft(conversation_id, assistant_id, store=ontology)
-            yield ("decision_draft", {"state": "queued", "jobId": job_id, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []})
-
-    if conversation.get("mode") == "onboarding" and (onboarding_turn or 0) > len(ONBOARDING_QUESTIONS) and memory.automatic_allowed(ontology, conv_store, conversation_id):
-        try:
-            jobs.enqueue_first_observation(conversation_id, assistant_id, store=ontology)
-        except Exception:  # noqa: BLE001
-            pass
+            result = _enqueue_followup(lambda: jobs.enqueue_draft(conversation_id, assistant_id, store=ontology))
+            yield ("decision_draft", {**result, "draftId": None, "revision": None, "status": "draft", "fields": None, "changedFields": []})
 
     preceding = [m for m in conv_store.list_messages(conversation_id) if m["role"] == "assistant" and m["seq"] < user_message["seq"] and m["status"] == "complete"]
     ok, reason = extract.should_extract(content, preceding[-1]["content"] if preceding else None)
     memory_allowed = memory.extraction_allowed(ontology, conv_store, conversation_id, content)
     if ok and jobs.extraction_enabled() and memory_allowed:
-        job_id = jobs.enqueue_extraction(conversation_id, user_message["id"], store=ontology)
-        yield ("extraction", {"state": "queued" if job_id else "skipped", "jobId": job_id, "reason": None if job_id else "duplicate"})
+        yield ("extraction", _enqueue_followup(lambda: jobs.enqueue_extraction(conversation_id, user_message["id"], store=ontology)))
     else:
         yield ("extraction", {"state": "skipped", "jobId": None, "reason": reason if ok is False else "memory_policy" if not memory_allowed else "disabled"})
     yield (

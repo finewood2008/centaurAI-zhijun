@@ -1271,6 +1271,8 @@ app.include_router(mindos_growth.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos import conversations as mindos_conversations
 mindos_conversations.configure_write_guard(require_local)
 app.include_router(mindos_conversations.router, dependencies=_MINDOS_WEB_DEPENDENCIES)
+from mindos.reflection_routes import build_router as build_reflection_router
+app.include_router(build_reflection_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos.memory_routes import build_router as build_memory_router
 app.include_router(build_memory_router(require_local), dependencies=_MINDOS_WEB_DEPENDENCIES)
 from mindos.matters_routes import build_router as build_matters_router

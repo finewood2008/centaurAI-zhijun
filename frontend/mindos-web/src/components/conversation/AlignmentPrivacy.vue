@@ -11,7 +11,13 @@ const error = ref('')
 let timer: ReturnType<typeof setTimeout> | undefined
 let epoch = 0
 let stopped = false
+const transitional = new Set(['queued', 'pending', 'processing', 'running'])
 const missing = computed(() => state.value?.sources.filter(s => !s.allowed) ?? [])
+
+function schedule(result: AlignmentState) {
+  clearTimeout(timer)
+  if (!stopped && !props.streaming && transitional.has(result.state.status)) timer = setTimeout(() => void refresh(), 5000)
+}
 
 async function refresh() {
   const id = props.conversationId, ticket = ++epoch
@@ -22,18 +28,17 @@ async function refresh() {
     emit('localOnly', !!result.state.local_only || result.sources.some(s => !s.allowed))
     selected.value = selected.value.filter(key => result.sources.some(s => s.fingerprint === key && !s.blocked))
     emit('proposals', result.proposals)
+    schedule(result)
   } catch { /* transient poll failures leave the last state visible */ }
 }
-async function poll() {
-  if (stopped) return
-  if (!props.streaming) await refresh()
-  if (!stopped) timer = setTimeout(poll, 5000)
-}
 watch(() => props.conversationId, () => {
-  ++epoch; state.value = null; selected.value = []; emit('proposals', []); emit('localOnly', false)
+  ++epoch; clearTimeout(timer); state.value = null; selected.value = []; emit('proposals', []); emit('localOnly', false)
   void refresh()
 }, { immediate: true })
-timer = setTimeout(poll, 5000)
+watch(() => props.streaming, value => {
+  clearTimeout(timer)
+  if (!value && state.value && transitional.has(state.value.state.status)) void refresh()
+})
 onBeforeUnmount(() => { stopped = true; ++epoch; clearTimeout(timer) })
 defineExpose({ refresh })
 

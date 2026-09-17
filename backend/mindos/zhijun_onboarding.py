@@ -151,7 +151,7 @@ def _start(progress: dict, ontology: OntologyStore, conversations: ConversationS
     conversations.append_message(
         conversation["id"],
         "assistant",
-        "我们先聊几个小话题，没想清楚可以跳过，随时开始使用。" + TOPICS[0][2],
+        "最近有什么事，想和我一起想一想？从你在意的事情开始，我们可以慢慢认识。",
         provider="template",
         model="template",
         # This is a local application template with no ancestry. Mark it at
@@ -223,12 +223,12 @@ def apply_action(
 
 
 def read_progress(request: Request):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return get_progress(scope=_device_scope_of(request))
 
 
 def update_progress(command: OnboardingCommand, request: Request):
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     return apply_action(command, scope=_device_scope_of(request))
 
 

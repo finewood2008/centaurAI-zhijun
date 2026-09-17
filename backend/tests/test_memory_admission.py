@@ -117,6 +117,18 @@ class MemoryAdmissionTests(unittest.TestCase):
         self.assertEqual(long_term, [candidate])
         self.assertEqual(context, [])
 
+    def test_short_complete_identity_is_extracted_without_a_previous_question(self):
+        for text in ("我是程序员", "我是医生", "我是老师", "我是医生。"):
+            with self.subTest(text=text):
+                self.assertEqual(extract.should_extract(text), (True, "ok"))
+                candidate = claim(text)
+                self.assertEqual(extract.admission([candidate], text), ([candidate], []))
+
+    def test_short_identity_exemption_does_not_accept_fragments_or_questions(self):
+        for text in ("我是", "我是个", "我是吗", "我是谁", "我是你吗", "我非医生", "假如我是", "“我是”"):
+            with self.subTest(text=text):
+                self.assertFalse(extract.should_extract(text)[0])
+
     def test_confirmed_extraction_confidence_does_not_make_an_event_permanent(self):
         text = "明天我想去黑客松现场寻找优秀人才"
         candidate = claim(text, section="direction", predicate="wants_to", layer="aspirational",

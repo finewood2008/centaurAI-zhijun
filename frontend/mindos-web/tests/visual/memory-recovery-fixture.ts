@@ -8,11 +8,12 @@ import '../../src/styles/base.css'
 // Fail closed: all APIs live in memory; no fallback to the running application.
 const cid = 'fixture-memory-recovery', log = ref<string[]>([]), count = ref(2)
 let revision = 1, includeCharter = false, granted = false, paused = true, expired = false, failReview = false
+const failedTask = new URLSearchParams(location.search).has('failed-task')
 const claims = [
   { id: 'fixture-c1', content: '我做重大决定前，希望先了解风险。', section: 'principles', layer: 'self_declared', trustState: 'working', confidence: .9, evidence: [{ conversationId: cid, messageId: 'u1', quote: '我希望先了解风险，再做决定。' }] },
   { id: 'fixture-c2', content: '我希望为陪伴家人留出稳定的时间。', section: 'direction', layer: 'aspirational', trustState: 'working', confidence: .9, evidence: [{ conversationId: cid, messageId: 'u2', quote: '我希望之后每周能有固定的家庭时间。' }] },
 ]
-const state = () => ({ mode: { mode: 'online', revision: 1, service: 'fixture-service' }, service: { id: 'fixture-service', name: '合成服务（不会联网）', model: 'fixture', external: true }, defaultAuthorization: { active: true, revision, serviceName: '合成服务', includeFiles: false, includeCharter }, handlingPreference: { active: false, revision: 0, action: 'omit' }, pending: paused ? [{ task_key: 'extract_turn', preview_id: 'fixture-preview', count: 8, reason: 'consent_required', detail: '人生章程与草稿尚未授权用于个人理解，8 轮对话待整理。', previewExpired: expired }] : [] })
+const state = () => ({ mode: { mode: 'online', revision: 1, service: 'fixture-service', cutoff: false }, service: { id: 'fixture-service', name: '合成服务（不会联网）', model: 'fixture', external: true }, defaultAuthorization: { active: true, revision, serviceName: '合成服务', includeFiles: false, includeCharter }, handlingPreference: { active: false, revision: 0, action: 'omit' }, pending: paused ? [{ task_key: 'extract_turn', preview_id: 'fixture-preview', count: failedTask ? 1 : 8, failedCount: failedTask ? 1 : 0, reason: failedTask ? 'processing_failed' : 'consent_required', detail: failedTask ? '本次整理未完成，原对话仍保留；可重试；继续前会重新核对当前模型、资料权限与人生章程。' : '人生章程与草稿尚未授权用于个人理解，8 轮对话待整理。', previewExpired: expired }] : [] })
 const response = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } })
 window.fetch = async (input, init) => {
   const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, location.origin)

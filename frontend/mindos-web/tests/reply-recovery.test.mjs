@@ -13,8 +13,10 @@ const tick = async () => { await Vue.nextTick(); await new Promise(resolve => se
 const originalFetch = globalThis.fetch
 const routing = {}
 new Function('require', 'exports', transpile(await readFile(new URL('../src/services/taskRouting.ts', import.meta.url), 'utf8')))(id => {
-  if (id === 'vue') return Vue
+  if (id.includes('productScope')) return { isDesktopProduct: () => false, onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
+    if (id === 'vue') return Vue
   if (id.includes('useReplyRecovery')) return recovery
+  if (id === './transport.ts') return { transportRequest: (...args) => globalThis.fetch(...args) }
   if (id === './api') return { buildHeaders: () => ({}), throwApiError: async response => { throw error((await response.json()).code) } }
   throw new Error('Unmocked routing import ' + id)
 }, routing)
@@ -63,6 +65,15 @@ try {
     await assert.rejects(routing.prepareChatRoute('synthetic-chat', { content: 'still unchanged' }), { code: 'ROUTE_CHANGED' })
     assert.equal(calls.length, 2, 'a constantly changing route is retried only once')
   }
+  {
+    let reads = 0
+    const calls = transport(() => ++reads === 1
+      ? { code: 'RAG_V2_CONTEXT_CHANGED' }
+      : preview('rag-fence-refreshed'))
+    const result = await routing.prepareChatRoute('synthetic-chat', { content: 'keep the request' })
+    assert.equal(result.routeRevision, 'rag-fence-refreshed')
+    assert.equal(calls.length, 2, 'a changed RAG fence rebuilds the preview only once')
+  }
   for (const code of ['SOURCE_CHANGED', 'SOURCE_UNAVAILABLE', 'SOURCE_LIMIT']) {
     const calls = transport(() => ({ code }))
     await assert.rejects(routing.prepareChatRoute('synthetic-chat', { content: 'edited choice', replyAssistance: origin }), { code })
@@ -93,8 +104,10 @@ async function setup(name, props, mocks) {
   const exports = {}, cleanup = [], exposed = {}, emitted = [], scope = Vue.effectScope()
   const code = transpile(compileScript(parse(source).descriptor, { id: 'reply-recovery-' + name }).content)
   new Function('require', 'exports', code)(id => {
+    if (id.includes('productScope')) return { isDesktopProduct: () => false, onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
     if (id === 'vue') return { ...Vue, onBeforeUnmount: fn => cleanup.push(fn) }
     if (id.includes('useReplyRecovery')) return recovery
+    if (id.includes('services/voiceRecording')) return { createVoiceRecording: () => { throw new Error('Web tests must not create desktop recorder') } }
     if (id.includes('shared/replyAssistance')) return replies
     if (id in mocks) return mocks[id]
     if (id.endsWith('.vue') || id === 'lucide-vue-next') return {}

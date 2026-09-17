@@ -42,3 +42,6 @@ frontend/mindos-web/node_modules/
 frontend/mindos-web/dist/
 release/
 testdata/
+
+# Local encrypted credential store and encryption key
+/secrets/

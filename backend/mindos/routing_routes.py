@@ -4,12 +4,12 @@ from typing import Literal
 from fastapi import Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from .chat_imports import require_conversation, service_info
+from .chat_imports import local_provider, require_conversation, service_info
 from .stores.conversation_store import ConversationStore
 from .stores.ontology_store import OntologyStore
 from .stores.routing_store import RoutingStore
 from .stores.chat_import_store import ChatImportStore
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun.provider import build_provider, ProviderError
 from .zhijun.routing import Router, check_service, fail, prepare_chat
 from .zhijun.reply_assistance import ReplyInput
@@ -32,8 +32,10 @@ class Mode(BaseModel):
 
 
 class Grant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     revision: str = Field(min_length=64, max_length=64)
     keys: list[str] = Field(default_factory=list, max_length=200)
+    defaultPolicyRevision: int | None = Field(default=None, ge=1)
 
 
 class Revoke(BaseModel):
@@ -45,6 +47,7 @@ class DefaultConsent(BaseModel):
     enabled: bool
     includeFiles: bool = False
     includeCharter: bool = False
+    autoEgress: bool = False
     acknowledge: bool = False
     serviceId: str = Field(default="", max_length=64)
     expectedRevision: int = Field(ge=0)
@@ -93,6 +96,7 @@ def active_pending(r):
     confirmed = GrowthStore.instance().current_charter(scope=r.scope) is not None
     active_workspace = CharterDraftStore().active_workspace(r.cid, r.scope)
     latest_jobs = r.store.conversation_jobs(r.cid)
+    valid_previews = r.store.valid_preview_ids(r.cid)
     job_tasks = {job["kind"] for job in latest_jobs}
     pending = {p["task_key"]: {**p, "count": 1, "reason": "consent_required", "messageIds": [], "reasons": [{"code": "consent_required", "count": 1, "detail": p["detail"]}]}
                for p in r.store.pending(r.cid) if p["task_key"] not in job_tasks}
@@ -105,13 +109,19 @@ def active_pending(r):
             # Do not expose raw provider errors: they may contain request details.
             cause = {"PROVIDER_TIMEOUT": "模型等待超时", "PROVIDER_BUSY": "模型通道繁忙",
                 "PROVIDER_UNAVAILABLE": "模型服务暂时不可用", "PROVIDER_MISCONFIGURED": "模型连接设置需要检查",
-                "INVALID_JSON_REPLY": "模型返回的整理内容不完整", "EMPTY_REPLY": "模型没有返回整理内容"}.get(job.get("errorCode"), "本次整理未完成")
+                "INVALID_JSON_REPLY": "模型返回的整理内容不完整", "EMPTY_REPLY": "模型没有返回整理内容",
+                "MODEL_EGRESS_CONSENT_REQUIRED": "本次个人理解整理缺少模型外发授权",
+                "MODEL_JSON_INVALID": "模型返回的整理内容不完整"}.get(job.get("errorCode"), "本次整理未完成")
             result = {"reason": "task_failed", "detail": cause + "，原对话仍保留。可重试；继续前会重新核对当前模型、资料权限与人生章程。"}
         task = job["kind"]
         item = pending.setdefault(task, {"conversation_id": r.cid, "task_key": task, "preview_id": "",
             "count": 0, "failedCount": 0, "reason": result.get("reason", "consent_required"), "detail": "", "messageIds": [], "updated_at": "", "reasons": []})
         item["count"] += 1
         item["failedCount"] += int(failed)
+        preview_id = result.get("previewId", "")
+        item.setdefault("jobs", []).append({"jobId": job["jobId"], "previewId": preview_id,
+            "state": "failed" if failed else "paused", "reason": result.get("reason", "consent_required"),
+            "previewExpired": preview_id not in valid_previews})
         message_id = job["payload"].get("messageId")
         if message_id and message_id not in item["messageIds"]:
             item["messageIds"].append(message_id)
@@ -133,7 +143,7 @@ def active_pending(r):
             item["reason"] = "multiple_reasons"
             item["detail"] = "；".join(f"{entry['count']} 项：{entry['detail']}" for entry in item["reasons"])
         item["state"] = "failed" if item.get("failedCount") == item["count"] else "mixed" if item.get("failedCount") else "paused"
-        item["previewExpired"] = not bool(item["preview_id"] and r.store.get_preview(item["preview_id"], r.cid))
+        item["previewExpired"] = item["preview_id"] not in valid_previews
         values.append(item)
     return values
 
@@ -142,6 +152,27 @@ def handling_state(store, scope, service):
     value = store.handling(scope)
     return {**value, "active": value["enabled"] and value["service"] == (service or {}).get("id"),
             "serviceChanged": value["enabled"] and value["service"] != (service or {}).get("id")}
+
+
+def local_service_info():
+    """Return the configured local model's safe public identity, or fail closed."""
+    try:
+        provider = local_provider()
+        info = service_info(provider)
+        if getattr(provider, "external", True) is not False or info.get("external") is not False:
+            return None
+        limits = {"id": 256, "name": 128, "model": 128}
+        public = {}
+        for key, limit in limits.items():
+            value = info.get(key)
+            if (not isinstance(value, str) or not value or len(value) > limit
+                    or value != value.strip() or any(ord(char) < 32 for char in value)):
+                return None
+            public[key] = value
+        return {**public, "external": False}
+    except Exception:
+        # Local runtime/capability errors can contain endpoints or credentials.
+        return None
 
 
 def set_handling(conversation_id: str, req: Handling, request: Request):
@@ -166,12 +197,12 @@ def state(conversation_id: str, request: Request):
     try:
         p = build_provider()
         check_service(p)
-        service, error = service_info(p), ""
+        service, configuration_revision, error = service_info(p), getattr(p, "configuration_revision", ""), ""
     except Exception as exc:
-        service, error = None, str(exc)
-    return {"mode": r.mode, "service": service, "error": error,
+        service, configuration_revision, error = None, "", str(exc)
+    return {"mode": r.mode, "service": service, "localService": local_service_info(), "error": error,
             "handlingPreference": handling_state(r.store, r.scope, service),
-            "defaultAuthorization": policy_state(r.store, r.scope, service),
+            "defaultAuthorization": policy_state(r.store, r.scope, service, configuration_revision),
             "pending": active_pending(r),
             "notice": "在线模式会发送日常消息；文件、画像和受保护历史另行授权。已发送内容无法收回。"}
 
@@ -216,7 +247,11 @@ def grant(conversation_id: str, req: Grant, request: Request):
     p = r.store.get_preview(req.revision, r.cid)
     if not p:
         fail("PREVIEW_EXPIRED", "预览已过期，请重新核对")
-    r.authorize(p, req.keys)
+    preview = {**p, "revision": req.revision}
+    if req.defaultPolicyRevision is not None:
+        r.authorize_default(preview, req.defaultPolicyRevision)
+    else:
+        r.authorize(preview, req.keys)
     return {"granted": req.keys}
 
 
@@ -243,16 +278,18 @@ def revoke(conversation_id: str, req: Revoke, request: Request):
     return {"revoked": True, "notice": "已停止后续使用；无法收回已经发送的内容"}
 
 
-def policy_state(store, scope, service):
+def policy_state(store, scope, service, configuration_revision=""):
     p = store.policy(scope)
+    configuration_changed = bool(p.get("autoEgress") and p.get("configurationRevision") != configuration_revision)
     return {**p, "active": p["enabled"] and p["service"] == (service or {}).get("id"),
-            "serviceChanged": p["enabled"] and p["service"] != (service or {}).get("id")}
+            "serviceChanged": p["enabled"] and (p["service"] != (service or {}).get("id") or configuration_changed)}
 
 
 def set_default_consent(conversation_id: str, req: DefaultConsent, request: Request):
     r = router_for(conversation_id, request)
     policy = r.store.policy(r.scope)
     service, name = policy["service"], policy["serviceName"]
+    provider = None
     if req.enabled:
         provider = build_provider()
         check_service(provider)
@@ -262,11 +299,13 @@ def set_default_consent(conversation_id: str, req: DefaultConsent, request: Requ
         service, name = info["id"], info["name"]
     from .zhijun.routing import PURPOSES
     try:
-        r.store.set_policy(r.scope, enabled=req.enabled, service=service, service_name=name,
-                           include_files=req.includeFiles if req.enabled else policy["includeFiles"],
-                           include_charter=req.includeCharter if req.enabled else policy["includeCharter"],
-                           purposes=list(PURPOSES) if req.enabled else policy["purposes"],
-                           expected_revision=req.expectedRevision)
+        saved = r.store.set_policy(r.scope, enabled=req.enabled, service=service, service_name=name,
+                                   include_files=req.includeFiles if req.enabled else policy["includeFiles"],
+                                   include_charter=req.includeCharter if req.enabled else policy["includeCharter"],
+                                   auto_egress=req.autoEgress if req.enabled else False,
+                                   configuration_revision=getattr(provider, "configuration_revision", "") if req.enabled else policy.get("configurationRevision", ""),
+                                   purposes=list(PURPOSES) if req.enabled else policy["purposes"],
+                                   expected_revision=req.expectedRevision)
     except ValueError as exc:
         fail("DEFAULT_CONSENT_CHANGED", str(exc))
     return default_state(request) if conversation_id == "default" else state(conversation_id, request)
@@ -285,18 +324,21 @@ def default_state(request: Request):
     try:
         provider = build_provider()
         check_service(provider)
-        service, error = service_info(provider), ""
+        service, configuration_revision, error = service_info(provider), getattr(provider, "configuration_revision", ""), ""
     except Exception as exc:
-        service, error = None, str(exc)
-    return {"mode": store.mode("default:" + _device_scope_of(request)), "service": service, "error": error,
+        service, configuration_revision, error = None, "", str(exc)
+    return {"mode": store.mode("default:" + _device_scope_of(request)), "service": service,
+            "localService": local_service_info(), "error": error,
             "handlingPreference": handling_state(store, _device_scope_of(request), service),
-            "defaultAuthorization": policy_state(store, _device_scope_of(request), service),
+            "defaultAuthorization": policy_state(store, _device_scope_of(request), service, configuration_revision),
             "pending": active_pending(router_for("default", request))}
 
 
 class Resume(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     task: str = Field(max_length=100)
     localOnly: bool = False
+    jobId: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 def pending_preview(conversation_id: str, revision: str, request: Request):
@@ -304,7 +346,8 @@ def pending_preview(conversation_id: str, revision: str, request: Request):
     # Only an actual outstanding task may refresh an expired preview. Grants
     # still require the fresh version returned by prepare below.
     outstanding = active_pending(r)
-    bound = any(item["preview_id"] == revision for item in outstanding)
+    bound = any(item["preview_id"] == revision or any(job["previewId"] == revision
+                for job in item.get("jobs", [])) for item in outstanding)
     p = r.store.get_preview(revision, r.cid, include_expired=bound)
     if not p:
         fail("PREVIEW_EXPIRED", "后台预览已过期；请重新准备待办，由后台按当前内容再次核对，原消息仍保留")
@@ -325,6 +368,8 @@ def resume(conversation_id: str, req: Resume, request: Request):
     r = router_for(conversation_id, request)
     outstanding = any(t["task_key"] == req.task for t in active_pending(r))
     if req.task.startswith("file_reply:"):
+        if req.jobId is not None:
+            fail("TASK_CHANGED", "文件任务不支持此整理任务编号")
         if not outstanding:
             fail("TASK_CHANGED", "任务已恢复或不存在")
         imports = ChatImportStore(r.convs)
@@ -338,9 +383,10 @@ def resume(conversation_id: str, req: Resume, request: Request):
         fail("TASK_CHANGED", "未知后台任务")
     if req.task == "charter_draft" and not outstanding:
         fail("TASK_CHANGED", "章程编辑已结束；需要修改时请主动开始")
-    if not r.store.conversation_jobs(r.cid, req.task):
+    current_jobs = r.store.conversation_jobs(r.cid, req.task)
+    if not current_jobs or (req.jobId is not None and not any(job["jobId"] == req.jobId for job in current_jobs)):
         fail("TASK_CHANGED", "原任务不可用，请重新触发")
-    job_ids = r.store.resume_jobs(r.cid, req.task, local_only=req.localOnly)
+    job_ids = r.store.resume_jobs(r.cid, req.task, local_only=req.localOnly, job_id=req.jobId)
     return {"state": "queued", "jobIds": job_ids, "jobId": job_ids[0] if job_ids else None,
             "queuedCount": len(job_ids), "pendingCount": len(r.store.recoverable_jobs(r.cid, req.task))}
 

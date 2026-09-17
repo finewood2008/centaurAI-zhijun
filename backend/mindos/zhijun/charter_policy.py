@@ -176,7 +176,10 @@ def bind_request(router, purpose, request, refs):
     previous = debug.get("charterPolicy")
     policy = assert_current(previous, router.scope) if previous else scope_policy(router.scope)
     query = "\n".join(str(m.get("content", "")) for m in request.messages[-2:])
-    text, required = mandatory_context(policy, query)
+    # Fact extraction interprets the user's statement, not the charter. Keep
+    # the local policy snapshot/control checks without making unrelated charter
+    # egress consent a prerequisite for proposing a memory candidate.
+    text, required = ("", []) if purpose == "extract_turn" else mandatory_context(policy, query)
     policy["usedClauseIds"] = [ref["id"].rsplit(":", 1)[-1] for ref in required]
     if not previous:
         original = asdict(request)

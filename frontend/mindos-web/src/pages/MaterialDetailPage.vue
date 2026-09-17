@@ -1,19 +1,29 @@
 <script setup lang="ts">
+import ProductImage from '@/components/ui/ProductImage.vue'
+import PdfPreview from '@/components/PdfPreview.vue'
+import { productPreview, releaseProductPreview, saveProductResource } from '@/services/productFiles'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { FileText } from 'lucide-vue-next'
 import { api, type ContentPart, type DerivedRelations, type DerivedTagSuggestions, type DerivedEntities, type EmbeddedImage, type EntityExtraction, type EntityType, type MaterialAnalysis, type MaterialDetail, type MaterialDraftCard, type MaterialImpact, type RelatedRecommendation, type RelationExtraction, type TranscriptSegment, type UploadResult } from '@/services/api'
 import { createSummaryPoller } from '@/composables/useSummaryPolling'
 import { createAnalysisPoller } from '@/composables/useAnalysisPolling'
+import { createGeneratedDraftPoller } from '@/composables/useGeneratedDraftRefresh'
 import { createSessionGate } from '@/composables/sessionGate'
 import { createEntityTagAdder } from '@/composables/useEntityTagAdd'
-import { materialStatusLabel } from '@/shared/status'
-import { formatDate, formatFileSize } from '@/shared/format'
+import { materialSensitiveScanStatusMeta, materialStatusLabel, materialStatusMeta } from '@/shared/status'
+import StatusBadge from '@/components/ui/StatusBadge.vue'
+import { formatDate, formatFileSize, formatFileType } from '@/shared/format'
 import { applyVersionSourceAction } from '@/shared/versionSources'
 import { useToast } from '@/composables/useToast'
 import LifecycleDangerPanel from '@/components/lifecycle/LifecycleDangerPanel.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
+import RedactionPanel from '@/components/RedactionPanel.vue'
+import { isDesktopProduct } from '@/shared/productScope'
 
+// The desktop capability adapter no longer exposes legacy derived/redaction
+// operations. Material reads, draft confirmation and versions remain supported.
+const desktopManagement = isDesktopProduct()
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
@@ -85,24 +95,64 @@ const applyingVersionAction = ref('')
 const versionActions = ref<Record<string, 'keep' | 'replace' | 'keepBoth' | 'manual'>>({})
 let versionPollTimer: ReturnType<typeof setTimeout> | null = null
 let cardIndexPollTimer: ReturnType<typeof setTimeout> | null = null
+let cardIndexPollSession = 0
 // P14-04/P0-1 智能分析（标签候选 / 实体抽取 / 关系三元组）：来自派生缓存，异步生成，轮询防串台。
 // 候选与正式标签在 UI/API/数据上严格区分：候选仅有建议语义，用户逐条确认后才写入。
 const analysis = ref<{ tagSuggestions: DerivedTagSuggestions; entities: DerivedEntities; relations: DerivedRelations } | null>(null)
 const analysisLoading = ref(false)
 const analysisError = ref('')
 const analysisWaitExpired = ref(false)
+const summaryWaitExpired = ref(false)
+const draftWaitExpired = ref(false)
 // 首次解析和手动重新解析均由四项派生产物驱动。只要其中任一项仍在后台生成，
 // 就不能再次提交重解析，避免已发出的 LLM 任务后面再排入一轮重复任务。
 const derivedGenerationPending = computed(() => {
-  if (analysisLoading.value || detail.value?.summary.status === 'pending') return true
+  if (!desktopManagement && detail.value?.summary?.status === 'pending' && !summaryWaitExpired.value) return true
   const current = analysis.value
   return Boolean(
-    current && (
+    !analysisWaitExpired.value && current && (
       current.tagSuggestions.status === 'pending'
       || current.entities.status === 'pending'
       || current.relations.status === 'pending'
     ),
   )
+})
+const privacyReviewRequired = computed(() => detail.value?.privacyStatus?.state === 'review_required')
+const privacyProcessing = computed(() => detail.value?.privacyStatus?.state === 'processing')
+const privacyFailed = computed(() => detail.value?.privacyStatus?.state === 'failed')
+const privacyBlocking = computed(() => privacyReviewRequired.value || privacyProcessing.value || privacyFailed.value)
+const draftGenerationPending = computed(() => draft.value?.status === 'pending' && !draftWaitExpired.value)
+const draftEditingBlocked = computed(() => privacyBlocking.value)
+const summaryGenerationWaitExpired = computed(() => Boolean(
+  summaryWaitExpired.value && detail.value?.summary?.status === 'pending',
+))
+const analysisGenerationWaitExpired = computed(() => Boolean(
+  analysisWaitExpired.value && analysis.value && (
+    analysis.value.tagSuggestions.status === 'pending'
+    || analysis.value.entities.status === 'pending'
+    || analysis.value.relations.status === 'pending'
+  ),
+))
+const draftGenerationWaitExpired = computed(() => Boolean(
+  draftWaitExpired.value && draft.value?.status === 'pending',
+))
+const generationWaitExpired = computed(() => (
+  summaryGenerationWaitExpired.value
+  || analysisGenerationWaitExpired.value
+  || draftGenerationWaitExpired.value
+))
+const draftRetryBlockedByEdits = computed(() => Boolean(
+  draftGenerationWaitExpired.value
+  && draftDirty.value
+  && !summaryGenerationWaitExpired.value
+  && !analysisGenerationWaitExpired.value,
+))
+const draftBadge = computed(() => {
+  if (draft.value?.confirmed) return '已确认'
+  if (privacyReviewRequired.value) return '待隐私复核'
+  if (privacyProcessing.value || draft.value?.status === 'pending') return '生成中'
+  if (privacyFailed.value || draft.value?.status === 'failed') return '生成失败'
+  return '草稿'
 })
 // 正在确认的候选 suggestionId（同一时刻只允许一个确认请求在途）
 const confirming = ref('')
@@ -115,16 +165,53 @@ const currentTime = ref(0)
 const contentParts = computed<ContentPart[]>(() =>
   [...(detail.value?.contentParts ?? [])].sort((a, b) => a.ordinal - b.ordinal),
 )
+const parsedCharacters = computed(() => detail.value?.text?.length ?? 0)
+const sensitiveScanMeta = computed(() => materialSensitiveScanStatusMeta(detail.value?.sensitiveScan))
+const indexAvailable = computed(() => detail.value?.status === 'available' && !detail.value?.recycled)
+const parsingLabel = computed(() => {
+  const parsing = detail.value?.parsing
+  const method = parsing?.contentFormat === 'ocr' || detail.value?.fileType === 'image'
+    ? 'OCR'
+    : parsing?.contentFormat === 'transcript' || detail.value?.fileType === 'audio'
+      ? '音频转写'
+      : parsing?.contentFormat === 'mixed'
+        ? '混合内容解析'
+        : '正文解析'
+  if (parsing?.status === 'ok') return `${method}成功`
+  if (parsing?.status === 'empty') return `${method}完成，但未识别到可用文字`
+  if (parsing?.status === 'failed') return `${method}失败`
+  if (parsing?.status === 'pending') return `${method}处理中`
+  if (detail.value?.status === 'available' && detail.value?.text) return `${method}成功`
+  return '尚无解析结果'
+})
 // P14-02：内嵌图片（受控预览 + OCR）
 const embeddedImages = computed<EmbeddedImage[]>(() => detail.value?.embeddedImages ?? [])
 // 摘要轮询（初次进入仍在生成的材料）；手动刷新统一通过“重新解析”。
-const summaryWaitExpired = ref(false)
 // 详情加载请求代次：防「资料 A 的详情请求延迟返回后覆盖已切换的资料 B」
 const detailLoadGate = createSessionGate()
 // 关联内容加载请求代次：防「A 的关联请求延迟返回后覆盖已切换的资料 B 的相关内容」
 const relatedLoadGate = createSessionGate()
 // P14-04 智能分析加载请求代次：防「A 的分析结果延迟返回后覆盖已切换的资料 B 的候选/实体」
 const analysisLoadGate = createSessionGate()
+const generatedDraftPoller = createGeneratedDraftPoller<MaterialDraftCard & { materialId?: string }>({
+  fetch: (materialId) => api.getMaterialDraftCard(materialId),
+  currentMaterialId: () => detail.value?.materialId ?? null,
+  currentDraft: () => draft.value,
+  isDirty: () => draftDirty.value,
+  apply: (latest) => {
+    draft.value = latest
+    draftTitle.value = latest.title
+    draftContent.value = latest.content
+    draftWaitExpired.value = false
+    takeDraftSnapshot()
+  },
+  onTimeout: (materialId) => {
+    if (detail.value?.materialId === materialId && draft.value?.status === 'pending' && !draftDirty.value) {
+      draftWaitExpired.value = true
+      draftError.value = '知识卡片生成时间较长，请稍后刷新处理状态。'
+    }
+  },
+})
 const summaryPoller = createSummaryPoller({
   fetch: (materialId) => api.getMaterialSummary(materialId),
   onResult: (materialId, result) => {
@@ -235,6 +322,7 @@ function startAnalysisPollingIfPending(materialId: string, result: MaterialAnaly
 
 // P14-04：首次加载（详情打开时）读取聚合分析；pending 时自动轮询到终态
 async function loadAnalysis() {
+  if (desktopManagement) return
   if (!detail.value || analysisLoading.value) return
   const materialId = detail.value.materialId
   analysisLoading.value = true
@@ -261,29 +349,49 @@ async function loadAnalysis() {
 // 用户明确点击“重新解析”时，强制重新生成摘要、标签、实体和关系。
 // 后端会先把四项状态置为 pending，避免前端读到旧 ok 结果后过早结束轮询。
 async function reparseMaterial() {
-  if (!detail.value || derivedGenerationPending.value) return
+  if (desktopManagement) return
+  if (!detail.value || draftEditingBlocked.value || draftRetryBlockedByEdits.value || analysisLoading.value || derivedGenerationPending.value || draftGenerationPending.value) return
   const materialId = detail.value.materialId
+  const retryDraft = draftGenerationWaitExpired.value && !draftDirty.value && !draft.value?.userEdited
+  const retryAnalysis = !retryDraft || summaryGenerationWaitExpired.value || analysisGenerationWaitExpired.value
   analysisLoading.value = true
   analysisError.value = ''
+  if (retryDraft) draftError.value = ''
   analysisWaitExpired.value = false
   const requestSession = analysisLoadGate.next()
+  let activeAction: 'analysis' | 'draft' = retryAnalysis ? 'analysis' : 'draft'
   try {
-    const result = await api.reparseMaterial(materialId)
-    if (!analysisLoadGate.isCurrent(requestSession) || !detail.value || detail.value.materialId !== materialId) return
-    setAnalysis(materialId, result)
-    // 提交后即使请求完成得很快，也先展示进行中；轮询以服务端 pending/终态为准。
-    detail.value.summary = { ...result.summary, status: 'pending', generatedAt: null }
-    analysis.value = {
-      tagSuggestions: { ...result.tagSuggestions, status: 'pending' },
-      entities: { ...result.entities, status: 'pending' },
-      relations: { ...result.relations, status: 'pending' },
+    if (retryAnalysis) {
+      const result = await api.reparseMaterial(materialId)
+      if (!analysisLoadGate.isCurrent(requestSession) || !detail.value || detail.value.materialId !== materialId) return
+      setAnalysis(materialId, result)
+      // 提交后即使请求完成得很快，也先展示进行中；轮询以服务端 pending/终态为准。
+      detail.value.summary = { ...result.summary, status: 'pending', generatedAt: null }
+      analysis.value = {
+        tagSuggestions: { ...result.tagSuggestions, status: 'pending' },
+        entities: { ...result.entities, status: 'pending' },
+        relations: { ...result.relations, status: 'pending' },
+      }
+      summaryWaitExpired.value = false
+      summaryPoller.start(materialId)
+      analysisPoller.start(materialId)
     }
-    summaryWaitExpired.value = false
-    summaryPoller.start(materialId)
-    analysisPoller.start(materialId)
+    if (retryDraft) {
+      activeAction = 'draft'
+      const latestDraft = await api.regenerateMaterialDraft(materialId)
+      if (!analysisLoadGate.isCurrent(requestSession) || detail.value?.materialId !== materialId || draftDirty.value) return
+      draft.value = latestDraft
+      draftTitle.value = latestDraft.title
+      draftContent.value = latestDraft.content
+      draftWaitExpired.value = false
+      takeDraftSnapshot()
+      generatedDraftPoller.start(materialId)
+    }
   } catch (e) {
     if (analysisLoadGate.isCurrent(requestSession) && detail.value?.materialId === materialId) {
-      analysisError.value = e instanceof Error ? e.message : '重新解析失败'
+      const message = e instanceof Error ? e.message : activeAction === 'draft' ? '草稿重新生成失败' : '重新解析失败'
+      if (activeAction === 'draft') draftError.value = message
+      else analysisError.value = message
     }
   } finally {
     if (analysisLoadGate.isCurrent(requestSession) && detail.value?.materialId === materialId) {
@@ -379,22 +487,27 @@ function stopVersionPolling() {
 }
 
 function stopCardIndexPolling() {
+  cardIndexPollSession += 1
   if (cardIndexPollTimer) clearTimeout(cardIndexPollTimer)
   cardIndexPollTimer = null
 }
 
 function pollCardIndexUntilTerminal(materialId: string) {
   stopCardIndexPolling()
+  const pollSession = ++cardIndexPollSession
   const poll = async () => {
+    if (pollSession !== cardIndexPollSession || detail.value?.materialId !== materialId) return
     try {
       const result = await api.getMaterialDetail(materialId)
-      if (detail.value?.materialId !== materialId) return
+      if (pollSession !== cardIndexPollSession || detail.value?.materialId !== materialId) return
       const next = result.draftCard
       if (!next?.confirmed) return
       draft.value = next
       if (next.indexState === 'indexing') cardIndexPollTimer = setTimeout(poll, 1800)
     } catch {
-      cardIndexPollTimer = setTimeout(poll, 3000)
+      if (pollSession === cardIndexPollSession && detail.value?.materialId === materialId) {
+        cardIndexPollTimer = setTimeout(poll, 3000)
+      }
     }
   }
   cardIndexPollTimer = setTimeout(poll, 1200)
@@ -484,34 +597,23 @@ async function saveDraft(): Promise<boolean> {
     draftError.value = '草稿正文不能为空'
     return false
   }
+  if (!draftDirty.value && draft.value.status === 'ok') {
+    toast({ type: 'success', message: '草稿已保存' })
+    return true
+  }
   savingDraft.value = true
   draftError.value = ''
+  const materialId = detail.value.materialId
+  const expectedRevision = draft.value.revision ?? ''
+  const title = draftTitle.value
+  const content = draftContent.value
   try {
-    // 草稿生成在后台执行。页面打开后它可能以新模型结果更新 revision；确认前
-    // 先同步，避免把旧 revision 送到 CAS 保存接口而得到没有上下文的 409。
-    const displayedDraft = draft.value
-    const latestDraft = await api.getMaterialDraftCard(detail.value.materialId)
-    if (latestDraft.confirmed) {
-      draft.value = latestDraft
-      draftTitle.value = latestDraft.title
-      draftContent.value = latestDraft.content
-      draftError.value = '该草稿已在其他会话确认，不能继续修改。'
-      return false
-    }
-    if (latestDraft.revision !== displayedDraft.revision) {
-      const locallyEdited = draftTitle.value !== displayedDraft.title || draftContent.value !== displayedDraft.content
-      draft.value = latestDraft
-      if (locallyEdited) {
-        // 保留输入框里的用户内容；下一次明确保存/确认会基于新 revision 写入。
-        draftError.value = '草稿已在后台更新，当前编辑已保留。请确认内容后再次点击确认。'
-        return false
-      }
-      draftTitle.value = latestDraft.title
-      draftContent.value = latestDraft.content
-    }
-    const savedDraft = await api.saveMaterialDraftCard(detail.value.materialId, {
-      expectedRevision: latestDraft.revision ?? '', title: draftTitle.value, content: draftContent.value,
+    // 单次 CAS 写入即可：后端会让显式用户保存覆盖尚未编辑的 AI 增强版本，
+    // 但仍拒绝覆盖其它用户会话的修改。避免保存前额外跨盒 GET 带来的整轮延迟。
+    const savedDraft = await api.saveMaterialDraftCard(materialId, {
+      expectedRevision, title, content,
     })
+    if (detail.value?.materialId !== materialId) return false
     draft.value = savedDraft
     draftTitle.value = savedDraft.title
     draftContent.value = savedDraft.content
@@ -519,7 +621,9 @@ async function saveDraft(): Promise<boolean> {
     toast({ type: 'success', message: '草稿已保存' })
     return true
   } catch (e) {
-    draftError.value = e instanceof Error ? e.message : '保存草稿失败'
+    if (detail.value?.materialId === materialId) {
+      draftError.value = e instanceof Error ? e.message : '保存草稿失败'
+    }
     return false
   } finally {
     savingDraft.value = false
@@ -529,17 +633,23 @@ async function saveDraft(): Promise<boolean> {
 async function confirmDraft() {
   if (!detail.value || !draft.value || confirmingDraft.value || draft.value.confirmed) return
   if (!(await saveDraft())) return
+  if (!detail.value || !draft.value) return
+  const materialId = detail.value.materialId
+  const revision = draft.value.revision ?? ''
   confirmingDraft.value = true
   draftError.value = ''
   try {
     const result = await api.confirmMaterialDraftCard(
-      detail.value.materialId, draft.value.revision ?? '', crypto.randomUUID(),
+      materialId, revision, crypto.randomUUID(),
     )
+    if (detail.value?.materialId !== materialId || draft.value?.revision !== revision) return
     draft.value = { ...draft.value, status: 'confirmed', confirmed: true, knowledgeId: result.knowledgeId, indexState: 'indexing', indexErrorCode: null }
-    pollCardIndexUntilTerminal(detail.value.materialId)
+    pollCardIndexUntilTerminal(materialId)
     toast({ type: 'success', message: '卡片已确认，正在建立索引' })
   } catch (e) {
-    draftError.value = e instanceof Error ? e.message : '确认卡片失败'
+    if (detail.value?.materialId === materialId) {
+      draftError.value = e instanceof Error ? e.message : '确认卡片失败'
+    }
   } finally {
     confirmingDraft.value = false
   }
@@ -643,16 +753,31 @@ async function loadRelated(materialId: string) {
   }
 }
 
-async function loadDetail(materialId: string) {
-  loading.value = true
-  error.value = ''
+async function loadDetail(materialId: string, options: { background?: boolean } = {}) {
+  const background = options.background === true
+  // A delayed analysis read for the previous route must not keep the reused
+  // component's loading flag true and prevent the new material from loading.
+  analysisLoadGate.invalidate()
+  analysisLoading.value = false
+  analysisError.value = ''
+  analysisWaitExpired.value = false
+  if (detail.value?.materialId !== materialId) analysis.value = null
+  if (!background) {
+    loading.value = true
+    error.value = ''
+  }
+  draftError.value = ''
   currentTime.value = 0
   stopVersionPolling()
+  stopCardIndexPolling()
   versionImpact.value = null
   versionActions.value = {}
   // 路由切换：先取消旧资料的摘要轮询，避免旧结果覆盖新页面
   summaryPoller.stop()
+  analysisPoller.stop()
+  generatedDraftPoller.stop()
   summaryWaitExpired.value = false
+  draftWaitExpired.value = false
   const requestSession = detailLoadGate.next()
   try {
     const result = await api.getMaterialDetail(materialId)
@@ -665,6 +790,9 @@ async function loadDetail(materialId: string) {
     draftTitle.value = result.draftCard?.title ?? ''
     draftContent.value = result.draftCard?.content ?? ''
     takeDraftSnapshot()
+    if (result.draftCard?.status === 'pending' && !privacyBlocking.value) {
+      generatedDraftPoller.start(materialId)
+    }
     loadVersions(materialId)
     if (result.supersedesMaterialId && result.status === 'available') loadVersionImpact(materialId)
     if (result.status === 'uploaded' || result.status === 'queued' || result.status === 'processing') {
@@ -675,19 +803,21 @@ async function loadDetail(materialId: string) {
     }
     loadRelated(detail.value.materialId)
     // 摘要仍在后台生成时自动轮询，直到 ok/failed/unavailable/skipped
-    if (detail.value.summary.status === 'pending') {
+    if (!desktopManagement && detail.value.summary?.status === 'pending' && !privacyBlocking.value) {
       summaryPoller.start(detail.value.materialId)
     }
     // P14-04：读取聚合分析（标签候选 / 实体），pending 时内部启动轮询
-    loadAnalysis()
+    if (!desktopManagement && !privacyBlocking.value) loadAnalysis()
   } catch (e) {
     if (detailLoadGate.isCurrent(requestSession) && route.params.materialId === materialId) {
-      error.value = e instanceof Error ? e.message : '资料详情加载失败'
+      const message = e instanceof Error ? e.message : '资料详情加载失败'
+      if (background) draftError.value = message
+      else error.value = message
     }
   } finally {
     // loading 只允许最新请求归位，避免旧请求误关新请求的加载态
     if (detailLoadGate.isCurrent(requestSession) && route.params.materialId === materialId) {
-      loading.value = false
+      if (!background) loading.value = false
     }
   }
 }
@@ -710,38 +840,78 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', onDraftBeforeUnload)
   summaryPoller.stop()
   analysisPoller.stop()
+  generatedDraftPoller.stop()
   stopVersionPolling()
   stopCardIndexPolling()
   detailLoadGate.invalidate()
   analysisLoadGate.invalidate()
 })
+
+watch(draftDirty, (dirty) => {
+  if (dirty) generatedDraftPoller.stop()
+})
+
+const mainPreviewUrl = ref('')
+const mainPreviewError = ref('')
+let previewController: AbortController | null = null
+let previewRevision = 0
+function clearMainPreview() {
+  previewRevision++; previewController?.abort(); previewController = null
+  audioEl.value?.pause()
+  if (mainPreviewUrl.value) releaseProductPreview(mainPreviewUrl.value)
+  mainPreviewUrl.value = ''
+}
+async function openMainPreview() {
+  clearMainPreview()
+  mainPreviewError.value = ''
+  const value = detail.value
+  if (!value || (value.fileType !== 'audio' && !value.fileName.toLowerCase().endsWith('.pdf'))) return
+  const ticket = previewRevision
+  previewController = new AbortController()
+  try {
+    const url = await productPreview(value.previewUrl, previewController.signal)
+    if (ticket !== previewRevision) releaseProductPreview(url)
+    else mainPreviewUrl.value = url
+  } catch (e) { if (ticket === previewRevision) mainPreviewError.value = e instanceof Error ? e.message : '原件预览不可用' }
+}
+watch(() => detail.value?.previewUrl, () => {
+  clearMainPreview(); mainPreviewError.value = ''
+  if (detail.value?.fileType === 'audio') void openMainPreview()
+})
+onBeforeUnmount(clearMainPreview)
+async function saveOriginal() {
+  const value = detail.value
+  if (!value) return
+  try { await saveProductResource(value.previewUrl, value.fileName) }
+  catch (e) { toast({ type: 'error', message: e instanceof Error ? e.message : '原件保存失败' }) }
+}
+
 </script>
 
 <template>
-  <div class="page">
+  <div class="page material-detail-page">
     <div class="page-head">
       <button class="back-btn" type="button" @click="router.push('/materials')">返回原材料</button>
       <h1>{{ detail?.fileName || route.query.name || '原材料详情' }}</h1>
-      <p v-if="detail">{{ detail.folderPath || '未分类' }} · {{ detail.fileType === 'image' ? '图片' : detail.fileType === 'audio' ? '音频' : '文档' }}</p>
+      <p v-if="detail">{{ detail.folderPath || '未分类' }} · 原材料保持只读，由 Data Engine 负责解析、切分、向量化与索引。</p>
     </div>
     <div v-if="loading" class="loading-state">正在加载资料详情…</div>
     <div v-else-if="error" class="error-state">{{ error }}</div>
     <template v-else-if="detail">
+      <section class="material-overview" aria-label="材料概览">
+        <div><span>状态</span><StatusBadge :meta="materialStatusMeta(detail.status)" /></div>
+        <div><span>类型</span><strong>{{ formatFileType(detail.fileType) }}</strong></div>
+        <div><span>版本</span><strong>V{{ detail.versionNumber }}</strong></div>
+        <div><span>解析字符</span><strong>{{ parsedCharacters.toLocaleString() }}</strong></div>
+        <div><span>文件大小</span><strong>{{ formatFileSize(detail.metadata.fileSize) }}</strong></div>
+        <div><span>导入时间</span><strong>{{ formatDate(detail.createdAt) }}</strong></div>
+        <div><span>索引可用</span><strong>{{ indexAvailable ? '是' : '否' }}</strong></div>
+        <div v-if="sensitiveScanMeta"><span>敏感识别</span><StatusBadge :meta="sensitiveScanMeta" /></div>
+      </section>
+      <p v-if="detail.errorMessage" class="error-text" role="alert">{{ detail.errorMessage }}</p>
       <div class="detail-actions">
-        <template v-if="detail.status === 'available' && draft && !draft.confirmed">
-          <button class="secondary-btn" type="button" :disabled="derivedGenerationPending || savingDraft || confirmingDraft" @click="reparseMaterial">{{ derivedGenerationPending ? '正在生成…' : '重新解析' }}</button>
-          <button class="primary-btn" type="button" :disabled="savingDraft || confirmingDraft" @click="confirmDraft">{{ confirmingDraft ? '确认中…' : '确认' }}</button>
-          <button class="secondary-btn" type="button" :disabled="savingDraft || confirmingDraft" @click="rethinkDraft">再想想</button>
-          <button class="secondary-btn sm" type="button" :disabled="savingDraft || confirmingDraft" @click="saveDraft">{{ savingDraft ? '保存中…' : '保存草稿' }}</button>
-        </template>
-        <LifecycleDangerPanel
-          compact
-          target-type="material"
-          :target-id="detail.materialId"
-          :target-title="detail.fileName"
-          :recycled="Boolean(detail.recycled)"
-          @completed="onLifecycleCompleted"
-        />
+        <button class="secondary-btn sm" type="button" :disabled="draftDirty || savingDraft || confirmingDraft" @click="loadDetail(detail.materialId)">刷新处理状态</button>
+        <span v-if="draftDirty" class="detail-text">请先保存知识卡片草稿，再刷新资料。</span>
       </div>
       <ConfirmDialog
         :open="showLeaveConfirm"
@@ -752,34 +922,38 @@ onBeforeUnmount(() => {
         @confirm="confirmLeave"
         @cancel="cancelLeave"
       />
-      <section v-if="detail.status === 'available' && draft" class="detail-panel draft-card-panel">
-        <div class="panel-title">知识卡片 <span class="badge soon">{{ draft?.cardState === 'confirmed' ? '已确认' : '草稿' }}</span></div>
-        <template v-if="draft?.confirmed">
-          <p class="detail-text">该卡片已确认。{{ indexStatusText }}</p>
-          <button v-if="draft.indexState === 'index_failed' || draft.indexState === 'none'" class="secondary-btn sm" type="button" :disabled="retryingIndex" @click="retryCardIndex">{{ retryingIndex ? '重试中…' : '重试索引' }}</button>
-          <button v-if="draft.knowledgeId" class="secondary-btn sm" type="button" @click="router.push(`/knowledge/${draft.knowledgeId}`)">查看知识卡片</button>
-        </template>
-        <template v-else>
-          <label class="draft-field">标题<input v-model="draftTitle" type="text" maxlength="200" :disabled="savingDraft || confirmingDraft"></label>
-          <label class="draft-field">正文<textarea v-model="draftContent" rows="12" :disabled="savingDraft || confirmingDraft"></textarea></label>
-          <p class="detail-text">当前材料的标签、摘要、正文、实体和关系均保留在本详情页中，确认时以此草稿正文创建知识卡片。</p>
-        </template>
-        <p v-if="draftError" class="error-text">{{ draftError }}</p>
+      <section v-if="desktopManagement" class="material-boundary-note" role="note">
+        <p class="detail-text">可在此查看原始资料、管理知识卡片草稿和材料版本。当前盒端不再提供旧版智能分析、重新解析和隐私复核操作；相关处理请在 Data Engine 管理端完成。材料用于对话时，仍需按检索结果确认本轮材料及脱敏方式。</p>
       </section>
-      <div class="detail-grid">
+      <RedactionPanel
+        v-if="!desktopManagement && (detail.privacyRequired || (detail.privacyStatus && detail.privacyStatus.state !== 'not_required'))"
+        :material-id="detail.materialId"
+        @updated="loadDetail(detail.materialId, { background: true })"
+      />
+      <div class="detail-grid material-content">
         <section class="detail-panel preview-panel">
           <div class="panel-title">原始资料 <span class="badge soon">只读</span></div>
-          <img v-if="detail.fileType === 'image'" :src="detail.previewUrl" :alt="detail.fileName" class="material-preview image-preview">
-          <iframe v-if="detail.fileName.toLowerCase().endsWith('.pdf')" :src="detail.previewUrl" :title="detail.fileName" class="material-preview document-preview"></iframe>
-         <!-- <div v-else-if="detail.fileType === 'document'" class="document-open-state">
-            <p>该文档格式由系统安全托管，可在新窗口中只读打开。</p>
-            <a class="secondary-btn" :href="detail.previewUrl" target="_blank" rel="noopener">打开文档</a>
-          </div>-->
+          <ProductImage v-if="detail.fileType === 'image'" :src="detail.previewUrl" :alt="detail.fileName" class="material-preview image-preview" />
+          <div v-if="detail.fileName.toLowerCase().endsWith('.pdf')" class="document-open-state">
+            <p v-if="mainPreviewError" role="status">{{ mainPreviewError }}</p>
+            <button v-if="!mainPreviewUrl" class="secondary-btn" type="button" @click="openMainPreview">查看 PDF 原件</button>
+            <template v-else>
+              <button class="secondary-btn sm" type="button" @click="clearMainPreview">关闭 PDF 预览</button>
+              <PdfPreview :src="mainPreviewUrl" :title="detail.fileName" />
+            </template>
+          </div>
+          <div v-else-if="detail.fileType === 'document'" class="document-open-state">
+            <p>此格式可下载原文件查看；下方提供解析后的只读内容。</p>
+            <button class="secondary-btn" type="button" @click="saveOriginal">下载原文件</button>
+          </div>
           <div v-else-if="detail.fileType === 'audio'" class="audio-preview">
-            <audio ref="audioEl" :src="detail.previewUrl" controls preload="metadata" class="audio-player" @timeupdate="onTimeUpdate"></audio>
+            <audio ref="audioEl" :src="mainPreviewUrl || undefined" controls preload="metadata" class="audio-player" @timeupdate="onTimeUpdate"></audio>
             <p class="audio-hint">播放时点击下方转写片段可跳转到对应时刻。</p>
           </div>
-          <div class="panel-title text-title">{{ detail.textLabel }}</div>
+        </section>
+        <section class="detail-panel parsed-content-panel">
+          <div class="panel-title">{{ detail.textLabel || '解析正文' }}</div>
+          <p class="parse-state" role="status">{{ parsingLabel }}</p>
           <template v-if="detail.fileType === 'audio'">
             <div v-if="detail.transcript.length" class="transcript-list">
               <button
@@ -800,6 +974,8 @@ onBeforeUnmount(() => {
             </p>
           </template>
           <template v-else-if="detail.fileType === 'document' && contentParts.length">
+            <pre v-if="detail.text" class="detail-text preformatted parsed-text">{{ detail.text }}</pre>
+            <h3 class="section-subtitle">结构化内容（{{ contentParts.length }}）</h3>
             <div v-for="part in contentParts" :key="part.partId" class="content-part">
               <pre v-if="part.partType !== 'table'" class="detail-text preformatted part-text">{{ part.text }}</pre>
               <div v-else class="content-part-table">
@@ -817,9 +993,12 @@ onBeforeUnmount(() => {
           <p v-else-if="detail.status === 'processing' || detail.status === 'uploaded' || detail.status === 'queued'" class="detail-text">
             正在解析文档正文。扫描版 PDF 需要逐页 OCR，处理完成后将显示解析文本。
           </p>
+          <p v-else-if="privacyReviewRequired" class="detail-text">原文件已解析；安全正文等待盒端隐私复核，当前不会展示原始解析内容。</p>
+          <p v-else-if="privacyProcessing" class="detail-text">原文件已解析；正在生成可安全展示的正文。</p>
+          <p v-else-if="privacyFailed" class="detail-text error-text">安全正文处理失败，请检查盒端任务。</p>
           <pre v-else class="detail-text preformatted">{{ detail.text || '暂无解析结果。' }}</pre>
         </section>
-        <section class="detail-panel">
+        <section v-if="!desktopManagement" class="detail-panel">
           <div class="panel-title">处理信息</div>
           <dl class="metadata-list">
             <dt>状态</dt><dd>{{ materialStatusLabel(detail.status) }}</dd>
@@ -827,12 +1006,15 @@ onBeforeUnmount(() => {
             <dt>导入时间</dt><dd>{{ formatDate(detail.createdAt) }}</dd>
             <dt>修改时间</dt><dd>{{ formatDate(detail.metadata.modifiedAt) }}</dd>
           </dl>
+          <template v-if="!desktopManagement">
           <div class="panel-title text-title">摘要</div>
           <template v-if="detail.summary.status === 'ok'">
             <p class="detail-text">{{ detail.summary.text }}</p>
           </template>
           <template v-else-if="detail.summary.status === 'pending'">
-            <p class="detail-text">{{ summaryWaitExpired ? '仍在后台生成摘要，可刷新页面查看' : '摘要生成中…' }}</p>
+            <p v-if="privacyReviewRequired" class="detail-text">安全正文复核完成后再生成摘要。</p>
+            <p v-else-if="privacyProcessing" class="detail-text">安全正文生成后再生成摘要。</p>
+            <p v-else class="detail-text">{{ summaryWaitExpired ? '仍在后台生成摘要，可刷新页面查看' : '摘要生成中…' }}</p>
           </template>
           <template v-else-if="detail.summary.status === 'skipped'">
             <p class="detail-text">暂无摘要（该资料无可用文本）</p>
@@ -841,13 +1023,31 @@ onBeforeUnmount(() => {
             <p class="detail-text">摘要暂不可用，请使用上方“重新解析”重新生成。</p>
           </template>
           <p v-if="detail.summary.status !== 'ok' && detail.excerpt" class="detail-text excerpt-preview">正文预览：{{ detail.excerpt }}</p>
+          </template>
           <div class="panel-title text-title">主题</div>
           <p class="detail-text">{{ detail.topic || '暂无主题' }}</p>
           <p v-if="detail.errorMessage" class="error-text">{{ detail.errorMessage }}</p>
         </section>
       </div>
+      <section v-if="detail.fileType === 'document' && embeddedImages.length" class="detail-panel image-panel">
+        <div class="panel-title">内嵌图片（{{ embeddedImages.length }}）</div>
+        <div class="embedded-image-grid">
+          <div v-for="img in embeddedImages" :key="img.partId" class="embedded-image-card">
+            <ProductImage :src="img.previewUrl" :alt="`内嵌图片：${imageLocationLabel(img)}`" class="embedded-image-thumb" />
+            <div class="embedded-image-meta">
+              <span class="image-location">{{ imageLocationLabel(img) }}</span>
+              <span v-if="img.width" class="image-size">{{ img.width }}×{{ img.height }}</span>
+            </div>
+            <p class="image-ocr" :class="{ 'is-muted': img.ocrStatus !== 'ok' }">
+              <template v-if="img.ocrStatus === 'ok'">{{ img.ocrText }}</template>
+              <template v-else-if="img.ocrStatus === 'empty'">未识别到文字</template>
+              <template v-else>OCR 暂不可用</template>
+            </p>
+          </div>
+        </div>
+      </section>
       <section class="detail-panel tag-panel">
-        <div class="panel-title">标签</div>
+        <div class="panel-title">人工标签</div>
         <div class="tag-list">
           <span v-for="tag in detail.tags" :key="tag" class="tag-chip">
             {{ tag }}
@@ -859,7 +1059,7 @@ onBeforeUnmount(() => {
           <input v-model="newTag" class="tag-input" type="text" placeholder="输入标签后回车添加" maxlength="64" @keyup.enter="addTag">
           <button class="secondary-btn sm" type="button" :disabled="!newTag.trim()" @click="addTag">添加</button>
         </div>
-        <div class="tag-suggest">
+        <div v-if="!desktopManagement" class="tag-suggest">
           <div class="panel-title text-title">候选标签（AI 推荐，确认后写入）</div>
           <template v-if="analysis">
             <template v-if="analysis.tagSuggestions.status === 'pending'">
@@ -890,7 +1090,7 @@ onBeforeUnmount(() => {
         </div>
         <span v-if="tagError" class="error-text">{{ tagError }}</span>
       </section>
-      <section class="detail-panel entity-panel">
+      <section v-if="!desktopManagement" class="detail-panel entity-panel">
         <div class="panel-title">实体识别</div>
         <template v-if="analysis">
           <template v-if="analysis.entities.status === 'pending'">
@@ -935,7 +1135,7 @@ onBeforeUnmount(() => {
         </template>
         <p v-else-if="analysisLoading" class="detail-text">正在加载实体…</p>
       </section>
-      <section class="detail-panel relation-panel">
+      <section v-if="!desktopManagement" class="detail-panel relation-panel">
         <div class="panel-title">关系三元组</div>
         <template v-if="analysis">
           <template v-if="analysis.relations.status === 'pending'">
@@ -965,25 +1165,6 @@ onBeforeUnmount(() => {
         </template>
         <p v-else-if="analysisLoading" class="detail-text">正在加载关系…</p>
       </section>
-      <section v-if="detail.fileType === 'document' && embeddedImages.length" class="detail-panel image-panel">
-        <div class="panel-title">内嵌图片（{{ embeddedImages.length }}）</div>
-        <div class="embedded-image-grid">
-          <div v-for="img in embeddedImages" :key="img.partId" class="embedded-image-card">
-            <a :href="img.previewUrl" target="_blank" rel="noopener" class="embedded-image-link">
-              <img :src="img.previewUrl" :alt="`内嵌图片：${imageLocationLabel(img)}`" class="embedded-image-thumb">
-            </a>
-            <div class="embedded-image-meta">
-              <span class="image-location">{{ imageLocationLabel(img) }}</span>
-              <span v-if="img.width" class="image-size">{{ img.width }}×{{ img.height }}</span>
-            </div>
-            <p class="image-ocr" :class="{ 'is-muted': img.ocrStatus !== 'ok' }">
-              <template v-if="img.ocrStatus === 'ok'">{{ img.ocrText }}</template>
-              <template v-else-if="img.ocrStatus === 'empty'">未识别到文字</template>
-              <template v-else>OCR 暂不可用</template>
-            </p>
-          </div>
-        </div>
-      </section>
       <section class="detail-panel related-panel">
         <div class="panel-title">相关内容</div>
         <div v-if="relatedLoading" class="loading-state">正在查找相关内容…</div>
@@ -1003,8 +1184,49 @@ onBeforeUnmount(() => {
           <div v-if="relatedNote" class="related-note">{{ relatedNote }}</div>
         </div>
       </section>
-      <section class="detail-panel">
-        <div class="panel-title">版本记录</div>
+      <section v-if="detail.status === 'available' && draft" class="detail-panel draft-card-panel" aria-label="知识卡片管理">
+        <div class="panel-title">知识卡片 <span class="badge soon">{{ draftBadge }}</span></div>
+        <template v-if="draft?.confirmed">
+          <p class="detail-text">该卡片已确认。{{ indexStatusText }}</p>
+          <button v-if="draft.indexState === 'index_failed' || draft.indexState === 'none'" class="secondary-btn sm" type="button" :disabled="retryingIndex" @click="retryCardIndex">{{ retryingIndex ? '重试中…' : '重试索引' }}</button>
+          <button v-if="draft.knowledgeId" class="secondary-btn sm" type="button" @click="router.push(`/knowledge/${draft.knowledgeId}`)">查看知识卡片</button>
+        </template>
+        <template v-else>
+          <div v-if="privacyReviewRequired" class="processing-notice" role="status">
+            <strong>安全正文待复核</strong>
+            <p>PDF 已解析完成，盒子正在等待受控隐私复核。复核完成后再刷新状态，安全正文和知识卡片会继续生成。</p>
+            <button class="secondary-btn sm" type="button" @click="loadDetail(detail.materialId)">刷新处理状态</button>
+          </div>
+          <div v-else-if="privacyProcessing" class="processing-notice" role="status">
+            <strong>正在生成安全正文</strong>
+            <p>PDF 已解析完成，隐私处理完成后会继续生成摘要和知识卡片。</p>
+            <button class="secondary-btn sm" type="button" @click="loadDetail(detail.materialId)">刷新处理状态</button>
+          </div>
+          <div v-else-if="privacyFailed" class="processing-notice error-text" role="alert">
+            安全正文处理失败，请检查盒端隐私处理任务后重试。
+          </div>
+          <template v-else>
+            <label class="draft-field">标题<input v-model="draftTitle" type="text" maxlength="200" :disabled="draftEditingBlocked || savingDraft || confirmingDraft"></label>
+            <label class="draft-field">正文<textarea v-model="draftContent" rows="12" :placeholder="draftGenerationPending ? '正在生成知识卡片正文…' : ''" :disabled="draftEditingBlocked || savingDraft || confirmingDraft"></textarea></label>
+            <p v-if="draftGenerationPending" class="detail-text" role="status">AI 正在补充草稿；当前内容已经可以编辑、保存或确认，保存后不会被后台结果覆盖。</p>
+            <p class="detail-text">{{ desktopManagement ? '确认时以当前草稿正文创建知识卡片；不会自动授权材料用于在线对话。' : '当前材料的标签、摘要、正文、实体和关系均保留在本详情页中，确认时以此草稿正文创建知识卡片。' }}</p>
+          </template>
+        </template>
+        <div class="detail-actions draft-actions">
+        <template v-if="detail.status === 'available' && draft && !draft.confirmed">
+          <button v-if="!desktopManagement" class="secondary-btn" type="button" :disabled="draftEditingBlocked || draftRetryBlockedByEdits || analysisLoading || derivedGenerationPending || draftGenerationPending || savingDraft || confirmingDraft" @click="reparseMaterial">{{ privacyReviewRequired ? '等待隐私复核' : privacyProcessing ? '正在安全处理…' : privacyFailed ? '隐私处理失败' : draftRetryBlockedByEdits ? '请先保存草稿' : analysisLoading ? '正在读取状态…' : derivedGenerationPending || draftGenerationPending ? '正在生成…' : generationWaitExpired ? '重试生成' : '重新解析' }}</button>
+          <button class="primary-btn" type="button" :disabled="draftEditingBlocked || savingDraft || confirmingDraft" @click="confirmDraft">{{ confirmingDraft ? '确认中…' : '确认' }}</button>
+          <button class="secondary-btn" type="button" :disabled="draftEditingBlocked || savingDraft || confirmingDraft" @click="rethinkDraft">再想想</button>
+          <button class="secondary-btn sm" type="button" :disabled="draftEditingBlocked || savingDraft || confirmingDraft" @click="saveDraft">{{ savingDraft ? '保存中…' : '保存草稿' }}</button>
+        </template>
+        </div>
+        <p v-if="draftError" class="error-text">{{ draftError }}</p>
+      </section>
+      <section class="detail-panel version-panel">
+        <div class="section-heading"><div class="panel-title">版本记录</div>
+          <button class="secondary-btn sm" type="button" :disabled="Boolean(detail.recycled) || uploadingVersion" @click="showVersionUpload = true">上传新版本</button>
+        </div>
+        <p class="detail-text">新版本处理完成前保留旧版本；知识卡片来源仍由你确认如何更新。</p>
         <p class="detail-text">当前为 V{{ detail.versionNumber }}{{ detail.versionNote ? ` · ${detail.versionNote}` : '' }}</p>
         <div v-if="versions.length" class="related-list">
           <button v-for="version in versions" :key="version.materialId" class="related-item" type="button" @click="router.push(`/materials/${version.materialId}`)">
@@ -1038,6 +1260,18 @@ onBeforeUnmount(() => {
           <p v-if="versionImpact.archivedKnowledgeCardCount" class="detail-text">另有 {{ versionImpact.archivedKnowledgeCardCount }} 张已归档卡片保持原引用。</p>
         </template>
       </section>
+      <section class="detail-panel lifecycle-panel">
+        <div class="panel-title">生命周期</div>
+        <p class="detail-text">管理回收与恢复；永久清除前会再次确认影响范围。</p>
+        <LifecycleDangerPanel
+          compact
+          target-type="material"
+          :target-id="detail.materialId"
+          :target-title="detail.fileName"
+          :recycled="Boolean(detail.recycled)"
+          @completed="onLifecycleCompleted"
+        />
+      </section>
     </template>
     <div v-else class="empty-state">
       <div class="empty-icon"><FileText :size="30" aria-hidden="true" /></div>
@@ -1057,3 +1291,48 @@ onBeforeUnmount(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.material-detail-page { min-width: 0; max-width: 1320px; margin-inline: auto; }
+.material-detail-page .page-head h1 { overflow-wrap: anywhere; font-size: clamp(22px, 2.3vw, 30px); }
+.material-detail-page .page-head p { max-width: 900px; font-size: 14px; line-height: 1.7; }
+.material-overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.material-overview > div { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.material-overview > div > span:first-child { font-size: 12px; color: var(--muted); }
+.material-overview strong { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.material-detail-page .detail-panel { margin: 0 0 16px; padding: 20px; }
+.material-detail-page .panel-title { font-size: 16px; margin-bottom: 12px; }
+.material-boundary-note { margin-bottom: 16px; padding: 0 2px; }
+.material-boundary-note .detail-text { font-size: 12px; color: var(--muted); line-height: 1.7; }
+.material-detail-page .detail-actions { flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.material-detail-page .material-content { display: contents; }
+.material-detail-page .detail-text { font-size: 14px; line-height: 1.75; overflow-wrap: anywhere; }
+.material-detail-page .preformatted { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 560px; overflow: auto; }
+.material-detail-page .preview-panel { min-height: 0; }
+.material-detail-page .document-open-state { min-height: 100px; }
+.material-detail-page .image-preview { max-height: 560px; object-fit: contain; }
+.section-subtitle { font-size: 14px; margin: 20px 0 10px; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.material-detail-page .draft-card-panel { background: var(--surface-soft, var(--surface)); }
+.material-detail-page .draft-field input, .material-detail-page .draft-field textarea { max-width: 100%; font-size: 14px; line-height: 1.7; }
+.material-detail-page .draft-actions { margin: 14px 0 0; }
+.material-detail-page .related-item { min-width: 0; flex-wrap: wrap; gap: 12px; }
+.material-detail-page .related-main { flex: 1 1 220px; min-width: 0; overflow-wrap: anywhere; }
+.material-detail-page .related-main strong, .material-detail-page .related-snippet { white-space: normal; overflow-wrap: anywhere; }
+.material-detail-page .related-meta { flex-shrink: 0; flex-wrap: wrap; }
+.material-detail-page .content-part-table { max-width: 100%; overflow-x: auto; }
+.material-detail-page .content-table { table-layout: fixed; width: 100%; }
+.material-detail-page .content-table td { overflow-wrap: anywhere; white-space: normal; }
+.material-detail-page .tag-input-row { flex-wrap: wrap; }
+.material-detail-page .tag-input { min-width: 0; max-width: 100%; }
+.material-detail-page .embedded-image-grid { grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); }
+@media (max-width: 760px) {
+  .material-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .material-detail-page .detail-panel { padding: 16px; }
+}
+@media (max-width: 440px) {
+  .material-overview { gap: 8px; }
+  .material-overview > div { padding: 12px; }
+  .material-detail-page .related-meta { width: 100%; align-items: flex-start; }
+}
+</style>

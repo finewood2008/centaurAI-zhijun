@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { saveProductText } from '@/services/productFiles'
 // 资料与边界：导入资料、模型与隐私、回收站、知识档案、搜索的枢纽；附「知君会带走什么」的投影预览。
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -20,23 +21,12 @@ const exporting = ref(false)
 const exportSections = ref<Section[]>([])
 const exportOpen = ref(false)
 
-function downloadJson(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 
 async function doExport(sections?: Section[]) {
   exporting.value = true
   try {
     const data = await exportOntology({ sections })
-    downloadJson(data, exportFileName())
+    await saveProductText(exportFileName(), JSON.stringify(data, null, 2), 'application/json')
     toast({ type: 'success', message: `已导出 ${data.claims.length} 条已确认理解、${data.entities.length} 个实体` })
   } catch (err) {
     toast({ type: 'error', message: err instanceof Error ? err.message : '导出失败' })
@@ -141,7 +131,7 @@ async function toggleProjection() {
 
     <section class="zj-hub__boundary">
       <h2><ShieldCheck :size="18" aria-hidden="true" />边界</h2>
-      <p>原件不出设备。用外部模型时，只发送完成这一轮所必需的问题和片段，每一轮的出处条里都看得到送出了什么。标为敏感或受限的理解永远不外发。</p>
+      <p>默认不发送原件。只有你先确认 Data Agent 的敏感交付方式、再明确允许本轮外部模型用途后，才会发送完成这一轮所必需的问题和片段；每一轮的出处条里都看得到送出了什么。标为敏感或受限的个人理解仍不会外发。</p>
       <p v-if="packError" class="zj-hub__pack-meta">{{ packError }}</p>
       <p v-else-if="pack" class="zj-hub__pack-meta">
         其他 Agent 能拿到的只有你确认过并打开「可带走」的理解，目前 <strong>{{ pack.exportable }}</strong> 条。

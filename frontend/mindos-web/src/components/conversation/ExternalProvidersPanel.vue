@@ -2,13 +2,15 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { api, ApiError, type ChatProviderConfig, type ExternalProviderProfile } from '@/services/api'
 
-const props = defineProps<{ chatRevision: number | null; disabled?: boolean }>()
+const props = defineProps<{ chatRevision: number | null; externalEnabled?: boolean; disabled?: boolean }>()
 const emit = defineEmits<{ activated: [config: ChatProviderConfig]; busy: [value: boolean] }>()
 const providers = ref<ExternalProviderProfile[]>([])
+const platformStatus = ref<'available' | 'unavailable' | 'not_configured'>('not_configured')
 const selectedId = ref('')
 const activeId = ref<string | null>(null)
 const serverChatRevision = ref<number | null>(null)
 const selected = computed(() => providers.value.find(p => p.id === selectedId.value))
+const managed = computed(() => selected.value?.source === 'admin-managed')
 const active = computed(() => providers.value.find(p => p.id === activeId.value))
 const loading = ref(false)
 const busy = ref(false)
@@ -75,7 +77,7 @@ function discardAndSelect() {
   pendingSelection.value = null
   choose(id)
 }
-function edit() { resetDraft(); editing.value = true; outdatedDraft.value = false; error.value = ''; notice.value = '' }
+function edit() { if (managed.value) return; resetDraft(); editing.value = true; outdatedDraft.value = false; error.value = ''; notice.value = '' }
 function cancelEdit() { resetDraft(); editing.value = false; outdatedDraft.value = false; error.value = ''; pendingSelection.value = null }
 async function refresh() {
   const ticket = ++listRevision
@@ -90,9 +92,10 @@ async function refresh() {
     const prior = selected.value
     const hadEdits = dirty.value
     providers.value = result.providers
+    platformStatus.value = result.platformStatus || 'not_configured'
     activeId.value = result.activeProviderId
     serverChatRevision.value = Math.max(serverChatRevision.value ?? 0, result.chatRevision)
-    if (prior && prior.revision !== selected.value?.revision) {
+    if (prior && (prior.revision !== selected.value?.revision || prior.providerRevision !== selected.value?.providerRevision)) {
       cache.delete(prior.id)
       modelRevision += 1; modelController?.abort(); modelsLoading.value = false
       models.value = []; manual.value = true
@@ -124,7 +127,7 @@ async function fetchModels() {
   modelsLoading.value = true
   modelError.value = ''
   try {
-    const result = await api.getExternalProviderModels(profile.id, profile.revision, signal)
+    const result = await api.getExternalProviderModels(profile.id, profile.revision, signal, profile.providerRevision)
     if (!alive || ticket !== modelRevision || selection !== selectionRevision || selected.value?.revision !== result.revision || result.providerId !== profile.id) return
     models.value = [...new Set(result.models)]
     cache.set(profile.id, { revision: result.revision, models: models.value })
@@ -141,6 +144,7 @@ async function save() {
   if (busy.value || props.disabled) return
   if (outdatedDraft.value) { error.value = '请先核对新版供应商设置，再决定保留哪份修改。'; return }
   const profile = selected.value
+  if (profile?.source === 'admin-managed') { error.value = '平台服务由管理员维护，无需填写密钥。'; return }
   if (!draft.name.trim() || !draft.baseUrl.trim()) { error.value = '请填写供应商名称和服务地址。'; return }
   if ((!profile?.apiKeyConfigured || endpointChanged.value) && !draft.apiKey.trim()) { error.value = endpointChanged.value ? '服务地址已变更，请重新输入对应的 Token。' : '请填写 API Token。'; return }
   const selection = selectionRevision
@@ -165,32 +169,42 @@ async function save() {
     if (alive && selection === selectionRevision) error.value = e instanceof ApiError && e.status === 409 ? '供应商已在别处修改，未覆盖你的输入。请先重新读取，再核对保存。' : e instanceof Error ? e.message : '保存失败，输入仍保留'
   } finally { if (alive) busy.value = false }
 }
-async function activate() {
+async function activate(): Promise<ChatProviderConfig | null> {
   const profile = selected.value
-  if (!profile || busy.value || props.disabled) return
-  if (editing.value || !model.value.trim()) { error.value = editing.value ? '请先保存供应商修改，再设置默认模型。' : '请先选择或填写模型。'; return }
+  if (busy.value) { error.value = '在线供应商正在处理中，请稍候后重试。'; return null }
+  if (props.disabled) { error.value = '当前设置正在处理中，请稍候后重试。'; return null }
+  if (!profile) { error.value = '还没有已保存的在线供应商。请关闭此面板，在下方添加供应商、Token 和模型。'; return null }
+  if (editing.value || !model.value.trim()) { error.value = editing.value ? '请先保存供应商修改，再设置默认模型。' : '请先选择或填写模型。'; return null }
   const selection = selectionRevision
   const revision = serverChatRevision.value ?? props.chatRevision
-  if (revision == null) { error.value = '请先重新读取配置。'; return }
+  if (revision == null) { error.value = '请先重新读取配置。'; return null }
   invalidateList()
   busy.value = true; error.value = ''; notice.value = ''
   try {
-    const result = await api.activateExternalProvider(profile.id, { revision: profile.revision, model: model.value.trim(), chatRevision: revision })
-    if (!alive) return
+    const result = await api.activateExternalProvider(profile.id, { revision: profile.revision, model: model.value.trim(), chatRevision: revision,
+      ...(profile.providerRevision ? { providerRevision: profile.providerRevision } : {}) })
+    if (!alive) return null
     providers.value = providers.value.map(p => p.id === profile.id ? result.provider : { ...p, active: false })
     activeId.value = result.provider.id
     serverChatRevision.value = result.chat.revision
     const savedModels = cache.get(profile.id)
     if (savedModels?.revision === profile.revision) cache.set(profile.id, { ...savedModels, revision: result.provider.revision })
     emit('activated', result.chat)
-    if (selection === selectionRevision) notice.value = `已设为默认：${result.provider.name} · ${result.provider.model}`
+    if (selection === selectionRevision) notice.value = `在线通道已启用：${result.provider.name} · ${result.provider.model}`
+    return result.chat
   } catch (e) {
     if (alive && selection === selectionRevision) error.value = e instanceof ApiError && e.status === 409 ? '默认配置已在别处更新，未覆盖。请重新读取后再确认。' : e instanceof Error ? e.message : '默认模型未更改，请重试'
+    return null
   } finally { if (alive) busy.value = false }
+}
+async function activateFromRouting(): Promise<ChatProviderConfig> {
+  const config = await activate()
+  if (config) return config
+  throw new Error(error.value || (loading.value ? '正在读取在线供应商，请稍候后重试。' : '在线通道尚未准备好，请核对供应商设置。'))
 }
 async function remove() {
   const profile = selected.value
-  if (!profile || profile.active || busy.value) return
+  if (!profile || profile.active || busy.value || profile.source === 'admin-managed') return
   const selection = selectionRevision
   invalidateList()
   busy.value = true; error.value = ''
@@ -205,16 +219,18 @@ async function remove() {
 }
 onMounted(refresh)
 onUnmounted(() => { alive = false; modelRevision += 1; listRevision += 1; modelController?.abort(); listController?.abort(); draft.apiKey = '' })
+defineExpose({ activate, activateFromRouting })
 </script>
 
 <template>
   <section class="external-providers" aria-label="在线供应商与默认模型" data-testid="external-providers">
     <header><strong>在线供应商与默认模型</strong><button type="button" :disabled="busy" @click="refresh">重新读取</button></header>
-    <p class="external-providers__hint">保存多个 OpenAI 兼容服务，选择一个默认模型。切换供应商不会转移文件、画像或历史的授权。</p>
-    <p v-if="active">已选默认：{{ active.name }} · {{ active.model || '尚未选择模型' }}<span v-if="active.pendingActivation">（修改待启用）</span></p>
+    <p class="external-providers__hint">平台在线服务无需填写密钥，也可使用自配服务。选择产品使用的模型；切换服务不会转移文件、画像或历史的授权。</p>
+    <p v-if="active"><template v-if="externalEnabled">当前在线供应商：</template><template v-else>已保存默认：</template>{{ active.name }} · {{ active.model || '尚未选择模型' }} · 在线通道{{ externalEnabled ? '已启用' : '已暂停' }}<span v-if="active.pendingActivation">（修改待启用）</span></p>
     <p v-if="loading" role="status">正在读取供应商…</p>
+    <p v-if="platformStatus === 'unavailable'" class="external-providers__notice" role="status">平台在线服务暂时不可用，自配服务仍可管理。已有平台选择不会自动切换到其他服务。</p>
     <div class="external-providers__list" aria-label="已保存供应商">
-      <button v-for="profile in providers" :key="profile.id" type="button" :aria-pressed="selectedId === profile.id" @click="selectProvider(profile.id)">{{ profile.name }}<small v-if="profile.active">默认</small></button>
+      <button v-for="profile in providers" :key="profile.id" type="button" :aria-pressed="selectedId === profile.id" @click="selectProvider(profile.id)">{{ profile.name }}<small v-if="profile.active">{{ externalEnabled ? '在线通道' : '已保存默认' }}</small></button>
       <button type="button" @click="selectProvider('')">＋ 添加供应商</button>
     </div>
     <div v-if="pendingSelection !== null" class="external-providers__notice" role="status">有未保存修改。<button type="button" @click="discardAndSelect">放弃修改并切换</button><button type="button" @click="pendingSelection = null">继续编辑</button></div>
@@ -230,7 +246,7 @@ onUnmounted(() => { alive = false; modelRevision += 1; listRevision += 1; modelC
       <div class="external-providers__actions"><button type="submit" :disabled="busy || disabled">{{ busy ? '正在保存…' : '保存并获取模型' }}</button><button v-if="selected" type="button" :disabled="busy" @click="cancelEdit">取消编辑</button></div>
     </form>
     <template v-else-if="selected">
-      <p class="external-providers__endpoint">{{ selected.baseUrl }} · {{ selected.apiKeyConfigured ? 'Token 已保存' : '未配置 Token' }} <button type="button" @click="edit">编辑供应商</button></p>
+      <p class="external-providers__endpoint">{{ selected.baseUrl }} · {{ managed ? '平台托管，无需配置密钥' : selected.apiKeyConfigured ? 'Token 已保存' : '未配置 Token' }} <button v-if="!managed" type="button" @click="edit">编辑供应商</button></p>
       <label class="external-providers__model">选择模型
         <select v-if="!manual && models.length" v-model="model" @change="modelEditRevision += 1"><option value="" disabled>请选择一个模型</option><option v-if="model && !models.includes(model)" :value="model">{{ model }}（已保存）</option><option v-for="name in models" :key="name" :value="name">{{ name }}</option></select>
         <input v-else v-model="model" maxlength="128" placeholder="输入完整模型名称" autocomplete="off" @input="modelEditRevision += 1" />
@@ -238,7 +254,7 @@ onUnmounted(() => { alive = false; modelRevision += 1; listRevision += 1; modelC
       <div class="external-providers__actions"><button type="button" :disabled="modelsLoading || busy" @click="fetchModels">{{ modelsLoading ? '正在获取模型…' : '获取模型列表' }}</button><button v-if="models.length" type="button" @click="manual = !manual; modelEditRevision += 1">{{ manual ? '从列表选择' : '手动填写模型' }}</button></div>
       <p v-if="modelError" class="external-providers__hint" role="status">{{ modelError }}</p>
       <p class="external-providers__hint">保存后，已启用在线理解的对话默认使用它；仅本地的对话保持不变。换服务需重新核对在线模式与资料授权，失败不会自动换供应商。</p>
-      <div class="external-providers__actions"><button type="button" class="external-providers__primary" :disabled="busy || disabled || !model.trim() || !selected.apiKeyConfigured" @click="activate">设为默认并启用</button><button v-if="!selected.active" type="button" :disabled="busy" @click="deleteConfirm = true">删除供应商</button></div>
+      <div class="external-providers__actions"><button type="button" class="external-providers__primary" :disabled="busy || disabled || !model.trim() || !selected.apiKeyConfigured" @click="activate">{{ selected.active && !externalEnabled ? `启用 ${selected.name} 在线通道` : selected.active ? '保存模型并保持在线' : '设为在线供应商并启用' }}</button><button v-if="!selected.active && !managed" type="button" :disabled="busy" @click="deleteConfirm = true">删除供应商</button></div>
       <p v-if="deleteConfirm" class="external-providers__notice">删除这项供应商及保存的 Token？<button type="button" :disabled="busy" @click="remove">确认删除</button><button type="button" @click="deleteConfirm = false">取消</button></p>
     </template>
     <p v-if="error" role="alert" class="external-providers__error">{{ error }}</p>

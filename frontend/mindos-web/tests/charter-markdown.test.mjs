@@ -58,6 +58,7 @@ function setup(initial = workspace(), { clear = true, updateParent = true } = {}
   }
   const exports = {}
   new Function('require', 'exports', code)(id => {
+    if (id.includes('productScope')) return { onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
     if (id === 'vue') return { ...Vue, onBeforeUnmount: fn => cleanup.push(fn) }
     if (id.includes('taskRouting')) return { routingRequest: request, routedTask: routed }
     if (id.includes('charterWorkspace')) return helpers
@@ -259,6 +260,7 @@ function pageSetup(initial = {}) {
   }
   const exports = {}
   new Function('require', 'exports', pageCode)(id => {
+    if (id.includes('productScope')) return { onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
     if (id === 'vue') return { ...Vue, onMounted() {} }
     if (id === 'vue-router') return { useRoute: () => route, useRouter: () => ({ push: async target => pushed.push(copy(target)) }) }
     if (id.includes('services/api')) return mocks
@@ -313,6 +315,7 @@ const chatCode = ts.transpileModule(compileScript(parse(chatSource).descriptor, 
   const cleanup = [], exports = {}
   const current = { id: 'formal-5', version: 5, document: text }
   new Function('require', 'exports', chatCode)(id => {
+    if (id.includes('productScope')) return { onProductScopeReset: () => () => {}, createProductSessionStorage: () => globalThis.sessionStorage }
     if (id === 'vue') return { ...Vue, onBeforeUnmount: fn => cleanup.push(fn) }
     if (id === 'vue-router') return { useRouter: () => ({ push: () => {} }) }
     if (id.includes('taskRouting')) return { routingRequest: async () => ({ workspace: workspace({ revision: 8 }), charter: current, topics: [] }) }

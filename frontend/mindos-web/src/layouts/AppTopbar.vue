@@ -3,6 +3,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu } from 'lucide-vue-next'
+import { isDesktopProduct } from '@/shared/productScope'
 import { api } from '@/services/api'
 import { backendConnection, backendNoticeActive, connectionNoticeMounted, markBackendConnected, markBackendDisconnected } from '@/shared/backendConnection'
 
@@ -21,7 +22,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let request: AbortController | null = null
 
 async function checkHealth() {
-  if (checking.value || !alive) return
+  if (isDesktopProduct() || checking.value || !alive) return
   checking.value = true
   request = new AbortController()
   const timeout = setTimeout(() => request?.abort(), 5000)

@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..chat_imports import local_provider, require_conversation
 from ..stores.conversation_store import ConversationStore
-from ..uploads import _device_scope_of
+from ..domain_scope import _device_scope_of
 from .gate import ProviderBusyError, provider_gate
 from .provider import ChatRequest, ProviderError
 

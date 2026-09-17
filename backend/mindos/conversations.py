@@ -16,7 +16,7 @@ from .stores.conversation_store import ConversationError, ConversationNotFoundEr
 from .zhijun import deliberate, persona
 from .zhijun.turn import TurnError, run_turn
 from .chat_import_routes import MaterialRef
-from .uploads import _device_scope_of
+from .domain_scope import _device_scope_of
 from .zhijun.reply_assistance import ReplyInput
 
 _PREFIX = "/api/mindos/conversations"
@@ -252,18 +252,15 @@ def update_conversation(conversation_id: str, req: ConversationUpdate, request: 
         raise _error(400, "BAD_CONVERSATION_UPDATE", str(exc)) from None
 
 
-def _provenance_from_receipt(receipt: dict | None) -> dict | None:
+def _provenance_from_receipt(receipt: dict | None, claims_by_id: dict[str, dict]) -> dict | None:
     """把落库的出设备回执还原成前端出处条需要的结构（刷新后历史回复也有出处）。"""
     if not receipt:
         return None
-    from .stores.ontology_store import OntologyStore
-
-    onto = OntologyStore.instance()
 
     def _briefs(ids: list[str]) -> list[dict]:
         items = []
         for claim_id in ids:
-            claim = onto.get_claim(claim_id, with_evidence=False)
+            claim = claims_by_id.get(claim_id)
             if claim is None:
                 continue
             items.append({"id": claim["id"], "content": claim["content"], "section": claim["section"], "layer": claim["layer"], "trustState": claim["trustState"]})
@@ -289,18 +286,35 @@ def _provenance_from_receipt(receipt: dict | None) -> dict | None:
 
 def get_conversation(conversation_id: str, request: Request = None):
     store = _store()
-    from .chat_imports import require_conversation
-    from .uploads import _device_scope_of
-    require_conversation(conversation_id, _device_scope_of(request))
-    conversation = store.get_conversation(conversation_id)
+    # Detail reads do not need attachment-store schema initialization or its
+    # writer lock. Check scope before loading messages in the metadata query.
+    conversation = store.get_conversation(conversation_id, device_scope=_device_scope_of(request))
     if conversation is None:
         raise _error(404, "CONVERSATION_NOT_FOUND", "会话不存在")
     messages = store.list_messages(conversation_id)
+    receipts = store.list_receipts(conversation_id)
+    fallback_receipts = []
+    for message in messages:
+        meta = message.get("meta") or {}
+        if message["role"] == "assistant" and not (meta.get("routingProvenance") or meta.get("attachmentProvenance")):
+            receipt = receipts.get(message["id"])
+            if receipt is not None:
+                fallback_receipts.append(receipt)
+    claim_ids = list(dict.fromkeys(
+        claim_id
+        for receipt in fallback_receipts
+        for key in ("confirmedClaimIds", "workingClaimIds")
+        for claim_id in receipt.get(key) or []
+    ))
+    claims_by_id = {
+        claim["id"]: claim
+        for claim in (_ontology_store().get_claims(claim_ids, with_evidence=False) if claim_ids else [])
+    }
     for message in messages:
         if (message.get("meta") or {}).get("routingProvenance"):
             message["provenance"] = message["meta"]["routingProvenance"]
         if message["role"] == "assistant":
-            provenance = (message.get("meta") or {}).get("routingProvenance") or (message.get("meta") or {}).get("attachmentProvenance") or _provenance_from_receipt(store.get_receipt(message["id"]))
+            provenance = (message.get("meta") or {}).get("routingProvenance") or (message.get("meta") or {}).get("attachmentProvenance") or _provenance_from_receipt(receipts.get(message["id"]), claims_by_id)
             if provenance is not None:
                 provenance.setdefault("alignmentSources", (message.get("meta") or {}).get("alignmentSources", []))
                 message["provenance"] = provenance
@@ -344,7 +358,7 @@ def _encode(name: str, data: dict) -> bytes:
 def post_message(conversation_id: str, req: MessageCreate, request: Request = None):
     from .zhijun.provider import ProviderError
     from .chat_imports import require_conversation
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     store = require_conversation(conversation_id, _device_scope_of(request))
     refs = [r.model_dump() for r in req.materialRefs]
     known = {(r["materialId"], r["version"]) for r in store.refs(conversation_id)}
@@ -400,7 +414,7 @@ def get_draft(conversation_id: str):
 
 def confirm_draft(conversation_id: str, req: DraftConfirm, request: Request = None):
     from .chat_imports import require_conversation
-    from .uploads import _device_scope_of
+    from .domain_scope import _device_scope_of
     require_conversation(conversation_id, _device_scope_of(request))
     overrides = req.model_dump()
     if overrides.get("reviewAt") is not None:

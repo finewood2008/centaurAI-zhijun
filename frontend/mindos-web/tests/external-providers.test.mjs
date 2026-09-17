@@ -29,9 +29,10 @@ function setup(overrides = {}) {
   const exports = {}
   new Function('require', 'exports', compiled)(id => id === 'vue' ? { ...Vue, onMounted: () => {}, onUnmounted: fn => cleanup.push(fn) } : { api, ApiError }, exports)
   const scope = Vue.effectScope()
-  const props = Vue.reactive({ chatRevision: 4 })
-  const ui = scope.run(() => exports.default.setup(props, { expose: () => {}, emit: (...args) => emits.push(args) }))
-  return { ui, api, store, calls, emits, props, close() { cleanup.forEach(fn => fn()); scope.stop() } }
+  const exposed = {}
+  const props = Vue.reactive({ chatRevision: 4, externalEnabled: false })
+  const ui = scope.run(() => exports.default.setup(props, { expose: value => Object.assign(exposed, value), emit: (...args) => emits.push(args) }))
+  return { ui, exposed, api, store, calls, emits, props, close() { cleanup.forEach(fn => fn()); scope.stop() } }
 }
 
 // Initial read does not query suppliers; save explicitly fetches available models, not activate.
@@ -46,7 +47,8 @@ function setup(overrides = {}) {
   assert.equal(h.ui.draft.apiKey, '')
   assert.equal(h.ui.manual.value, false)
   assert.deepEqual(h.ui.models.value, ['new-one', 'new-two'])
-  h.ui.model.value = 'new-two'; await h.ui.activate()
+  h.ui.model.value = 'new-two'; const activated = await h.exposed.activate()
+  assert.equal(activated.externalEnabled, true)
   assert.equal(h.ui.activeId.value, 'new')
   assert.equal(h.store.providers.find(p => p.active).model, 'new-two')
   assert.equal(h.ui.cache.get('new').revision, h.ui.selected.value.revision)
@@ -90,7 +92,7 @@ function setup(overrides = {}) {
   const read = h.ui.refresh(); h.ui.model.value = 'a-two'; await h.ui.activate()
   waiting.resolve(stale); await read
   assert.equal(h.ui.selected.value.model, 'a-two'); assert.equal(h.ui.serverChatRevision.value, 5)
-  h.store.version = 8; await h.ui.activate(); assert.match(h.ui.error.value, /在别处更新/)
+  h.store.version = 8; assert.equal(await h.ui.activate(), null); assert.match(h.ui.error.value, /在别处更新/)
   h.api.getExternalProviders = originalRead; await h.ui.refresh(); await h.ui.activate()
   assert.equal(h.calls.at(-1)[1].chatRevision, 8)
   assert.equal(h.ui.serverChatRevision.value, 9)
@@ -129,8 +131,67 @@ function setup(overrides = {}) {
   h.close()
 }
 
+// Activation requested from the routing drawer must return an actionable
+// reason instead of looking like a dead button when no provider is saved.
+{
+  const h = setup({ getExternalProviders: async () => ({ providers: [], activeProviderId: null, chatRevision: 4 }) })
+  await h.ui.refresh()
+  await assert.rejects(h.exposed.activateFromRouting(), /还没有已保存的在线供应商/)
+  assert.match(h.ui.error.value, /添加供应商、Token 和模型/)
+  assert.equal(h.calls.some(([operation]) => operation === 'activate'), false)
+  h.close()
+}
+
+// Platform-managed services never ask for a token or mutate provider metadata;
+// the product selects provider/model and includes the trusted catalog revision.
+{
+  const h = setup()
+  h.store.providers = [{ id: 'managed:platform', name: '平台在线服务', revision: 2,
+    providerRevision: 'a'.repeat(64), source: 'admin-managed', baseUrl: 'https://cloud.example.invalid/v1',
+    model: '', apiKeyConfigured: true, active: false }]
+  let discovery
+  h.api.getExternalProviderModels = async (...args) => {
+    discovery = args
+    return { providerId: args[0], revision: args[1], models: ['product-model-A', 'product-model-B'] }
+  }
+  await h.ui.refresh()
+  assert.equal(h.ui.managed.value, true)
+  h.ui.edit(); assert.equal(h.ui.editing.value, false)
+  await h.ui.save(); await h.ui.remove()
+  assert.equal(h.calls.length, 0)
+  await h.ui.fetchModels()
+  assert.equal(discovery[3], 'a'.repeat(64))
+  h.ui.model.value = 'product-model-B'
+  await h.ui.activate()
+  assert.deepEqual(h.calls[0], ['activate', { revision: 2, model: 'product-model-B', chatRevision: 4, providerRevision: 'a'.repeat(64) }])
+  assert.equal(h.ui.draft.apiKey, '')
+  h.close()
+}
+
+// Broker failure is visible but self-configured profiles remain editable;
+// the missing managed selection is never automatically replaced.
+{
+  const h = setup()
+  const own = copy(h.store.providers[0])
+  own.active = false
+  h.api.getExternalProviders = async () => ({ providers: [own], activeProviderId: 'managed:platform',
+    chatRevision: 4, platformStatus: 'unavailable', platformErrorCode: 'BROKER_UNAVAILABLE' })
+  await h.ui.refresh()
+  assert.equal(h.ui.platformStatus.value, 'unavailable')
+  assert.equal(h.ui.activeId.value, 'managed:platform')
+  assert.equal(h.ui.providers.value.length, 1)
+  assert.equal(h.calls.length, 0)
+  h.ui.choose(own.id); await flush(); h.ui.edit()
+  assert.equal(h.ui.editing.value, true)
+  assert.match(source, /已有平台选择不会自动切换到其他服务/)
+  h.close()
+}
+
 assert.doesNotMatch(source, /localStorage|sessionStorage|v-html/)
 assert.match(source, /type="password"/)
 assert.match(source, /已启用在线理解的对话/)
 assert.match(source, /仅本地的对话保持不变/)
+assert.match(source, /externalEnabled \? '已启用' : '已暂停'/)
+assert.match(source, /启用 \$\{selected\.name\} 在线通道/)
+assert.match(source, /defineExpose\(\{ activate, activateFromRouting \}\)/)
 console.log('external providers: real SFC save/discovery/default, token boundary, stale reads/models, editing, conflict refresh, fallback and inactive deletion passed')

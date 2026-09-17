@@ -1,3 +1,4 @@
+import { transportRequest } from './transport'
 // SSE 流式客户端：POST + fetch + ReadableStream。
 //
 // 不能用 EventSource——它只支持 GET 且无法带 X-Requested-By / X-MindOS-Session，
@@ -5,11 +6,17 @@
 // buildHeaders / throwApiError，保证与普通请求完全一致的鉴权行为。
 import { API_BASE, ApiError, buildHeaders, throwApiError } from './api'
 import { parseSseChunk, type SseFrame } from '@/shared/sse-parser'
+import { COMPLETED_SSE_STREAM } from '../shared/streamCompletion.ts'
 
 export { parseSseChunk }
 export type { SseFrame }
 
 export type SseHandlers = Record<string, (data: unknown) => void>
+
+export interface SseStreamOptions {
+  /** Domain events that complete this stream even if the HTTP body stays open. */
+  terminalEvents?: readonly string[]
+}
 
 /**
  * 发起流式 POST。流开始前的非 2xx 抛 ApiError；流中的每一帧按 event 名分发到
@@ -20,11 +27,12 @@ export async function streamPost(
   body: unknown,
   handlers: SseHandlers,
   signal?: AbortSignal,
+  options: SseStreamOptions = {},
 ): Promise<void> {
   const headers = buildHeaders()
   headers.set('Content-Type', 'application/json')
   headers.set('Accept', 'text/event-stream')
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await transportRequest(`${API_BASE}${path}`, {
     method: 'POST',
     headers,
     body: JSON.stringify(body ?? {}),
@@ -35,10 +43,19 @@ export async function streamPost(
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder('utf-8')
+  const terminalEvents = new Set(options.terminalEvents ?? [])
   let buffer = ''
+  let terminalReached = false
+  let reachedEof = false
+  let streamFailed = false
   const dispatch = (frame: SseFrame) => {
+    if (terminalReached) return
+    const terminal = terminalEvents.has(frame.event)
     const handler = handlers[frame.event]
-    if (!handler) return
+    if (!handler) {
+      terminalReached = terminal
+      return
+    }
     let payload: unknown = frame.data
     try {
       payload = JSON.parse(frame.data)
@@ -46,18 +63,36 @@ export async function streamPost(
       // 非 JSON 数据原样透传
     }
     handler(payload)
+    terminalReached = terminal
   }
   try {
-    for (;;) {
+    while (!terminalReached) {
       const { value, done } = await reader.read()
-      if (done) break
+      if (done) {
+        reachedEof = true
+        break
+      }
       buffer += decoder.decode(value, { stream: true })
       buffer = parseSseChunk(buffer, dispatch)
     }
-    buffer += decoder.decode()
-    // 流结束时若尾部还有未以空行收尾的完整帧，补一个分隔符再解析一次
-    if (buffer.trim()) parseSseChunk(`${buffer}\n\n`, dispatch)
+    if (reachedEof) {
+      buffer += decoder.decode()
+      // 流结束时若尾部还有未以空行收尾的完整帧，补一个分隔符再解析一次
+      if (buffer.trim()) parseSseChunk(`${buffer}\n\n`, dispatch)
+    }
+  } catch (error) {
+    streamFailed = true
+    throw error
   } finally {
+    if ((terminalReached || streamFailed) && !reachedEof) {
+      try {
+        // Release the read side without revoking the completed command's
+        // registered background work in the desktop adapter.
+        await reader.cancel(terminalReached && !streamFailed ? COMPLETED_SSE_STREAM : undefined)
+      } catch {
+        // 业务终态已经送达；底层流可能已同时因断连或取消而关闭。
+      }
+    }
     try {
       reader.releaseLock()
     } catch {

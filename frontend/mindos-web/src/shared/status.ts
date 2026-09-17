@@ -16,6 +16,9 @@ export const MATERIAL_STATUS_META: Record<string, StatusMeta> = {
   processing: { label: '处理中', tone: 'warning' },
   available: { label: '已完成', tone: 'success' },
   failed: { label: '失败', tone: 'danger' },
+  recycled: { label: '已回收', tone: 'neutral' },
+  restoring: { label: '恢复中', tone: 'info' },
+  purging: { label: '删除中', tone: 'warning' },
   deleted: { label: '已删除', tone: 'neutral' },
 }
 
@@ -25,6 +28,26 @@ export function materialStatusMeta(status: string): StatusMeta {
 
 export function materialStatusLabel(status: string): string {
   return materialStatusMeta(status).label
+}
+
+/** Scan completion describes detection, not permission to send original text. */
+export function materialSensitiveScanStatusMeta(scan: {
+  state: string; completedFields?: number; totalFields?: number
+  errorCode?: string | null
+} | null | undefined): StatusMeta | null {
+  if (!scan) return null
+  const progress = Number.isInteger(scan.totalFields) && Number(scan.totalFields) > 0
+    && Number.isInteger(scan.completedFields) && Number(scan.completedFields) >= 0
+    && Number(scan.completedFields) <= Number(scan.totalFields)
+    ? ` ${scan.completedFields}/${scan.totalFields}` : ''
+  const states: Record<string, StatusMeta> = {
+    queued: { label: scan.errorCode ? `敏感识别等待重试${progress}` : '等待敏感识别', tone: scan.errorCode ? 'warning' : 'info' },
+    processing: { label: `敏感识别中${progress}`, tone: 'warning' },
+    completed: { label: '敏感识别已完成', tone: 'success' },
+    failed: { label: '敏感识别失败', tone: 'danger' },
+    canceled: { label: '敏感识别已取消', tone: 'neutral' },
+  }
+  return states[scan.state] ?? { label: '敏感识别状态未知', tone: 'neutral' }
 }
 
 // ---- 导入队列状态（页面级：待上传/上传中/已上传/处理中/可用/失败）----

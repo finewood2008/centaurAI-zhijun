@@ -27,6 +27,7 @@ import SelfMap from '@/components/ontology/SelfMap.vue'
 import OntologyExplainer from '@/components/ontology/OntologyExplainer.vue'
 import PersonalSummary from '@/components/ontology/PersonalSummary.vue'
 import { preferredOntologyView, type OntologyView } from '@/components/ontology/summary'
+import { createOntologyStatsLoader, ontologyLoadPlan } from './ontologyLoading'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
@@ -73,6 +74,7 @@ function setView(v: OntologyView) {
 
 const mapItems = ref<Claim[]>([])
 const mapLoading = ref(false)
+const mapLoaded = ref(false)
 const mapError = ref('')
 const selected = ref<Claim | null>(null)
 const layerFilter = ref<Set<Layer> | null>(null)
@@ -114,12 +116,15 @@ function friendlyError(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback
 }
 
-async function loadStats() {
-  try {
-    stats.value = await getOntologyStats()
-  } catch {
-    // 统计不可用不阻塞列表
-  }
+const statsLoader = createOntologyStatsLoader(
+  getOntologyStats,
+  () => ontologyLoadPlan(view.value, current.value).stats,
+  value => { stats.value = value },
+)
+
+function invalidateStats() {
+  stats.value = null
+  statsLoader.invalidate()
 }
 
 async function load() {
@@ -155,6 +160,7 @@ async function loadMap() {
     const res = await listClaims({ trust: ['confirmed', 'working'], limit: 1000 })
     if (!mapGate.isCurrent(session)) return
     mapItems.value = res.items
+    mapLoaded.value = true
     if (selected.value) selected.value = res.items.find((c) => c.id === selected.value?.id) ?? null
     // 从出处小图跳过来：?claim=<id> → 在全景里选中这条理解并打开详情
     if (pendingClaimId.value) {
@@ -173,10 +179,11 @@ async function loadMap() {
   }
 }
 
-function select(key: NavKey) {
+async function select(key: NavKey) {
+  if (key === 'inbox') await router.push('/me/inbox')
+  else await router.push({ path: '/me', query: { section: key } })
+  // Let the route reach the requested section before list mode starts its read.
   if (showSummary.value && key !== 'inbox' && key !== 'proposals') setView('list')
-  if (key === 'inbox') router.push('/me/inbox')
-  else router.push({ path: '/me', query: { section: key } })
 }
 
 function onSectionFocus(section: Section | null) {
@@ -196,16 +203,19 @@ function toggleLayer(key: Layer | null) {
 }
 
 function onProposalsChanged() {
-  void loadStats()
+  invalidateStats()
 }
 
-watch(current, () => {
-  void load()
-  if (isSectionView.value && current.value !== focusSection.value) focusSection.value = null
-})
+function loadVisibleView() {
+  const plan = ontologyLoadPlan(view.value, current.value)
+  if (plan.claims) void load()
+  if (plan.overview && !mapLoaded.value && !mapLoading.value) void loadMap()
+  if (plan.stats && !stats.value) void statsLoader.load()
+}
 
-watch(usesOverview, (on) => {
-  if (on && !mapItems.value.length) void loadMap()
+watch([current, view], () => {
+  void loadVisibleView()
+  if (isSectionView.value && current.value !== focusSection.value) focusSection.value = null
 })
 
 function applyReviewResult(claim: Claim, action: ReviewAction, finalClaim: Claim) {
@@ -243,7 +253,7 @@ async function onReview(claim: Claim, action: ReviewAction, editedContent?: stri
       reaffirm: '已重申',
     }
     toast({ type: 'success', message: label[action] })
-    void loadStats()
+    invalidateStats()
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '操作失败') })
   } finally {
@@ -264,7 +274,7 @@ async function submitCreate() {
     newContent.value = ''
     showCreate.value = false
     toast({ type: 'success', message: newSection.value ? `已记入「${sectionLabel(created.section)}」` : `知君把它归到了「${sectionLabel(created.section)}」` })
-    void loadStats()
+    invalidateStats()
   } catch (err) {
     toast({ type: 'error', message: friendlyError(err, '保存失败') })
   } finally {
@@ -280,12 +290,11 @@ onMounted(() => {
     pendingClaimId.value = claimQuery
     if (!usesOverview.value) view.value = 'summary'
   }
-  void loadStats()
-  void load()
-  if (usesOverview.value) void loadMap()
+  void loadVisibleView()
 })
 
 onBeforeUnmount(() => {
+  statsLoader.dispose()
   gate.invalidate()
   mapGate.invalidate()
 })

@@ -133,7 +133,9 @@ def _routing_pause(exc):
     code = detail.get("code", "")
     if preview or code in {"SOURCE_UNAVAILABLE", "SOURCE_CHANGED", "SOURCE_LIMIT", "ROUTE_CHANGED", "ONLINE_SERVICE_CHANGED",
                            "CHARTER_CHANGED", "CHARTER_POLICY_CONFLICT", "CHARTER_CONTEXT_TOO_LARGE"}:
-        reason = "source_unavailable" if preview.get("blocked") else "consent_required" if preview.get("missing") else code.lower() or "consent_required"
+        reason = ("source_unavailable" if preview.get("blocked") else "consent_required"
+                  if preview.get("missing") or preview.get("deConsentRequired") or code == "ROUTE_CONSENT_REQUIRED"
+                  else code.lower() or "consent_required")
         return {"state": "paused", "reason": reason,
                 "detail": "相关来源已失效或无法核验，请重新核对；不会绕过来源限制" if preview.get("blocked") else detail.get("detail", "后台任务等待核对"),
                 **({"previewId": preview["revision"]} if preview.get("revision") else {})}
@@ -179,6 +181,9 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     from . import alignment, memory
     if kind in ("alignment", "first_observation") and not memory.automatic_allowed(store, conv_store, payload.get("conversationId")):
         return {"state": "skipped", "reason": "memory_policy"}
+    if kind == "reflection":
+        from .reflections import run_job as run_reflection
+        return run_reflection(payload, store, conv_store)
     if kind == "alignment":
         return alignment.run_job(payload, store, conv_store)
     if not managed and payload.get("conversationId") and alignment.protected(payload["conversationId"], conv_store, store):
@@ -187,7 +192,7 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     imports = ChatImportStore(conv_store)
     if not managed and payload.get("conversationId") and imports.has_imports(payload["conversationId"]):
         return {"state": "skipped", "reason": "file_discussion_requires_explicit_action"}
-    if kind == "extract_material" and job["ownerId"] in imports.protected_ids():
+    if kind == "extract_material" and payload.get("materialId", job["ownerId"]) in imports.protected_ids():
         return {"state": "skipped", "reason": "file_is_not_personal_assertion"}
     if kind == "extract_turn":
         conversation_id = payload.get("conversationId")
@@ -212,12 +217,19 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
         if not memory.extraction_allowed(store, conv_store, conversation_id, message["content"]):
             return {"state": "skipped", "reason": "memory_policy"}
         history = conv_store.list_messages(conversation_id)
+        source = extract.memory_source_message(history, message)
+        if source is None:
+            return {"state": "skipped", "reason": "memory_source_missing"}
+        source_origin = (source.get("meta") or {}).get("replyAssistance")
         prev_assistant = None
         for item in history:
-            if item["seq"] >= message["seq"]:
+            if item["seq"] >= source["seq"]:
                 break
             if item["role"] == "assistant":
                 prev_assistant = item["content"]
+        ok, reason = extract.should_extract(source["content"], prev_assistant)
+        if not ok:
+            return {"state": "skipped", "reason": reason}
         provider = choose_provider()
         channel = "external" if provider.external else "local"
         if not provider_gate.acquire(channel, timeout=30.0, background=True):
@@ -227,16 +239,28 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
                 provider=provider,
                 store=store,
                 conversation_id=conversation_id,
-                message_id=message_id,
-                user_text=message["content"],
+                message_id=source["id"],
+                user_text=source["content"],
                 prev_assistant=prev_assistant,
                 debug={"mode": conversation.get("mode")},
-                input_origin=input_origin,
+                input_origin=source_origin,
+                request_message_id=message_id if source["id"] != message_id else None,
             )
         finally:
             provider_gate.release(channel)
+        def enqueue_followup(kind, action):
+            from zhijun_worker.background import BackgroundEnqueueError
+            try:
+                return action()
+            except BackgroundEnqueueError as exc:
+                # The candidate is already durable. Keep the separately stored
+                # failed child task, without relabelling or replaying extraction.
+                result.setdefault("followupFailures", []).append(
+                    {"kind": kind, "jobId": exc.job_id, "code": exc.code})
+                return None
+
         if result.get("created") or result.get("promoted"):
-            enqueue_projection(store=store)
+            enqueue_followup("project", lambda: enqueue_projection(store=store))
             try:
                 from . import consolidate
 
@@ -251,10 +275,11 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
                 assistants = [m for m in conv_store.list_messages(conversation_id)
                               if m["role"] == "assistant" and m["status"] == "complete" and m["seq"] > message["seq"]]
                 if assistants:
-                    enqueue_alignment(conversation_id, assistants[0]["id"], message["content"], store=store)
+                    enqueue_followup("alignment", lambda: enqueue_alignment(
+                        conversation_id, assistants[0]["id"], message["content"], store=store))
         user_turns = conv_store.count_messages(conversation_id, role="user")
         if user_turns and user_turns % _SUMMARY_EVERY_TURNS == 0:
-            enqueue_summary(conversation_id, store=store)
+            enqueue_followup("summarize_conversation", lambda: enqueue_summary(conversation_id, store=store))
         return result
     if kind == "summarize_conversation":
         conversation_id = payload.get("conversationId")
@@ -328,7 +353,7 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     if kind == "extract_material":
         from . import materials
 
-        result = materials.run(job["ownerId"], store=store)
+        result = materials.run(payload.get("materialId", job["ownerId"]), store=store, expected_version=payload.get("version"))
         if result.get("created"):
             enqueue_projection(store=store)
         return result
@@ -406,7 +431,7 @@ class OntologyWorker:
             pass
         last_scan = 0.0
         while not self._stop_event.is_set():
-            if time.time() - last_scan >= _NUDGE_SCAN_INTERVAL:
+            if not os.environ.get("ZHIJUN_WORKSPACE_ID") and time.time() - last_scan >= _NUDGE_SCAN_INTERVAL:
                 last_scan = time.time()
                 try:
                     enqueue_nudge_scan(store=store)
@@ -426,10 +451,23 @@ class OntologyWorker:
             self.process(job, owner, store=store, conv_store=conv_store)
 
     def process(self, job: dict, owner: str, *, store: OntologyStore, conv_store: ConversationStore) -> None:
+        from zhijun_worker.capabilities import CapabilityError
         job_id = job["jobId"]
         try:
-            result = run_job(job, store=store, conv_store=conv_store)
-            store.finish_job(job_id, owner, result=result)
+            from zhijun_worker.background import activated, finish
+            with activated(job_id):
+                try:
+                    result = run_job(job, store=store, conv_store=conv_store)
+                    store.finish_job(job_id, owner, result=result)
+                except ProviderError as exc:
+                    if not exc.retryable:
+                        finish(job_id)
+                    raise
+                except Exception:
+                    finish(job_id)
+                    raise
+                else:
+                    finish(job_id)
         except ProviderError as exc:
             store.fail_job(
                 job_id,
@@ -441,6 +479,9 @@ class OntologyWorker:
             )
             if exc.retryable:
                 time.sleep(0.5)
+        except CapabilityError as exc:
+            store.fail_job(job_id, owner, failure_class="business", error_code=exc.code,
+                           error_detail="中央能力拒绝或资料版本已变化，请重新核对", retry=False)
         except Exception as exc:  # noqa: BLE001
             logger.warning("本体任务失败 %s: %s", job.get("kind"), type(exc).__name__)
             store.fail_job(job_id, owner, failure_class="infrastructure", error_code=type(exc).__name__, error_detail=str(exc)[:300], retry=False)

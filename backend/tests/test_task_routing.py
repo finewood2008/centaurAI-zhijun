@@ -72,6 +72,9 @@ class RoutingTests(unittest.TestCase):
             patch("mindos.zhijun.routing.local_provider", return_value=self.local)
         )
         self.stack.enter_context(
+            patch("mindos.routing_routes.local_provider", return_value=self.local)
+        )
+        self.stack.enter_context(
             patch.dict(
                 os.environ,
                 {
@@ -242,6 +245,28 @@ class RoutingTests(unittest.TestCase):
         self.assertFalse(self.online.requests)
         self.assertEqual(len(self.local.requests), 1)
 
+    def test_routing_states_expose_configured_local_model_while_online(self):
+        self.enable()
+        expected = service_info(self.local)
+        paths = (self.url + "/routing", "/api/mindos/conversations/routing/default")
+        for path in paths:
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, response.text)
+            state = response.json()
+            self.assertTrue(state["service"]["external"])
+            self.assertEqual(state["localService"], expected)
+        self.assertEqual(self.client.get(paths[0]).json()["mode"]["mode"], "online")
+
+    def test_routing_states_hide_local_runtime_failures(self):
+        self.enable()
+        secret = "https://user:password@local.invalid"
+        with patch("mindos.routing_routes.local_provider", side_effect=RuntimeError(secret)):
+            for path in (self.url + "/routing", "/api/mindos/conversations/routing/default"):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertIsNone(response.json()["localService"])
+                self.assertNotIn(secret, response.text)
+
     def test_same_endpoint_model_account_change_blocks_queued_old_credentials(self):
         self.enable()
         router = Router(self.onto, self.convs, self.cid)
@@ -253,7 +278,9 @@ class RoutingTests(unittest.TestCase):
         guarded = GuardedProvider(router, old, "chat", [], revision=preview["revision"])
         with self.assertRaises(HTTPException) as raised:
             list(guarded.stream(request))
-        self.assertEqual(raised.exception.detail["code"], "ROUTE_CHANGED")
+        # A different model account now has a different service identity, so
+        # the online-mode fence rejects it before the queued-request fence.
+        self.assertEqual(raised.exception.detail["code"], "ONLINE_SERVICE_CHANGED")
         self.assertFalse(old.requests)
 
     def test_source_changed_between_preview_and_network_blocks(self):
@@ -620,6 +647,33 @@ class RoutingTests(unittest.TestCase):
         audit = self.client.get(self.url + "/routing/audits").json()["items"][0]
         self.assertTrue(any(s["authorization"] == {"kind": "default", "revision": 1} for s in audit["sources"]))
         self.assertFalse(self.store.granted("global", source, service_info(self.online)["id"], "chat"), "default must not mint permanent per-source grants")
+
+    def test_auto_egress_requires_new_opt_in_and_never_mints_source_grants(self):
+        c = self.claim()
+        self.enable()
+        self.assertEqual(self.default_consent().status_code, 200)
+        _, legacy = self.preview("星桥项目工作安排")
+        self.assertFalse(legacy["defaultAuthorization"]["autoEgress"])
+        self.assertFalse(legacy["defaultAuthorization"]["applies"])
+        self.assertEqual(self.default_consent(autoEgress=True).status_code, 200)
+        _, preview = self.preview("星桥项目工作安排")
+        policy = preview["defaultAuthorization"]
+        self.assertTrue(policy["autoEgress"])
+        self.assertTrue(policy["applies"])
+        response = self.client.post(self.url + "/routing/grant", json={
+            "revision": preview["revision"], "keys": [s["key"] for s in preview["sources"]],
+            "defaultPolicyRevision": policy["revision"],
+        })
+        self.assertEqual(response.status_code, 200, response.text)
+        source = Router(self.onto, self.convs, self.cid).resolve(Router(self.onto, self.convs, self.cid).ref("claim", c["id"]))[0]
+        self.assertFalse(self.store.granted("global", source, service_info(self.online)["id"], "chat"))
+        self.assertEqual(self.default_consent(False).status_code, 200)
+        stale = self.client.post(self.url + "/routing/grant", json={
+            "revision": preview["revision"], "keys": [s["key"] for s in preview["sources"]],
+            "defaultPolicyRevision": policy["revision"],
+        })
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.json()["detail"]["code"], "DEFAULT_CONSENT_CHANGED")
 
     def test_default_consent_disable_revokes_derived_and_background_access(self):
         c = self.claim()

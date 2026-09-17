@@ -1,9 +1,11 @@
+import { onProductScopeReset } from '../shared/productScope.ts'
 import { shallowReactive } from 'vue'
 import type { ReplyAssistanceInput } from '@/shared/replyAssistance'
 
 // Presentation only. The server remains responsible for validating every source on send.
 interface ReplyRecovery { messageId: string; batchIds: string[]; control?: ReplyAssistanceInput['control']; reason: string }
 export const replyRecoveries = shallowReactive<Record<string, ReplyRecovery>>({})
+onProductScopeReset(() => { for (const key of Object.keys(replyRecoveries)) delete replyRecoveries[key] })
 const staleCodes = new Set(['SOURCE_CHANGED', 'SOURCE_UNAVAILABLE', 'SOURCE_LIMIT', 'REPLY_SOURCE_CHANGED', 'REPLY_CONTEXT_CHANGED', 'REPLY_BATCH_NOT_FOUND', 'REPLY_CANDIDATE_NOT_FOUND', 'REPLY_FORMAT_CHANGED'])
 export function isReplySourceError(error: unknown): boolean {
   return !!error && typeof error === 'object' && staleCodes.has(String((error as { code?: unknown }).code))

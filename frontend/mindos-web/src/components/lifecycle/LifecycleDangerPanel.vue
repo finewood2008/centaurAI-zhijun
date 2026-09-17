@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** P15-04/05：删除影响预览、依赖决策与回收/永久清除的统一入口。 */
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { api, type BlockingDependency, type DeletionImpact, type DependencyActionPayload, type LifecycleTargetType } from '@/services/api'
 
 const props = defineProps<{
@@ -9,8 +9,14 @@ const props = defineProps<{
   targetTitle: string
   recycled: boolean
   compact?: boolean
+  recycleOnly?: boolean
+  autoPreview?: boolean
 }>()
-const emit = defineEmits<{ (e: 'completed', action: 'recycle' | 'purge' | 'unrecycle'): void }>()
+const emit = defineEmits<{
+  (e: 'completed', action: 'recycle' | 'purge' | 'unrecycle'): void
+  (e: 'busy-change', busy: boolean): void
+  (e: 'cancel'): void
+}>()
 
 const impact = ref<DeletionImpact | null>(null)
 const mode = ref<'recycle' | 'purge' | null>(null)
@@ -20,6 +26,8 @@ const error = ref('')
 const choices = ref<Record<string, string>>({})
 const replacementType = ref<Record<string, 'material' | 'knowledge'>>({})
 const replacementId = ref<Record<string, string>>({})
+watch([loading, executing], () => emit('busy-change', loading.value || executing.value), { flush: 'sync' })
+onMounted(() => { if (props.autoPreview && !props.recycled) void open('recycle') })
 
 function key(dep: BlockingDependency) { return `${dep.type}:${dep.id}` }
 function label(action: string) {
@@ -41,10 +49,11 @@ function defaultChoice(dep: BlockingDependency) {
 }
 
 async function open(nextMode: 'recycle' | 'purge') {
-  if (loading.value || executing.value) return
+  if (loading.value || executing.value || (props.recycleOnly && nextMode !== 'recycle')) return
   const requestMode = nextMode
   loading.value = true; error.value = ''; mode.value = nextMode
   choices.value = {}; replacementType.value = {}; replacementId.value = {}
+  impact.value = null
   try {
     impact.value = props.targetType === 'material'
       ? await api.getMaterialDeletionImpact(props.targetId)
@@ -70,6 +79,7 @@ function buildActions(): DependencyActionPayload[] {
 
 async function execute() {
   if (!impact.value || unresolved.value.length || !mode.value || executing.value) return
+  if (props.recycleOnly && mode.value !== 'recycle') return
   executing.value = true; error.value = ''
   const executingMode = mode.value
   try {
@@ -108,6 +118,7 @@ async function restore() {
 function close() {
   if (executing.value) return
   mode.value = null; impact.value = null; error.value = ''
+  emit('cancel')
 }
 </script>
 
@@ -121,8 +132,8 @@ function close() {
     <p v-if="error" class="lifecycle-danger__error">{{ error }}</p>
     <div class="lifecycle-danger__buttons">
       <button v-if="recycled" class="secondary-btn sm" type="button" :disabled="executing" @click="restore">{{ executing ? '处理中…' : '恢复' }}</button>
-      <button v-else class="secondary-btn sm" type="button" :disabled="loading || executing" @click="open('recycle')">移至回收站</button>
-      <button class="danger-btn secondary-btn sm" type="button" :disabled="loading || executing" @click="open('purge')">{{ compact ? '彻底删除' : '永久清除' }}</button>
+      <button v-else-if="!autoPreview || !mode" class="secondary-btn sm" type="button" :disabled="loading || executing" @click="open('recycle')">移至回收站</button>
+      <button v-if="!recycleOnly" class="danger-btn secondary-btn sm" type="button" :disabled="loading || executing" @click="open('purge')">{{ compact ? '彻底删除' : '永久清除' }}</button>
     </div>
 
     <div v-if="mode" class="lifecycle-danger__preview" role="region" aria-live="polite">

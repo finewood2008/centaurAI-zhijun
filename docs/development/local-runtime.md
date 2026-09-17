@@ -1,5 +1,7 @@
 # 本机开发：一个入口启动知君
 
+本文说明当前工程的平台、进程管理与测试隔离边界；具体行为以 `zhijun.sh` 和对应测试为准。
+
 在仓库根目录运行：
 
 ```sh
@@ -14,7 +16,11 @@ bash zhijun.sh stop
 
 日志位于 `data/run/dev/backend.log`、`web.log`，进程记录在同目录 `services.json`，均不提交仓库。服务异常退出后，查看日志并再次 `start`，仅补启动缺失服务；不安装登录项或系统常驻任务，不自动切换模型或修改任何授权。
 
-本入口用于本机开发，依赖现有 Python 虚拟环境与 Node 依赖；不自动安装依赖或构建生产应用。正式部署仍使用部署文档中的系统服务。
+本入口用于本机开发，依赖现有 Python 虚拟环境与 Node 依赖；不自动安装依赖或构建生产应用。正式盒端部署和 NPU-only 运行约束由 CentaurOS 的当前发布流程负责，本仓库不复制一份可能漂移的系统部署手册。
+
+该入口依赖 `fcntl`、bash、lsof、ps 与 POSIX 进程组，目前在 macOS 验证。Linux 需确认这些工具和进程检查行为；源测试 `test_dev_runtime.py` 还有 `/private/tmp` 平台路径假设，本次未承诺 Linux 通过。Windows 应继续使用已有 PowerShell/启动脚本，不直接运行该 Python supervisor。
+
+`start` 默认使用项目业务数据，`data/run/dev` 固定相对项目根，即使指定其他业务数据根也不移动运行记录。因此它是开发启动器，不能当作一次性测试沙箱。Vite 绑定 `127.0.0.1:5173` 并启用 strictPort，端口被占用时应报告问题而非换端口。
 
 ## 后台整理未完成
 
@@ -32,3 +38,22 @@ bash zhijun.sh stop
 这是为了隔离已有测试对模块级服务、路由和单例的配置，不代表这些全局状态问题已修复。
 失败模块会汇总并返回非零退出码；没有匹配测试的模块单独列出。JUnit 总数包含子测试，
 与 pytest 的普通测试函数数量不同，不能直接相加或混用。
+
+conftest 强制隔离业务数据根，但 MCP 路径使用 setdefault，且 metadata、gbrain 和 secret store 另有路径覆盖；secret store 默认还在项目 `secrets/`。本次测试使用外层临时目录并清除独立路径环境，示例：
+
+```sh
+backend/.venv/bin/python - <<'PY'
+import os, subprocess, sys, tempfile
+from pathlib import Path
+with tempfile.TemporaryDirectory(prefix="zhijun-test-env-") as directory:
+    env = os.environ.copy()
+    for key in ("CENTAUR_METADATA_DB", "CENTAUR_GBRAIN_HOME", "CENTAUR_MCP_DATA_DIR", "CENTAUR_MCP_CONFIG_DIR"):
+        env.pop(key, None)
+    env["CENTAUR_SECRET_STORE_DIR"] = str(Path(directory) / "secrets")
+    env["CENTAURAI_DATABASE_DATA_ROOT"] = str(Path(directory) / "fallback-data")
+    result = subprocess.run([sys.executable, "scripts/run_tests.py", "--isolated-modules", "--", "-q", "-p", "no:cacheprovider"], env=env)
+raise SystemExit(result.returncode)
+PY
+```
+
+浏览器 fixture `tests.matters_fixture`（8774）和 `tests.chat_send_fixture`（8775）在业务 import 前自建临时数据根，但仍需应用同样的外层路径环境。先构建前端，检查端口空闲，验证专用 health 身份后运行对应 E2E，只停止本次创建的进程。`today-layout.e2e.mjs` 无需后端；其他历史 E2E 的输出目录不同，例如 context-plan 仍写项目 `data/diagnostics`，应逐个检查后运行。
