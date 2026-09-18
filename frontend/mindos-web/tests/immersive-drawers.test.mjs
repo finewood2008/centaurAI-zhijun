@@ -1,0 +1,231 @@
+// 沉浸壳第一阶段 C 部分：印坞与四个抽屉、在场一行、昼夜色调、偏好卡、底部 sheet。
+// 纯函数走单测（注入输入），组件走源码钉。运行：node --experimental-strip-types --test tests/immersive-drawers.test.mjs
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import { readFile } from 'node:fs/promises'
+import { greetingForHour, presenceLine, dayKeyOf, isFirstOpenToday, STAGE_TEXT } from '../src/immersive/composables/presenceLine.ts'
+import { TINT_DAY, TINT_INTERVAL_MS, TINT_MORNING, TINT_NIGHT, tintForHour } from '../src/immersive/composables/useDayTint.ts'
+import { deskCountOf, draftPresentOf, hostChildHasContent, hostObjectCount } from '../src/immersive/composables/useDeskObjects.ts'
+import { PHONE_QUERY, placementFor } from '../src/immersive/composables/useSheetPlacement.ts'
+import { PREFS_ANCHORS, PREFS_ADVANCED_ID, availableAnchorIds, findAnchorTarget } from '../src/immersive/drawers/prefsAnchors.ts'
+
+const read = rel => readFile(new URL('../' + rel, import.meta.url), 'utf8')
+
+test('SealDock: toolbar named 印, four seals with full labels, dialog popups, expanded state, 案 lit only by deskCount', async () => {
+  const dock = await read('src/immersive/SealDock.vue')
+  assert.match(dock, /role="toolbar" aria-label="印"/)
+  for (const label of ['我 · 核心画像', '昔 · 判断与回看', '案头', '偏好']) assert.ok(dock.includes(`label: '${label}'`), `missing aria-label ${label}`)
+  assert.match(dock, /aria-haspopup="dialog"/)
+  assert.match(dock, /:aria-expanded="active === seal\.id"/)
+  assert.match(dock, /'is-lit': seal\.id === 'desk' && deskCount > 0/)
+  assert.match(dock, /useDeskObjects\(\)/)
+  assert.doesNotMatch(dock, /deskLit/, '亮不亮只由 useDeskObjects 决定，不再有外部开关')
+})
+
+test('useDeskObjects: draft + host objects with content light the 案 seal', () => {
+  assert.equal(draftPresentOf({ draft: null, draftPending: false, draftTimedOut: false }), false)
+  assert.equal(draftPresentOf({ draft: { status: 'discarded' }, draftPending: false, draftTimedOut: false }), false)
+  assert.equal(draftPresentOf({ draft: { status: 'proposed' }, draftPending: false, draftTimedOut: false }), true)
+  assert.equal(draftPresentOf({ draft: null, draftPending: true, draftTimedOut: false }), true)
+  assert.equal(draftPresentOf({ draft: null, draftPending: false, draftTimedOut: true }), true)
+  const el = (classes, textContent, extra = {}) => ({ classList: { contains: c => classes.includes(c) }, textContent, childElementCount: 0, querySelector: () => null, ...extra })
+  assert.equal(hostChildHasContent(el(['matter-trigger'], '事情与成果')), false, '还没绑定事情的触发钮不算')
+  assert.equal(hostChildHasContent(el(['matter-trigger'], '这件事 · 搬家')), true)
+  assert.equal(hostChildHasContent(el(['memory-pending-entry'], '待核对')), false, '零条待核对不算')
+  assert.equal(hostChildHasContent(el(['memory-pending-entry'], '待核对 2', { querySelector: () => ({}) })), true)
+  assert.equal(hostChildHasContent(el(['chat-files'], '')), false)
+  assert.equal(hostChildHasContent(el(['chat-files'], '', { childElementCount: 1 })), true)
+  assert.equal(hostChildHasContent(el(['charter-chat'], '查看章程草稿')), true)
+  assert.equal(hostChildHasContent(el([], '   ')), false)
+  assert.equal(hostObjectCount([el(['matter-trigger'], '事情与成果'), el(['memory-pending-entry'], '待核对 1', { querySelector: () => ({}) })]), 1)
+  assert.equal(deskCountOf(false, 0), 0)
+  assert.equal(deskCountOf(true, 0), 1)
+  assert.equal(deskCountOf(true, 2), 3)
+})
+
+test('usePresence: priority table with injected inputs', () => {
+  const base = {
+    workspaceReady: true, connectionLabel: '', backendDown: false, modelUnavailable: false, streaming: false,
+    preparationStage: null, pendingJobs: 0, composerFocused: false, firstToday: false, relationshipDays: null, hour: 9,
+  }
+  const line = over => presenceLine({ ...base, ...over })
+  assert.deepEqual(line({ workspaceReady: false, connectionLabel: '正在连接盒子', streaming: true }), { text: '正在连接盒子', action: null }, '桌面未就绪先于一切')
+  assert.deepEqual(line({ backendDown: true, streaming: true }), { text: '暂时未连接', action: 'reconnect' })
+  assert.deepEqual(line({ modelUnavailable: true, streaming: true }), { text: '还没配置模型', action: 'prefs' })
+  assert.deepEqual(line({ streaming: true, preparationStage: 'searching', pendingJobs: 3, composerFocused: true }), { text: '在想', action: null })
+  assert.deepEqual(line({ preparationStage: 'searching', pendingJobs: 3 }), { text: '在找资料', action: null })
+  assert.deepEqual(line({ preparationStage: 'reviewing' }), { text: '等你确认', action: null })
+  assert.deepEqual(line({ preparationStage: 'authorizing' }), { text: '在核对授权', action: null })
+  assert.deepEqual(STAGE_TEXT, { searching: '在找资料', reviewing: '等你确认', authorizing: '在核对授权' })
+  assert.deepEqual(line({ pendingJobs: 3, composerFocused: true }), { text: '在整理 3 件事', action: null })
+  assert.deepEqual(line({ composerFocused: true, firstToday: true, relationshipDays: 12 }), { text: '在听', action: null })
+  assert.deepEqual(line({ firstToday: true, relationshipDays: 12 }), { text: '今天是我们认识的第 12 天', action: null })
+  assert.deepEqual(line({ firstToday: true, relationshipDays: 0 }), { text: '早安', action: null }, '没有天数就退回问候')
+  assert.deepEqual(line({ firstToday: false, relationshipDays: 12, hour: 14 }), { text: '午后好', action: null })
+  assert.equal(greetingForHour(5), '早安')
+  assert.equal(greetingForHour(10), '早安')
+  assert.equal(greetingForHour(11), '午后好')
+  assert.equal(greetingForHour(17), '午后好')
+  assert.equal(greetingForHour(18), '晚上好')
+  assert.equal(greetingForHour(22), '晚上好')
+  assert.equal(greetingForHour(23), '夜深了')
+  assert.equal(greetingForHour(2), '夜深了')
+  assert.equal(dayKeyOf(new Date(2026, 8, 19, 7)), '2026-09-19')
+  assert.equal(isFirstOpenToday(null, '2026-09-19'), true)
+  assert.equal(isFirstOpenToday('2026-09-18', '2026-09-19'), true)
+  assert.equal(isFirstOpenToday('2026-09-19', '2026-09-19'), false)
+  for (const text of Object.values(STAGE_TEXT).concat(['在想', '在听'])) assert.doesNotMatch(text, /openai|ollama|anthropic|deepseek|gpt/i)
+})
+
+test('PresenceBar wires usePresence with the health composable and shows the two actions', async () => {
+  const bar = await read('src/immersive/PresenceBar.vue')
+  assert.match(bar, /useBackendHealth\(\)/)
+  assert.match(bar, /usePresence\(\{\s*workspaceReady: \(\) => props\.workspaceReady,\s*connectionLabel: \(\) => props\.connectionLabel,\s*backendDown: \(\) => noticeActive\.value,\s*\}\)/)
+  assert.match(bar, /presence\.action === 'reconnect'/)
+  assert.match(bar, /presence\.action === 'prefs'/)
+  assert.match(bar, /<RouterLink to="\/settings">去偏好<\/RouterLink>/)
+  assert.match(bar, /role="status" aria-live="polite"/)
+  const use = await read('src/immersive/composables/usePresence.ts')
+  assert.match(use, /addEventListener\('focusin', onFocusIn\)/)
+  assert.match(use, /closest\(COMPOSER_HOST\)/)
+  assert.match(use, /PRESENCE_DAY_KEY = 'zhijun\.presence\.day'/)
+  assert.match(use, /modelUnavailable\(status\)/)
+  assert.match(use, /chatPreparation\.value\?\.stage/)
+  assert.match(use, /status\?\.pendingJobs \?\? 0/)
+})
+
+test('useDayTint: morning warm, day neutral, night cool, recomputed every 10 minutes on the shell root', async () => {
+  assert.equal(TINT_MORNING, 'rgba(166, 69, 46, 0.035)')
+  assert.equal(TINT_NIGHT, 'rgba(60, 64, 61, 0.04)')
+  assert.equal(TINT_DAY, 'transparent')
+  for (const h of [5, 7, 9]) assert.equal(tintForHour(h), TINT_MORNING, `hour ${h}`)
+  for (const h of [10, 12, 15, 17]) assert.equal(tintForHour(h), TINT_DAY, `hour ${h}`)
+  for (const h of [18, 21, 23, 0, 3, 4]) assert.equal(tintForHour(h), TINT_NIGHT, `hour ${h}`)
+  assert.equal(tintForHour(25), TINT_NIGHT)
+  assert.equal(TINT_INTERVAL_MS, 600000)
+  const tint = await read('src/immersive/composables/useDayTint.ts')
+  assert.match(tint, /style\.setProperty\('--zj-tint', tintForHour\(now\(\)\.getHours\(\)\)\)/)
+  const shell = await read('src/immersive/ImmersiveShell.vue')
+  assert.match(shell, /<div ref="shellRef" class="zj-shell">/)
+  assert.match(shell, /useDayTint\(shellRef\)/)
+})
+
+test('ShellPreferenceCard writes the two localStorage keys without any network and without a second switch', async () => {
+  const store = new Map()
+  globalThis.localStorage = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)) }, removeItem: k => { store.delete(k) } }
+  const shell = await import('../src/immersive/shellPreference.ts')
+  const paced = await import('../src/immersive/pacedReplyPreference.ts')
+  shell.setImmersiveShell(true)
+  assert.equal(store.get('zhijun.shell'), 'immersive')
+  assert.equal(shell.immersiveShell.value, true)
+  shell.setImmersiveShell(false)
+  assert.equal(store.get('zhijun.shell'), 'classic')
+  paced.setPacedReply(false)
+  assert.equal(store.get('zhijun.pacedReply'), 'off')
+  assert.equal(paced.pacedReplyEnabled.value, false)
+  paced.setPacedReply(true)
+  assert.equal(store.get('zhijun.pacedReply'), 'on')
+  assert.equal(paced.resolvePacedReplyPreference(null), true, '默认开')
+  const card = await read('src/components/settings/ShellPreferenceCard.vue')
+  assert.match(card, /setImmersiveShell\(false\)/)
+  assert.match(card, /setImmersiveShell\(true\)/)
+  assert.match(card, /setPacedReply\(!pacedReplyEnabled\)/)
+  assert.doesNotMatch(card, /role="switch"/, '设置页的唯一 switch 留给记忆整理（settings-ontology.e2e）')
+  assert.doesNotMatch(card, /fetch\(|from '@\/services\/api'|onMounted/, '挂载时不联网')
+  assert.match(card, /aria-pressed/)
+  const settings = await read('src/pages/SettingsPage.vue')
+  assert.match(settings, /<ShellPreferenceCard v-if="!embedded" \/>\s*<ExternalAgentsPanel/, '经典壳的设置页在外部 Agent 之前挂这张卡；沉浸壳里它在偏好抽屉的「高级」组')
+  assert.match(settings, /inject\(immersiveKey, null\)/)
+})
+
+test('Preferences drawer: anchors resolve against the existing settings headings, plus box / agents / advanced', async () => {
+  const labels = PREFS_ANCHORS.map(a => a.label)
+  assert.deepEqual(labels, ['关系设置', '记忆整理', '日常对话与理解', '本地文件处理', '运行监控与任务', '账号与盒子', '外部 Agent', '高级'])
+  const workspace = await read('src/components/settings/WorkspaceSettings.vue')
+  const headings = [...workspace.matchAll(/<h2>([^<]+)<\/h2>/g)].map(m => m[1])
+  for (const anchor of PREFS_ANCHORS.filter(a => a.heading)) {
+    assert.ok(headings.some(h => h.startsWith(anchor.heading)), `WorkspaceSettings 里找不到以「${anchor.heading}」开头的 h2`)
+  }
+  assert.match(await read('src/desktop/DesktopBoxSettings.vue'), /data-testid="box-settings"/)
+  assert.match(await read('src/components/settings/ExternalAgentsPanel.vue'), /id="external-agents-heading"/)
+  const h2 = text => ({ textContent: text })
+  const root = {
+    querySelector: sel => (sel === '[data-testid="box-settings"]' ? { box: true } : sel === `#${PREFS_ADVANCED_ID}` ? { adv: true } : null),
+    querySelectorAll: () => [h2('关系设置'), h2('本地文件处理（Ollama）'), h2('高级')],
+  }
+  assert.deepEqual([...availableAnchorIds(root)], ['relationship', 'files', 'box', 'advanced'])
+  assert.deepEqual(findAnchorTarget(root, PREFS_ANCHORS.find(a => a.id === 'files')), h2('本地文件处理（Ollama）'))
+  assert.equal(findAnchorTarget(root, PREFS_ANCHORS.find(a => a.id === 'agents')), null)
+  const prefs = await read('src/immersive/drawers/Preferences.vue')
+  assert.match(prefs, /<nav class="zj-prefs__anchors" aria-label="偏好分区">/)
+  assert.match(prefs, /:hidden="!available\.has\(anchor\.id\)"/)
+  assert.match(prefs, /:id="advancedHostId"/)
+  assert.match(prefs, /ADVANCED_HOST\.slice\(1\)/)
+  assert.match(prefs, /<ShellPreferenceCard \/>/)
+  assert.match(prefs, /<SideDrawer :open="open" title="偏好" wide :placement="placement"/)
+})
+
+test('SideDrawer placement prop: sheet from the bottom at phone width, side otherwise', async () => {
+  assert.equal(placementFor(true), 'sheet')
+  assert.equal(placementFor(false), 'side')
+  assert.equal(PHONE_QUERY, '(max-width: 767px)')
+  const drawer = await read('src/components/ui/SideDrawer.vue')
+  assert.match(drawer, /placement\?: 'side' \| 'sheet'/)
+  assert.match(drawer, /'side-drawer--sheet': placement === 'sheet'/)
+  assert.match(drawer, /\.side-drawer--sheet \{ inset:auto 0 0 0; width:100vw; height:min\(88dvh, 760px\); max-height:88dvh;[^}]*border-radius:16px 16px 0 0;/)
+  assert.match(drawer, /\.side-drawer--wide \{ width:min\(960px,100vw\); \}/, '宽抽屉尺寸不变')
+  assert.match(drawer, /showModal\(\)/)
+  assert.match(drawer, /@cancel\.prevent="emit\('close'\)"/)
+  assert.match(drawer, /if \(returnFocus\?\.isConnected\) returnFocus\.focus\(\)/, '合上抽屉焦点回到打开它的印钮')
+  for (const file of ['SelfScroll', 'PastTimeline', 'Desk', 'Preferences']) {
+    const source = await read(`src/immersive/drawers/${file}.vue`)
+    assert.match(source, /useSheetPlacement\(\)/, `${file} 按 matchMedia 自动用 sheet`)
+    assert.match(source, /:placement="placement"/, `${file} 把落点传给 SideDrawer`)
+  }
+})
+
+test('the four drawers: data sources, hosts and the reveal / review paths', async () => {
+  const self = await read('src/immersive/drawers/SelfScroll.vue')
+  assert.match(self, /listClaims\(\{ trust: \['confirmed', 'working'\], limit: 500 \}\)/)
+  assert.match(self, /getCoreProfile\(\)/)
+  assert.match(self, /getOntologyStats\(\)/)
+  assert.match(self, /<SelfMap compact/)
+  assert.match(self, /<PersonalSummary :claims="claims" :profile="profile"/)
+  assert.match(self, /<SideDrawer :open="!!selected" title="这条理解与依据"/)
+  assert.match(self, /<ClaimCard v-if="selected"[^>]*show-section/)
+  assert.match(self, /<RouterLink to="\/me" class="zj-drawer__link" @click="emit\('close'\)">完整档案 →<\/RouterLink>/)
+  assert.match(self, /useDrawerLoad\(\(\) => props\.open, load, \(\) => turn\.value\?\.lastTurnAt\.value \?\? null\)/, '首次打开才读，每轮回复后刷新')
+
+  const past = await read('src/immersive/drawers/PastTimeline.vue')
+  assert.match(past, /api\.listGrowthDecisions\(\)/)
+  assert.match(past, /listConversations\(\{ status: 'all', limit: 40 \}\)/)
+  assert.match(past, /readRevisitPreferences\(createProductLocalStorage\(\)\.getItem\(REVISIT_STORAGE_KEY\)\)/)
+  assert.match(past, /revisitEntries\(decisions\.value, conversations\.value, preferences\.value\)/)
+  assert.match(past, /revisitLabel\(entry\)/)
+  assert.match(past, /revisitReason\(entry\)/)
+  assert.match(past, /<DecisionStepper v-if="entry\.kind === 'decision'" :status="entry\.decision\.status" \/>/)
+  assert.match(past, /<RelationshipTimeline :items="timeline" @open="openSource" \/>/)
+  assert.match(past, /createConversation\(\{ mode: 'review', decisionId: decision\.id \}\)/)
+  assert.match(past, /emit\('reveal', id\)/)
+  assert.match(past, /<RouterLink to="\/review" class="zj-drawer__link" @click="emit\('close'\)">完整回看 →<\/RouterLink>/)
+  assert.doesNotMatch(past, /deferred\[|selected\[/, '暂放 / 选入不在这里做')
+
+  const desk = await read('src/immersive/drawers/Desk.vue')
+  assert.match(desk, /<LiveObjectPanel/)
+  assert.match(desk, /:id="hostId" ref="host" class="zj-desk__host"/)
+  assert.match(desk, /DESK_HOST\.slice\(1\)/)
+  assert.match(desk, /observeDeskHost\(host\.value\)/)
+  assert.match(desk, /turn\.value\?\.openWorkspace\('review'\)/)
+  assert.doesNotMatch(desk, /DraftCard/, '案头不引流里的草稿卡，直接镜像 LiveObjectPanel')
+
+  const shell = await read('src/immersive/ImmersiveShell.vue')
+  assert.match(shell, /<SelfScrollDrawer :open="drawer === 'self'" @close="drawer = null" \/>/)
+  assert.match(shell, /<PastTimelineDrawer :open="drawer === 'past'" @close="drawer = null" @reveal="revealConversation" \/>/)
+  assert.match(shell, /<DeskDrawer :open="drawer === 'desk'" @close="drawer = null" \/>/)
+  assert.match(shell, /<PreferencesDrawer :open="prefsOpen" @close="closeDrawer">/)
+  assert.match(shell, /const prefsOpen = computed\(\(\) => inDrawer\.value && isSettings\.value\)/)
+  assert.match(shell, /<template v-if="inDrawer && !prefsOpen">\s*<RoutePageDrawer open/, '/settings 由偏好抽屉承载，其余非流路由走 RoutePageDrawer')
+  assert.match(shell, /<SealDock :active="activeSeal" @select="onSeal" \/>/)
+  assert.match(shell, /router\.push\(`\/c\/\$\{encodeURIComponent\(id\)\}`\)/, 'DayStream 没暴露 revealConversation 时退回路由')
+  assert.ok(shell.indexOf('<DeskDrawer') < shell.indexOf('class="zj-stage"'), '抽屉（含 Teleport 宿主）先于流挂载')
+})

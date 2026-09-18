@@ -6,6 +6,7 @@ import { provisionMindosSession } from './services/api'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/main.css'
+import './styles/immersive.css'
 
 const app = createApp(App)
 

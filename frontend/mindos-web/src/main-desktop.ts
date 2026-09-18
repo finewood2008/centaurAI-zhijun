@@ -6,6 +6,7 @@ import { enableDesktopProduct } from './shared/productScope'
 import './styles/tokens.css'
 import './styles/base.css'
 import './styles/main.css'
+import './styles/immersive.css'
 
 enableDesktopProduct()
 const app = createApp(DesktopApp)

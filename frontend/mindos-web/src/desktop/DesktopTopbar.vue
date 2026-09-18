@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import type { Phase } from '../../../shared/desktop-contract'
 import { Menu } from 'lucide-vue-next'
 import { useDesktopWorkspace } from './workspace'
+import { connectionLabel as connectionLabelFor } from './connectionPresentation'
 const props = defineProps<{ workspaceReady: boolean }>()
 const emit = defineEmits<{ (e: 'toggle-menu'): void }>()
 const { state } = useDesktopWorkspace()
 const route = useRoute()
 const phase = computed(() => state.value.snapshot?.phase)
-const labels: Record<Phase, string> = { signed_out: '尚未登录', authenticating: '正在登录', selecting_device: '未连接', connecting: '正在连接盒子', authorizing: '正在连接', ready: '正在打开工作区', disconnecting: '正在断开', failed: '连接未就绪' }
-const connectionLabel = computed(() => props.workspaceReady ? '已连接' : phase.value ? labels[phase.value] : '正在初始化')
+const connectionLabel = computed(() => connectionLabelFor(phase.value, props.workspaceReady))
 const title = computed(() => typeof route.meta.title === 'string' ? route.meta.title : '知君')
 </script>
 <template>

@@ -4,7 +4,7 @@
 // 切页不截断：卸载时不中断正在进行的流（服务端把这轮生成完并落库），只有用户点「停止」才中断；
 // 卸载后的回调用 alive 守卫，不再碰已销毁的状态。
 // 页头只有模型名与「还在整理 N 件事」；提醒、下一步等都在今日页。支持的 query：?say=（话头放进输入框，可配 ?deliberate=1 打开商量开关）与 ?onboarding=1（直接进建档态）。
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronDown, ChevronUp, Sparkles } from 'lucide-vue-next'
 import {
@@ -91,6 +91,13 @@ import ErrorState from '@/components/ui/ErrorState.vue'
 import ConfirmDialog from '@/components/ui/ConfirmDialog.vue'
 import SideDrawer from '@/components/ui/SideDrawer.vue'
 import MatterWorkspace from '@/components/matters/MatterWorkspace.vue'
+import StreamTurn from '@/immersive/StreamTurn.vue'
+import { immersiveKey } from '@/immersive/shellContext'
+import { clearActiveTurn, setActiveTurn, type ActiveTurnBridge } from '@/immersive/activeTurn'
+
+// 沉浸壳注入时进入嵌入模式：壳负责滚动容器与三个宿主，本页仍是唯一的轮次引擎（发送、流式、授权、记忆注意力原样）
+const shell = inject(immersiveKey, null)
+const embedded = !!shell
 
 interface UiMessage extends Message {
   provenance?: ProvenanceEvent | null
@@ -142,6 +149,8 @@ const replyTarget = computed(() => {
   const last = messages.value.filter(m => m.role === 'user' || m.role === 'assistant').at(-1)
   return last?.role === 'assistant' && last.status === 'complete' && !last.streaming ? last.id : null
 })
+// 嵌入模式：「留」印挂在最后一条知君消息上
+const lastAssistantId = computed(() => messages.value.filter(m => m.role === 'assistant').at(-1)?.id ?? null)
 const alignmentLocalOnly = ref(false)
 const routingMode = ref('legacy')
 const routingPanel = ref<InstanceType<typeof RoutingPanel> | null>(null)
@@ -857,7 +866,7 @@ async function loadConversation(id: string) {
       onboardingStep.value = null
     }
     if (typeof route.query.message === 'string') await revealMessage(route.query.message)
-    else await scrollToBottom()
+    else await scrollToBottom(true)
   } catch (err) {
     if (!loadGate.isCurrent(session)) return
     if (controller.signal.aborted) return
@@ -929,16 +938,19 @@ watch(
   { immediate: true },
 )
 
-async function scrollToBottom() {
+// 嵌入模式：壳的滚动容器只在贴近底部或明确要求（打开会话、刚发送）时才跟随，不打断正在往上翻的人
+async function scrollToBottom(force = false) {
+  const follow = !embedded || force || !!shell?.isNearBottom()
   await nextTick()
   if (typeof route.query.message === 'string') return
-  const el = listRef.value
+  if (!follow) return
+  const el = shell?.scroller() ?? listRef.value
   if (el) el.scrollTop = el.scrollHeight
 }
 
 async function revealMessage(messageId: string) {
   await nextTick()
-  const scroller = listRef.value
+  const scroller = shell?.scroller() ?? listRef.value
   const target = scroller?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
   if (!scroller || !target) return
   scroller.scrollTop += target.getBoundingClientRect().top - scroller.getBoundingClientRect().top - Math.min(80, scroller.clientHeight / 4)
@@ -1181,7 +1193,7 @@ async function streamTurn(conv: Conversation, content: string, depth: 'brief' | 
     streaming: true,
   })
   messages.value.push(userMsg, assistant)
-  await scrollToBottom()
+  await scrollToBottom(true)
 
   // 首个 token 之前失败：把原文放回输入框，并撤掉刚插入的两个气泡
   let gotToken = false
@@ -1605,8 +1617,27 @@ async function loadPageSupportingData() {
   await Promise.allSettled(reads)
 }
 
+// 沉浸壳的桥接：字段都是本页的 ref / computed，壳的其它部件只读这里、动作直接转发
+const bridgeOwner = Symbol('conversation-page')
+const lastTurnAt = computed(() => messages.value.filter(m => m.role === 'assistant' && !m.streaming).at(-1)?.createdAt ?? null)
+const activeTurnBridge: ActiveTurnBridge = {
+  owner: bridgeOwner,
+  conversationId: currentId, current, streaming, status, draft, draftPending, draftTimedOut, draftChanged, draftBusy, draftError,
+  decision, memoryAttention, memoryPlacement, turnOutcomes, imports, isReview, lastTurnAt,
+  send: (text, depth = 'brief', mode = 'chat') => send(text, depth, mode),
+  stop,
+  setText: text => composerRef.value?.setText(text),
+  setDeliberate: on => composerRef.value?.setDeliberate(on),
+  focus: () => composerRef.value?.focus(),
+  openWorkspace,
+  onConfirmDraft,
+  onDiscardDraft,
+  retryDraft,
+}
+
 onMounted(async () => {
   mounted = true
+  if (embedded) setActiveTurn(activeTurnBridge)
   // Load visible navigation first, then cap non-critical startup reads at two.
   await loadConversations()
   if (!alive) return
@@ -1614,6 +1645,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  clearActiveTurn(bridgeOwner)
   if (preparation.value) abortController?.abort()
   // 不 abort 正在进行的流：服务端会把这轮生成完并落库，回来时从服务端重载
   alive = false
@@ -1634,8 +1666,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="zj-page" @dragover="onFileDragOver" @drop="imports.drop" @paste="imports.paste">
-    <aside class="zj-page__side" :class="{ 'is-open': listOpen }">
+  <div class="zj-page" :class="{ 'zj-page--embedded': embedded }" @dragover="onFileDragOver" @drop="imports.drop" @paste="imports.paste">
+    <aside v-if="!embedded" class="zj-page__side" :class="{ 'is-open': listOpen }">
       <button type="button" class="zj-page__side-toggle" :aria-expanded="listOpen" @click="listOpen = !listOpen">
         <span>会话（{{ conversationsTotal }}）</span>
         <component :is="listOpen ? ChevronUp : ChevronDown" :size="16" aria-hidden="true" />
@@ -1677,7 +1709,7 @@ onBeforeUnmount(() => {
 
     <section class="zj-page__main" aria-live="polite">
       <header class="zj-page__head">
-        <div>
+        <div v-if="!embedded">
           <div class="zj-page__title-row"><h1 class="zj-page__title">{{ headerTitle }}</h1>
             <MoreMenu v-if="current" boundary="viewport" :items="conversationActions(current, !guidedOnboarding)" :disabled="metadataBusy[current.id]" label="管理当前对话" @select="action => current && manageConversation(current, action)" />
           </div>
@@ -1699,14 +1731,25 @@ onBeforeUnmount(() => {
           </p>
         </div>
         <div class="zj-page__tools">
+          <!-- 嵌入沉浸壳时，整理状态投到偏好的「高级」，事情与待核对投到案头；组件、ref 与事件原样 -->
+          <Teleport :to="shell?.advancedHost" :disabled="!embedded" defer>
           <RoutingPanel v-if="!currentId || loadedConversationId" ref="routingPanel" conversation :conversation-id="loadedConversationId || undefined" :disabled="streaming" @mode="onRoutingMode" @mode-selected="onRoutingModeSelected" @jobs-resumed="onMemoryJobsResumed" />
+          </Teleport>
+          <Teleport :to="shell?.deskHost" :disabled="!embedded" defer>
           <MatterWorkspace v-if="(!currentId || loadedConversationId) && !guidedOnboarding" ref="matterWorkspace" :conversation-id="loadedConversationId" :ensure-conversation="async () => (await ensureConversation('chat')).id" :suspension="matterSuspension" :disabled="streaming" @prepare="text => composerRef?.appendText(text)" />
+          </Teleport>
+          <template v-if="!embedded">
           <button v-if="showDraftPanel" class="zj-page__tool zj-page__tool--draft" aria-haspopup="dialog" @click="openWorkspace('draft')">判断草稿<span>{{ draftPending ? '整理中' : draft?.status === 'confirmed' ? '已记录' : '待查看' }}</span></button>
           <button v-if="isOnboarding" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('map')">本体与进度</button>
           <button v-if="decision" class="zj-page__tool" aria-haspopup="dialog" @click="openWorkspace('review')">观察与复盘</button>
+          </template>
+          <Teleport :to="shell?.deskHost" :disabled="!embedded" defer>
           <MemoryPending v-if="current" :key="current.id" :conversation-id="current.id" :pending-count="memoryAttention?.pendingCount" @changed="onPendingMemoryChanged" />
+          </Teleport>
+          <template v-if="!embedded">
           <button v-if="memoryDraft && memoryDraft.status !== 'dismissed'" class="zj-page__tool" data-testid="memory-draft-entry" aria-haspopup="dialog" @click="openWorkspace('memory')">这件事的小结<span v-if="memoryDraft.status === 'saved'">已保存</span></button>
           <BaseButton v-if="guidedOnboarding" variant="text" size="sm" :loading="onboardingTransitioning" @click="skipOnboarding">跳过引导</BaseButton>
+          </template>
         </div>
       </header>
 
@@ -1714,7 +1757,7 @@ onBeforeUnmount(() => {
       <div class="zj-page__stream">
       <AlignmentPrivacy v-if="loadedConversationId && conversationAuxPhase >= 2 && routingMode === 'legacy'" ref="alignmentPrivacy" conversation :conversation-id="loadedConversationId" :streaming="streaming" :managed="false" @local-only="alignmentLocalOnly = $event" />
       <div ref="listRef" class="zj-page__messages">
-        <div v-if="showIntro" class="zj-intro">
+        <div v-if="showIntro && !embedded" class="zj-intro">
           <Sparkles :size="22" aria-hidden="true" />
           <h2>先让我认识真实的你</h2>
           <p>先聊 3～5 个小话题：你现在的处境、在意的事、想往哪里走，以及希望我怎样帮助你。没想清楚可以跳过，随时开始使用，以后再慢慢完善。</p>
@@ -1734,6 +1777,8 @@ onBeforeUnmount(() => {
         <ErrorState v-else-if="messagesError" :message="messagesError" retry-label="重试" @retry="currentId && loadConversation(currentId)" />
 
         <template v-for="m in messages" :key="m.id">
+          <!-- 经典壳的一轮：被测试钉住的片段原样留在这个分支；沉浸壳走 StreamTurn -->
+          <template v-if="!embedded">
           <div class="zj-turn" :class="[`zj-turn--${m.role}`, { 'zj-turn--search-hit': highlightedMessage === m.id }]" :data-message-id="m.id" :aria-label="highlightedMessage === m.id ? '搜索命中消息' : undefined">
             <MessageBubble
               :role="m.role === 'system' && m.meta?.kind === 'review_open' ? 'assistant' : m.role"
@@ -1784,8 +1829,37 @@ onBeforeUnmount(() => {
               @review="(action, edited) => memoryPlacement && onReview(m, memoryPlacement.claim, action, edited)"
               @dismiss="memoryPlacement && dismissMemory('claim', memoryPlacement.claim.id, true)" />
           </div>
+          </template>
+          <StreamTurn
+            v-else
+            :message="m"
+            paced
+            :placement="memoryPlacement"
+            :review-busy="reviewBusy"
+            :imports="imports"
+            :outcomes="showOutcomesCard && m.id === lastAssistantId ? turnOutcomes : null"
+            :is-last-assistant="m.id === replyTarget"
+            :highlighted="highlightedMessage === m.id"
+            :allow-save="!!currentId && !guidedOnboarding"
+            :charter-attention="charterAttention"
+            :streaming="streaming"
+            :assistance-ready="!!loadedConversationId && conversationAuxPhase >= 4"
+            :conversation-id="loadedConversationId"
+            @cite="n => onCite(m, n)"
+            @save="matterWorkspace?.saveFromReply(m)"
+            @review="(claim, action, edited) => onReview(m, claim, action, edited)"
+            @dismiss="id => dismissMemory('claim', id, true)"
+            @retry="localOnly => retryMessage(m, localOnly)"
+            @check-saved="checkSavedReply(m)"
+            @ask-files="prompt => askAboutFiles(m, prompt)"
+            @insert-reply="(text, origin) => composerRef?.insertReply(text, origin)"
+            @write="composerRef?.focus()"
+            @alignment-updated="onAlignmentUpdated"
+            @alignment-refreshed="c => onAlignmentUpdated(c, false)"
+            @refresh-outcomes="current && refreshOutcomes(current.id, true)"
+          />
         </template>
-        <div v-if="showBlank" class="zj-blank" :class="{ 'zj-blank--after-opening': openingOnly }">
+        <div v-if="showBlank && !embedded" class="zj-blank" :class="{ 'zj-blank--after-opening': openingOnly }">
           <p v-if="!openingOnly" class="zj-blank__lead">从你眼下在意的事聊起。可以一起想清楚、准备一份文稿，也可以只是说说，不必马上作决定。</p>
           <button v-if="pendingOnboarding && !openingOnly" type="button" class="zj-blank__resume" data-testid="resume-onboarding" @click="selectConversation(pendingOnboarding.id)">
             <span class="zj-seal zj-seal--accent">建档</span>
@@ -1803,15 +1877,17 @@ onBeforeUnmount(() => {
         <CharterConversation v-if="loadedConversationId && conversationAuxPhase >= 3" :key="loadedConversationId" :conversation-id="loadedConversationId" :onboarding="guidedOnboarding"
           :message-id="replyTarget" :disabled="streaming || messagesLoading" :claims="mapClaims" :requested="route.query.charter === '1'"
           @finished="finishLightOnboarding" @attention="charterAttention = $event" @topics="onboardingTopics = $event" @reviewed="loadMapClaims" />
-        <OutcomesCard v-if="showOutcomesCard && turnOutcomes" :outcomes="turnOutcomes" :conversation-id="current?.id" @refresh="current && refreshOutcomes(current.id, true)" />
+        <OutcomesCard v-if="showOutcomesCard && turnOutcomes && !embedded" :outcomes="turnOutcomes" :conversation-id="current?.id" @refresh="current && refreshOutcomes(current.id, true)" />
       </div>
 
-      <div class="zj-page__composer">
+      <Teleport :to="shell?.composerHost" :disabled="!embedded" defer>
+      <div class="zj-page__composer" v-on="embedded ? { dragover: onFileDragOver, drop: imports.drop, paste: imports.paste } : {}">
         <p v-if="preparation" class="zj-turn__note" role="status" aria-live="polite" data-testid="chat-preparation">
           {{ preparation.message }}
         </p>
         <Composer
           ref="composerRef"
+          :quiet="embedded"
           :conversation-id="currentId"
           :streaming="streaming"
           :disabled="messagesLoading"
@@ -1826,9 +1902,10 @@ onBeforeUnmount(() => {
           @files="imports.stageFiles($event)"
           @pick-materials="imports.openPicker()"
         >
-          <template #attachments><ChatFilesPanel conversation :model="imports" /></template>
+          <template #attachments><Teleport :to="shell?.deskHost" :disabled="!embedded" defer><ChatFilesPanel conversation :model="imports" /></Teleport></template>
         </Composer>
       </div>
+      </Teleport>
       </div>
 
       </div>
@@ -2356,5 +2433,23 @@ onBeforeUnmount(() => {
     padding: 20px;
     margin: 12px 0;
   }
+}
+
+/* 嵌入沉浸壳：页只剩一列消息；滚动、输入区宿主与工作台入口都交给壳 */
+.zj-page.zj-page--embedded {
+  display: block;
+  height: auto;
+  max-width: none;
+  margin: 0;
+}
+.zj-page--embedded .zj-page__head { display: none; }
+.zj-page--embedded .zj-page__main,
+.zj-page--embedded .zj-page__body,
+.zj-page--embedded .zj-page__stream { display: block; }
+.zj-page--embedded .zj-page__stream { max-width: none; margin: 0; }
+.zj-page--embedded .zj-page__messages {
+  display: block;
+  overflow: visible;
+  padding: 0;
 }
 </style>

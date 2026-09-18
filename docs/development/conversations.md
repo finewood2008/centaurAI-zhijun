@@ -62,3 +62,13 @@
 - 前端测试：`conversation-management.test.mjs`、`chat-stream.test.mjs`、`reply-recovery.test.mjs`、`memory-pending-routing.test.mjs`
 
 接口字段详见 [知君接口契约](zhijun-api-contract.md)，模型和资料授权详见 [模型路由](task-routing.md)。
+
+## 沉浸式壳（记忆系统 V3 之后，2026-09-19）
+
+设计见 [沉浸式界面](../product/ZHIJUN_IMMERSIVE_UI.md)。当前通过 `?shell=immersive|classic`（写入 `localStorage['zhijun.shell']`）或偏好里的开关切换；壳的选择在 `src/App.vue`，路由表不变。
+
+- `src/immersive/ImmersiveShell.vue`：舞台（在场行 + 印坞 + 日流 + 输入区宿主）与四个抽屉（我 / 昔 / 案头 / 偏好）；非流路由在 `RoutePageDrawer` 中打开，`/settings` 在偏好抽屉中打开。
+- `src/immersive/composables/useDayStream.ts` + `dayStream.ts`：按天分节的长流（会话列表分页、按创建日分组、上滑加载更早、今日来信、当前会话规则、回到某天）。
+- `src/pages/ConversationPage.vue` 嵌入模式：注入 `immersiveKey` 后成为流里唯一可发送的当前块，发送 / 流式 / 授权 / 记忆 / 产出 / 草稿逻辑原样；工具与输入区经 `Teleport` 进入案头、偏好与输入区宿主；`activeTurn.ts` 桥接把状态暴露给壳。
+- `src/immersive/StreamTurn.vue` + `composables/usePacedReply.ts`：单条消息的知印、状态行（`statusLine.ts`）、记印 / 留印、就地展开的出处与产出；回复按段落浮现（偏好可关，减少动效偏好下直通）。
+- 测试：`tests/immersive-*.test.mjs`、`tests/paced-reply.test.mjs`、`tests/status-line.test.mjs`；端到端 `tests/immersive-turn.e2e.mjs`（夹具 `backend/tests/immersive_fixture.py`，8778 端口）。

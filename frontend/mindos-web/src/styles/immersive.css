@@ -1,0 +1,607 @@
+/* ============================================================
+   沉浸壳：一张米纸、一行在场、四枚印、一条流、一个输入区。
+   只用 --ws-* Token；朱砂只给印章；没有徽章、没有红点。
+   ============================================================ */
+
+.zj-shell {
+  --zj-tint: transparent;
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100dvh;
+  min-height: 0;
+  color: var(--ws-text-primary-color, #1d211f);
+  background: var(--ws-body-bg, #fffcf6);
+  overflow: hidden;
+}
+
+/* 昼夜色调：只是一层极淡的罩，由 useDayTint 写 --zj-tint */
+.zj-shell::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--zj-tint);
+  pointer-events: none;
+  transition: background 1.2s ease;
+}
+
+.zj-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- 上方一行：知印 + 在场文字 + 印坞 ---- */
+.zj-presence {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 52px;
+  padding: 10px 24px 6px;
+}
+
+.zj-presence__seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1.5px solid var(--ws-primary-color, #a6452e);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ws-primary-color, #a6452e);
+  font-family: var(--ws-font-display, serif);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.86;
+  flex-shrink: 0;
+}
+.zj-presence__seal:hover { opacity: 1; }
+.zj-presence__seal:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 4px;
+}
+
+.zj-presence__line {
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.zj-presence__line button {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.zj-dock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.zj-dock__seal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--ws-border-color, #d8d3c8);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font-family: var(--ws-font-display, serif);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.zj-dock__seal:hover,
+.zj-dock__seal[aria-pressed='true'] {
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-primary-color, #a6452e);
+}
+.zj-dock__seal.is-lit {
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-primary-color, #a6452e);
+}
+.zj-dock__seal:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ---- 中间：一条流 ---- */
+.zj-stage {
+  position: relative;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.zj-stream {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: auto;
+  padding: 8px 24px 32px;
+  scroll-padding-block: 12px 24px;
+}
+
+.zj-stream__inner,
+.zj-shell__composer > * {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.zj-stage__quiet {
+  margin: 48px auto 0;
+  max-width: 560px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  text-align: center;
+}
+
+/* ---- 下方：输入区宿主 ---- */
+.zj-shell__composer {
+  padding: 4px 24px 14px;
+}
+.zj-shell__composer:empty {
+  padding: 0;
+}
+
+/* ---- 嵌入式对话页：壳负责滚动，页只剩一列 ---- */
+.zj-shell .zj-page.zj-page--embedded {
+  display: block;
+  height: auto;
+  max-width: none;
+  margin: 0;
+}
+
+/* ---- 印章：呼吸只在听 / 在生成时发生 ---- */
+.zj-seal-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--ws-primary-color, #a6452e);
+  border-radius: 3px;
+  color: var(--ws-primary-color, #a6452e);
+  font-family: var(--ws-font-display, serif);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.62;
+  transform-origin: center;
+}
+.zj-seal-mark--breathing {
+  animation: zj-seal-breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes zj-seal-breathe {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zj-seal-mark--breathing { animation: none; opacity: 0.9; }
+  .zj-shell::before { transition: none; }
+}
+
+@media (max-width: 767px) {
+  .zj-presence { padding: 8px 16px 4px; gap: 10px; }
+  .zj-stream { padding: 6px 16px 24px; }
+  .zj-shell__composer { padding: 4px 12px 10px; }
+}
+
+/* B: stream ---------------------------------------------------------------
+   一条按天分节的流：日头、今天的信、只读历史块、当前块、流内草稿卡。
+   历史块在视口外只画占位（content-visibility），进入前 800px 才读消息。 */
+
+/* 视口外的块会记住上次渲染的宽度（contain-intrinsic-size: auto）；
+   舞台作为网格项不能被这个最小内容宽度撑开，流也不横向滚动（正文换行） */
+.zj-shell > .zj-stage { min-width: 0; }
+.zj-daystream { overflow-x: hidden; }
+.zj-daystream__more {
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-daystream__more button {
+  padding: 2px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-bottom: 1px dotted currentColor;
+}
+.zj-daystream__more button:hover { color: var(--ws-text-secondary-color, #686b66); }
+
+.zj-day { margin: 0 0 8px; }
+.zj-day__label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 16px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-day__label::before,
+.zj-day__label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--ws-border-color-3, #ebe7de);
+}
+.zj-day--today > .zj-day__label { color: var(--ws-text-secondary-color, #686b66); }
+.zj-day--lonely > .zj-day__label { margin-top: 4px; }
+
+.zj-daystream__active { min-height: 12px; }
+
+.zj-daystream__empty {
+  margin: 36px auto 24px;
+  max-width: 560px;
+  font-family: var(--ws-font-display, serif);
+  font-size: 16px;
+  line-height: 1.8;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  text-align: center;
+}
+.zj-daystream__note {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  text-align: center;
+}
+
+/* 当前块不是今天的对话时：贴在流底部（输入框上方）的一枚淡 chip */
+.zj-daystream__replying {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  background: var(--ws-body-bg, #fffcf6);
+}
+.zj-daystream__replying button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ---- 只读历史块 ---- */
+.zj-block {
+  position: relative;
+  margin: 0 0 18px;
+  padding: 2px 0 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
+  border-radius: 8px;
+  transition: background 0.6s ease, box-shadow 0.6s ease;
+}
+.zj-block.is-revealed {
+  background: var(--ws-surface-2, #fbf8f1);
+  box-shadow: 0 0 0 6px var(--ws-surface-2, #fbf8f1);
+}
+.zj-block__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 6px 32px;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-block__time { font-variant-numeric: tabular-nums; }
+.zj-block__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-block__line::before { content: '· '; }
+.zj-block__placeholder { margin: 0 0 0 32px; }
+.zj-block__note {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-block__note button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.zj-block__messages { min-width: 0; }
+.zj-block__midnight {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 14px 32px;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-block__midnight::before,
+.zj-block__midnight::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--ws-border-color-3, #ebe7de);
+}
+.zj-block__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 0 32px;
+}
+.zj-block__continue {
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px dotted transparent;
+}
+.zj-block__continue:hover {
+  color: var(--ws-primary-color, #a6452e);
+  border-bottom-color: currentColor;
+}
+.zj-block > .zj-outcomes,
+.zj-block > .zj-outcomes-card { margin: 8px 0 0 32px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .zj-block { transition: none; }
+}
+
+@media (max-width: 767px) {
+  .zj-block__head,
+  .zj-block__placeholder,
+  .zj-block__midnight,
+  .zj-block__foot,
+  .zj-block > .zj-outcomes,
+  .zj-block > .zj-outcomes-card { margin-left: 0; }
+}
+
+/* C: drawers */
+/* ---- 印坞：抽屉开着时那枚印与被按下一样 ---- */
+.zj-dock__seal[aria-expanded='true'] {
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-primary-color, #a6452e);
+}
+.zj-dock__seal:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 3px;
+}
+
+/* ---- 在场行里的动作：「· 重新连接」「· 去偏好」 ---- */
+.zj-presence__line button,
+.zj-presence__line a {
+  margin-left: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.zj-presence__line a:hover,
+.zj-presence__line button:hover:not(:disabled) {
+  color: var(--ws-primary-color, #a6452e);
+}
+
+/* ---- 抽屉通用：安静的正文、一行链接、底部一条去向 ---- */
+.zj-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-height: 100%;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ws-text-color, #3c403d);
+}
+.zj-drawer__quiet {
+  margin: 0;
+  font-family: var(--ws-font-display, serif);
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-drawer__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ws-primary-color, #a6452e);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.zj-drawer__link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.zj-drawer__link:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+.zj-drawer__link:focus-visible { outline: 2px solid var(--ws-primary-color, #a6452e); outline-offset: 3px; border-radius: 2px; }
+.zj-drawer__foot {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
+  text-align: right;
+}
+
+/* ---- 我：全景在卷首 ---- */
+.zj-self__map {
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+/* ---- 昔：时间线条目 ---- */
+.zj-past__list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.zj-past__entry {
+  padding: 14px 0;
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
+}
+.zj-past__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zj-past__title {
+  min-width: 0;
+  font-family: var(--ws-font-display, serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ws-text-primary-color, #1d211f);
+  overflow-wrap: anywhere;
+}
+.zj-past__time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--ws-text-placeholder-color, #a3a69f);
+}
+.zj-past__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-past__reason { min-width: 0; }
+.zj-past__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 8px;
+}
+.zj-past .zj-journey { padding: 0 0 18px; border-top: 0; }
+
+/* ---- 案头：分节 + 宿主 ---- */
+.zj-desk__section { display: grid; gap: 8px; }
+.zj-desk__section + .zj-desk__section {
+  padding-top: 18px;
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
+}
+.zj-desk__section h3 {
+  margin: 0;
+  font-family: var(--ws-font-display, serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-desk__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-desk__host {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px;
+}
+.zj-desk__host > * { max-width: 100%; }
+
+/* ---- 偏好：锚点一排、页面内容去掉自己的边距、高级一组 ---- */
+.zj-prefs__anchors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.zj-prefs__anchors button {
+  padding: 4px 10px;
+  border: 1px solid var(--ws-border-color-3, #ebe7de);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ws-text-secondary-color, #686b66);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zj-prefs__anchors button:hover {
+  color: var(--ws-primary-color, #a6452e);
+  border-color: var(--ws-primary-color, #a6452e);
+}
+.zj-prefs__anchors button:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 2px;
+}
+.zj-prefs__page .settings-page.page { max-width: none; padding: 0; margin: 0; }
+.zj-prefs__page .settings-page .page-head { display: none; }
+.zj-prefs__advanced {
+  display: grid;
+  gap: 10px;
+  padding-top: 20px;
+  border-top: 1px solid var(--ws-border-color-3, #ebe7de);
+}
+.zj-prefs__advanced h2 {
+  margin: 0;
+  font-family: var(--ws-font-display, serif);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--ws-text-primary-color, #1d211f);
+}
+.zj-prefs__advanced h2:focus-visible,
+.zj-prefs__page h2:focus-visible {
+  outline: 2px solid var(--ws-primary-color, #a6452e);
+  outline-offset: 4px;
+}
+.zj-prefs__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ws-text-secondary-color, #686b66);
+}
+.zj-prefs__host { display: grid; gap: 12px; }
+.zj-prefs__advanced .shell-pref { margin-bottom: 0; }
+
+@media (max-width: 767px) {
+  .zj-drawer { gap: 18px; }
+  .zj-past__head { flex-direction: column; gap: 2px; }
+}

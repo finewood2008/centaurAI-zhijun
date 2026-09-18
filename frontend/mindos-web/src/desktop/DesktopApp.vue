@@ -12,6 +12,7 @@ import { DesktopController } from './controller'
 import { desktopWorkspaceKey } from './workspace'
 import DesktopConnection from './DesktopConnection.vue'
 import DesktopTopbar from './DesktopTopbar.vue'
+import { connectionLabel } from './connectionPresentation'
 import { nextWriteUncertainty, showWriteUncertainty, uncertainWriteMessage, type UncertainWriteOwner } from './writeUncertainty'
 
 const bridge = (window as Window & { zhijunDesktop?: ZhijunDesktopV1 }).zhijunDesktop
@@ -20,6 +21,7 @@ const state = shallowRef(controller.state)
 const router = useRouter()
 const signedIn = computed(() => !!state.value.snapshot?.subject?.accountId)
 const isSettings = computed(() => router.currentRoute.value.path === '/settings')
+const phase = computed(() => state.value.snapshot?.phase)
 const hasEnteredWorkspace = shallowRef(false)
 const enteredScope = shallowRef<string | null>(null)
 const uncertainWrite = shallowRef<UncertainWriteOwner | null>(null)
@@ -72,7 +74,7 @@ onMounted(() => { void controller.start() })
 onBeforeUnmount(() => { stopObserving(); setProductScope(null); client?.dispose(); stopTransport(); stopFiles(); controller.dispose() })
 </script>
 <template>
-  <App v-if="signedIn">
+  <App v-if="signedIn" :workspace-ready="ready" :connection-label="connectionLabel(phase, ready)">
     <template #content>
       <div v-if="showUncertainWrite" role="alert" data-testid="uncertain-write-notice" class="uncertain-write-notice">{{ uncertainWriteMessage }}</div>
       <RouterView v-if="ready || isSettings" :key="isSettings ? 'settings' : scopeKey ?? ''" />

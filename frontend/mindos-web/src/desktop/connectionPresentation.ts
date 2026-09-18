@@ -1,4 +1,4 @@
-import type { DesktopSnapshot } from '../../../shared/desktop-contract'
+import type { DesktopSnapshot, Phase } from '../../../shared/desktop-contract'
 
 export type ConnectionStageId = 'connect' | 'authorize' | 'workspace'
 export type ConnectionStageState = 'pending' | 'active' | 'complete' | 'error' | 'blocked' | 'simulated'
@@ -170,4 +170,21 @@ export function connectionPresentation(
     announcement,
     cancellablePhase,
   }
+}
+
+const PHASE_LABELS: Readonly<Record<Phase, string>> = {
+  signed_out: '尚未登录',
+  authenticating: '正在登录',
+  selecting_device: '未连接',
+  connecting: '正在连接盒子',
+  authorizing: '正在连接',
+  ready: '正在打开工作区',
+  disconnecting: '正在断开',
+  failed: '连接未就绪',
+}
+
+/** 顶栏 / 在场行的一句连接状态：工作区就绪即「已连接」，否则按阶段；没有快照时「正在初始化」。 */
+export function connectionLabel(phase: Phase | null | undefined, ready: boolean): string {
+  if (ready) return '已连接'
+  return (phase && PHASE_LABELS[phase]) || '正在初始化'
 }

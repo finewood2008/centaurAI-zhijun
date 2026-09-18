@@ -1,11 +1,9 @@
 <script setup lang="ts">
 // 顶栏：移动端菜单按钮 + 当前页标题。只有后端不可用时才出现一条提示；其他时候什么都不说。
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { Menu } from 'lucide-vue-next'
-import { isDesktopProduct } from '@/shared/productScope'
-import { api } from '@/services/api'
-import { backendConnection, backendNoticeActive, connectionNoticeMounted, markBackendConnected, markBackendDisconnected } from '@/shared/backendConnection'
+import { useBackendHealth } from '@/composables/useBackendHealth'
 
 const emit = defineEmits<{ (e: 'toggle-menu'): void }>()
 
@@ -16,48 +14,7 @@ const title = computed(() => {
   return typeof t === 'string' ? t : '知君'
 })
 
-const checking = ref(false)
-let alive = true
-let timer: ReturnType<typeof setTimeout> | undefined
-let request: AbortController | null = null
-
-async function checkHealth() {
-  if (isDesktopProduct() || checking.value || !alive) return
-  checking.value = true
-  request = new AbortController()
-  const timeout = setTimeout(() => request?.abort(), 5000)
-  try {
-    await api.health(request.signal)
-    if (alive) markBackendConnected()
-  } catch {
-    if (alive) markBackendDisconnected()
-  } finally {
-    clearTimeout(timeout)
-    request = null
-    checking.value = false
-    if (alive) {
-      clearTimeout(timer)
-      timer = setTimeout(checkHealth, backendConnection.value === 'disconnected' ? 5000 : 30000)
-    }
-  }
-}
-
-watch(backendConnection, state => {
-  if (state === 'disconnected' && !checking.value) {
-    clearTimeout(timer)
-    timer = setTimeout(checkHealth, 1000)
-  }
-})
-onMounted(() => {
-  connectionNoticeMounted.value = true
-  void checkHealth()
-  window.addEventListener('online', checkHealth)
-})
-onBeforeUnmount(() => {
-  alive = false; clearTimeout(timer); request?.abort()
-  connectionNoticeMounted.value = false
-  window.removeEventListener('online', checkHealth)
-})
+const { checking, checkHealth, noticeActive: backendNoticeActive } = useBackendHealth()
 </script>
 
 <template>

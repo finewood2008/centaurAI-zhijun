@@ -26,6 +26,8 @@ const props = defineProps<{
   uploading?: boolean
   retrievalOnly?: boolean
   conversationId?: string | null
+  // 沉浸壳：不显示两枚常驻 chip，「整理成判断」「展开分析」收进「+」菜单；意图提示行照旧
+  quiet?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -305,6 +307,9 @@ defineExpose({
   setDeliberate: (on: boolean) => {
     deliberate.value = on
   },
+  setDeep: (on: boolean) => {
+    deep.value = on
+  },
   setText: (value: string, origin?: ReplyAssistanceInput) => {
     const failed = lastSubmission && lastSubmission.conversationId === props.conversationId && lastSubmission.text.trim() === value && JSON.stringify(lastSubmission.origin) === JSON.stringify(origin) ? lastSubmission : undefined
     text.value = failed?.text ?? value
@@ -331,6 +336,10 @@ defineExpose({
     <p v-else-if="showHint" class="zj-composer__intent" role="status">
       像是在拿主意？切到「我在考虑…」，知君会帮你整理成判断草稿。
       <button type="button" class="zj-composer__intent-btn" @click="deliberate = true">切换</button>
+    </p>
+    <p v-if="quiet && (deliberate || deep)" class="zj-composer__intent" role="status" data-testid="composer-quiet-modes">
+      这一轮{{ deliberate ? '会整理成判断' : '' }}{{ deliberate && deep ? '，也' : '' }}{{ deep ? '会展开分析' : '' }}。
+      <button type="button" class="zj-composer__intent-btn" @click="deliberate = false; deep = false">先不用</button>
     </p>
     <div class="zj-composer__wrap">
       <textarea
@@ -364,12 +373,16 @@ defineExpose({
           <button type="button" @click="emit('pick-materials'); addOpen = false">选择已有资料</button>
           <span>也可以拖入文件或粘贴截图</span>
           </template>
+          <template v-if="quiet">
+          <button v-if="allowDeliberate !== false" type="button" :aria-pressed="deliberate" @click="deliberate = !deliberate; addOpen = false">{{ deliberate ? '不整理成判断' : '整理成判断' }}</button>
+          <button type="button" :aria-pressed="deep" @click="deep = !deep; addOpen = false">{{ deep ? '不展开分析' : '展开分析' }}</button>
+          </template>
         </div>
         <input v-if="!retrievalOnly && desktopAudioUpload" ref="audioInput" type="file" multiple hidden :accept="AUDIO_EXTENSIONS.join(',')" aria-label="上传音频到盒子处理" @change="onFiles" />
         <input v-if="!retrievalOnly" ref="filesInput" type="file" multiple hidden :accept="acceptFiles" aria-label="上传聊天文件" @change="onFiles" />
       </div>
       <button
-        v-if="allowDeliberate !== false"
+        v-if="allowDeliberate !== false && !quiet"
         type="button"
         class="zj-composer__chip"
         :class="{ 'is-on': deliberate }"
@@ -381,6 +394,7 @@ defineExpose({
         整理成判断
       </button>
       <button
+        v-if="!quiet"
         type="button"
         class="zj-composer__chip"
         :class="{ 'is-on': deep }"

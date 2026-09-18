@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { X } from 'lucide-vue-next'
-const props = defineProps<{ open: boolean; title: string }>()
+// placement：side 从右侧滑出（默认）；sheet 从底部升起（手机宽度由调用方按 matchMedia 决定）。两种都沿用 <dialog showModal> 的焦点陷阱、Escape 与焦点归还。
+const props = defineProps<{ open: boolean; title: string; wide?: boolean; placement?: 'side' | 'sheet' }>()
 const emit = defineEmits<{ (e: 'close'): void }>()
 const dialog = ref<HTMLDialogElement | null>(null)
 let returnFocus: HTMLElement | null = null
@@ -26,7 +27,7 @@ onBeforeUnmount(() => dialog.value?.close())
 <template>
   <Teleport to="body">
     <!-- Keep contents mounted: closing or switching tabs must not erase draft edits. -->
-    <dialog ref="dialog" class="side-drawer" :aria-label="title" @cancel.prevent="emit('close')" @click="backdrop">
+    <dialog ref="dialog" class="side-drawer" :class="{ 'side-drawer--wide': wide, 'side-drawer--sheet': placement === 'sheet' }" :aria-label="title" @cancel.prevent="emit('close')" @click="backdrop">
       <header class="side-drawer__head"><h2>{{ title }}</h2><button type="button" :aria-label="`关闭${title}`" @click="emit('close')"><X :size="20" /></button></header>
       <div v-if="$slots.navigation" class="side-drawer__nav"><slot name="navigation" /></div>
       <div class="side-drawer__body"><slot /></div>
@@ -36,6 +37,9 @@ onBeforeUnmount(() => dialog.value?.close())
 <style scoped>
 .side-drawer { position:fixed; inset:0 0 0 auto; margin:0; width:min(600px,100vw); height:100dvh; max-height:100dvh; max-width:100vw; padding:0; border:0; border-left:1px solid var(--ws-border-color,#d8d3c8); background:var(--ws-bg-color,#fffcf7); color:var(--ws-text-color,#3c403d); box-shadow:-12px 0 48px #29251e18; box-sizing:border-box; }
 .side-drawer[open] { display:flex; flex-direction:column; }.side-drawer::backdrop { background:#211e191f; }
+.side-drawer--wide { width:min(960px,100vw); }
+.side-drawer--sheet { inset:auto 0 0 0; width:100vw; height:min(88dvh, 760px); max-height:88dvh; border-left:0; border-top:1px solid var(--ws-border-color,#d8d3c8); border-radius:16px 16px 0 0; box-shadow:0 -12px 48px #29251e18; }
+.side-drawer--sheet.side-drawer--wide { width:100vw; }
 .side-drawer__head { display:flex; flex-shrink:0; align-items:center; justify-content:space-between; gap:16px; padding:20px 24px; border-bottom:1px solid var(--ws-border-color-3,#ebe7de); }
 .side-drawer__head h2 { margin:0; font:600 20px var(--ws-font-display,serif); }.side-drawer__head button { display:grid; place-items:center; width:36px; height:36px; border:1px solid var(--ws-border-color-3,#ebe7de); border-radius:50%; background:transparent; color:inherit; cursor:pointer; }
 .side-drawer__nav { flex-shrink:0; padding:12px 24px; border-bottom:1px solid var(--ws-border-color-3,#ebe7de); }

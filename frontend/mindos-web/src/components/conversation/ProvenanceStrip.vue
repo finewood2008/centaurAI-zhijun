@@ -15,9 +15,12 @@ const props = defineProps<{
   conversation?: boolean
   provenance: ProvenanceEvent & { fromReceipt?: boolean }
   meta?: TurnMetaEvent | null
+  // faint：沉浸壳里由状态行控制展开，本组件不再显示自己的开关
+  variant?: 'default' | 'faint'
 }>()
 
-const open = ref(false)
+const faint = computed(() => props.variant === 'faint')
+const open = ref(props.variant === 'faint')
 const safeProvenance = computed(() => normalizeProvenance(props.provenance))
 // 以前记过的相似判断（旧后端没有这个字段）
 const pastDecisions = computed(() => safeProvenance.value.pastDecisions ?? [])
@@ -33,11 +36,12 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
 </script>
 
 <template>
-  <div class="zj-prov" :class="{ 'is-open': open }">
+  <div class="zj-prov" :class="{ 'is-open': open, 'zj-prov--faint': faint }">
     <button
       type="button"
       class="zj-prov__toggle"
       data-testid="provenance-toggle"
+      :hidden="faint || undefined"
       :aria-expanded="open"
       @click="open = !open"
     >
@@ -159,6 +163,14 @@ const anchorText = computed(() => anchorIds.value.size ? `旧回执标记了 ${a
   border: 1px solid var(--ws-border-color-3, #ebe7de);
   border-radius: var(--ws-radius-lg, 8px);
   background: var(--ws-card-bg, #fff);
+}
+.zj-prov--faint .zj-prov__body {
+  margin-top: 2px;
+  padding: 6px 12px;
+  border: 0;
+  border-left: 2px solid var(--ws-border-color-3, #ebe7de);
+  border-radius: 0;
+  background: transparent;
 }
 .zj-prov__line {
   margin: 0 0 6px;

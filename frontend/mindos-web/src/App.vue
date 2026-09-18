@@ -1,21 +1,32 @@
 <script setup lang="ts">
+// 壳的二选一在这里，不碰路由表：沉浸壳（ImmersiveShell）或经典壳（MainLayout）。
+// 建档流程（route.meta.onboardingFlow / /onboarding*）暂留经典壳。
+// 桌面端的连接状态只经 props 传入（workspaceReady / connectionLabel），沉浸壳不引入 src/desktop/*。
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import MainLayout from '@/layouts/MainLayout.vue'
+import ImmersiveShell from '@/immersive/ImmersiveShell.vue'
+import { immersiveShell } from '@/immersive/shellPreference'
 import ToastHost from '@/components/ui/ToastHost.vue'
 import RoutingConsent from '@/components/conversation/RoutingConsent.vue'
 import RagSensitiveDialog from '@/components/conversation/RagSensitiveDialog.vue'
 import { ragQuestion, type RagV2Choice } from '@/services/taskRouting'
 
+withDefaults(defineProps<{ workspaceReady?: boolean; connectionLabel?: string }>(), { workspaceReady: true, connectionLabel: '' })
+
 const ragPrompt = computed(() => ragQuestion.value?.prompt)
 const chooseRag = (choice: RagV2Choice) => ragQuestion.value?.done(choice)
 const route = useRoute()
 const conversationPresentation = computed(() => ['conversation', 'conversation-detail', 'onboarding-chat', 'onboarding-conversation'].includes(String(route.name)))
+const useImmersiveShell = computed(() => immersiveShell.value && route.meta.onboardingFlow !== true && !route.path.startsWith('/onboarding'))
 </script>
 
 <template>
   <ToastHost>
-    <MainLayout>
+    <ImmersiveShell v-if="useImmersiveShell" :workspace-ready="workspaceReady" :connection-label="connectionLabel">
+      <template v-if="$slots.content" #content><slot name="content" /></template>
+    </ImmersiveShell>
+    <MainLayout v-else>
       <template v-if="$slots.content" #content><slot name="content" /></template>
       <template v-if="$slots.topbar" #topbar="controls"><slot name="topbar" v-bind="controls" /></template>
     </MainLayout>

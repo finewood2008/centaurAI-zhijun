@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { inject } from 'vue'
 import WorkspaceSettings from '@/components/settings/WorkspaceSettings.vue'
 import ExternalAgentsPanel from '@/components/settings/ExternalAgentsPanel.vue'
+import ShellPreferenceCard from '@/components/settings/ShellPreferenceCard.vue'
+import { immersiveKey } from '@/immersive/shellContext'
 
 // Desktop supplies readiness and its connection slot through its own route.
 // Keep all native modules outside the browser build.
@@ -8,6 +11,8 @@ withDefaults(defineProps<{ workspaceReady?: boolean; workspaceKey?: string }>(),
   workspaceReady: true,
   workspaceKey: 'web',
 })
+// 沉浸壳里这张卡放在偏好抽屉的「高级」组，页面上不再重复
+const embedded = !!inject(immersiveKey, null)
 </script>
 
 <template>
@@ -17,6 +22,7 @@ withDefaults(defineProps<{ workspaceReady?: boolean; workspaceKey?: string }>(),
       <p>管理连接，调整知君与你相处的方式。</p>
     </header>
     <slot name="connection" />
+    <ShellPreferenceCard v-if="!embedded" />
     <ExternalAgentsPanel v-if="workspaceReady" :key="`agents-${workspaceKey}`" />
     <WorkspaceSettings v-if="workspaceReady" :key="workspaceKey" />
     <p v-else class="settings-unavailable" role="status">连接盒子后，可调整提醒、记忆整理、隐私和模型设置。</p>
