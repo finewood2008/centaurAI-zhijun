@@ -278,11 +278,6 @@ def charter_exception(conversation_id: str, req: CharterException, request: Requ
 def revoke(conversation_id: str, req: Revoke, request: Request):
     r = router_for(conversation_id, request)
     policy = r.store.revoke(r.scope, req.key)
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from zhijun_worker import consent
-        consent.revoke(req.key)
-        if policy["revision"]:
-            consent.revoke_policy(req.key, policy["revision"])
     return {"revoked": True, "notice": "已停止后续使用；无法收回已经发送的内容"}
 
 
@@ -316,18 +311,6 @@ def set_default_consent(conversation_id: str, req: DefaultConsent, request: Requ
                                    expected_revision=req.expectedRevision)
     except ValueError as exc:
         fail("DEFAULT_CONSENT_CHANGED", str(exc))
-    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
-        from zhijun_worker import consent
-        try:
-            consent.register_policy(saved)
-            if not saved["enabled"]:
-                consent.revoke()
-        except Exception:
-            # An uncertain remote write must never leave local auto-consent
-            # active. A fresh explicit settings action is required to retry.
-            if saved["enabled"]:
-                r.store.revoke(r.scope)
-            raise
     return default_state(request) if conversation_id == "default" else state(conversation_id, request)
 
 

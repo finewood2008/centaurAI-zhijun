@@ -658,18 +658,6 @@ def _fake_allowed() -> bool:
     return os.environ.get("MINDOS_RUNTIME_ENV", "").strip().lower() != "production"
 
 
-def workspace_provider(*, local_only=False) -> ChatProvider:
-    """Resolve workspace models only through the authenticated DE capability."""
-    from zhijun_worker.capabilities import CapabilityError
-    from zhijun_worker.model import CapabilityProvider
-
-    try:
-        return CapabilityProvider(local_only=local_only)
-    except CapabilityError as exc:
-        raise ProviderError("工作区模型服务暂时不可用，请重新读取模型设置", code=exc.code,
-                            status_code=exc.status, retryable=exc.status in {429, 502, 503, 504}) from None
-
-
 def _chat_channel_ever_saved() -> bool:
     """设置页是否保存过模型通道。没保存过＝用户还没做过任何选择。
 
@@ -692,13 +680,7 @@ def build_provider(snapshot=None) -> ChatProvider:
     - ``ZHIJUN_PROVIDER=openai`` 或设置页「外部问答」已开启且 provider=openai：OpenAI 兼容通道。
     - 其余：本地 Ollama（沿用材料通道快照的地址与模型）。
     """
-    workspace = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
-    if workspace:
-        if snapshot is not None:
-            raise ProviderError("工作区模型配置必须重新从模型服务读取", code="WORKSPACE_MODEL_SNAPSHOT_FORBIDDEN",
-                                status_code=409, retryable=False)
-        return workspace_provider()
-    override = "" if workspace else os.environ.get("ZHIJUN_PROVIDER", "").strip().lower()
+    override = os.environ.get("ZHIJUN_PROVIDER", "").strip().lower()
     if override == "fake":
         if not _fake_allowed():
             raise ProviderError("演示模型不能在生产环境启用", status_code=503, code="FAKE_FORBIDDEN", retryable=False)
@@ -712,7 +694,7 @@ def build_provider(snapshot=None) -> ChatProvider:
     if use_openai:
         # 用户已选定的供应商必须整体生效，不能把新端点与旧环境变量密钥混用。
         # 只有非工作区且没有已保存供应商时，保留联调 / 评测的环境变量兼容路径。
-        isolated = workspace or selected
+        isolated = selected
         base_url = snap.base_url if isolated else (os.environ.get("ZHIJUN_OPENAI_BASE_URL", "").strip() or snap.base_url)
         model = snap.model if isolated else (os.environ.get("ZHIJUN_OPENAI_MODEL", "").strip() or snap.model)
         key = get_provider().resolve_api_key(snap) if isolated else (os.environ.get("ZHIJUN_OPENAI_API_KEY", "").strip() or get_provider().resolve_api_key(snap))
@@ -724,11 +706,11 @@ def build_provider(snapshot=None) -> ChatProvider:
                 retryable=False,
             )
         try:
-            timeout = float(snap.timeout_seconds if workspace else (os.environ.get("ZHIJUN_OPENAI_TIMEOUT", "") or snap.timeout_seconds))
+            timeout = float(os.environ.get("ZHIJUN_OPENAI_TIMEOUT", "") or snap.timeout_seconds)
         except ValueError:
             timeout = float(snap.timeout_seconds)
         task_model = None if isolated else (os.environ.get("ZHIJUN_OPENAI_TASK_MODEL", "").strip() or None)
-        thinking = None if workspace else (os.environ.get("ZHIJUN_OPENAI_THINKING", "").strip() or None)
+        thinking = os.environ.get("ZHIJUN_OPENAI_THINKING", "").strip() or None
         result = OpenAICompatibleProvider(base_url, model, key, timeout=timeout, task_model=task_model, thinking=thinking)
         # Internal-only identity lets the dispatch guard notice a saved account
         # change even when the endpoint and model stay identical. Never a token.
@@ -738,10 +720,9 @@ def build_provider(snapshot=None) -> ChatProvider:
         ).encode("utf-8")).hexdigest() if isolated else None
         return result
     never_configured = (
-        not workspace
-        # 调用方自带快照＝它已经把配置定下来了，不要再去翻存储second-guess 它。
+        # 调用方自带快照＝它已经把配置定下来了，不要再去翻存储 second-guess 它。
         # 真实调用方（routing_routes / turn / ontology / alignment / chat_imports）都不传快照。
-        and snapshot is None
+        snapshot is None
         # 存过外部供应商、只是暂停了的人，是做过选择的：那种情况要落回本机模型，
         # 不能报「还没配置」，也不能被环境里的陈旧 key 重新打开外发。
         and not getattr(snap, "external_provider_id", None)
@@ -760,12 +741,8 @@ def build_provider(snapshot=None) -> ChatProvider:
     local = snap.local
     if getattr(local, "configuration_error", None):
         raise ProviderError("本地 GPU 配置与部署合同冲突，请修复工作区设置", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
-    if workspace and (not local or not local.base_url or not local.model):
-        raise ProviderError("本地模型配置不完整：请先配置盒端已有的本地模型服务",
-                            code="PROVIDER_MISCONFIGURED", retryable=False)
     try:
-        num_ctx = int((getattr(local, "context_window", None) or DEFAULT_LOCAL_NUM_CTX) if workspace
-                      else (os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX))
+        num_ctx = int(os.environ.get("ZHIJUN_LOCAL_NUM_CTX", "") or DEFAULT_LOCAL_NUM_CTX)
     except ValueError:
         num_ctx = DEFAULT_LOCAL_NUM_CTX
     gpu_policy = getattr(local, "backend", None) == "ollama_gpu"

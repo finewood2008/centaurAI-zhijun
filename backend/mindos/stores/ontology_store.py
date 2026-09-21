@@ -1549,7 +1549,7 @@ class OntologyStore:
             if db.execute("SELECT 1 FROM ontology_jobs WHERE kind=? AND owner_id=? AND state IN ('queued','running')", (kind, owner_id)).fetchone():
                 return None
         job_id = f"ojob_{uuid.uuid4().hex[:12]}"
-        from zhijun_worker.background import register, BackgroundEnqueueError
+        from ..background import register, BackgroundEnqueueError
         registration_error = None
         try:
             register(job_id, kind)
