@@ -197,29 +197,6 @@ def test_tool_contract_is_read_only_closed_and_not_native_model_dispatch():
     assert tools.native_model_tools_supported is False
 
 
-def test_execute_search_calls_only_fixed_client_with_review_context():
-    plan = tools.plan_search("星桥项目怎么验收？", material_ids=["mat-1"])
-    sentinel = [{"evidenceRef": "erv2_" + "a" * 32}]
-    with patch("mindos.data_agent_rag.search_materials", return_value=sentinel) as search:
-        assert tools.execute_search(plan, "conversation-1:turn-2") == sentinel
-    search.assert_called_once_with(
-        "星桥项目怎么验收？",
-        ["mat-1"],
-        "conversation-1:turn-2",
-        top_k=5,
-        require_review=True,
-        review_context={"query": "星桥项目怎么验收？", "scopeLabel": "所选资料"},
-    )
-
-
-def test_execute_search_revalidates_plan_and_rejects_unknown_parameters():
-    plan = tools.plan_search("发布验收")
-    plan["url"] = "https://example.invalid"
-    with patch("mindos.data_agent_rag.search_materials") as search, pytest.raises(HTTPException):
-        tools.execute_search(plan, "turn-1")
-    search.assert_not_called()
-
-
 def test_offline_cases_are_declared_expectations_not_quality_claims():
     path = Path(__file__).parents[2] / "testdata" / "retrieval-query-cases.json"
     cases = json.loads(path.read_text(encoding="utf-8"))

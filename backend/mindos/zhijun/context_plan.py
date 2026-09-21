@@ -268,51 +268,18 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
                    "inProfile": c["id"] in profile_ids} for c in claims]
     adapters = [context_sources.history_candidates, context_sources.summary_candidates,
                 context_sources.decision_candidates]
-    workspace_rag = bool(os.environ.get("ZHIJUN_WORKSPACE_ID"))
     # A deep answer alone is not evidence of a document question. Preserve
     # ordinary chat while letting explicit files and document follow-ups search.
     needs_materials = bool(material_refs) or _needs_implicit_material_search(
-        content, allowed_history, focus,
-        queries=None if workspace_rag else queries, complex=False if workspace_rag else complex,
+        content, allowed_history, focus, queries=queries, complex=complex,
     )
-    retrieval_plan = None
-    if workspace_rag and needs_materials:
-        from .retrieval_tools import plan_search
-        retrieval_plan = plan_search(
-            content, allowed_history,
-            material_ids=list(dict.fromkeys(r["materialId"] for r in material_refs)) if material_refs else None,
-        )
-        # Query ancestry is an authorization dependency even if it does not
-        # survive the normal visible-context budget.
-        history_by_id = {m.get("id"): m for m in allowed_history}
-        for message_id in retrieval_plan["historyUsed"]:
-            message = history_by_id.get(message_id)
-            if message is None:
-                raise HTTPException(409, {"code": "CONTEXT_FOCUS_CHANGED", "detail": "检索问题所依据的对话已变化"})
-            closure = router.resolve(context_sources.message_ref(router, message))
-            router.check_lifecycle(closure)
-            if any(s["blocked"] or (provider.external and not router.allowed(s, service, purpose)) for s in closure):
-                raise HTTPException(409, {"code": "CONTEXT_FOCUS_CHANGED", "detail": "检索问题所依据的对话权限已变化"})
-            result["focusRefs"].append(closure[0]["ref"])
-        result["retrieval"] = {"tool": "search_materials", "execution": "server",
-            "query": retrieval_plan["query"], "scopeLabel": retrieval_plan["scopeLabel"],
-            "topK": retrieval_plan["topK"], "userReviewRequired": True}
     if needs_materials:
         adapters.append(context_sources.material_candidates)
     for adapter in adapters:
         if adapter is context_sources.history_candidates:
             candidates.extend(adapter(router, search_queries, cutoff=router.mode.get("cutoff", 0) if provider.external else 0))
         elif adapter is context_sources.material_candidates:
-            if workspace_rag:
-                material_items = adapter(router, search_queries, interaction_id=rag_interaction_id,
-                                         retrieval_plan=retrieval_plan)
-                expected = {(r["materialId"], r["version"]) for r in material_refs or []}
-                if expected and any((c["material"]["materialId"], c["material"]["version"]) not in expected for c in material_items):
-                    raise HTTPException(409, {"code": "ATTACHMENT_VERSION_CHANGED", "detail": "所选资料版本已变化，请重新选择"})
-                candidates.extend(material_items)
-                result["retrieval"]["selectedCount"] = len(material_items)
-            else:
-                candidates.extend(adapter(router, search_queries, interaction_id=rag_interaction_id))
+            candidates.extend(adapter(router, search_queries, interaction_id=rag_interaction_id))
         else:
             candidates.extend(adapter(router, search_queries))
     if matter_ready:
@@ -321,7 +288,7 @@ def build_context_plan(router, content, allowed_history, *, provider, purpose="c
             candidates.extend(context_sources.artifact_candidates(router, matter_candidate["ref"]["id"], search_queries))
     elif not matter_binding.get("matterId"):
         candidates.extend(context_sources.matter_candidates(router, content))
-    explicit_materials = set() if workspace_rag else {r["materialId"] for r in material_refs or []}
+    explicit_materials = {r["materialId"] for r in material_refs or []}
     candidates = [c for c in candidates if not (c["ref"]["kind"] == "material" and c["ref"]["id"] in explicit_materials)]
     # User-selected Search results retain the service's order, not a second
     # ordering by its public score (which need not be the reranker score).
