@@ -102,7 +102,7 @@ MCP 是当下唯一被这几个客户端共同支持的、可以声明工具与�
 
 ### 3.2 本地 token
 
-**目标态**：token 的生成、散列存储、前缀展示、过期、防枚举**不需要新写**，`backend/mindos/agent/store.py:163-304` 已有完整实现（`create_client` / `rotate` / `disable` / `authenticate`，前缀 `agk_` 见 `:41`，库中只存散列与不可逆前缀，见 `:172-174` 的说明）。把它抄进 MCP 底座即可。
+**目标态**：token 的生成、散列存储、前缀展示、过期、防枚举**不需要新写**（前缀沿用现有的 `agk_`，不另起），`backend/mindos/agent/store.py:163-304` 已有完整实现（`create_client` / `rotate` / `disable` / `authenticate`，前缀 `agk_` 见 `:41`，库中只存散列与不可逆前缀，见 `:172-174` 的说明）。把它抄进 MCP 底座即可。
 
 | 事项 | 目标态 |
 |---|---|
@@ -181,7 +181,7 @@ MCP 是当下唯一被这几个客户端共同支持的、可以声明工具与�
       "section": "who",
       "sectionTitle": "我是谁",
       "layer": "self_declared",
-      "layerTitle": "我这样说自己",
+      "layerTitle": "你告诉我的",
       "content": "我是万象与知君两个产品的负责人。",
       "lastReaffirmed": "2026-09-11T09:20:00Z",
       "version": "2026-09-11T09:20:00Z"
@@ -191,7 +191,7 @@ MCP 是当下唯一被这几个客户端共同支持的、可以声明工具与�
       "section": "principles",
       "sectionTitle": "我的原则",
       "layer": "self_declared",
-      "layerTitle": "我这样说自己",
+      "layerTitle": "你告诉我的",
       "content": "宁可直说差距，也不要含糊的乐观汇报。",
       "lastReaffirmed": "2026-08-30T14:02:00Z",
       "version": "2026-08-30T14:02:00Z"
@@ -225,7 +225,9 @@ MCP 是当下唯一被这几个客户端共同支持的、可以声明工具与�
 
 ### 5.2 分区默认表（主张）
 
-今天已固定六个分区的键与标题：`who / people / matters / principles / ways / direction`（`backend/mindos/agent/mcp_server.py:356`），对应「我是谁 / 我的人 / 我的事 / 我的原则 / 我的做法 / 我的方向」（`backend/zhijun_mcp/browser.py:18`）。
+六个分区的键今天已固定：`who / people / matters / principles / ways / direction`（`backend/mindos/agent/mcp_server.py:356`）。
+
+**界面名以[数据层](ZHIJUN_DATA_MODEL.md) 4.4 的目标态为准**：我是谁 / 重要的人 / 正在做的事 / 我的原则 / 相处方式 / 我要去哪。今天代码里的 `SECTION_TITLES` 是「我是谁 / 我的人 / 我的事 / 我的原则 / 我的做法 / 我的方向」（`backend/zhijun_mcp/browser.py:18`、`ontology_store.py:78-85`），落地时一并改，不要两套并存。`layerTitle` 同理，取 `LAYER_TITLES`（`ontology_store.py:86-91`）的原值，不另起措辞。
 
 数据层目标态是八个分区（[数据层](ZHIJUN_DATA_MODEL.md) 4.4），新增的两个**不进入本表的授权体系**：它们在 MCP 这一侧根本不存在（I6）。
 
@@ -233,8 +235,8 @@ MCP 是当下唯一被这几个客户端共同支持的、可以声明工具与�
 |---|---|---|---|
 | `who` | 我是谁 | **开** | 身份、角色、称呼。这是 AI 少问一轮的最大来源，且几乎不含第三方信息 |
 | `principles` | 我的原则 | **开** | 「直说差距」「不要含糊的乐观」这类约束，正是希望每个工具都遵守的 |
-| `ways` | 我的做法 | **开** | 工作方式与偏好。描述的是用户自己，不涉及他人 |
-| `direction` | 我的方向 | **开** | 长期目标。有助于 AI 判断当前任务的取舍，粒度粗、时效长 |
+| `ways` | 相处方式 | **开** | 工作方式与偏好。描述的是用户自己，不涉及他人 |
+| `direction` | 我要去哪 | **开** | 长期目标。有助于 AI 判断当前任务的取舍，粒度粗、时效长 |
 | `people` | 重要的人 | **关** | 每一条都包含第三方信息。第三方没有同意过被外发，用户也未必意识到自己在替别人做决定 |
 | `matters` | 正在做的事 | **关** | 时效性强、商业敏感度高，且经常牵涉未公开的项目与合作方 |
 | `burdens` | 心里的事 | **永不** | **无开关，不出现在授权页上。** 这是用户袒露心声的产物：反复压在心里的事、在回避的事、消耗他的东西。别的 AI 读到它，唯一确定的后果是用户下次不再说真话（I6） |
@@ -259,19 +261,27 @@ MCP 是当下唯一被这几个客户端共同支持的、可以声明工具与�
 
 ### 5.4 两道闸门与一处必须修的语义不一致
 
-可见性应当是**两道闸门取交集**：
+**先说清一件事：MCP 不自己定义可见性。** 能读到什么由[数据层](ZHIJUN_DATA_MODEL.md) 6.4 的 `可带走()` 唯一决定，本节只讲 MCP 这条通道上额外叠加的两道闸门。完整判据是：
 
 ```
-可外发 = 分区闸门（grant.sections 勾选）  ∧  逐条闸门（该条 exportAllowed 为真）
+MCP 可见 = 可带走(c, "mcp")                       # 数据层 6.4，已含
+                                                  #   section ∉ {burdens, self_view}（I6）
+                                                  #   confirmed ∧ privacy ∈ {public,private}
+                                                  #   scope == long_term ∧ ¬本地血统
+           ∧ 分区闸门（grant.sections 勾选）
+           ∧ 不在 denials ∧ 不在 excludedClaimIds
 ```
 
-今天这两道闸门在两条导出路径上**判定不一致**：
+第一行不可省略，也不允许 MCP 侧重新拼一遍条件（数据层 6.4「不得各自实现」）。下面讨论的是第二、三行。
+
+今天这两道闸门在**四条**出门路径上判定不一致（与数据层 6.1 同一件事，这里按 MCP 视角列）：
 
 | 路径 | 是否看 `exportAllowed` 字段 | 锚点 |
 |---|---|---|
 | A 线 `zhijun_get_personal_context` | **不看**。只把「历史上被显式关掉」当永久拒绝，沿 `supersedesId`、`evidence.locator.claimId`、`decisionId` 递归传染并持久化到 denials 表 | `backend/zhijun_mcp/personal.py:44-84`；候选筛选见 `:86-105`，其中无 `exportAllowed` 条件 |
 | context pack | **要求为真** | `backend/mindos/zhijun/context_pack.py:32` |
 | projection / `USER.md` | **要求为真** | 同上，`exportable_claims` 为唯一入口 |
+| 界面导出 `/ontology/export` | **不看，连敏感也导** | `backend/mindos/ontology.py:377-387`。四条路径里最松的一条 |
 
 后果：同一条理解，在 MCP 里可见、在导出包里不可见，或者相反。用户在界面上关掉一条的「带走开关」，A 线不一定认。
 
@@ -301,12 +311,13 @@ A 线其余筛选条件全部保留，逐条列出以便实现时对照（`backe
 | 字段 | 值 | 理由 |
 |---|---|---|
 | `trust_state` | `working` | 与用户自己手写的 `confirmed` 区分开 |
-| `trust_origin` | `agent_proposed:<agentId>` | 界面要能说出「是谁说的」 |
+| `trust_origin` | **`model`**（受控词表六值之一，数据层 4.4），`agentId` 写在 `evidence` 里 | 界面要能说出「是谁说的」，但**不能为此扩受控词表**——数据层 4.4 声明除 8 分区 / 27 谓词外词表不变 |
 | `layer` | `hypothesis` | 它没听见你说，是它推断的 |
 | `confidence` | 由 agent 声明，但不参与排序 | 防止 agent 用高置信度抢占注意力 |
-| `evidence` | `[{kind: "agent_proposal", agentId, rationale}]` | 不含外部会话内容 |
-| `exportAllowed` | `false` | 未确认的东西不能再流出去 |
-| `device_scope` | 与第一方写入一致 | 沿用 `backend/mindos/ontology.py:214` 的 `_scope(request)` 语义 |
+| `evidence` | `[{kind: "user_edit", locator: {source: "mcp", agentId, rationale}}]` | `EVIDENCE_KINDS` 是五值封闭表（数据层 4.4），不能加 `agent_proposal`。`agentId` 与理由放进 `locator`，界面照样说得出是谁提的 |
+| `takeaway` | **`unset`**，不是 `off` | `working` 本来就过不了 `可带走()`，不需要再压一个开关。**压成 `off` 会变成永久拒绝并沿 `supersedesId` 传染**（6.6），用户后来确认了也再也带不走 |
+| `section` | **不接受 `burdens` / `self_view`** | 外部 agent 不该有能力断言用户心里压着什么（I6、4.1） |
+| ~~`device_scope`~~ | **不写** | 该列已在目标态删除（数据层 4.3、PRD 14.3），不要沿用 `ontology.py:214` 的 `_scope(request)` |
 
 用户在「待确认」里看到的是一句人话：**「Cursor 说你倾向于先收窄再展开。是这样吗？」** 三个按钮：确认、改一下再确认、不是这样。确认后走既有的复核路径 `POST /api/mindos/ontology/claims/{id}/review`（`backend/mindos/ontology.py:231-250`），`trust_origin` 保留，用户随时能翻出来这条当初是谁提的。
 
@@ -425,7 +436,7 @@ check(principal, grant.revision)  →  receipt(...)  →  check(principal, grant
   "mcpServers": {
     "zhijun": {
       "url": "http://127.0.0.1:8644/mcp",
-      "headers": { "Authorization": "Bearer zjk_xxxxxxxxxxxx" }
+      "headers": { "Authorization": "Bearer agk_xxxxxxxxxxxx" }
     }
   }
 }
@@ -525,4 +536,4 @@ stdio 入口的实现可直接抄 `backend/mindos/agent/mcp_server.py:470-472`�
 
 ---
 
-*附录 B 完。本文描述的现状均以本仓库 `newzhijun` 分支（`98c2331`）为准；2026-09-21 定位修正改动了第 1 节（新增 I6）、2.1、4.1、5.2 与本节。*
+*附录 B 完。本文的 `文件:行` 锚点与 PRD、数据层一致，均以 `redesign/memory-v3`（`4ad7d39`）为基线；本文所在的 `newzhijun` 分支只含文档，从 `main`（`98c2331`）开出，main 与基线的差异见[数据层](ZHIJUN_DATA_MODEL.md) 0.1。2026-09-21 定位修正改动了第 1 节（新增 I6）、2.1、4.1、5.2、5.4、6.2 与本节。*
