@@ -24,7 +24,9 @@
 
 ## 1. 文档定位
 
-知君被重新定位为**可以在任何一台电脑上独立运行的个人知识库**，主要对外产出是 MCP。本文是产品重设计 PRD 的附录 A，只规定数据层：存什么、谁能写、怎么检索、什么能出门、怎么删、怎么带走。
+知君是**一个让用户直面内心的产品**，形态是可以在任何一台电脑上独立运行的软件，内核是一份属于用户自己的理解库。本文是产品重设计 PRD 的附录 A，只规定数据层：存什么、谁能写、怎么检索、什么能出门、怎么删、怎么带走。
+
+**2026-09-21 定位修正对本文的影响**：新增 `burdens`（心里的事）与 `self_view`（我眼中的我）两个分区与 6 个谓词（4.4）、内观分区的抽取与张力规则（4.9）、「模型可见」与「可带走」两种出门的区分（6.3）、第五条「永不」（6.5）。其余部分不变——证据纪律、信任状态、状态机、统一出门规则当初就是围绕「认识一个人」建的，在新定位下只增不改。MCP 从「主要对外产出」降为一项延伸能力。
 
 ### 1.1 四条产品前提（本文不得与之矛盾）
 
@@ -32,16 +34,25 @@
 |---|---|
 | P1 | 独立软件，一个数据文件夹，无账号，可备份、可拷走、可删除 |
 | P2 | 资料（导入文档）只作为理解你的证据，不做文档问答；搜索框搜的是「你的理解与判断」，资料以出处形式出现 |
-| P3 | MCP 按分区默认可读：我是谁 / 原则 / 做法 / 方向 默认可读；重要的人 / 正在做的事 默认关；敏感与受限永不外发 |
+| P3 | MCP 按分区默认可读：我是谁 / 原则 / 做法 / 方向 默认可读；重要的人 / 正在做的事 默认关；**心里的事 / 我眼中的我、敏感与受限永不外发且无开关** |
 | P4 | 目标收敛到 6 类一等对象、约 15 张表、约 60 条路由 |
+| P5 | **知君是让用户直面内心的产品，不是提效工具**（2026-09-21 定位修正）。数据层必须记得下内心，并且必须保证内心不会流向其他 AI |
 
-### 1.2 五条不可关闭的原则
+### 1.2 数据层的七条硬约束
 
-1. 凡断言必有出处。
-2. 只有用户能确认。
-3. 撤回的永不回流。
-4. 出门要打招呼并留回执。
-5. 清空即清空。
+**编号独立于 PRD 第 3 节的七条产品原则，两者不是同一份清单。** 这里是那些原则在数据层的可执行形式，右列给出对应关系。
+
+| # | 数据层约束 | 对应 PRD 原则 |
+|---|---|---|
+| C1 | 凡断言必有出处 | 原则 2 |
+| C2 | 只有用户能确认 | 原则 3 |
+| C3 | 撤回的永不回流 | 原则 3 |
+| C4 | 出门要打招呼并留回执 | 原则 4 |
+| C5 | 清空即清空 | 原则 1 |
+| **C6** | **袒露不立刻成为素材**：重话推迟抽取，危机对话完全不抽取 | 原则 6、7（PRD 5.5） |
+| **C7** | **内心不外流**：`burdens` 与 `self_view` 永不进入任何到达其他 AI 或其他软件的通道，没有开关（第 6 节） | 原则 7；对应 MCP 契约 I6 |
+
+C6、C7 是 2026-09-21 定位修正新增的。它们是「用户肯说真话」这件事在数据层的代价：一个会把最脆弱的话记成档案、或者可能把它交给另一个 AI 的系统，不配被袒露心声。
 
 ### 1.3 与其它文档的关系
 
@@ -78,7 +89,7 @@
 
 | 对象 | 一句话定义 | 关键字段 | 生命周期 | 与其它对象的关系 | 用户在界面上怎么看见 |
 |---|---|---|---|---|---|
-| **理解** claim | 知君对「你是谁、你怎么想、你在做什么」的一条可被确认或撤回的断言 | `content`（≤120 字）、`section`、`layer`、`trust_state`、`predicate`、`confidence`、`privacy`、`带走开关` | working → confirmed / context_only / rejected / deferred；confirmed → retracted / superseded | 主语与宾语指向实体；由证据支撑；被复核事件驱动 | 本体页按六分区分组，每条带来源标签与「确认 / 改一改 / 不对 / 以后再说」 |
+| **理解** claim | 知君对「你是谁、你怎么想、你在做什么」的一条可被确认或撤回的断言 | `content`（≤120 字）、`section`、`layer`、`trust_state`、`predicate`、`confidence`、`privacy`、`带走开关` | working → confirmed / context_only / rejected / deferred；confirmed → retracted / superseded | 主语与宾语指向实体；由证据支撑；被复核事件驱动 | 「我的理解」页按八分区分组（`burdens` / `self_view` 单独成组并标注「只有你和知君看得到」），每条带来源标签与「确认 / 改一改 / 不对 / 以后再说」 |
 | **实体** entity | 一个被反复提到的人、组织、项目、地点、主题、事件或术语 | `id`、`type`（8 种）、`canonical_name`、别名表 | 由抽取创建；合并需用户裁决（`consolidate.py` 只产候选） | 作为 claim 的主语或宾语；`ent_me` 是唯一的「我」 | 在理解条目里作为可点的名字；合并提示出现在整理页 |
 | **资料** material | 你导入的一份文档原件及其解析快照 | `material_id`、`file_name`、`version_number`、版本链、`snapshot_id` | 导入 → 解析 → 抽取 → 可回收 → 可永久清除 | **只作为 claim 的证据出现**，不参与搜索结果的第一层 | 理解条目下方的「出处」链接；点开跳到原文对应位置 |
 | **对话** conversation | 你和知君的一次连续交谈及其消息 | `conversation_id`、消息列表、摘要 | 持续追加；可归档；随清空一起清空 | 作为 claim 的证据（`conversation_turn`）；提供上下文 | 会话列表与聊天页 |
@@ -183,7 +194,7 @@
 
 | 词表 | 值 | 位置 |
 |---|---|---|
-| `SECTIONS` 6 | `who` `people` `matters` `principles` `ways` `direction` | `:34` |
+| `SECTIONS` 6 → **8** | `who` `people` `matters` `principles` `ways` `direction` **+ `burdens` `self_view`** | `:34` |
 | `LAYERS` 4 | `observed` `self_declared` `aspirational` `hypothesis` | `:35` |
 | `TRUST_STATES` 4 | `working` `confirmed` `retracted` `superseded` | `:36` |
 | `TRUST_ORIGINS` 6 | `utterance` `user_confirm` `user_edit` `user_created` `material` `model` | `:37` |
@@ -197,20 +208,24 @@
 | `JOB_KINDS` 14 | 含 `core_profile`、`proactive_scan` | `:57` |
 | `DEFER_DAYS` | 14 | `:93` |
 
-`PREDICATES` 共 21 个，**按分区封闭，越界整条丢弃**（校验 `:804-806`）：
+`PREDICATES` 现有 21 个，**目标态 27 个**，**按分区封闭，越界整条丢弃**（校验 `:804-806`）：
 
-| 分区 | 谓词 |
-|---|---|
-| who | `is` `has_trait` `background` `role` |
-| people | `knows` `works_with` `relationship` `attitude_toward` |
-| matters | `working_on` `committed_to` `happened` `owns` |
-| principles | `holds_principle` `boundary` |
-| ways | `prefers` `tends_to` `decides_by` `wants_zhijun_to` |
-| direction | `wants_to` `goal` `avoids` |
+| 分区 | 谓词 | 状态 |
+|---|---|---|
+| who 我是谁 | `is` `has_trait` `background` `role` | 现有 |
+| people 重要的人 | `knows` `works_with` `relationship` `attitude_toward` | 现有 |
+| matters 正在做的事 | `working_on` `committed_to` `happened` `owns` | 现有 |
+| principles 我的原则 | `holds_principle` `boundary` | 现有 |
+| ways 相处方式 | `prefers` `tends_to` `decides_by` `wants_zhijun_to` | 现有 |
+| direction 我要去哪 | `wants_to` `goal` `avoids` | 现有 |
+| **burdens 心里的事** | `weighs_on` 压在心里 / `drains` 消耗 / `avoids_facing` 在回避 / `worries_about` 担心 | **新增 4** |
+| **self_view 我眼中的我** | `sees_self_as` 自认为 / `blames_self_for` 自责 | **新增 2** |
 
-分层在界面上的措辞由 `LAYER_TITLES:86-91` 决定：`self_declared` = 你告诉我的，`observed` = 资料里看到的，`hypothesis` = 我推测的，`aspirational` = 你想成为的。
+`avoids_facing` 与 direction 的 `avoids` 有意用不同的词：后者是「不想要的方向」（我不想做管理），前者是「知道该做但在躲」（我知道该和他谈）。混用会让张力检测失效。
 
-**目标态维持这份词表不变。** 它的价值在于封闭：模型不能发明新谓词，越界的整条被丢掉而不是降级保存。
+分层在界面上的措辞由 `LAYER_TITLES:86-91` 决定：`self_declared` = 你告诉我的，`observed` = 资料里看到的，`hypothesis` = 我推测的，`aspirational` = 你想成为的。**新增两个分区的默认层**：`burdens` 多为 `observed`（从反复出现中看出）或 `self_declared`；`self_view` 几乎总是 `self_declared`，**不接受 `hypothesis`**——替用户推断他怎么看自己，越界且几乎必错。
+
+词表的价值在于封闭：模型不能发明新谓词，越界的整条被丢掉而不是降级保存。**除上述 8 分区 / 27 谓词的扩展外，目标态维持这份词表不变。**
 
 ### 4.5 状态机
 
@@ -283,6 +298,41 @@ CREATE UNIQUE INDEX ux_claims_active_hash
 | `why_it_matters` 是否填了 | 检索加成 `memory_retrieval.py:113` |
 | 最近是否重申 | `last_reaffirmed` |
 
+### 4.9 内观分区的抽取与张力规则（2026-09-21 新增）
+
+`burdens`（心里的事）与 `self_view`（我眼中的我）不是「多记两类东西」，它们的用处是**产生张力**，而张力是照见的唯一来源（PRD 场景 S3）。规则相应地和其它分区不同。
+
+**抽取必须格外克制**
+
+| 分区 | 成为候选的条件 | 禁止 |
+|---|---|---|
+| `burdens` | **同一件事在不同对话里被提及两次以上**。第一次只在本地记一个计数，不产生 claim | 把一次抱怨、一次疲惫记成长期困扰 |
+| `self_view` | 只接受用户**明确的自我评价原话**（「我这个人就是不够狠」） | 任何推断。`self_view` 不接受 `layer=hypothesis`（4.4） |
+| 两者 | 危机对话完全不抽取（PRD 5.5）；重话所在的那一轮默认推迟抽取 | 把袒露当素材 |
+
+误判两个方向的代价不对称：**漏记一条困扰只是少一条理解，错记一条会让用户下次不敢说。** 所有阈值向「宁可不记」倾斜。
+
+**两种张力**
+
+```
+张力A（言行不一）= self_view 的一条 self_declared
+                 ⟂ ways / matters 里 layer=observed 的记录
+  例：sees_self_as「果断」 vs observed「三次决定各拖了一个月以上」
+
+张力B（说了没动）= 同一条 burdens 被重申 ≥3 次
+                 ∧ 时间跨度 ≥ 30 天
+                 ∧ 相关实体上没有任何 matters / decision 进展
+  例：avoids_facing「和林岚那次谈话」被提及三次，跨度六周，无任何相关判断或事项
+```
+
+两者都产出 `layer=hypothesis` 的候选，走现有求知引擎的 `tension` 目标（`inquiry.py:43,152-164`），受同一套 7 天冷却与安静领域过滤约束。
+
+**今天的张力检测只覆盖一种组合**：`consolidate.py:153-156` 取 confirmed 的 `principles`，与 7 天内 confirmed 的 `ways` / `matters` 配对，判定为矛盾时产出 `principle_tension`（`:168,181-190`）。本次是把输入扩到上面两类，检测结构不变。
+
+**张力的呈现规则**：第一句永远是观察，不是评价。给出证据（哪几次、什么时候），不给结论。用户可以说「不对」，说了就按现有纠正通路处理，并且这条张力在同一对象上进入更长的冷却。
+
+**有效期**：`burdens` 的困扰会过去，而现有衰减参数是按原则、做法这类稳定内容调的。目标态给 `burdens` 显著更短的默认有效期，具体值待真实数据（第 10 节未决事项）。
+
 ---
 
 ## 5. 检索与组装
@@ -327,7 +377,7 @@ CREATE UNIQUE INDEX ux_claims_active_hash
 其它口径：
 
 - `confirmed_background`（`:222-244`）只取 `who` 分区的 `is` / `role` / `background`，默认 4 条 / 600 字。这是身份与角色，不是性格预测。
-- self-overview 走六分区轮询（`:267-278`），避免一个活跃分区把小分区挤掉。
+- self-overview 走六分区轮询（`:267-278`），避免一个活跃分区把小分区挤掉。**目标态扩到八分区**，但 `burdens` / `self_view` 在轮询里权重减半：内观分区贵在准不贵在多，让它们和其它分区等权会挤占本来就紧的画像预算（5.4）。
 
 ### 5.3 两套打分必须合一（主张）
 
@@ -348,11 +398,14 @@ CREATE UNIQUE INDEX ux_claims_active_hash
 |---|---|---|
 | 预算 | 1200 字（外发）/ 600 字（本地） | `core_profile.py:21-23` |
 | 分区上限 | who 4、people 3、principles 4、ways 3、direction 3 | `:39` |
+| **新增分区上限（目标态）** | **burdens 2、self_view 2**。刻意压低：内观分区贵在准，不贵在多，而且每一条都占用用户读画像时最敏感的注意力 | 新增 |
+| **新增分区的外发** | **只进 `模型可见()`，永不进 `可带走()`**（6.3）。导出包与 MCP 拿到的画像里这两段根本不渲染 | 新增 |
 | 事项上限 | matter 2 + committed_to 3 + working_on 2 | `:40` |
 | 近期上限 | 3 主题 / 4 待办 / 2 到期 | `:41` |
 | 最近对话数 | 3 | `:42` |
 | 到期天数 | 7 | `:43` |
 | 丢弃顺序 | recent → direction → ways → people → principles → matters → who | `:38` |
+| **新增丢弃顺序（目标态）** | recent → direction → ways → people → **burdens** → principles → matters → **self_view** → who。`self_view` 排得靠后，因为它是张力检测的锚，掉了就照见不出来；`burdens` 排中间，因为单条困扰的时效性强于原则 | 新增 |
 | 第一轮保底 | 每段至少留 1 行 | `:249-259` |
 | 排序 | `(-来源数, -lastReaffirmed, id)` | `:84-87` |
 | 外发过滤 | `externalOk = privacy ∈ (public,private) ∧ not claim_local` | `:126`、`:262-268` |
@@ -410,27 +463,55 @@ CREATE UNIQUE INDEX ux_claims_active_hash
 
 **推荐 ①。理由：资料只作为证据，理解本身是用户的。** 把文档原文关在本地是对的，把用户经过确认的判断也关在本地是过度保护。列入第 10 节未决事项。
 
-### 6.3 目标态：唯一判定函数
+### 6.3 两种「出门」必须分开（2026-09-21 新增，最重要的一条）
+
+定位修正引入了一个过去不存在的区分。「出门」现在是两件不同的事，混为一谈会直接毁掉产品前提：
+
+| | `模型可见()` | `可带走()` |
+|---|---|---|
+| 去哪 | **知君自己调用的模型**（BYOK 在线模型或本机模型） | **其他 AI 或其他软件**：MCP、导出包、上下文包、USER.md 投影 |
+| 目的 | 让知君能当知己与导师 | 让别的工具用上这份理解 |
+| `burdens` / `self_view` | **可见**（否则知君在在线模式下根本无法承担这个角色） | **永不，且无开关** |
+| 用户的出路 | 切到本机模型，一个字不出这台电脑（PRD 8） | 无需出路，本来就不出去 |
+
+这个区分必须对用户明说，不能含糊（PRD 8 节）。今天 `core_profile.py:126` 的 `externalOk` 属于第一列，第 6 节其余部分讲的全部是第二列。
+
+### 6.4 目标态：唯一判定函数
 
 ```
 可带走(c, 通道) =
     c.trust_state == confirmed
   ∧ c.privacy ∈ {public, private}
+  ∧ c.section ∉ {burdens, self_view}        # 新增，无开关可绕过
   ∧ c.scope == long_term
   ∧ 取带走开关(c) == on
   ∧ ¬本地血统(c)
   ∧ 通道许可(通道, c.section)
 
 取带走开关(c) = c.takeaway if c.takeaway != unset else 分区默认(c.section)
-分区默认 = {who:on, principles:on, ways:on, direction:on, people:off, matters:off}
+分区默认 = {who:on, principles:on, ways:on, direction:on,
+            people:off, matters:off,
+            burdens:永不, self_view:永不}      # 不是 off，是不可设置
 ```
 
-四个通道**必须共用这一个函数**，不得各自实现。
+```
+模型可见(c) =
+    c.trust_state == confirmed
+  ∧ c.privacy ∈ {public, private}
+  ∧ c.scope == long_term
+  ∧ ¬本地血统(c)
+  # 注意：不含 section 与带走开关的判断。burdens / self_view 在这里是可见的
+```
 
-### 6.4 四条「永不」
+四个带走通道**必须共用 `可带走()`**，不得各自实现。画像装配用 `模型可见()`。
+
+**为什么 `burdens` / `self_view` 用硬编码的分区判断，而不是把它们的 `privacy` 默认设成 `sensitive`**：`sensitive` 是用户可以逐条改的，而这条约束不该可改。用户在某个瞬间点掉一个开关，不该导致他三个月前最脆弱的一句话流向另一个 AI。**这是唯一一条我们替用户做主的规则，理由是它保护的是产品前提本身。**
+
+### 6.5 五条「永不」
 
 | 规则 | 判据 | 说明 |
 |---|---|---|
+| **内观分区永不** | `section ∈ {burdens, self_view}` | **新增。** 无开关，不可绕过。只对 `可带走()` 生效，不影响 `模型可见()`（6.3） |
 | 敏感与受限永不 | `privacy ∈ {sensitive, restricted}` | 用户打开开关也不行。开关只能在 `public` / `private` 范围内起作用 |
 | 被撤回的永不 | `trust_state ∈ {retracted, superseded}` | 墓碑不回流。由状态机保证（4.5 节） |
 | 仅当时情境的永不 | `scope == context_only` | 只适用于当时那件事的理解，换个场合就是误导 |
@@ -462,8 +543,13 @@ CREATE UNIQUE INDEX ux_claims_active_hash
 | 任意分区，**retracted / superseded** | 否 | 不导出 | 不出现 | 不出现 | 不可读 |
 | 任意分区，`scope=context_only` | 否 | 不导出 | 不出现 | 仅当同一情境 | 不可读 |
 | 曾被设 `off` 的任意条 | 否 | 不导出 | 不出现 | 不出现 | 不可读（永久） |
+| **`burdens` / `self_view`，confirmed，private** | **否（永不，无开关）** | **不导出** | **进知君自己的模型画像** | **不出现** | **不可读（永久，无开关）** |
 
-「不出现」与「仅本地」的区别：前者连本地提示词也不进，后者进本地模型但不进外部服务。
+最后一行是定位修正带来的新行为，也是全表唯一一条「用户无法通过任何开关改变」的：它保护的是袒露本身的前提（6.3、6.4）。
+
+两个口径说明：
+- 「画像投影」这一列问的是 `模型可见()`，即这条会不会进入**知君自己调用的模型**；其余三列问的是 `可带走()`，即会不会到达**其他 AI 或其他软件**。两者在 6.3 已分开定义。
+- 「不出现」与「仅本地」的区别：前者连本地提示词也不进，后者进本地模型但不进外部服务。
 
 ### 6.7 出门要留回执
 
@@ -649,3 +735,7 @@ CREATE UNIQUE INDEX ux_claims_active_hash
 | 4 | **知识卡片的下线迁移** | ① 直接删除 9 张表；② 一次性转成资料；③ 一次性转成 claim 候选让用户逐条裁决 | 倾向 ②。卡片是用户写过的内容，当资料保留出处比当断言更安全，但需要确认有多少真实数据 |
 | 5 | **清空语义的向后兼容** | 目标态把清空改成「删文件夹重建」，与今天的逐表 DELETE 行为不同 | 需要确认：老用户升级后第一次清空，是否需要一次迁移提示 |
 | 6 | **`takeaway` 三态的迁移** | 今天是两态布尔，历史数据全是 0 或 1，没有 `unset` | 需要拍板：历史的 0 算 `off`（永久拒绝）还是算 `unset`（取分区默认）。前者更保守，后者更符合用户预期 |
+| 7 | **`burdens` 的有效期与衰减** | 现有参数按「原则、做法」这类稳定内容调；困扰会过去 | 需要真实数据。第一版给一个显著更短的默认值并记录实际重申间隔，不猜（4.9 节） |
+| 8 | **张力 B 的阈值** | 「重申 ≥3 次、跨度 ≥30 天、无相关进展」是拍脑袋的初值 | 需要真实使用校准。误判代价不对称：说早了像逼问，说晚了只是没说。第一版取保守值 |
+| 9 | **「重话」的本地判定阈值** | PRD 5.5 要求重话推迟抽取，判定是关键词加上下文，不依赖模型自觉 | 倾向向「宁可不记」倾斜。漏判会把袒露变成档案，误判只是少记一条（4.9 节） |
+| 10 | **两个内观分区是否进 `.zhijun` 导出包** | ① 进包但整体加密、只有本人能解；② 进包不加密（包本来就在用户自己手里）；③ 不进包 | 倾向 ①。导出包是「带我走」，用户自己的东西该带得走；但包可能被误发，而这两个分区是全库最敏感的内容。需与第 8 节的包格式一起定 |
