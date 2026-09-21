@@ -278,7 +278,7 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
         finally:
             provider_gate.release(channel)
         def enqueue_followup(kind, action):
-            from ..background import BackgroundEnqueueError
+            from zhijun_worker.background import BackgroundEnqueueError
             try:
                 return action()
             except BackgroundEnqueueError as exc:
@@ -500,10 +500,10 @@ class OntologyWorker:
             self.process(job, owner, store=store, conv_store=conv_store)
 
     def process(self, job: dict, owner: str, *, store: OntologyStore, conv_store: ConversationStore) -> None:
-        from ..background import CapabilityError
+        from zhijun_worker.capabilities import CapabilityError
         job_id = job["jobId"]
         try:
-            from ..background import activated, finish
+            from zhijun_worker.background import activated, finish
             with activated(job_id):
                 try:
                     result = run_job(job, store=store, conv_store=conv_store)

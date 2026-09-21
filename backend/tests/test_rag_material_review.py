@@ -294,6 +294,26 @@ def test_one_expired_selected_ref_invalidates_entire_review_not_just_material():
     assert INTERACTION not in rag._entries
 
 
+def test_raw_material_search_needs_no_local_registration_or_knowledge_cards():
+    from mindos.zhijun.retrieval_tools import execute_search, plan_search
+    name = "大模型自我认知微调项目复现新版.docx"
+    first = {**item(), "title": name}
+    second = {**item("erv2_" + "b" * 32), "title": name, "materialId": "material-b", "materialVersion": 2}
+    client = FakeClient(search_result([first, second]))
+    client.delivered = [first, second]
+    rag.reset_for_tests(client)
+    plan = plan_search("请阅读" + name)
+    with pytest.raises(HTTPException) as caught:
+        execute_search(plan, INTERACTION)
+    prompt = caught.value.detail["ragV2"]
+    assert client.calls[0][2]["material_ids"] == []
+    assert [(value["materialId"], value["materialVersion"]) for value in prompt["items"]] == [
+        ("material-a", 1), ("material-b", 2)]
+    assert client.calls == [client.calls[0]], "no card, original-file or evidence read before selection"
+    rag.decide(prompt["interactionId"], "use-selected", [prompt["items"][1]["previewId"]])
+    assert execute_search(plan, INTERACTION) == [second]
+
+
 @pytest.mark.parametrize("code,status", [("CAPABILITY_DENIED", 403), ("AUTHENTICATION_REQUIRED", 401),
                                         ("SENSITIVE_CHECK_UNAVAILABLE", 503)])
 def test_search_errors_never_become_no_results_or_create_review(code, status):

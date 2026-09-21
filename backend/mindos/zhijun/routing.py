@@ -567,6 +567,13 @@ class Router:
                    "excluded": excluded or [], "request": asdict(request),
                    "reason": "按任务与来源授权；没有本地意图分类调用" if provider.external else "本地处理；复杂理解能力可能有限"}
         preview = self.store.preview(payload)
+        if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+            # DE owns the model transport and independently binds the exact
+            # prompt, sources and destination to a foreground user grant.
+            from zhijun_worker import consent
+            consent.register_preview(preview, provider)
+            if provider.external:
+                preview["deConsentRequired"] = consent.find_receipt(preview, provider) is None
         return preview
 
     @_rag_boundary(fresh=True)
@@ -586,6 +593,11 @@ class Router:
         if (service_info(provider)["id"] != service
                 or preview.get("configurationRevision", "") != getattr(provider, "configuration_revision", "")):
             fail("ONLINE_SERVICE_CHANGED", "接收服务已变化")
+        if os.environ.get("ZHIJUN_WORKSPACE_ID") and provider.external:
+            from zhijun_worker import consent
+            # Issue first: a rejected/stale DE grant cannot create durable
+            # local source permission. DE checks the signed foreground action.
+            consent.issue(preview, keys, provider)
         files = [s["materialRef"] for s in selected if s["kind"] == "material" and not s.get("ragReviewed")]
         if files:
             ChatImportStore(self.convs).grant(files, service)
@@ -619,6 +631,10 @@ class Router:
             if (not current or current["blocked"] or current["version"] != old["version"]
                     or not self.permission(current, service, preview["purpose"], policy)):
                 fail("SOURCE_CHANGED", "来源已变化或超出默认授权范围，请重新核对")
+        if os.environ.get("ZHIJUN_WORKSPACE_ID") and provider.external:
+            from zhijun_worker import consent
+            consent.issue(preview, [source["key"] for source in preview["sources"]], provider,
+                          default_policy_revision=policy_revision)
 
 
 @dataclass
@@ -1131,14 +1147,17 @@ class GuardedProvider:
             if self.background:
                 self.router.store.pending(self.router.cid, self.purpose, preview["revision"], "后台任务与当前人生章程冲突，已暂停")
             fail("CHARTER_POLICY_CONFLICT", preview["charterConflict"]["detail"], preview)
+        if self.background and self.external and preview.get("deConsentRequired"):
+            from zhijun_worker import consent
+            if consent.authorize_background(preview, self.inner):
+                preview["deConsentRequired"] = False
         if self.background and not preview["missing"]:
             self.revision = preview["revision"]
-        # deConsentRequired 随盒端 consent 一起去掉了：那是 Data Engine 的二次授权回执，
-        # 独立版没有第二方要说服，授权判断只剩本机这一处（preview["missing"]）。
-        if self.external and (preview["missing"] or not self.revision or preview["revision"] != self.revision):
+        if self.external and (preview["missing"] or preview.get("deConsentRequired")
+                              or not self.revision or preview["revision"] != self.revision):
             if self.background:
                 self.router.store.pending(self.router.cid, self.purpose, preview["revision"], "后台任务缺少当前用途授权，已暂停")
-            fail("ROUTE_CONSENT_REQUIRED" if preview["missing"] else "ROUTE_CHANGED", "请核对本轮的处理方与实际发送内容", preview)
+            fail("ROUTE_CONSENT_REQUIRED" if preview["missing"] or preview.get("deConsentRequired") else "ROUTE_CHANGED", "请核对本轮的处理方与实际发送内容", preview)
         return preview
 
     def stream(self, req):

@@ -1,6 +1,6 @@
 """资料 → 观察型理解：把 derived.py 已产出的实体 / 关系记录，转成本体里的实体与 ``observed`` 工作理解。
 
-- 单体入口读取已有派生；抽取在本机完成，校验版本和隐私快照。
+- 单体入口读取已有派生；独立 workspace 从安全正文调用中央本地模型，校验版本和隐私快照。
 - 每份资料最多 20 条；证据是 ``material_span``（quote = 关系记录里的原文片段），定位是尽力而为。
 - 资料是关于第三方的（「远川项目 属于 X 公司」），所以主语是资料实体而不是「我」；
   分区按端点类型：涉及人 → 我的人（relationship），否则 → 我的事（happened）。
@@ -31,9 +31,19 @@ def _records(material_id: str) -> tuple[dict | None, dict | None]:
 
 
 def run(material_id: str, *, store: OntologyStore | None = None, entity_record: dict | None = None, relation_record: dict | None = None, expected_version: int | None = None) -> dict:
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from ..chat_imports import require_import_enabled
+        require_import_enabled()
     store = store or OntologyStore.instance()
-    from ..stores.job_store import JobStore
-    get_material = JobStore.instance().get
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.capabilities import require
+        def get_material(ident):
+            record = require().call("materials.get", {"materialId": ident})
+            # DE has already checked its scope; only then map into this fixed private namespace.
+            return {**record, "device_scope": "global"} if record else None
+    else:
+        from ..stores.job_store import JobStore
+        get_material = JobStore.instance().get
     report = {"materialId": material_id, "entities": 0, "created": [], "reaffirmed": 0, "skipped": 0}
     material = get_material(material_id)
     if not material or material.get("recycled") or material.get("canceled") or not material.get("device_scope"):
@@ -41,7 +51,13 @@ def run(material_id: str, *, store: OntologyStore | None = None, entity_record: 
     if expected_version is not None and material.get("versionNumber", material.get("version_number")) != expected_version:
         return {**report, "state": "skipped", "reason": "material_version_changed"}
     scope = material["device_scope"]
-    if entity_record is None and relation_record is None:
+    fence = None
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from zhijun_worker.material_understanding import extract, assert_current
+        version = expected_version or material["versionNumber"]
+        entity_record, relation_record, fence, generation = extract(material_id, version)
+        report["generation"] = generation
+    elif entity_record is None and relation_record is None:
         entity_record, relation_record = _records(material_id)
     entity_types: dict[str, str] = {}
     for item in (entity_record or {}).get("content", {}).get("items", []) if entity_record and entity_record.get("status") == "ok" else []:
@@ -58,6 +74,8 @@ def run(material_id: str, *, store: OntologyStore | None = None, entity_record: 
     if not relation_record or relation_record.get("status") != "ok":
         return report
     for rel in (relation_record.get("content") or {}).get("items", [])[:MAX_CLAIMS_PER_MATERIAL]:
+        if fence:
+            assert_current(fence)
         current = get_material(material_id)
         if (not current or current.get("device_scope") != scope or current.get("recycled") or current.get("canceled") or (expected_version is not None and current.get("versionNumber", current.get("version_number")) != expected_version)):
             return {**report, "state": "skipped", "reason": "material_unavailable"}
@@ -78,7 +96,7 @@ def run(material_id: str, *, store: OntologyStore | None = None, entity_record: 
         people = "person" in (sub_type, obj_type)
         content = f"{sub} {predicate} {obj}"[:120]
         evidence = [{"kind": "material_span", "material_id": material_id, "quote": str(rel.get("evidence") or "")[:300],
-                     }]
+                     **({"locator": rel["locator"], "chunk_key": rel["chunkKey"]} if fence else {})}]
         existing = store.find_active_by_hash(subject["id"], "relationship" if people else "happened", content, device_scope=scope)
         if existing:
             if not any(ev.get("materialId") == material_id for ev in existing["evidence"]):

@@ -452,7 +452,7 @@ def start_worker():
                     if os.environ.get("ZHIJUN_WORKSPACE_ID"):
                         if batch["state"] not in {"queued", "waiting"}:
                             continue
-                        from .background import activated, finish
+                        from zhijun_worker.background import activated, finish
                         with activated(batch["id"]):
                             process_batch(batch, store)
                             if store.get(batch["id"])["state"] not in {"queued", "waiting", "replying"}:

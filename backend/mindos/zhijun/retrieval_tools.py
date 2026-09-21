@@ -330,10 +330,6 @@ def _rewrite_follow_up(current: str, subject: str) -> str:
     raise _clarification()
 
 
-# 注：`plan_search` 目前没有调用方——它原本服务于已删除的盒端 RAG 通路。
-# 刻意保留而不是一起删掉：它是纯粹的查询改写（把依赖上文的追问重写成独立查询、
-# 从历史里解析指代），不依赖盒子，也有二十多条用例钉着。独立版的资料检索现在走
-# `qa.build_evidence` 的原始查询，接上这层是后面该做的事，不是现在该删的东西。
 def plan_search(
     content: str,
     allowed_history: Iterable[Mapping[str, Any]] = (),
@@ -403,3 +399,18 @@ def _validated_plan(plan: Any) -> dict[str, Any]:
     return {**values, "topK": TOP_K, "scopeLabel": expected_label, "historyUsed": list(history)}
 
 
+def execute_search(plan: Mapping[str, Any], interaction_id: str):
+    """Execute only the fixed RAG search client with mandatory review enabled."""
+    values = _validated_plan(plan)
+    if not isinstance(interaction_id, str) or _INTERACTION_ID_RE.fullmatch(interaction_id) is None:
+        raise _unprocessable("RAG_INTERACTION_ID_INVALID", "检索交互编号格式无效")
+    from .. import data_agent_rag
+
+    return data_agent_rag.search_materials(
+        values["query"],
+        values["materialIds"] or [],
+        interaction_id,
+        top_k=TOP_K,
+        require_review=True,
+        review_context={"query": values["query"], "scopeLabel": values["scopeLabel"]},
+    )

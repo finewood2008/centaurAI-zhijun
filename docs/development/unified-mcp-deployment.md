@@ -1,18 +1,6 @@
 # 知君统一 MCP 部署与调用
 
-> **2026-09-21 失效声明（PRD V2 的 P0「删盒端耦合」）。** 本文描述的是盒端 + 云端隧道部署。
-> 支撑它的五个模块已从仓库删除：`zhijun_mcp/__main__.py`（CentaurOS 管理的进程入口）、
-> `gateway.py`（盒端 IPC）、`account.py`（账号服务适配）、`tunnel.py`（反向 TCP 隧道）、
-> `stdio.py`（指向公网 HTTPS 的 stdio 适配）。因此**第 3、5 步与第 74、100 行的命令已经跑不起来**。
->
-> 仍在仓库里、且是目标态基础的部分：`management.py`（`server.py:1281` 注册的唯一活路由）、
-> `server.py`、`browser.py`（授权页渲染，[MCP 契约](../product/ZHIJUN_MCP_CONTRACT.md) 5.2 要复用）、
-> `auth.py`、`store.py`、`service.py`、`personal.py`、`models.py`、`runtime.py`、`http.py`。
->
-> 目标态是本机 stdio + `127.0.0.1` HTTP + 本地 token，没有云控制面，见 [MCP 契约](../product/ZHIJUN_MCP_CONTRACT.md) 第 3 节。
-> 本文暂留作盒端部署的历史记录与合同参照，不要照着它部署。
-
-本仓库代码曾提供 box server、只读适配、浏览器授权页、stdio adapter 和密文 relay/connector。**不能直接启用到现有生产盒子**：先按 [统一合同](unified-mcp-contract.md) 在 Data Engine Gateway / Admin 实现对应路由、身份注册、ACL 和 OAuth 服务；当前信令链路不等同于本次 TCP 隧道。
+本仓库代码已提供 box server、只读适配、浏览器授权页、stdio adapter 和密文 relay/connector。**不能直接启用到现有生产盒子**：先按 [统一合同](unified-mcp-contract.md) 在 Data Engine Gateway / Admin 实现对应路由、身份注册、ACL 和 OAuth 服务；当前信令链路不等同于本次 TCP 隧道。
 
 ## 配套发布顺序
 

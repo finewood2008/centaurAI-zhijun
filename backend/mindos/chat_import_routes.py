@@ -187,12 +187,7 @@ def seal_import(conversation_id: str, batch_id: str, request: Request):
 
 
 def retry_file(conversation_id: str, batch_id: str, file_id: str, request: Request):
-    from .uploads import mindos_upload_resume, mindos_upload_retry
-
-    def resume_or_retry(material_id, action, request):
-        # 原来在 zhijun_worker.attachments，那层除了一道盒端专用的开关校验之外
-        # 只是转调这两个函数；开关校验本函数上面已经做过（require_import_enabled）。
-        return (mindos_upload_resume if action == "resume" else mindos_upload_retry)(material_id, request=request)
+    from zhijun_worker.attachments import resume_or_retry
     store, batch = batch_for(conversation_id, batch_id, request)
     svc.require_import_enabled()
     if batch["state"] == "replying":
@@ -211,12 +206,7 @@ def retry_file(conversation_id: str, batch_id: str, file_id: str, request: Reque
 
 
 def retry_import(conversation_id: str, batch_id: str, request: Request):
-    from .uploads import mindos_upload_resume, mindos_upload_retry
-
-    def resume_or_retry(material_id, action, request):
-        # 原来在 zhijun_worker.attachments，那层除了一道盒端专用的开关校验之外
-        # 只是转调这两个函数；开关校验本函数上面已经做过（require_import_enabled）。
-        return (mindos_upload_resume if action == "resume" else mindos_upload_retry)(material_id, request=request)
+    from zhijun_worker.attachments import resume_or_retry
 
     store, batch = batch_for(conversation_id, batch_id, request)
     svc.require_import_enabled()

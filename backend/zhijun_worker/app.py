@@ -151,10 +151,10 @@ def create_app(workspace, capabilities=None):
     for module in (conversations, ontology, growth, nudges, zhijun_onboarding, zhijun_status, zhijun_home):
         registered.extend(module.router.routes)
         domain.include_router(module.router, dependencies=[Depends(require_workspace)])
-    from mindos import memory_routes, matters_routes, chat_import_routes
+    from mindos import memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes
     from mindos.zhijun import charter
     from mindos import reflection_routes
-    for module in (memory_routes, matters_routes, chat_import_routes, charter, reflection_routes):
+    for module in (memory_routes, matters_routes, chat_import_routes, sensitive_rule_routes, charter, reflection_routes):
         router = module.build_router(require_workspace)
         registered.extend(router.routes)
         domain.include_router(router, dependencies=[Depends(require_workspace)])

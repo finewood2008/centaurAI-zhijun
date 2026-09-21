@@ -6,6 +6,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { createVisiblePoller } from '@/composables/visiblePolling'
 import RoutingPanel from '@/components/conversation/RoutingPanel.vue'
 import ExternalProvidersPanel from '@/components/conversation/ExternalProvidersPanel.vue'
+import SensitiveRulesPanel from '@/components/settings/SensitiveRulesPanel.vue'
 import {
   Activity,
   Check,
@@ -847,6 +848,7 @@ onUnmounted(() => {
       </div>
     </section>
 
+    <SensitiveRulesPanel class="rt-section" />
 
     <ErrorState v-if="loadError" :message="loadError" retry-label="重试" @retry="loadAll" />
     <div v-else-if="loading" class="loading-state">正在加载模型配置…</div>
@@ -868,7 +870,7 @@ onUnmounted(() => {
           <div class="rt-routing-card" role="group" aria-label="新对话模型与资料授权">
             <div class="rt-routing-card__copy">
               <strong>新对话使用哪个模型</strong>
-              <span>推荐填一个自己的 API Key 走在线模型，它记得更多、想得更深；想让内容一个字都不离开这台电脑时，改用本机模型（它会记得少一些）。在线模式的资料授权在“模型与授权”中管理。</span>
+              <span>直接选择本地模型或在线模型；在线模式的资料授权在“模型与授权”中管理。</span>
             </div>
             <RoutingPanel ref="routingPanel" :activate-online-channel="activateOnlineChannelFromRouting" />
           </div>
@@ -877,7 +879,7 @@ onUnmounted(() => {
           <ExternalProvidersPanel ref="externalProvidersPanel" :chat-revision="cRevision" :external-enabled="cExternal" :disabled="cSaving || cTesting" @activated="handleProviderActivated" @busy="cProviderBusy = $event" />
           <p class="rt-note">{{ cExternal ? '在线通道已启用；只有选择“在线模型”的对话才会使用。' : '在线通道已暂停；新对话请选择上方“本地模型”，已打开的对话可在对话顶部切换。' }}<button v-if="cExternal" type="button" class="rt-link" :disabled="cSaving || cProviderBusy" @click="disableExternalChatImmediately">暂停在线通道，新对话改用本地</button></p>
           <div class="rt-field is-none-label">
-            <span class="rt-hint">本机模型跑在这台电脑上，当前为 <code>{{ chatLocalModel }}</code>。</span>
+            <span class="rt-hint">本地模型运行在盒子上，当前为 <code>{{ chatLocalModel }}</code>。</span>
           </div>
 
           <details class="rt-more">

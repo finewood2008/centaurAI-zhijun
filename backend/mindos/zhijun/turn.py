@@ -28,7 +28,7 @@ INTERACTIVE_GATE_TIMEOUT = 2.0
 
 def _enqueue_followup(action):
     """A saved answer stays complete when optional organization cannot enqueue."""
-    from ..background import BackgroundEnqueueError
+    from zhijun_worker.background import BackgroundEnqueueError
     try:
         job_id = action()
         return {"state": "queued" if job_id else "skipped", "jobId": job_id,

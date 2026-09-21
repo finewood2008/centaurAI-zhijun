@@ -100,7 +100,7 @@ class ChatImportStore:
     def update(self, batch_id: str, state: str, error: str | None = None, *,
                local_only: bool | None = None, rag_prompt: dict | None = None):
         if state == "queued":
-            from ..background import register
+            from zhijun_worker.background import register
             register(batch_id, "chat")
         with self.conversations._lock, self.conversations._connect() as db:
             db.execute("UPDATE chat_import_batches SET state=?,error=?,rag_prompt_json=?,updated_at=?,"

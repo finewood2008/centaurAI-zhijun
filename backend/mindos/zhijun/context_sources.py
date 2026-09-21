@@ -263,11 +263,53 @@ def rag_evidence_revision(items):
     return digest(sorted(items, key=lambda item: item["evidenceRef"]))
 
 
-def material_candidates(router, queries, *, interaction_id=None):
+def material_candidates(router, queries, *, interaction_id=None, retrieval_plan=None):
     if os.environ.get("ZHIJUN_MATERIAL_EVIDENCE", "1").lower() in ("0", "false", "no"):
         return []
     from ..chat_imports import read_ref, require_material
     results = []
+    if os.environ.get("ZHIJUN_WORKSPACE_ID"):
+        from .retrieval_tools import execute_search, plan_search
+
+        # A fixed application tool owns the Data Agent boundary. Local import
+        # records neither define the App ACL nor prove a returned source valid.
+        plan = retrieval_plan or plan_search(next(iter(queries), ""))
+        interaction_id = interaction_id or (
+            router.cid + ":context:" + digest(plan)[:32]
+        )
+        hits = execute_search(plan, interaction_id)
+        by_material = {}
+        for hit in hits:
+            by_material.setdefault((hit["materialId"], hit["materialVersion"]), []).append(hit)
+        for rank, hit in enumerate(hits):
+            ident, version = hit["materialId"], hit["materialVersion"]
+            results.append({
+                "ref": router.ref("material", ident, materialVersion=version,
+                                  ragInteractionId=interaction_id,
+                                  ragRevision=rag_evidence_revision(by_material[(ident, version)])),
+                "score": hit["score"],
+                "retrievalRank": rank,
+                "category": "material",
+                "title": hit["title"],
+                "text": hit["text"],
+                "material": {
+                    "materialId": ident,
+                    "version": version,
+                    "title": hit["title"],
+                    "snapshotId": f"rag-v2:{ident}:{version}",
+                    "chunkKey": hit["evidenceRef"],
+                    "evidenceRef": hit["evidenceRef"],
+                    "locator": hit["locator"],
+                    "partial": True,
+                    "containsSensitive": hit["containsSensitive"],
+                    "verificationStatus": hit["verificationStatus"],
+                    "policyVersion": hit["policyVersion"],
+                    "detectorRevision": hit["detectorRevision"],
+                },
+            })
+        # Preserve the service's ranking. Its public score is not necessarily
+        # the reranker score and must not be used to undo that ranking.
+        return results
     qa = sys.modules.get("mindos.qa")
     encoder = getattr(sys.modules.get("embedder"), "_text_model", None)
     if qa is not None and encoder is not None:
