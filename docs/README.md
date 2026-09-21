@@ -13,6 +13,7 @@
 | 别的 AI 能读到什么 | [MCP 契约（附录 B）](product/ZHIJUN_MCP_CONTRACT.md) | 工具签名、授权模型、审计 |
 | 桌面、worker、两类 Gateway、Remote Agent、Data Engine、模型与升级边界 | [产品架构](development/architecture.md) | 当前代码、外部合同与已核验部署边界 |
 | 本机开发、测试隔离 | [本机开发](development/local-runtime.md) | `zhijun.sh`、测试脚本 |
+| 本机模式（第二形态，无盒子无账号） | [本机模式](development/local-mode.md) | 设计记录，实现在分支 `newzhijun-local` |
 | 在线/本地模型选择与授权 | [模型路由](development/task-routing.md) | 路由 API、消息回执 |
 | 桌面运行与打包 | [桌面说明](../frontend/shell/README.md) | `frontend/shell/package.json` 脚本 |
 | Windows 安装包、签名与验包 | [Windows 发布指南](development/windows-release.md) | Windows 构建与验包脚本 |
