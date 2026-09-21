@@ -246,6 +246,88 @@ class PushBackToPeopleTests(unittest.TestCase):
         self.assertNotIn("不是我", nudges[0]["message"])
 
 
+class ObservationReachesTheUserTests(unittest.TestCase):
+    """照见要真的走到用户面前。
+
+    `_from_nudge` 对未知 kind 返回 None，所以只在 consolidate 里产出提醒是不够的——
+    不接进来就会被静默丢掉，整条照见等于没做。
+    """
+
+    def _store(self, claims):
+        return type("S", (), {"get_claim": lambda self, cid, **kw: claims.get(cid)})()
+
+    def _nudge(self, kind, ref, message="合成消息"):
+        return {"id": "n1", "kind": kind, "triggerKey": f"{kind}:1", "triggerRef": ref,
+                "whyNow": "合成理由", "message": message, "scheduledFor": "2026-09-21T00:00:00Z"}
+
+    def test_self_view_tension_becomes_a_candidate_with_both_claims_as_sources(self):
+        from mindos.zhijun import proactive
+        store = self._store({
+            "v1": {"id": "v1", "content": "我不够狠", "trustState": "confirmed"},
+            "b1": {"id": "b1", "content": "三次决定各拖了一个月", "trustState": "confirmed"},
+        })
+        got = proactive._from_nudge(self._nudge("self_view_tension", {"selfViewId": "v1", "behaviourId": "b1"}), store, None)
+        self.assertIsNotNone(got, "不接进来就会被静默丢掉")
+        self.assertEqual({r["id"] for r in got["refs"]}, {"v1", "b1"})
+        self.assertIn("我不够狠", got["opening"])
+        self.assertIn("三次决定各拖了一个月", got["opening"])
+        self.assertIn("没看明白", got["opening"], "第一句是观察不是评价")
+
+    def test_a_retracted_claim_stops_the_observation_from_coming_back(self):
+        """撤回的永不回流（原则 3）。任意一条被撤回，这条照见就不该再出现。"""
+        from mindos.zhijun import proactive
+        for gone in ("v1", "b1"):
+            with self.subTest(retracted=gone):
+                claims = {
+                    "v1": {"id": "v1", "content": "我不够狠", "trustState": "confirmed"},
+                    "b1": {"id": "b1", "content": "三次决定各拖了一个月", "trustState": "confirmed"},
+                }
+                claims[gone]["trustState"] = "retracted"
+                got = proactive._from_nudge(
+                    self._nudge("self_view_tension", {"selfViewId": "v1", "behaviourId": "b1"}),
+                    self._store(claims), None)
+                self.assertIsNone(got)
+
+    def test_burden_stalled_keeps_the_facts_and_the_push_back_line(self):
+        from mindos.zhijun import proactive
+        message = "「和林岚那次谈话」这件事，60 天里你提过 5 次。\n\n还有一句：这件事你真正要谈的人可能是林岚，不是我。"
+        store = self._store({"b9": {"id": "b9", "content": "和林岚那次谈话", "trustState": "confirmed"}})
+        got = proactive._from_nudge(
+            self._nudge("burden_stalled", {"burdenId": "b9", "talkToEntityId": "ent_linlan"}, message), store, None)
+        self.assertIsNotNone(got)
+        self.assertIn("60 天", got["opening"])
+        self.assertIn("5 次", got["opening"])
+        self.assertIn("不是我", got["opening"], "把人推回人那句要活着到用户面前")
+        self.assertIn("\n\n", got["opening"], "那句是刻意单起一段的，不能被压成一行")
+
+    def test_a_retracted_burden_stops_it_too(self):
+        from mindos.zhijun import proactive
+        store = self._store({"b9": {"id": "b9", "content": "和林岚那次谈话", "trustState": "retracted"}})
+        self.assertIsNone(proactive._from_nudge(self._nudge("burden_stalled", {"burdenId": "b9"}), store, None))
+
+    def test_observations_rank_below_things_with_an_agreed_time(self):
+        """回访和承诺有确定的时间约定，照见没有，所以排在它们后面。"""
+        from mindos.zhijun.proactive import _PRIORITY
+        for kind in ("self_view_tension", "burden_stalled", "principle_tension"):
+            with self.subTest(kind=kind):
+                self.assertIn(kind, _PRIORITY)
+                self.assertGreater(_PRIORITY[kind], _PRIORITY["review_due"])
+                self.assertGreater(_PRIORITY[kind], _PRIORITY["commitment_due"])
+                self.assertLess(_PRIORITY[kind], _PRIORITY["gap"])
+
+    def test_every_nudge_kind_consolidate_emits_has_a_home(self):
+        """防回归：以后再加一种张力，忘了接进 proactive 就会在这里挂掉。"""
+        from mindos.zhijun import persona
+        from mindos.zhijun.proactive import _PRIORITY
+        emitted = ("principle_tension", "self_view_tension", "burden_stalled")
+        for kind in emitted:
+            with self.subTest(kind=kind):
+                self.assertIn(kind, _PRIORITY)
+                self.assertNotEqual(persona.proactive_opening(kind, {}), persona.PROACTIVE_GREETING,
+                                    "落到了兜底问候，等于这条照见没有自己的说法")
+                self.assertNotEqual(persona.proactive_title(kind, {}), "好几天没聊了")
+
+
 class SchemaMigrationTests(unittest.TestCase):
     """老库的 CHECK 里没有新分区，写入会被 SQLite 直接拒绝。"""
 

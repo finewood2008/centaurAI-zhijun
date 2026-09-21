@@ -35,7 +35,11 @@ BACKOFF_STREAK = 3
 BACKOFF_DAYS = 7
 NUDGE_KINDS = ("review_due", "commitment_due", "principle_tension", "weekly_review")
 INQUIRY_KINDS = ("open_loop", "nod", "stale", "gap")
-_PRIORITY = {"review_due": 0, "commitment_due": 1, "principle_tension": 2, "weekly_review": 3,
+# 三种张力同一档：它们都是「照见」，彼此之间由 scheduledFor 排先后。
+# 排在回访与承诺之后——那两件有确定的时间约定，照见没有。
+_PRIORITY = {"review_due": 0, "commitment_due": 1,
+             "principle_tension": 2, "self_view_tension": 2, "burden_stalled": 2,
+             "weekly_review": 3,
              "open_loop": 4, "milestone": 5, "nod": 6, "stale": 7, "gap": 8, "greeting": 9}
 _CACHE_KEY = "zhijun_proactive_recent_v1"
 
@@ -234,6 +238,28 @@ def _from_nudge(nudge: dict, store, growth) -> dict | None:
             payload.update(a=claims[0]["content"], b=claims[1]["content"])
         refs = [{"kind": "claim", "id": c["id"]} for c in claims]
         return _candidate(kind, key=key, why_now=nudge["whyNow"], payload=payload, refs=refs, order=str(nudge.get("scheduledFor") or ""), nudge=nudge)
+    if kind == "self_view_tension":
+        # 照见 A（言行不一）。两条理解任意一条被撤回或改写，这条照见就不该再出现
+        # ——撤回的永不回流（原则 3）。
+        view = store.get_claim(str(ref.get("selfViewId") or ""), with_evidence=False) if ref.get("selfViewId") else None
+        behaviour = store.get_claim(str(ref.get("behaviourId") or ""), with_evidence=False) if ref.get("behaviourId") else None
+        if not view or not behaviour or view.get("trustState") != "confirmed" or behaviour.get("trustState") != "confirmed":
+            return None
+        payload = {"a": view["content"], "b": behaviour["content"], "message": nudge.get("message") or ""}
+        return _candidate(kind, key=key, why_now=nudge["whyNow"], payload=payload,
+                          refs=[{"kind": "claim", "id": view["id"]}, {"kind": "claim", "id": behaviour["id"]}],
+                          order=str(nudge.get("scheduledFor") or ""), nudge=nudge)
+    if kind == "burden_stalled":
+        # 照见 B（说了没动）。消息里已经写好了次数与跨度这两个事实，以及可能的
+        # 「把人推回人」那一句，直接用，不在这里重新拼一遍。
+        burden = store.get_claim(str(ref.get("burdenId") or ""), with_evidence=False) if ref.get("burdenId") else None
+        if not burden or burden.get("trustState") != "confirmed":
+            return None
+        payload = {"content": burden["content"], "message": nudge.get("message") or "",
+                   "talkToEntityId": ref.get("talkToEntityId")}
+        return _candidate(kind, key=key, why_now=nudge["whyNow"], payload=payload,
+                          refs=[{"kind": "claim", "id": burden["id"]}],
+                          order=str(nudge.get("scheduledFor") or ""), nudge=nudge)
     if kind == "weekly_review":
         payload = {"summary": ref.get("summary") or "", "weekStart": ref.get("weekStart")}
         return _candidate(kind, key=key, why_now=nudge["whyNow"], payload=payload, refs=[], order=str(nudge.get("scheduledFor") or ""), nudge=nudge)

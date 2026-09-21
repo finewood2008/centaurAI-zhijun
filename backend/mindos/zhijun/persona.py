@@ -167,6 +167,13 @@ def _short(value, limit: int) -> str:
     return text if len(text) <= limit else text[: max(1, limit - 1)].rstrip() + "…"
 
 
+def _short_paragraphs(value, limit: int) -> str:
+    """同 _short，但保留段落。「把人推回人」那句是刻意单起一段的，压成一行就糊在一起了。"""
+    paragraphs = [" ".join(part.split()) for part in str(value or "").split("\n\n")]
+    text = "\n\n".join(p for p in paragraphs if p)
+    return text if len(text) <= limit else text[: max(1, limit - 1)].rstrip() + "…"
+
+
 def proactive_opening(kind: str, payload: dict | None = None) -> str:
     """知君主动开口的第一句：模板生成、不调模型；第一人称，一句说清「为何现在」，最多一个轻问句或不问。
 
@@ -184,6 +191,17 @@ def proactive_opening(kind: str, payload: dict | None = None) -> str:
         if a and b:
             return f"「{_short(a, 40)}」是你确认过的原则，而最近「{_short(b, 40)}」。是原则变了，还是这次情况特殊？"
         return f"{_short(data.get('message') or '有两条理解放在一起有点张力', 120)} 我不急着下结论，只是想听你怎么看。"
+    if kind == "self_view_tension":
+        # 照见的第一句永远是观察，不是评价：并排放两件事，说自己没看明白，
+        # 不问「你是不是其实……」，那是替他下结论。
+        a, b = data.get("a"), data.get("b")
+        if a and b:
+            return (f"你说过「{_short(a, 40)}」。我这边记着的是「{_short(b, 40)}」。"
+                    f"这两件事放在一起，我没看明白——是我记错了，还是有我不知道的原因？")
+        return _short(data.get("message") or "有两件事放在一起，我没看明白。", 160)
+    if kind == "burden_stalled":
+        # 消息里已经带着次数与跨度这两个事实，以及可能的「把人推回人」那一句。
+        return _short_paragraphs(data.get("message") or "有件事你提过几次，后来一直没听你再说起。", 200)
     if kind == "weekly_review":
         summary = _short(data.get("summary") or "你记下的东西攒了一些", 120)
         return f"一周过去了。{summary}——要不要花几分钟一起看看？不想看也没关系。"
@@ -215,6 +233,10 @@ def proactive_title(kind: str, payload: dict | None = None) -> str:
         return _short("承诺到期：" + str(data.get("content") or ""), 30)
     if kind == "principle_tension":
         return "两条理解有点张力"
+    if kind == "self_view_tension":
+        return "你说的和我记着的对不上"
+    if kind == "burden_stalled":
+        return _short("一直压着的事：" + str(data.get("content") or ""), 30)
     if kind == "weekly_review":
         return "一周回顾"
     if kind == "open_loop":
