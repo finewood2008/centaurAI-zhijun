@@ -3,8 +3,10 @@
 本文件只覆盖能纯本地断言的部分，不连模型、不写用户数据。
 """
 import os
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import server
 from runtime_paths import (
@@ -46,6 +48,36 @@ class StandaloneEntryTests(unittest.TestCase):
             with self.subTest(env=env_name):
                 self.assertTrue(current.is_absolute(), f"{env_name} 解析出的路径必须是绝对路径")
                 self.assertNotIn(env_name, os.environ, "本用例要在未设置覆盖变量时运行")
+
+    def test_a_fresh_install_puts_data_outside_the_source_tree(self):
+        """PRD V2 的「一个数据文件夹」：它要属于用户。
+
+        安装目录多半是只读的，而且卸载软件时数据不该跟着没。
+        """
+        import runtime_paths
+
+        home = runtime_paths._user_data_home()
+        self.assertTrue(home.is_absolute())
+        self.assertNotIn(runtime_paths.PROJECT_ROOT, home.parents,
+                         f"全新安装的数据根不能落在源码树里：{home}")
+        self.assertIn("hijun", home.name.lower() or "", "文件夹要能认出是知君的")
+
+    def test_an_existing_data_folder_is_kept_where_it_is(self):
+        """直接改默认会让一整个本体、对话、判断簿凭空「消失」（其实还在老地方），
+        这是最吓人的一种升级体验。"""
+        import runtime_paths
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "data").mkdir()
+            with patch.object(runtime_paths, "PROJECT_ROOT", root):
+                self.assertEqual(runtime_paths._default_data_root(), root / "data")
+            # 老位置不存在时才走用户数据目录
+            empty = Path(temporary) / "elsewhere"
+            empty.mkdir()
+            with patch.object(runtime_paths, "PROJECT_ROOT", empty):
+                self.assertEqual(runtime_paths._default_data_root(), runtime_paths._user_data_home())
 
     def test_config_exposes_no_hardcoded_source_dir_model_path(self):
         """config 里不得再出现 `Path(__file__).parent / "models_cache"` 这类写死路径。"""

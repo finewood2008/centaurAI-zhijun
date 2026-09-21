@@ -25,9 +25,31 @@ def _env_path(name: str, default: Path) -> Path:
     return (Path(value).expanduser() if value else default).resolve()
 
 
-# 默认把所有可变数据与源码隔离到项目内的 data/；部署环境仍可通过环境变量
-# 将整个数据根迁到代码目录之外。
-DATA_ROOT = _env_path("CENTAURAI_DATABASE_DATA_ROOT", PROJECT_ROOT / "data")
+def _user_data_home() -> Path:
+    """按平台惯例的用户数据目录。PRD V2 的「一个数据文件夹」：它要属于用户，
+    不能落在安装目录里——安装目录多半是只读的，而且卸载软件时数据不该跟着没。
+    """
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Zhijun"
+    if os.name == "nt":
+        base = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        return (Path(base) if base else Path.home() / "AppData" / "Roaming") / "Zhijun"
+    base = os.environ.get("XDG_DATA_HOME", "").strip()
+    return (Path(base) if base else Path.home() / ".local" / "share") / "zhijun"
+
+
+def _default_data_root() -> Path:
+    """环境变量 → 源码树里已有的 data/ → 用户数据目录。
+
+    中间那一档是给已有安装和开发树留的：直接改默认会让一整个本体、对话、判断簿
+    凭空「消失」（其实还在老地方），这是最吓人的一种升级体验。
+    """
+    legacy = PROJECT_ROOT / "data"
+    return legacy if legacy.exists() else _user_data_home()
+
+
+# 数据根：一个属于用户的文件夹，可备份、可拷走、可彻底删除，卸载软件数据仍在。
+DATA_ROOT = _env_path("CENTAURAI_DATABASE_DATA_ROOT", _default_data_root())
 CONFIG_ROOT = DATA_ROOT / "config"
 DB_ROOT = DATA_ROOT / "db"
 
