@@ -66,7 +66,9 @@ try {
       },
     }
   })
-  await page.goto(origin + '/desktop.html', { waitUntil: 'networkidle' })
+  // 本文件覆盖的是经典壳（侧栏与分页）。P0 起默认壳是沉浸壳，所以这里显式选经典壳；
+  // 默认壳走哪一个由 tests/immersive-shell.test.mjs 与本文件末尾的默认壳断言覆盖。
+  await page.goto(origin + '/desktop.html?shell=classic', { waitUntil: 'networkidle' })
   const navigation = page.getByRole('navigation', { name: '主导航' })
   await navigation.waitFor()
   assert.equal(await navigation.getByRole('link').count(), 5)

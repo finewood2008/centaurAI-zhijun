@@ -93,7 +93,7 @@ test('both entries load the immersive stylesheet after main.css and the shell sk
   assert.match(await read('src/components/ui/SideDrawer.vue'), /\.side-drawer--wide \{ width:min\(960px,100vw\); \}/)
 })
 
-test('shell preference: url param wins, is persisted, stripped, then storage, default classic', () => {
+test('shell preference: url param wins, is persisted, stripped, then storage, default immersive', () => {
   assert.equal(shellParamFrom('?shell=immersive'), 'immersive')
   assert.equal(shellParamFrom('?say=hi&shell=classic'), 'classic')
   assert.equal(shellParamFrom('?shell=other'), null)
@@ -104,7 +104,11 @@ test('shell preference: url param wins, is persisted, stripped, then storage, de
   assert.equal(resolveShellPreference('immersive', 'classic'), true)
   assert.equal(resolveShellPreference('classic', 'immersive'), false)
   assert.equal(resolveShellPreference(null, 'immersive'), true)
-  assert.equal(resolveShellPreference(null, null), false)
+  // P0：默认沉浸壳。只有存储里明确写着 'classic' 才回经典壳。
+  assert.equal(resolveShellPreference(null, null), true, '全新设备默认沉浸壳')
+  assert.equal(resolveShellPreference(null, 'classic'), false, '用户明确选过经典壳就留在经典壳')
+  assert.equal(resolveShellPreference(null, ''), true, '存储被清空当作没选过')
+  assert.equal(resolveShellPreference(null, 'garbage'), true, '存储损坏时取默认，不回经典壳')
 })
 
 test('desktop passes connection state through App props and shares one label table', async () => {

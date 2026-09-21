@@ -1,5 +1,7 @@
-// 壳的偏好：`?shell=immersive|classic` → 写入 localStorage['zhijun.shell'] 并从地址栏清掉 → 否则读存储 → 默认经典壳。
-// 第二阶段把默认改成沉浸壳；这里只负责读写，不碰路由表。
+// 壳的偏好：`?shell=immersive|classic` → 写入 localStorage['zhijun.shell'] 并从地址栏清掉 → 否则读存储 → 默认沉浸壳。
+// 2026-09-21（PRD V2 的 P0）：默认从经典壳改为沉浸壳。经典壳保留，偏好页可随时切回，
+// 只有存储里明确写着 'classic' 才走经典壳——读不到存储、存储损坏、全新设备都走沉浸壳。
+// 这里只负责读写，不碰路由表。
 import { ref } from 'vue'
 
 export const SHELL_STORAGE_KEY = 'zhijun.shell'
@@ -29,10 +31,10 @@ export function stripShellParam(search: string, hash = ''): { search: string; ha
   return { search: clean(search), hash: nextHash }
 }
 
-/** 纯函数：参数优先，其次是已存的选择，默认 false。 */
+/** 纯函数：参数优先，其次是已存的选择，默认沉浸壳。只有明确存着 'classic' 才是经典壳。 */
 export function resolveShellPreference(param: ShellChoice | null, stored: string | null): boolean {
   if (param) return param === 'immersive'
-  return stored === 'immersive'
+  return stored !== 'classic'
 }
 
 function readStored(): string | null {
@@ -44,7 +46,7 @@ function writeStored(choice: ShellChoice): void {
 }
 
 function readInitial(): boolean {
-  if (typeof window === 'undefined') return false
+  if (typeof window === 'undefined') return true
   try {
     const param = shellParamFrom(window.location.search, window.location.hash)
     if (param) {
@@ -54,7 +56,7 @@ function readInitial(): boolean {
     }
     return resolveShellPreference(param, readStored())
   } catch {
-    return false
+    return true
   }
 }
 

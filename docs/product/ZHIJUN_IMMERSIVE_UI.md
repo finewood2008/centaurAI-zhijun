@@ -1,6 +1,6 @@
 # 知君「沉浸式 · 拟人化」界面
 
-版本：2026-09-18 · 状态：第一阶段实施中（分支 `redesign/memory-v3`，`?shell=immersive` 开关；稳定后成为默认）
+版本：2026-09-21 · 状态：**已是默认壳**（PRD V2 的 P0，分支 `newzhijun-p0`）。经典壳保留，`?shell=classic` 或偏好页可切回
 
 ## 1. 为什么
 
@@ -47,6 +47,7 @@
 ## 7. 实现要点
 
 - 壳切换在 `src/App.vue`，路由表不变，深链全部保留；`?shell=immersive|classic` 与偏好里的开关。
-- 第一阶段不复制对话逻辑：`ConversationPage` 以嵌入模式成为流里唯一可发送的当前块（发送、流式、授权、记忆、产出、草稿原样），历史会话由只读组件渲染；第二阶段再抽 composable 并成为默认，同时改写钉住导航结构的测试。
+- 不复制对话逻辑：`ConversationPage` 以嵌入模式成为流里唯一可发送的当前块（发送、流式、授权、记忆、产出、草稿原样），历史会话由只读组件渲染。抽 composable 尚未做。
+- **2026-09-21 默认壳已切换**：`resolveShellPreference` 改为「只有存储里明确写着 `classic` 才走经典壳」，读不到存储、存储损坏、全新设备都走沉浸壳。三个启动真实应用壳的测试（`product-navigation` / `settings-ontology` / `secure-connection`）改为显式 `?shell=classic`，它们覆盖的本来就是经典壳；新增 `tests/shell-default.e2e.mjs` 覆盖默认壳本身，其中最关键的一条是**已经选过经典壳的用户不会被这次默认变更掀走**。
 - 桌面契约不变：未登录、需要连接盒子、写入不确定等状态仍由原槽渲染；`src/immersive/*` 不引入桌面模块，桌面状态经 props 传入。
 - 详见 `.claude` 计划与 `docs/development/conversations.md` 的代码入口。

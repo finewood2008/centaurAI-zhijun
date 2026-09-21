@@ -34,7 +34,9 @@
     "test:secure-connection": "npm run build:desktop && node tests/secure-connection.e2e.mjs",
     "test:all": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:product": "node --experimental-strip-types --test tests/product-transport.test.mjs tests/navigation-progress.test.mjs",
-    "test:product-navigation": "node tests/product-navigation.e2e.mjs"
+    "test:product-navigation": "node tests/product-navigation.e2e.mjs",
+    "test:shell-default": "npm run build:desktop && node tests/shell-default.e2e.mjs",
+    "test:shells": "npm run build:desktop && node tests/shell-default.e2e.mjs && node tests/product-navigation.e2e.mjs && node tests/settings-ontology.e2e.mjs"
   },
   "dependencies": {
     "@types/markdown-it": "^14.2.0",

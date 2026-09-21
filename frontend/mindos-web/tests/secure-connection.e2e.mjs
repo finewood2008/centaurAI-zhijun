@@ -136,7 +136,8 @@ try {
     }
   })
 
-  await page.goto(origin + '/desktop.html', { waitUntil: 'networkidle' })
+  // 连接与登录不依赖壳的选择；固定经典壳以免壳变化影响这条链路的断言。
+  await page.goto(origin + '/desktop.html?shell=classic', { waitUntil: 'networkidle' })
   await page.getByTestId('connect-synthetic-device').waitFor()
   assert.equal(await page.evaluate(() => window.__secureConnectionStats.starts.length), 0)
 

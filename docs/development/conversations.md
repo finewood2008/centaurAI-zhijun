@@ -65,7 +65,9 @@
 
 ## 沉浸式壳（记忆系统 V3 之后，2026-09-19）
 
-设计见 [沉浸式界面](../product/ZHIJUN_IMMERSIVE_UI.md)。当前通过 `?shell=immersive|classic`（写入 `localStorage['zhijun.shell']`）或偏好里的开关切换；壳的选择在 `src/App.vue`，路由表不变。
+设计见 [沉浸式界面](../product/ZHIJUN_IMMERSIVE_UI.md)。**沉浸壳自 2026-09-21 起是默认壳**（PRD V2 的 P0）；经典壳保留，通过 `?shell=classic`（写入 `localStorage['zhijun.shell']`）或偏好里的开关切回。只有存储里明确写着 `classic` 才走经典壳——读不到存储、存储损坏、全新设备都走沉浸壳。壳的选择在 `src/App.vue`，路由表不变，深链全部保留。
+
+测试口径：启动真实应用壳的测试只有三个（`product-navigation` / `settings-ontology` / `secure-connection`），它们覆盖的是经典壳，已显式加 `?shell=classic`；其余 e2e 用 esbuild 单独编译组件，不经过 `App.vue`，不受壳默认值影响。`tests/shell-default.e2e.mjs` 覆盖默认壳与「已存的选择压过新默认」。
 
 - `src/immersive/ImmersiveShell.vue`：舞台（在场行 + 印坞 + 日流 + 输入区宿主）与四个抽屉（我 / 昔 / 案头 / 偏好）；非流路由在 `RoutePageDrawer` 中打开，`/settings` 在偏好抽屉中打开。
 - `src/immersive/composables/useDayStream.ts` + `dayStream.ts`：按天分节的长流（会话列表分页、按创建日分组、上滑加载更早、今日来信、当前会话规则、回到某天）。

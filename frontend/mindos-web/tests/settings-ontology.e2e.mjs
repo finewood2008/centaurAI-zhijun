@@ -121,7 +121,8 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, name)
     await page.screenshot({ path: `${screenshots}/${name}.png`, fullPage: true, animations: 'disabled' })
   }
-  await page.goto(origin + '/desktop.html#/settings')
+  // 经典壳下的设置页。沉浸壳里设置在「偏好」抽屉，由 immersive-drawers.test.mjs 覆盖。
+  await page.goto(origin + '/desktop.html?shell=classic#/settings')
   await expect(page.getByTestId('box-settings')).toBeVisible()
   await expect(page.getByTestId('workspace-settings')).toHaveCount(0)
   assert.equal(await page.evaluate(() => window.__settingsStats.requests.length), 0)
