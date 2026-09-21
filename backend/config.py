@@ -6,7 +6,10 @@ from runtime_paths import (
     CHROMA_DATA_DIR as CHROMA_DATA_PATH,
     DATA_ROOT,
     MEMORY_DIR as MEMORY_PATH,
+    MODELS_CACHE_DIR,
+    MODELSCOPE_CACHE_DIR,
     PROJECT_ROOT,
+    WHISPER_MODELS_DIR,
     VIDEO_FRAMES_DIR as VIDEO_FRAMES_PATH,
     VIDEO_WORK_DIR as VIDEO_WORK_PATH,
     WATCH_FOLDER as WATCH_FOLDER_PATH,
@@ -17,13 +20,13 @@ from runtime_paths import (
 # 数据目录
 CHROMA_DATA_DIR = str(CHROMA_DATA_PATH)
 WATCH_FOLDER = str(WATCH_FOLDER_PATH)
-MODELS_CACHE = str(Path(__file__).parent / "models_cache")
+MODELS_CACHE = str(MODELS_CACHE_DIR)
 
 # 嵌入模型（本地路径，通过 modelscope/HuggingFace 下载）。
 # 开发工作树可通过环境变量复用宿主机已有缓存，避免每个 worktree 复制约 190MB 权重。
-_DEFAULT_TEXT_MODEL_PATH = Path(__file__).parent / "models_cache" / "BAAI" / "bge-small-zh-v1.5"
+_DEFAULT_TEXT_MODEL_PATH = MODELS_CACHE_DIR / "BAAI" / "bge-small-zh-v1.5"
 TEXT_MODEL_PATH = os.getenv("CENTAUR_TEXT_MODEL_PATH", "").strip() or str(_DEFAULT_TEXT_MODEL_PATH)
-IMAGE_MODEL_PATH = str(Path(__file__).parent / "models_cache" / "models--openai--clip-vit-base-patch32" / "snapshots" / "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
+IMAGE_MODEL_PATH = str(MODELS_CACHE_DIR / "models--openai--clip-vit-base-patch32" / "snapshots" / "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
 
 # 服务器
 HOST = "127.0.0.1"
@@ -107,7 +110,7 @@ BGE_QUERY_INSTRUCTION = "为这个句子生成表示以用于检索相关文章�
 # bge-small-zh：24MB，中文优化，CPU 快（默认）。
 # bge-m3：560M，8192 长上下文 + 多语言，CPU 较慢——置 True 后须 POST /api/reindex 切换。
 def _find_bge_m3() -> str:
-    d = Path(__file__).parent / "models_cache_ms" / "BAAI" / "bge-m3"
+    d = MODELSCOPE_CACHE_DIR / "BAAI" / "bge-m3"
     if (d / "pytorch_model.bin").exists() or list(d.glob("*.safetensors")):
         return str(d)
     return ""
@@ -130,7 +133,7 @@ else:
 # 优先用本地（modelscope 下载）路径——自动探测 models_cache_ms 下任一镜像源目录，
 # 缺失则回落到 HF 仓库 id
 def _find_local_reranker() -> str:
-    base = Path(__file__).parent / "models_cache_ms"
+    base = MODELSCOPE_CACHE_DIR
     for cfg in base.glob("*/bge-reranker-base/config.json"):
         return str(cfg.parent)
     return "BAAI/bge-reranker-base"
@@ -177,7 +180,7 @@ VLM_CAPTION_ENABLED = True
 # ---------- 视觉检索（Chinese-CLIP，图片↔中文文本同空间）----------
 # 自动探测已下载的 chinese-clip 权重；缺失则关闭视觉检索（不影响文本检索）
 def _find_chinese_clip() -> str:
-    base = Path(__file__).parent / "models_cache_ms"
+    base = MODELSCOPE_CACHE_DIR
     for cfg in sorted(base.rglob("chinese-clip-vit-base-patch16/config.json")):
         d = cfg.parent
         if (d / "pytorch_model.bin").exists() or list(d.glob("*.safetensors")):
@@ -219,7 +222,7 @@ VIDEO_FRAME_OCR_ENABLED = True
 # 优先用本地已下载的 flat 目录（whisper_models/faster-whisper-{size}）；缺失则回落到 size 名
 # 触发联网下载（注意 hf-mirror 对 whisper 仓库 HEAD 缺元数据头，下载需直连 huggingface.co）。
 def _find_whisper_model() -> tuple[str, bool]:
-    base = Path(__file__).parent / "whisper_models"
+    base = WHISPER_MODELS_DIR
     for size in ("small", "base", "medium", "large-v3"):
         d = base / f"faster-whisper-{size}"
         if (d / "model.bin").exists():
@@ -232,7 +235,7 @@ WHISPER_MODEL, WHISPER_LOCAL_FILES_ONLY = _find_whisper_model()
 WHISPER_COMPUTE = "int8"          # 纯 CPU 用 int8（float16 在 CPU 无收益）
 WHISPER_LANGUAGE = "zh"           # 中文为主强制 zh，避免 auto 被前几秒英文/音乐误判整段
 WHISPER_BEAM_SIZE = 5             # 想更快设 1（greedy）；中文建议 5
-WHISPER_DOWNLOAD_ROOT = str(Path(__file__).parent / "whisper_models")
+WHISPER_DOWNLOAD_ROOT = str(WHISPER_MODELS_DIR)
 # 转写墙钟硬上限 = max(600s, 视频时长 × 该倍率)；封顶超长/卡死视频对后台串行池的占用
 WHISPER_TIMEOUT_RTF = 4.0
 

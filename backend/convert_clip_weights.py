@@ -2,8 +2,9 @@
 from pathlib import Path
 import torch, re
 
-damo_bin = Path(__file__).parent / "models_cache_ms/damo/multi-modal_clip-vit-base-patch16_zh/pytorch_model.bin"
-flat_dir = Path(__file__).parent / "models_cache_ms/chinese-clip-vit-base-patch16"
+from runtime_paths import MODELSCOPE_CACHE_DIR
+damo_bin = MODELSCOPE_CACHE_DIR / "damo/multi-modal_clip-vit-base-patch16_zh/pytorch_model.bin"
+flat_dir = MODELSCOPE_CACHE_DIR / "chinese-clip-vit-base-patch16"
 
 raw = torch.load(str(damo_bin), map_location="cpu", weights_only=True)
 state = raw["state_dict"]

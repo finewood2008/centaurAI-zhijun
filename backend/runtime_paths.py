@@ -31,6 +31,27 @@ DATA_ROOT = _env_path("CENTAURAI_DATABASE_DATA_ROOT", PROJECT_ROOT / "data")
 CONFIG_ROOT = DATA_ROOT / "config"
 DB_ROOT = DATA_ROOT / "db"
 
+# 模型权重缓存。历史上三处写死在 backend/ 源码目录下（models_cache / models_cache_ms /
+# whisper_models），装到只读目录就会坏——这是 PRD V2 的 P0「三道锁」之一。
+# 解法：可配，默认落数据根。但旧位置已经有权重时沿用旧位置，否则升级会把已下载的
+# 几百 MB 权重变成孤儿、并触发一次重新下载。
+_BACKEND_DIR = Path(__file__).resolve().parent
+
+
+def _model_cache_path(env_name: str, legacy_name: str) -> Path:
+    explicit = os.environ.get(env_name, "").strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    legacy = _BACKEND_DIR / legacy_name
+    if legacy.exists():
+        return legacy.resolve()
+    return (DATA_ROOT / legacy_name).resolve()
+
+
+MODELS_CACHE_DIR = _model_cache_path("CENTAUR_MODELS_CACHE", "models_cache")
+MODELSCOPE_CACHE_DIR = _model_cache_path("CENTAUR_MODELSCOPE_CACHE", "models_cache_ms")
+WHISPER_MODELS_DIR = _model_cache_path("CENTAUR_WHISPER_MODELS", "whisper_models")
+
 CHROMA_DATA_DIR = DATA_ROOT / "chroma_data"
 # C1：索引代际物理目录（一代一个完整 Chroma PersistentClient 路径）。
 INDEXES_DIR = DATA_ROOT / "indexes"

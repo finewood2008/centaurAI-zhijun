@@ -1024,11 +1024,12 @@ def _model_job_cleanup_loop():
 # 注册记忆管理路由
 app.include_router(memory_api.router)
 
-# 根路径重定向
+# 根路径重定向。PRD V2 的 P0：独立软件的首页就是知君本身，不再是遗留的 LAN 上传页。
+# /lan 仍在原地可直接访问；前端未构建时 /mindos/ 会给出明确的 503 提示。
 @app.get("/")
 def root():
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/lan")
+    return RedirectResponse(url="/mindos/")
 
 
 # ========== LAN 路由 ==========

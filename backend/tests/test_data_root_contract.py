@@ -66,6 +66,9 @@ def _module_contract(env: dict[str, str]) -> dict[str, str]:
         "CENTAUR_GBRAIN_HOME",
         "CENTAUR_MCP_DATA_DIR",
         "CENTAUR_MCP_CONFIG_DIR",
+        "CENTAUR_MODELS_CACHE",
+        "CENTAUR_MODELSCOPE_CACHE",
+        "CENTAUR_WHISPER_MODELS",
     ):
         process_env.pop(name, None)
     process_env.update(env)
@@ -86,17 +89,42 @@ class DataRootContractTests(unittest.TestCase):
             data_root = Path(temporary).resolve()
             values = _module_contract({"CENTAURAI_DATABASE_DATA_ROOT": str(data_root)})
 
-        mutable_names = {
-            name for name in values
-            if name not in {"PROJECT_ROOT", "config.MODELS_CACHE"}
-        }
+        mutable_names = {name for name in values if name != "PROJECT_ROOT"}
+        legacy_cache = BACKEND_DIR / "models_cache"
+        if legacy_cache.exists():
+            # 旧位置还在的安装沿用旧位置（见下面那条用例），这里不把它当数据根下的路径要求。
+            mutable_names.discard("config.MODELS_CACHE")
         for name in mutable_names:
             path = Path(values[name]).resolve()
             self.assertTrue(path == data_root or data_root in path.parents, f"{name}: {path}")
         self.assertEqual(Path(values["DATA_ROOT"]), data_root)
+
+    def test_model_cache_is_configurable_and_leaves_the_source_tree(self):
+        """PRD V2 的 P0：模型权重缓存过去写死在 backend/ 下，装到只读目录会坏。
+
+        新契约有三条：显式环境变量最优先；没设时旧位置还在就沿用旧位置（升级不把
+        已下载的几百 MB 权重变成孤儿）；两者都没有才落到数据根下。
+        """
+        legacy_cache = BACKEND_DIR / "models_cache"
+
+        with tempfile.TemporaryDirectory() as temporary:
+            explicit = Path(temporary).resolve()
+            values = _module_contract({"CENTAUR_MODELS_CACHE": str(explicit)})
+            self.assertEqual(Path(values["config.MODELS_CACHE"]), explicit, "环境变量最优先")
+
+        if legacy_cache.exists():
+            values = _module_contract({})
+            self.assertEqual(Path(values["config.MODELS_CACHE"]), legacy_cache.resolve(),
+                             "旧位置还在就沿用旧位置")
+            return
+
+        # 旧位置不存在：落到数据根下，且绝不留在源码目录里。
+        with tempfile.TemporaryDirectory() as temporary:
+            data_root = Path(temporary).resolve()
+            values = _module_contract({"CENTAURAI_DATABASE_DATA_ROOT": str(data_root)})
         model_cache = Path(values["config.MODELS_CACHE"])
-        self.assertEqual(model_cache, BACKEND_DIR / "models_cache")
-        self.assertNotIn(data_root, model_cache.parents)
+        self.assertIn(data_root, model_cache.parents, f"应落在数据根下：{model_cache}")
+        self.assertNotIn(BACKEND_DIR, model_cache.parents, f"不得留在源码目录：{model_cache}")
 
     def test_default_and_specific_overrides_remain_supported(self):
         defaults = _module_contract({})

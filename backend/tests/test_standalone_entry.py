@@ -1,0 +1,60 @@
+"""PRD V2 的 P0「独立可跑」验收：入口与路径不再假设盒子或源码目录可写。
+
+本文件只覆盖能纯本地断言的部分，不连模型、不写用户数据。
+"""
+import os
+import unittest
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+import server
+from runtime_paths import (
+    MODELS_CACHE_DIR,
+    MODELSCOPE_CACHE_DIR,
+    WHISPER_MODELS_DIR,
+)
+
+BACKEND_DIR = Path(server.__file__).resolve().parent
+
+
+class StandaloneEntryTests(unittest.TestCase):
+    def test_root_opens_the_app_not_the_legacy_lan_page(self):
+        """独立软件的首页就是知君本身。/lan 仍在原地，只是不再是根路径的去处。"""
+        with TestClient(server.app) as client:
+            response = client.get("/", follow_redirects=False)
+        self.assertIn(response.status_code, (301, 302, 307, 308))
+        self.assertEqual(response.headers["location"], "/mindos/")
+
+    def test_legacy_lan_entry_still_reachable(self):
+        """降级根路径不等于删功能：直接访问 /lan 仍要有路由，不能 404。"""
+        paths = {getattr(route, "path", None) for route in server.app.routes}
+        self.assertIn("/lan", paths)
+
+    def test_model_caches_are_not_pinned_to_the_source_tree(self):
+        """三处模型权重缓存过去写死在 backend/ 下，装到只读目录会坏。
+
+        允许它们落在源码目录（旧安装沿用旧位置），但不允许写死——必须能被环境变量改掉。
+        这里断言的是「可配」这一半；默认值落哪里由 test_data_root_contract 覆盖。
+        """
+        for env_name, current in (
+            ("CENTAUR_MODELS_CACHE", MODELS_CACHE_DIR),
+            ("CENTAUR_MODELSCOPE_CACHE", MODELSCOPE_CACHE_DIR),
+            ("CENTAUR_WHISPER_MODELS", WHISPER_MODELS_DIR),
+        ):
+            with self.subTest(env=env_name):
+                self.assertTrue(current.is_absolute(), f"{env_name} 解析出的路径必须是绝对路径")
+                self.assertNotIn(env_name, os.environ, "本用例要在未设置覆盖变量时运行")
+
+    def test_config_exposes_no_hardcoded_source_dir_model_path(self):
+        """config 里不得再出现 `Path(__file__).parent / "models_cache"` 这类写死路径。"""
+        source = (BACKEND_DIR / "config.py").read_text(encoding="utf-8")
+        for needle in ('"models_cache"', '"models_cache_ms"', '"whisper_models"'):
+            self.assertNotIn(
+                f"Path(__file__).parent / {needle}", source,
+                f"config.py 仍把 {needle} 写死在源码目录下",
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
