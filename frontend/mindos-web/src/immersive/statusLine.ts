@@ -20,6 +20,9 @@ export function statusLineText(
   if (status === 'streaming') return '在想'
   if (status === 'aborted') return '你按了停止，这段没有说完'
   if (status === 'error') return '这一轮没有完成'
+  // PRD V2 5.5：危机那一轮不出现任何与记忆有关的字样。人刚说完最难的一句话，
+  // 气泡下跟一行「参考了你记下的 3 条」，是把它当成了一次检索。整行留空。
+  if ((provenance as { disclosure?: { kind?: string } } | null | undefined)?.disclosure?.kind === 'crisis') return ''
   const parts: string[] = []
   if (provenance) {
     const p = normalizeProvenance(provenance)

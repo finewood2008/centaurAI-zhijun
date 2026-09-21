@@ -175,6 +175,20 @@ MCP 配置从首次流程里移出，放进设置与「接口」界面，在用�
 
 **这些行为都是本地判定**（关键词 + 上下文），不依赖模型自觉，且在 BYOK 在线模型路径上同样生效。
 
+**2026-09-21 已实现**（分支 `newzhijun-p0`）。判定在 `backend/mindos/zhijun/disclosure.py`，纯正则、不调模型、不联网，分 ordinary / heavy / crisis 三档。落点三处：
+
+| 位置 | 作用 |
+|---|---|
+| `memory.extraction_allowed` | 抽取的唯一接缝，四条生产路径共用。重话推迟（「记下来」可豁免），危机永不（无豁免） |
+| `jobs._run_job` 的作业闸 | **实施中发现的缺口**：自我校准 / 第一次观察 / 照见读同一条用户原话，走的却是 `automatic_allowed` 而不是 `extraction_allowed`，会绕过上面那道闸。已单独挡住 |
+| `routing.py` 的系统提示词装配 | 命中重话加 `persona.RECEIVE_INSTRUCTION`，命中危机加 `persona.crisis_instruction()`。两者都压过「深入」与「商量」——这一轮的任务是接住，决定可以等下一轮 |
+
+求助渠道放在 `crisis_resources.json`，代码只渲染不编造；读不到就不给。**文件里 `verifiedOn` 是 `null`，意思是还没有人核对过那两个号码是否仍然有效，发行前必须有人核对并填上日期。**
+
+界面侧：危机那一轮状态行整行留空（`statusLine.ts`）。「记」微印不需要单独关——没有候选就没有微印，这是构造保证，不是 UI 判断。
+
+中文的夸张用法是主要误判源，已挡住「累得想死」「困死我了」「死心」「死磕」「死线」这一类；测试在 `backend/tests/test_disclosure.py`（18 条用例 + 30 条子用例）。
+
 **没有现成轮子可用，这是净新增工作量。** 仓库里唯一的敏感内容检测是 `backend/mindos/sensitive_rule_routes.py`，它的文件头自陈是 `Renderer-safe facade for Data Agent V2 sensitive-rule management`，实现依赖盒端的 `zhijun_worker.data_agent_rag_v2`，用途是**资料的个人信息脱敏规则**，与「这段话是不是重话」是两件不相干的事，而且它在单机发行版里本来就要删（14.3）。因此 5.5 的判定器必须从零写，且必须是纯本地、无外部依赖的。它是 P0 的一部分，不能挪到后面——一个还不会接住的知君，不应该被交到目标人群手里。
 
 ## 6. 数据层（摘要，详见附录 A）

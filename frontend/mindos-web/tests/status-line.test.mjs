@@ -60,3 +60,16 @@ test('channel suffix is off by default and never names a provider or model', () 
   assert.equal(statusLineText(planned, null, 'complete', false, { channel: true }), '参考了你记下的 2 条')
   assert.doesNotMatch(statusLineText(planned, meta, 'complete', false, { channel: true }), forbidden)
 })
+
+// PRD V2 5.5：危机那一轮，气泡下不出现任何与记忆有关的字样。
+test('危机轮次整行留空，不显示「参考了你记下的 N 条」', () => {
+  const crisis = { ...planned, disclosure: { kind: 'crisis', extractionDeferred: true } }
+  assert.equal(statusLineText(crisis, null, 'done'), '', '危机轮次状态行必须为空')
+
+  // 重话只是推迟抽取，状态行照常——它说的是这次回答参考了什么，不是记了什么。
+  const heavy = { ...planned, disclosure: { kind: 'heavy', extractionDeferred: true } }
+  assert.notEqual(statusLineText(heavy, null, 'done'), '')
+
+  // 没有 disclosure 字段的旧回执不受影响。
+  assert.notEqual(statusLineText(planned, null, 'done'), '')
+})

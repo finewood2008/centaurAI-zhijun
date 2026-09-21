@@ -40,7 +40,12 @@ def automatic_allowed(ontology, convs, cid):
 def extraction_allowed(ontology, convs, cid, text):
     from .extract import explicit_memory_request, memory_request_declined
     from .charter_policy import scope_policy, check_action
+    from . import disclosure
     explicit = explicit_memory_request(text)
+    # PRD V2 5.5：重话那一轮先接住、不抽取（用户说「记下来」可以豁免）；
+    # 危机内容完全不抽取，explicit 也不豁免。放在最前面短路，任何其它策略都不能绕过它。
+    if disclosure.extraction_blocked(text, explicit_request=explicit):
+        return False
     return (bool(convs.get_conversation(cid)) and not memory_request_declined(text)
             and (automatic_allowed(ontology, convs, cid) or explicit)
             and check_action(scope_policy(scope_for(cid, convs)), "memory_extract", explicit=explicit)["allowed"])

@@ -764,10 +764,20 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
             excluded.extend(profile["excluded"])
             restricted_seen = restricted_seen or any(x.get("restricted") for x in profile["excluded"])
             excluded_claims.update(x["id"] for x in profile["excluded"] if x.get("kind") == "claim")
-    if depth == "deep":
-        system.append(persona.DEEP_INSTRUCTION)
-    if mode == "deliberate":
-        system.append(persona.DELIBERATE_INSTRUCTION)
+    # PRD V2 5.5「接住与边界」。判定在 disclosure，纯本地正则，不依赖模型自觉，
+    # 在自带 key 的在线路径上同样生效。重话与危机都压过「深入」和「商量」：
+    # 这一轮的任务是接住，决定可以等下一轮。
+    from . import disclosure
+    disclosure_kind = disclosure.classify(content)
+    if disclosure_kind == disclosure.CRISIS:
+        system.append(persona.crisis_instruction(disclosure.crisis_resources()))
+    elif disclosure_kind == disclosure.HEAVY:
+        system.append(persona.RECEIVE_INSTRUCTION)
+    else:
+        if depth == "deep":
+            system.append(persona.DEEP_INSTRUCTION)
+        if mode == "deliberate":
+            system.append(persona.DELIBERATE_INSTRUCTION)
     onboarding_topic = None
     charter_topic = None
     workspace_snapshot = None
@@ -1004,6 +1014,10 @@ def prepare_chat(router, content, *, depth="brief", mode="chat", material_refs=N
     provenance["contextPlan"] = {k: v for k, v in context_plan.items() if k not in ("system", "refs")}
     provenance["coreProfile"] = profile["info"] or {"lineCount": 0, "claimIds": [], "sourceHash": None, "excludedCount": len(profile["excluded"])}
     provenance["inquiry"] = inquiry_block["info"]
+    # PRD V2 5.5：这一轮是不是重话 / 危机。前端据此不显示「记」微印——
+    # 用户刚说完一件很重的事，气泡下弹出「已记下 1 条」是这个产品最糟的一种失败。
+    # 只给分级，不给命中的词：判定依据本身也属于这段对话，没必要外传。
+    provenance["disclosure"] = {"kind": disclosure_kind, "extractionDeferred": disclosure_kind != disclosure.ORDINARY}
     default_count = sum(1 for s in preview["sources"] if (s.get("authorization") or {}).get("kind") == "default")
     if default_count:
         provenance["routing"]["defaultAuthorization"] = {"sourceCount": default_count, "revision": preview["defaultAuthorization"]["revision"]}

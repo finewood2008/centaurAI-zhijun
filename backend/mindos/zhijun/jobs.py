@@ -200,6 +200,16 @@ def _run_job(job: dict, *, store: OntologyStore, conv_store: ConversationStore, 
     from . import alignment, memory
     if kind in ("alignment", "first_observation") and not memory.automatic_allowed(store, conv_store, payload.get("conversationId")):
         return {"state": "skipped", "reason": "memory_policy"}
+    # PRD V2 5.5：重话与危机那一轮不产出任何候选。自我校准、第一次观察与照见读的都是
+    # 同一条用户原话，走的却是 automatic_allowed 而不是 extraction_allowed，所以必须
+    # 在这里单独挡一次——否则用户刚说完最难的一句话，气泡下会冒出一枚「记」印。
+    if kind in ("alignment", "first_observation", "reflection") and payload.get("messageId"):
+        from . import disclosure
+        from .extract import explicit_memory_request
+        message = conv_store.get_message(payload["messageId"])
+        body = (message or {}).get("content") or ""
+        if disclosure.extraction_blocked(body, explicit_request=explicit_memory_request(body)):
+            return {"state": "skipped", "reason": "disclosure_deferred"}
     if kind == "reflection":
         from .reflections import run_job as run_reflection
         return run_reflection(payload, store, conv_store)
