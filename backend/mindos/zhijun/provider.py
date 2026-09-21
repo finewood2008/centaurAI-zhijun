@@ -670,6 +670,19 @@ def workspace_provider(*, local_only=False) -> ChatProvider:
                             status_code=exc.status, retryable=exc.status in {429, 502, 503, 504}) from None
 
 
+def _chat_channel_ever_saved() -> bool:
+    """设置页是否保存过模型通道。没保存过＝用户还没做过任何选择。
+
+    读不到存储时返回 True：这个判断只用来给一句更好的提示，不该自己变成故障点。
+    """
+    from ..stores.runtime_settings_store import SECTION_CHAT
+
+    try:
+        return get_provider().store.get_section(SECTION_CHAT) is not None
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def build_provider(snapshot=None) -> ChatProvider:
     """按环境变量与设置页快照选择模型通道。
 
@@ -724,6 +737,26 @@ def build_provider(snapshot=None) -> ChatProvider:
             ensure_ascii=False, separators=(",", ":"),
         ).encode("utf-8")).hexdigest() if isolated else None
         return result
+    never_configured = (
+        not workspace
+        # 调用方自带快照＝它已经把配置定下来了，不要再去翻存储second-guess 它。
+        # 真实调用方（routing_routes / turn / ontology / alignment / chat_imports）都不传快照。
+        and snapshot is None
+        # 存过外部供应商、只是暂停了的人，是做过选择的：那种情况要落回本机模型，
+        # 不能报「还没配置」，也不能被环境里的陈旧 key 重新打开外发。
+        and not getattr(snap, "external_provider_id", None)
+        and not _chat_channel_ever_saved()
+    )
+    if never_configured:
+        # PRD V2 的 P0：自带 key 是首选路径。用户还没在设置里做过任何选择时，
+        # 不要静悄悄去连一个多半根本不存在的本机 Ollama —— 那会让第一条消息以
+        # 一个看不懂的连接错误收场。给一句能照着做的话，并且把本机模型的真正
+        # 用途一并说清（PRD 8 节）。
+        raise ProviderError(
+            "还没有配置模型。推荐在「设置 → 模型」里填一个 API Key；"
+            "如果你要说的话一个字都不想离开这台电脑，也可以在那里改用本机模型（它会记得少一些）。",
+            status_code=503, code="PROVIDER_NOT_CONFIGURED", retryable=False,
+        )
     local = snap.local
     if getattr(local, "configuration_error", None):
         raise ProviderError("本地 GPU 配置与部署合同冲突，请修复工作区设置", code="LOCAL_GPU_DEPLOYMENT_CONFLICT", retryable=False)
@@ -747,7 +780,8 @@ def provider_status() -> dict:
     try:
         provider = build_provider()
     except ProviderError as exc:
-        return {"provider": os.environ.get("ZHIJUN_PROVIDER", "").strip().lower() or "ollama", "model": None, "external": False, "configured": False, "error": str(exc)}
+        # 自带 key 是首选通道，因此未配置时报告 openai 而不是 ollama。
+        return {"provider": os.environ.get("ZHIJUN_PROVIDER", "").strip().lower() or "openai", "model": None, "external": False, "configured": False, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         return {"provider": "unknown", "model": None, "external": False, "configured": False, "error": type(exc).__name__}
     return {"provider": provider.name, "model": provider.model, "external": bool(provider.external), "configured": True, "error": None}

@@ -217,6 +217,46 @@ class SelectionTests(unittest.TestCase):
             with self.assertRaises(ProviderError):
                 build_provider()
 
+    def test_unconfigured_install_says_so_instead_of_dialing_a_missing_ollama(self) -> None:
+        """PRD V2 的 P0：自带 key 是首选通道。
+
+        全新安装什么都没配时，过去会静悄悄去连本机 Ollama，第一条消息以一个看不懂的
+        连接错误收场。现在要给一句照着做得了的话，并且顺带说清本机模型的用途。
+        """
+        local = SimpleNamespace(base_url="http://127.0.0.1:11434", model="qwen3:4b",
+                                timeout_seconds=60, keep_alive=0, context_window=4096)
+        fresh = SimpleNamespace(provider="ollama", external_enabled=False, base_url=None, model=None,
+                                external_provider_id=None, secret_ref=None, timeout_seconds=30, local=local)
+        runtime = SimpleNamespace(
+            get_chat_snapshot=lambda: fresh,
+            resolve_api_key=lambda _snap: None,
+            store=SimpleNamespace(get_section=lambda _section: None),   # 设置页从没保存过
+        )
+        with patch.dict(os.environ, {"ZHIJUN_PROVIDER": "", "ZHIJUN_WORKSPACE_ID": ""}), \
+                patch.object(provider_module, "get_provider", lambda: runtime):
+            with self.assertRaises(ProviderError) as caught:
+                build_provider()
+        self.assertEqual(caught.exception.code, "PROVIDER_NOT_CONFIGURED")
+        self.assertIn("API Key", str(caught.exception))
+        self.assertIn("本机模型", str(caught.exception))
+
+    def test_saved_local_choice_still_reaches_ollama(self) -> None:
+        """做过选择的人不受上一条影响：设置页存过就照存的走，不报「还没配置」。"""
+        local = SimpleNamespace(base_url="http://127.0.0.1:11434", model="qwen3:4b",
+                                timeout_seconds=60, keep_alive=0, context_window=4096)
+        saved = SimpleNamespace(provider="ollama", external_enabled=False, base_url=None, model=None,
+                                external_provider_id=None, secret_ref=None, timeout_seconds=30, local=local)
+        runtime = SimpleNamespace(
+            get_chat_snapshot=lambda: saved,
+            resolve_api_key=lambda _snap: None,
+            store=SimpleNamespace(get_section=lambda _section: {"section": "chat_provider", "revision": 3}),
+        )
+        with patch.dict(os.environ, {"ZHIJUN_PROVIDER": "", "ZHIJUN_WORKSPACE_ID": "", "ZHIJUN_LOCAL_NUM_CTX": "4096"}), \
+                patch.object(provider_module, "get_provider", lambda: runtime):
+            prov = build_provider()
+        self.assertIsInstance(prov, OllamaProvider)
+        self.assertEqual(prov.model, "qwen3:4b")
+
     def test_default_is_local_ollama_from_snapshot(self) -> None:
         snap = SimpleNamespace(
             provider="ollama",
