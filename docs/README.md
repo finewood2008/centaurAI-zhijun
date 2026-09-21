@@ -6,7 +6,11 @@
 
 | 需要了解 | 文档 | 权威来源 |
 |---|---|---|
-| 产品定位、入口和边界 | [产品定义](product/PRODUCT.md) | 产品行为与当前界面 |
+| 产品定位、入口和边界 | [产品定义](product/PRODUCT.md) | 面向界面的一页定义，冲突时以 PRD V2 为准 |
+| 为什么做这个产品（合伙人 / 投资人） | [产品愿景](product/ZHIJUN_VISION.md) | 定位、价值主张与商业模式原则 |
+| 目标态的完整设计与分期 | [产品需求 V2](product/ZHIJUN_PRD_V2.md) | **产品行为的权威来源** |
+| 存什么、怎么检索、什么能出门 | [数据层（附录 A）](product/ZHIJUN_DATA_MODEL.md) | 字段、受控词表、出门判定函数 |
+| 别的 AI 能读到什么 | [MCP 契约（附录 B）](product/ZHIJUN_MCP_CONTRACT.md) | 工具签名、授权模型、审计 |
 | 桌面、worker、两类 Gateway、Remote Agent、Data Engine、模型与升级边界 | [产品架构](development/architecture.md) | 当前代码、外部合同与已核验部署边界 |
 | 本机开发、测试隔离 | [本机开发](development/local-runtime.md) | `zhijun.sh`、测试脚本 |
 | 在线/本地模型选择与授权 | [模型路由](development/task-routing.md) | 路由 API、消息回执 |
