@@ -49,6 +49,40 @@ class StandaloneEntryTests(unittest.TestCase):
                 self.assertTrue(current.is_absolute(), f"{env_name} 解析出的路径必须是绝对路径")
                 self.assertNotIn(env_name, os.environ, "本用例要在未设置覆盖变量时运行")
 
+    def test_standalone_mode_needs_no_cloud_ticket_but_demands_loopback(self):
+        """独立发行版装在用户自己电脑上，没有云控制面，也就没有票据可换。
+
+        但它必须同时满足两条：发行版自己声明，且服务确实只绑在回环上。
+        """
+        from mindos.local_web_debug import (
+            ACCESS_MODE_STANDALONE, ACCESS_MODE_TICKET_REQUIRED, access_context,
+        )
+        got = access_context(bind_host="127.0.0.1", environ={"ZHIJUN_STANDALONE": "1"})
+        self.assertEqual(got["mode"], ACCESS_MODE_STANDALONE)
+        self.assertFalse(got["localDebug"], "独立发行版不是调试模式，别混为一谈")
+
+        # 绑到了非回环地址：声明了也不算，退回要票据。
+        for host in ("0.0.0.0", "192.168.1.10", "", "localhost"):
+            with self.subTest(host=host):
+                self.assertEqual(
+                    access_context(bind_host=host, environ={"ZHIJUN_STANDALONE": "1"})["mode"],
+                    ACCESS_MODE_TICKET_REQUIRED, host)
+
+    def test_standalone_is_not_inferred_from_the_runtime_environment(self):
+        """不按 MINDOS_RUNTIME_ENV 推断——那会让某个盒子因为环境变量写错而静默失去票据校验。"""
+        from mindos.local_web_debug import ACCESS_MODE_TICKET_REQUIRED, access_context
+        for env in ({}, {"MINDOS_RUNTIME_ENV": "development"}, {"MINDOS_RUNTIME_ENV": "production"}):
+            with self.subTest(env=env):
+                self.assertEqual(access_context(bind_host="127.0.0.1", environ=env)["mode"],
+                                 ACCESS_MODE_TICKET_REQUIRED)
+
+    def test_standalone_does_not_claim_a_cloud_device_id(self):
+        """没有「认领 → 票据 → 交换」那个闭环，就不该声称有设备标识。"""
+        from mindos.local_web_debug import ACCESS_MODE_STANDALONE
+        with patch.object(server, "_mindos_web_access_context",
+                          return_value={"mode": ACCESS_MODE_STANDALONE, "localDebug": False}):
+            self.assertNotIn("deviceId", server.get_mindos_web_access_context())
+
     def test_a_fresh_install_puts_data_outside_the_source_tree(self):
         """PRD V2 的「一个数据文件夹」：它要属于用户。
 

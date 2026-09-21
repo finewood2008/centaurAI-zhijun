@@ -1181,7 +1181,9 @@ def require_loopback(request: Request):
 # 阶段 1：未配置 AI 盒子时，Web 只能在显式开启的本机开发模式下访问 MindOS。
 # 阶段 2 会在此唯一边界接入 Consumer Connectivity Ticket 校验，不能再让路由各自
 # 增加临时回退。当前 Gate 关闭时 fail-closed，避免误把 loopback 当作生产鉴权。
-from mindos.local_web_debug import ACCESS_MODE_LOCAL_DEBUG, access_context as local_web_access_context
+from mindos.local_web_debug import (
+    ACCESS_MODE_LOCAL_DEBUG, ACCESS_MODE_STANDALONE, access_context as local_web_access_context,
+)
 from mindos.connectivity_ticket import ConnectivityTicketError
 from mindos.connectivity_session import SESSION_HEADER, validate_session
 from mindos.device_context import get_device_registry
@@ -1195,8 +1197,11 @@ def require_mindos_web_access(request: Request):
     if not _is_loopback_request(request):
         raise HTTPException(403, "MindOS Web 仅允许 loopback 直连访问")
     context = _mindos_web_access_context()
-    if context["mode"] == ACCESS_MODE_LOCAL_DEBUG:
-        # 本机调试模式不创建真实设备上下文：不得声称或写入 Consumer device_id。
+    if context["mode"] in (ACCESS_MODE_LOCAL_DEBUG, ACCESS_MODE_STANDALONE):
+        # 两种模式都不创建真实设备上下文：不得声称或写入 Consumer device_id。
+        # 独立发行版没有云控制面，也就没有票据可换；边界是「只绑回环 + 写操作要
+        # CSRF 头」，判定在 local_web_debug.access_context，那里要求发行版显式声明
+        # 且确实绑在回环上，不按运行环境推断。
         request.state.mindos_access_context = context
         request.state.mindos_device_context = None
         return context
@@ -1226,7 +1231,9 @@ def get_mindos_web_access_context():
     「认领→票据→交换」闭环；本机调试模式不返回设备标识。
     """
     context = _mindos_web_access_context()
-    if context["mode"] != ACCESS_MODE_LOCAL_DEBUG:
+    # 只有票据模式需要 device_id 去走「认领 → 票据 → 交换」闭环。
+    # 本机调试与独立发行版都没有那个闭环，不返回设备标识。
+    if context["mode"] not in (ACCESS_MODE_LOCAL_DEBUG, ACCESS_MODE_STANDALONE):
         context["deviceId"] = os.environ.get("MINDOS_DEVICE_ID") or ""
     return context
 
