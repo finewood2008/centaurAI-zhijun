@@ -6,7 +6,14 @@ const { APP_ICON, installDockIcon } = require('./app-icon.cjs')
 const { createDesktopRuntime } = require('./runtime/desktop-runtime.cjs')
 const { isProvisioningEnabled, createProvisioningWindow, closeProvisioningWindow } = require('./provisioning-window.cjs')
 const { ENTRY_URL, INVOKE_CHANNEL, SNAPSHOT_CHANNEL, isEntryUrl,
-  shouldBlockRendererRequest, createInvokeHandler, createAssetHandler } = require('./security.cjs')
+  shouldBlockRendererRequest, createInvokeHandler, createAssetHandler, createLocalProfile } = require('./security.cjs')
+
+// 本机模式（第二形态，见 docs/development/local-mode.md）：没有盒子、没有云账号，
+// 窗口直接加载本机后端自己服务的那份前端。必须显式声明，不从别的状态推断——
+// 这条决定了渲染进程能不能直接联网，不该被猜出来。
+const LOCAL = process.env.ZHIJUN_LOCAL_MODE === '1'
+  ? createLocalProfile(process.env.ZHIJUN_LOCAL_PORT || 8618)
+  : null
 const provisioningTestBuild = require('./package.json').zhijunProvisioningTestBuild === true
 
 protocol.registerSchemesAsPrivileged([
@@ -38,6 +45,7 @@ let quitting = false
 
 async function createWindow() {
   installDockIcon(app)
+  if (LOCAL) return createLocalWindow()
   await access(path.join(assetRoot, 'desktop.html'))
   let config
   if (mode !== 'simulation') {
@@ -103,12 +111,51 @@ async function createWindow() {
   await window.loadURL(ENTRY_URL)
 }
 
+/** 本机模式的窗口。与盒端那条路完全分开，不共用 runtime、IPC 与资源协议。 */
+async function createLocalWindow() {
+  const isolatedSession = session.fromPartition('zhijun-local-m0')
+  isolatedSession.on('will-download', event => event.preventDefault())
+  // 拦截器只放行本机后端自己（见 security.cjs 的 createLocalProfile）。
+  isolatedSession.webRequest.onBeforeRequest(
+    { urls: ['<all_urls>'] },
+    (details, callback) => callback({ cancel: LOCAL.shouldBlockRendererRequest(details.url) }),
+  )
+  // 后端不给 /mindos/ 发 CSP，这份由壳注入：渲染进程的边界是壳的责任，不能指望被加载方自律。
+  isolatedSession.webRequest.onHeadersReceived((details, callback) => callback({
+    responseHeaders: { ...details.responseHeaders,
+      'Content-Security-Policy': [LOCAL.CSP],
+      'X-Content-Type-Options': ['nosniff'] },
+  }))
+  // 本机模式不暴露任何 IPC，也就不需要权限中介：一律拒绝。
+  // 代价是网页里的语音输入用不了，这是已知取舍，记在 local-mode.md。
+  isolatedSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+  isolatedSession.setPermissionCheckHandler(() => false)
+
+  window = new BrowserWindow({
+    width: 1200, height: 820, minWidth: 760, minHeight: 580,
+    title: '知君', backgroundColor: '#FFFCF6', icon: APP_ICON,
+    webPreferences: {
+      // 不挂 preload：本机模式不向渲染进程暴露任何桌面能力。
+      session: isolatedSession,
+      contextIsolation: true, sandbox: true, nodeIntegration: false,
+      webSecurity: true, webviewTag: false, plugins: false,
+    },
+  })
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, url) => { if (!LOCAL.isEntryUrl(url)) event.preventDefault() })
+  window.webContents.on('will-attach-webview', event => event.preventDefault())
+  window.webContents.on('render-process-gone', () => app.quit())
+  await window.loadURL(LOCAL.entryUrl)
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', () => { if (window && !window.isDestroyed()) { window.show(); window.focus() } })
   app.whenReady().then(createWindow).catch(() => {
-    console.error('知君桌面启动失败，请先在 frontend/mindos-web 执行 npm run build:desktop，并检查桌面构建产物。')
+    console.error(LOCAL
+      ? `知君本机模式启动失败：连不上 ${LOCAL.entryUrl}。先确认本机后端已在运行（ZHIJUN_STANDALONE=1，绑 127.0.0.1），并已执行 npm run build。`
+      : '知君桌面启动失败，请先在 frontend/mindos-web 执行 npm run build:desktop，并检查桌面构建产物。')
     app.exit(1)
   })
 }

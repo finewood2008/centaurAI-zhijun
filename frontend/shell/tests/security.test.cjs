@@ -169,3 +169,65 @@ test('preload exposes narrow methods, strips events, and unsubscribes exactly on
     ['zhijun:invoke', 'openProvisioning', [context]],
   ])
 })
+
+// ---------------------------------------------------------------------------
+// 本机模式（第二形态）。盒端那套的断言在上面，一条没动；这里只验另给的那份。
+// ---------------------------------------------------------------------------
+const { createLocalProfile } = require('../security.cjs')
+
+test('本机模式只认字面回环地址与声明的端口', () => {
+  const profile = createLocalProfile(8618)
+  assert.equal(profile.entryUrl, 'http://127.0.0.1:8618/mindos/')
+  assert.equal(profile.mode, 'local')
+  for (const bad of [0, 65536, -1, 'abc', null, undefined, 1.5]) {
+    assert.throws(() => createLocalProfile(bad), /合法端口/, String(bad))
+  }
+})
+
+test('本机模式的入口判定只覆盖 /mindos/ 之下', () => {
+  const profile = createLocalProfile(8618)
+  assert.equal(profile.isEntryUrl('http://127.0.0.1:8618/mindos/'), true)
+  assert.equal(profile.isEntryUrl('http://127.0.0.1:8618/mindos/chat#x'), true)
+  assert.equal(profile.isEntryUrl('http://127.0.0.1:8618/api/mindos/x'), false, 'API 不是入口')
+  assert.equal(profile.isEntryUrl('http://127.0.0.1:8618/lan'), false)
+  assert.equal(profile.isEntryUrl('http://127.0.0.1:8619/mindos/'), false, '换个端口就不是')
+  assert.equal(profile.isEntryUrl('zhijun://desktop/desktop.html'), false, '盒端入口不是本机入口')
+})
+
+test('本机模式只放行本机后端自己', () => {
+  const profile = createLocalProfile(8618)
+  const blocked = url => profile.shouldBlockRendererRequest(url)
+  // 放行：同源的页面、资源与 API
+  for (const ok of ['http://127.0.0.1:8618/mindos/', 'http://127.0.0.1:8618/mindos/assets/a.js',
+                    'http://127.0.0.1:8618/api/mindos/conversations']) {
+    assert.equal(blocked(ok), false, ok)
+  }
+  // 拦截：别的端口、别的主机、外网、把凭据当主机名的花招、以及 localhost 这个名字
+  for (const no of ['http://127.0.0.1:8619/x', 'http://127.0.0.2:8618/x', 'http://localhost:8618/x',
+                    'https://evil.example/x', 'http://127.0.0.1:8618@evil.com/', 'file:///etc/passwd',
+                    'http://user:pw@127.0.0.1:8618/x']) {
+    assert.equal(blocked(no), true, no)
+  }
+  // 应用自用的 blob 与内联图片仍然可用，但 blob 必须属于本机这个来源
+  assert.equal(blocked('blob:http://127.0.0.1:8618/abc'), false)
+  assert.equal(blocked('blob:https://evil.example/abc'), true)
+  assert.equal(blocked('data:image/png;base64,AAAA'), false)
+  assert.equal(blocked('data:text/html;base64,AAAA'), true)
+})
+
+test('本机模式的 CSP 把连接限制在同源，且不放开脚本来源', () => {
+  const { CSP: local } = createLocalProfile(8618)
+  assert.match(local, /connect-src 'self'/)
+  assert.match(local, /script-src 'self'/)
+  assert.match(local, /default-src 'none'/)
+  assert.doesNotMatch(local, /unsafe-eval/)
+  assert.doesNotMatch(local, /script-src[^;]*unsafe-inline/)
+})
+
+test('盒端那份判定不受本机模式影响', () => {
+  // 两份各自独立：本机模式放宽的是它自己那份，盒端的保证一个字没动。
+  assert.equal(shouldBlockRendererRequest('http://127.0.0.1:8618/mindos/'), true,
+    '盒端形态下渲染进程仍然不许直接联网')
+  assert.equal(isEntryUrl('http://127.0.0.1:8618/mindos/'), false)
+  assert.match(CSP, /connect-src zhijun-media: blob:/)
+})

@@ -36,23 +36,42 @@ if (!desktopTransport || !hasProductScope()) throw new Error('请先连接盒子
 网页闸门不再要求云端票据（`server.py:require_mindos_web_access`）。
 `provisionMindosSession`（`api.ts:1743`）看到非 `connectivity_ticket_required` 就直接返回，不换票据。
 
-## 所以要改的全在壳里（`frontend/shell/`，共 218 行）
+## 壳里的实现（已完成）
 
-| 位置 | 改什么 | 注意 |
-|---|---|---|
-| `security.cjs:4` `ENTRY_URL` | 本机模式指向 `http://127.0.0.1:8618/mindos/` | 现在写死为 `zhijun://desktop/desktop.html` |
-| `security.cjs:25` `isEntryUrl` | 接受本机地址 | 它同时把守 `isTrustedSender`，放宽等于放宽 IPC 的调用方校验 |
-| `security.cjs:13` `shouldBlockRendererRequest` | 放行 `http://127.0.0.1:8618/*` | 现在除 `zhijun:` / `zhijun-media:` / `blob:` / `data:image` 外一律拦截 |
-| `security.cjs:11` `CSP` | 现在是 `connect-src zhijun-media: blob:`，禁止任何 HTTP | 本机模式下页面由后端服务、带后端自己的 CSP，壳不该再注入这一份 |
-| `main.js:103` | 按模式选 URL | |
-| 启动 | 以 `ZHIJUN_STANDALONE=1` 拉起本机后端 | |
+`ZHIJUN_LOCAL_MODE=1` 开启，端口取 `ZHIJUN_LOCAL_PORT`（默认 8618）。必须显式声明，
+不从别的状态推断——这条决定渲染进程能不能直接联网，不该被猜出来。
 
-**IPC 要不要留是个待定**。本机模式不需要 `product.*` 那套（走直连 fetch 了），
-但原生保存、麦克风权限、安全存储仍然有用。倾向：本机模式下把 `OPERATIONS` 收窄到原生能力那几项，
-不暴露 `product.*` 与账号 / 连接相关的操作。
+**盒端那套判定一个字没动。** `security.cjs` 里另给一份 `createLocalProfile(port)`，
+两份各自独立；测试里有一条专门钉住这件事（「盒端那份判定不受本机模式影响」）。
 
-## 为什么值得单独一条分支
+| 本机模式 | 做法 |
+|---|---|
+| 入口 | `http://127.0.0.1:<port>/mindos/`，`isEntryUrl` 只认这个来源下 `/mindos/` 之下的路径 |
+| 请求拦截 | 只放行同一来源，外加 `blob:`（必须属于该来源）与内联图片。**`localhost` 不放行**：那是个名字，可以被解析到别处 |
+| CSP | 由壳经 `onHeadersReceived` 注入（后端不给 `/mindos/` 发 CSP）。`connect-src 'self'`——`'self'` 在这里正好解析成本机后端，不会多放行一个来源 |
+| 会话分区 | 独立的 `zhijun-local-m0`，与盒端的 `zhijun-desktop-m0` 不共用 |
+| **IPC** | **完全不暴露，连 preload 都不挂** |
 
-上面每一条都在动壳的安全边界：入口白名单、请求拦截、CSP、IPC 调用方校验。
-盒端形态靠这几条保证「渲染进程绝不直接联网」，而本机模式恰恰要让它直接联网。
-两种形态在这一点上要求相反，混在一条线上很容易把盒端的保证悄悄削弱。
+### 为什么本机模式不暴露 IPC
+
+这是和原计划不同的一处，也是这次改动里最要紧的一个决定。
+
+原计划是放宽 `isEntryUrl` 去容纳本机地址。问题在于 `isEntryUrl` **同时把守
+`isTrustedSender`**——放宽入口判定，等于顺带放宽了「谁能调用桌面能力」。那是一条
+不该在实现第二形态时被捎带松开的边界。
+
+而本机模式加载的是网页构建（`src/main.ts`），那份代码根本不调 `window.zhijunDesktop`。
+既然用不上，就不暴露：不挂 preload、不注册 `ipcMain.handle`、不订阅 runtime 快照。
+最危险的耦合因此不存在，而不是被小心地绕开。
+
+**已知取舍**：权限一律拒绝，所以网页里的语音输入在本机模式下用不了。
+要恢复它，应该单独给一个只含麦克风的窄通道，而不是把整个 IPC 面打开。
+
+## 还没做的
+
+- 拉起本机后端：现在要求后端已经在跑（`ZHIJUN_STANDALONE=1`，绑 127.0.0.1）。
+  壳还没有代托管后端进程的逻辑。
+- 打包：`electron-builder` 的配置仍然只面向盒端形态。
+- 端到端验证：这台 Mac 没装 Electron 与厂商包（壳测试 78 个失败全是 `MODULE_NOT_FOUND`，
+  改动前后同样 78 个），所以本机模式只验到了判定函数这一层，没有真跑起来过。
+
