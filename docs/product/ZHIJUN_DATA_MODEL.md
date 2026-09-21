@@ -194,21 +194,21 @@ C6、C7 是 2026-09-21 定位修正新增的。它们是「用户肯说真话」
 
 | 词表 | 值 | 位置 |
 |---|---|---|
-| `SECTIONS` 6 → **8** | `who` `people` `matters` `principles` `ways` `direction` **+ `burdens` `self_view`** | `:34` |
-| `LAYERS` 4 | `observed` `self_declared` `aspirational` `hypothesis` | `:35` |
-| `TRUST_STATES` 4 | `working` `confirmed` `retracted` `superseded` | `:36` |
-| `TRUST_ORIGINS` 6 | `utterance` `user_confirm` `user_edit` `user_created` `material` `model` | `:37` |
-| `ENTITY_TYPES` 8 | `me` `person` `organization` `project` `place` `topic` `event` `term` | `:38` |
-| `PRIVACY_LEVELS` 4 | `public` `private` `sensitive` `restricted` | `:39` |
-| `SCOPES` 2 | `long_term` `context_only` | `:40` |
-| `EVIDENCE_KINDS` 5 | `conversation_turn` `material_span` `user_edit` `decision` `review` | `:41` |
-| `STANCES` 3 | `supports` `contradicts` `background` | `:42` |
-| `REVIEW_ACTIONS` 8 | `confirm` `partial` `context_only` `reject` `defer` `retract` `reaffirm` `create` | `:43-52` |
+| `SECTIONS` 6 → **8** | `who` `people` `matters` `principles` `ways` `direction` **+ `burdens` `self_view`** | `:37` |
+| `LAYERS` 4 | `observed` `self_declared` `aspirational` `hypothesis` | `:38` |
+| `TRUST_STATES` 4 | `working` `confirmed` `retracted` `superseded` | `:39` |
+| `TRUST_ORIGINS` 6 | `utterance` `user_confirm` `user_edit` `user_created` `material` `model` | `:40` |
+| `ENTITY_TYPES` 8 | `me` `person` `organization` `project` `place` `topic` `event` `term` | `:41` |
+| `PRIVACY_LEVELS` 4 | `public` `private` `sensitive` `restricted` | `:42` |
+| `SCOPES` 2 | `long_term` `context_only` | `:43` |
+| `EVIDENCE_KINDS` 5 | `conversation_turn` `material_span` `user_edit` `decision` `review` | `:44` |
+| `STANCES` 3 | `supports` `contradicts` `background` | `:45` |
+| `REVIEW_ACTIONS` 8 | `confirm` `partial` `context_only` `reject` `defer` `retract` `reaffirm` `create` | `:46-55` |
 | `SURFACES` 7 | `conversation` `ontology_page` `onboarding` `today` `decision_panel` `import` `system` | `:56` |
 | `JOB_KINDS` 14 | 含 `core_profile`、`proactive_scan` | `:57` |
 | `DEFER_DAYS` | 14 | `:93` |
 
-`PREDICATES` 现有 21 个，**目标态 27 个**，**按分区封闭，越界整条丢弃**（校验 `:804-806`）：
+`PREDICATES`（`:61-67`）现有 21 个，**目标态 27 个**，**按分区封闭，越界整条丢弃**（校验 `:804-806`）：
 
 | 分区 | 谓词 | 状态 |
 |---|---|---|
@@ -222,6 +222,18 @@ C6、C7 是 2026-09-21 定位修正新增的。它们是「用户肯说真话」
 | **self_view 我眼中的我** | `sees_self_as` 自认为 / `blames_self_for` 自责 | **新增 2** |
 
 `avoids_facing` 与 direction 的 `avoids` 有意用不同的词：后者是「不想要的方向」（我不想做管理），前者是「知道该做但在躲」（我知道该和他谈）。混用会让张力检测失效。
+
+**落地时要同时改的五处**（行号相对基线，均在 `ontology_store.py`）：
+
+| 位置 | 改什么 |
+|---|---|
+| `SECTIONS:37` | 元组加两个值 |
+| `PREDICATES:61-67` | 加两个分区各自的谓词元组 |
+| `DEFAULT_PREDICATE:69-76` | 加两个默认谓词（建议 `weighs_on` / `sees_self_as`），否则不传 predicate 的调用会 `KeyError` |
+| `SECTION_TITLES:78-85` | 加界面名「心里的事」「我眼中的我」 |
+| `claims` 表 DDL `:127` 的 `CHECK(section IN (...))` | 加两个值，并给已建库写迁移。**这是唯一一处会让旧库写入直接失败的地方** |
+
+分区越界整条丢弃的校验在 `:804-806`，逻辑不用改——加了词表它自然生效。
 
 分层在界面上的措辞由 `LAYER_TITLES:86-91` 决定：`self_declared` = 你告诉我的，`observed` = 资料里看到的，`hypothesis` = 我推测的，`aspirational` = 你想成为的。**新增两个分区的默认层**：`burdens` 多为 `observed`（从反复出现中看出）或 `self_declared`；`self_view` 几乎总是 `self_declared`，**不接受 `hypothesis`**——替用户推断他怎么看自己，越界且几乎必错。
 
