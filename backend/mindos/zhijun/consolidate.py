@@ -115,6 +115,27 @@ def judge_pair(provider: ChatProvider | None, a: dict, b: dict) -> tuple[str, st
     return (verdict if verdict in ("contradict", "equivalent", "unrelated") else "unrelated"), str(raw.get("reason") or "")[:200]
 
 
+def _person_to_talk_to(store, claim) -> str | None:
+    """原则 7「把人推回人」：这件压着的事，是不是该去找一个真人谈。
+
+    只在两个条件同时成立时才说：这条困扰**指向一个具体的人**，而且那个人是用户自己
+    提过的。泛泛的「建议你找朋友聊聊」不算把人推回人，那只是一句漂亮话。
+
+    指向项目、公司、抽象话题的困扰不触发——「你该和『年底融资』谈谈」是胡话。
+    """
+    entity_id = claim.get("objectEntityId")
+    if not entity_id:
+        return None
+    try:
+        entity = store.get_entity(entity_id)
+    except Exception:  # noqa: BLE001 - 查不到就不说这句，不该让整轮整理挂掉
+        return None
+    if not entity or entity.get("type") != "person":
+        return None
+    name = (entity.get("canonicalName") or claim.get("objectName") or "").strip()
+    return name or None
+
+
 def _stalled_burdens(store, conv_store, active, charter, current, report) -> None:
     """张力 B（说了没动）：同一件心里的事反复回来，相关的地方却一直没有任何进展。
 
@@ -156,13 +177,20 @@ def _stalled_burdens(store, conv_store, active, charter, current, report) -> Non
         if moved:
             continue
         span_days = max(1, (last - first).days)
+        person = _person_to_talk_to(store, claim)
         # 同样是观察在先：给出次数与跨度这两个事实，不替他解释为什么。
+        opening = (f"「{claim['content'][:40]}」这件事，{span_days} 天里你提过 {mentions} 次。"
+                   f"我想问的不是你为什么没动——是这件事本身难，还是别的什么难？")
+        if person:
+            # 原则 7「把人推回人」：知君的目标是减少孤独，不是替代人。
+            # 必须具体到人，引用他自己提过的那个人，不能是泛泛的「找朋友聊聊」。
+            opening += f"\n\n还有一句：这件事你真正要谈的人可能是{person}，不是我。"
         conv_store.create_nudge(
             kind="burden_stalled",
             trigger_key=f"burden:{claim['id']}",
-            trigger_ref={"burdenId": claim["id"]},
+            trigger_ref={"burdenId": claim["id"], **({"talkToEntityId": claim.get("objectEntityId")} if person else {})},
             why_now=f"「{claim['content'][:40]}」在 {span_days} 天里被提过 {mentions} 次，相关的事项没有新进展",
-            message=f"「{claim['content'][:40]}」这件事，{span_days} 天里你提过 {mentions} 次。我想问的不是你为什么没动——是这件事本身难，还是别的什么难？",
+            message=opening,
             scheduled_for=_iso(current),
             dedupe_days=60,
             now=_iso(current),

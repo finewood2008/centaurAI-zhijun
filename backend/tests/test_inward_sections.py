@@ -168,14 +168,14 @@ class ExtractionRestraintTests(unittest.TestCase):
 class StalledBurdenTests(unittest.TestCase):
     """张力 B（说了没动）：反复回来却一直没动静。不调模型——这是数出来的，不是判出来的。"""
 
-    def _run(self, claims, *, mentions=5, days=60):
+    def _run(self, claims, *, mentions=5, days=60, entity=None):
         from datetime import datetime, timedelta, timezone
         from mindos.zhijun import consolidate
         now = datetime.now(timezone.utc)
         nudges = []
         conv = type("C", (), {"create_nudge": lambda self, **kw: nudges.append(kw)})()
-        store = object()
         report = {"tensions": 0}
+        store = type("S", (), {"get_entity": lambda self, eid: entity})()
         with patch("mindos.zhijun.charter_policy.check_action", return_value={"allowed": True}), \
                 patch("mindos.zhijun.burdens.mention_count", return_value=mentions):
             for c in claims:
@@ -216,6 +216,34 @@ class StalledBurdenTests(unittest.TestCase):
         many = [dict(self._burden(f"第 {i} 件压着的事", entity=f"ent_{i}"), id=f"b{i}") for i in range(4)]
         nudges, _ = self._run(many)
         self.assertEqual(len(nudges), 1)
+
+
+class PushBackToPeopleTests(unittest.TestCase):
+    """原则 7：知君的目标是减少孤独，不是替代人。"""
+
+    def _nudge(self, entity):
+        return StalledBurdenTests._run(StalledBurdenTests(), [
+            {"id": "b1", "section": "burdens", "content": "和林岚那次谈话一直没谈",
+             "objectEntityId": "ent_linlan"}], entity=entity)[0]
+
+    def test_a_burden_about_a_person_suggests_talking_to_that_person_by_name(self):
+        nudges = self._nudge({"type": "person", "canonicalName": "林岚"})
+        self.assertEqual(len(nudges), 1)
+        self.assertIn("林岚", nudges[0]["message"])
+        self.assertIn("不是我", nudges[0]["message"], "要说清该找的人不是知君")
+        self.assertEqual(nudges[0]["trigger_ref"].get("talkToEntityId"), "ent_linlan")
+
+    def test_a_burden_about_a_project_says_nothing_of_the_kind(self):
+        """「你该和『年底融资』谈谈」是胡话。"""
+        nudges = self._nudge({"type": "project", "canonicalName": "年底融资"})
+        self.assertEqual(len(nudges), 1)
+        self.assertNotIn("不是我", nudges[0]["message"])
+        self.assertNotIn("talkToEntityId", nudges[0]["trigger_ref"])
+
+    def test_an_unknown_entity_stays_quiet_rather_than_guessing(self):
+        nudges = self._nudge(None)
+        self.assertEqual(len(nudges), 1)
+        self.assertNotIn("不是我", nudges[0]["message"])
 
 
 class SchemaMigrationTests(unittest.TestCase):
