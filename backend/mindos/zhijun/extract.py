@@ -163,6 +163,15 @@ _STABLE_EXPRESSION_RE = re.compile(r"一直|长期|通常|一般|每次|一贯|�
 _IDENTITY_RE = re.compile(r"我(?:是|叫|的职业|的身份|的岗位)|(?:我在|我目前在|我现在在).{1,30}(?:做|担任|任职|工作|任(?=[A-Za-z]|总|副|主管|经理|董事|负责人|院长|校长))|我(?:目前|现在)?(?:担任|任职|负责)|叫我|称呼我")
 _RELATIONSHIP_RE = re.compile(r"我(?:的)?(?:父|母|爸|妈|爱人|伴侣|丈夫|妻子|女儿|儿子|孩子|家人|合伙人|搭档|同事|朋友)|我和.{1,20}(?:一起|合作|共事|结婚|认识)|关系|合伙人|伴侣")
 _ONGOING_RE = re.compile(r"我(?:目前|现在|正在|一直|主要)?(?:在做|在带|负责|承担|从事|分管|主管|管理)|长期|主业|主营|创业|项目负责人")
+# P1 内观。两条都刻意收得比其它分区更紧（PRD 6.1）：错记一条会让用户下次不敢说。
+# 心里的事：必须是「还在持续」的表达，一次性的情绪不算。次数门槛另见 burdens.py。
+_BURDEN_RE = re.compile(r"一直|总是|老是|反复|又一次|还是没|始终没|拖了|推了|压在|悬着|没敢|不敢|放不下|绕不开|挥之不去|每次想到")
+# 我眼中的我：只收用户明确说出口的自我评价。不做任何推断——替人断定他怎么看自己，
+# 越界且几乎必错，所以这里要的是原话里的自评句式，不是 content 里模型的转述。
+_SELF_VIEW_RE = re.compile(
+    r"我(?:觉得|认为|感觉|发现)自己|我这(?:个)?人|我(?:就)?是(?:个|一个)"
+    r"|我(?:太|很|挺|够|不够|没有|从来不|向来)(?!.{0,4}(?:忙|累|困))"
+    r"|我不配|我(?:天生|骨子里)|像个(?:骗子|废物|失败者|笑话)|我对不起")
 _LONG_GOAL_RE = re.compile(r"(?:未来|明年|年后|年底|几年|长期|人生|职业|目标|理想)|(?:成为|创办|转行|退休|定居|创业)")
 _GENERIC_VALUE_RE = re.compile(r"^(?:这条|这个|该|此)?(?:信息|内容|理解|记录)?(?:有助于|帮助|便于|能够|可以|能)?(?:以后|未来|更好地|更好|进一步)?(?:了解用户|理解用户|了解他|理解他|提供帮助|个性化建议|个性化服务|做判断|对话|记住|有用|有帮助|很重要|值得记住)[。！!]*$")
 
@@ -330,6 +339,11 @@ def _durable_expression(claim: ValidatedClaim, user_text: str, prev_assistant: s
         return bool(_STABLE_EXPRESSION_RE.search(clause) or _RECURRING_RE.search(clause))
     if claim.section == "direction":
         return bool(_LONG_GOAL_RE.search(clause) and _ASPIRATION_RE.search(clause))
+    if claim.section == "burdens":
+        return bool(_BURDEN_RE.search(clause) or _STABLE_EXPRESSION_RE.search(clause))
+    if claim.section == "self_view":
+        # 看 quote 而不是 clause：自评句式要出现在用户自己那句话里。
+        return bool(_SELF_VIEW_RE.search(claim.quote or ""))
     return False
 
 

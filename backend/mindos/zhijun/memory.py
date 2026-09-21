@@ -121,6 +121,12 @@ def process_candidates(valid, entities, *, store, conversation_id, message_id, u
                     continue
         novel.append(claim)
     long_term, contextual = admission(novel, user_text, input_origin, prev_assistant=prev_assistant)
+    # PRD V2 6.1：心里的事要同一件事被提及两次以上才成候选，第一次只记一个计数。
+    # 一次抱怨不是长期困扰。计数本身有副作用（这次提及要记下来），所以即使这条
+    # 候选后面因为别的原因被丢掉，计数也照记——那次提及确实发生过。
+    from . import burdens as burden_gate
+    long_term = [c for c in long_term if burden_gate.admitted(store, c, message_id=message_id)]
+    contextual = [c for c in contextual if c.section != "burdens"]
     explicit = explicit_memory_request(request["content"])
     selected = (long_term or (contextual[:1] if explicit else []))
     result = persist(selected, entities if selected else [], store=store, conversation_id=conversation_id,

@@ -28,6 +28,13 @@ CHALLENGE_DECAY_DAYS = 30
 STALE_DEFER_DAYS = 60
 TENSION_WINDOW_DAYS = 7
 MAX_PAIRS_PER_RUN = 30
+# P1 内观的两种张力（数据层 4.9）。这两条是「照见」的唯一来源：
+# A 言行不一 —— 他对自己的评价，和记录下来的行为对不上。
+# B 说了没动 —— 同一件心里的事反复回来，相关的地方却一直没有任何进展。
+SELF_VIEW_SIMILARITY = 0.25   # 比原则-做法宽一点：自评用词和行为记录本来就不重合
+BURDEN_MIN_MENTIONS = 3       # 反复到这个次数才算「反复」
+BURDEN_MIN_SPAN_DAYS = 30     # 且要跨过这么久，否则只是这一阵心烦
+BURDEN_STALL_MAX = 1          # 一轮最多提一件，这种话说多了就成了催
 NEW_CLAIMS_TRIGGER = 20
 
 _NEG_RE = re.compile(r"不|没|别|从不|绝不|无法|不再|放弃|停")
@@ -108,6 +115,62 @@ def judge_pair(provider: ChatProvider | None, a: dict, b: dict) -> tuple[str, st
     return (verdict if verdict in ("contradict", "equivalent", "unrelated") else "unrelated"), str(raw.get("reason") or "")[:200]
 
 
+def _stalled_burdens(store, conv_store, active, charter, current, report) -> None:
+    """张力 B（说了没动）：同一件心里的事反复回来，相关的地方却一直没有任何进展。
+
+    这一条不调模型：它判断的不是两句话矛不矛盾，而是「说过很多次」与「什么都没发生」
+    之间的落差，那是可以直接数出来的。不送模型也意味着这些内容少出一次门。
+
+    三个条件同时成立才算：提及 ≥3 次、跨度 ≥30 天、相关的事项里没有这条困扰出现之后
+    的新进展。一轮最多提一件——这种话说多了就成了催。
+    """
+    from . import burdens as burden_meta
+    from .charter_policy import check_action
+
+    if not check_action(charter, "proactive")["allowed"]:
+        return
+    stalled = [c for c in active if c["section"] == "burdens" and c["trustState"] == "confirmed"]
+    matters = [c for c in active if c["section"] == "matters"]
+    raised = 0
+    for claim in stalled:
+        if raised >= BURDEN_STALL_MAX:
+            break
+        first = _parse(claim["firstSeen"])
+        last = _parse(claim["lastReaffirmed"]) or first
+        if not first or not last or (last - first) < timedelta(days=BURDEN_MIN_SPAN_DAYS):
+            continue
+        mentions = burden_meta.mention_count(store, claim["content"], object_name=claim.get("objectName"))
+        if mentions < BURDEN_MIN_MENTIONS:
+            continue
+        # 「相关的地方有没有进展」按实体判，不按词面：分词会把「林岚」和「林岚谈」
+        # 切成不同的词，纯词面匹配在这里几乎必然漏判，一漏判就会去催一个其实已经
+        # 动起来的人。没有实体可依时才退回词面。
+        words = tokenize(claim["content"])
+        subject = claim.get("objectEntityId")
+        moved = any(
+            (_parse(m["firstSeen"]) or current) > first
+            and ((subject and m.get("objectEntityId") == subject)
+                 or (not subject and lexical_similarity(words, tokenize(m["content"])) >= 0.3))
+            for m in matters
+        )
+        if moved:
+            continue
+        span_days = max(1, (last - first).days)
+        # 同样是观察在先：给出次数与跨度这两个事实，不替他解释为什么。
+        conv_store.create_nudge(
+            kind="burden_stalled",
+            trigger_key=f"burden:{claim['id']}",
+            trigger_ref={"burdenId": claim["id"]},
+            why_now=f"「{claim['content'][:40]}」在 {span_days} 天里被提过 {mentions} 次，相关的事项没有新进展",
+            message=f"「{claim['content'][:40]}」这件事，{span_days} 天里你提过 {mentions} 次。我想问的不是你为什么没动——是这件事本身难，还是别的什么难？",
+            scheduled_for=_iso(current),
+            dedupe_days=60,
+            now=_iso(current),
+        )
+        report["tensions"] += 1
+        raised += 1
+
+
 def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | None = None, provider: ChatProvider | None = None, now: datetime | None = None, router=None) -> dict:
     store = store or OntologyStore.instance()
     conv_store = conv_store or ConversationStore.instance()
@@ -166,6 +229,17 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
         for act in recent_actions:
             if lexical_similarity(tokenize(p["content"]), tokenize(act["content"])) >= 0.3:
                 candidates.append((p, act, "tension"))
+    # 张力 A（言行不一）：self_view 的自我评价 ⟂ ways / matters 里 observed 层的行为记录。
+    # 只配 observed：那是被观察到的事，不是他自己又说了一遍。拿自评去配自评，
+    # 得到的只是措辞差异，不是张力。
+    self_views = [c for c in active if c["section"] == "self_view"
+                  and c["trustState"] == "confirmed" and c["layer"] == "self_declared"]
+    observed_behaviour = [c for c in active if c["section"] in ("ways", "matters")
+                          and c["trustState"] == "confirmed" and c["layer"] == "observed"]
+    for view in self_views:
+        for act in observed_behaviour:
+            if lexical_similarity(tokenize(view["content"]), tokenize(act["content"])) >= SELF_VIEW_SIMILARITY:
+                candidates.append((view, act, "self_view_tension"))
     for a, b, kind in candidates[:MAX_PAIRS_PER_RUN]:
         pair_provider = provider
         if router and provider:
@@ -177,6 +251,28 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
             pair_provider.assert_current()
         report["pairsJudged"] += 1
         if verdict == "unrelated":
+            continue
+        if kind == "self_view_tension":
+            if verdict != "contradict":
+                continue
+            if not store.create_conflict(a["id"], b["id"], kind="tension", verdict_by=note or "model",
+                                         note="自我评价与行为记录之间可能有张力"):
+                continue
+            report["tensions"] += 1
+            if not check_action(charter, "proactive")["allowed"]:
+                continue
+            # 第一句永远是观察，不是评价（PRD 5.1 / 数据层 4.9）。这里只并排放两件事，
+            # 不下结论，也不问「你是不是其实……」。
+            conv_store.create_nudge(
+                kind="self_view_tension",
+                trigger_key=f"selfview:{a['id']}:{b['id']}",
+                trigger_ref={"selfViewId": a["id"], "behaviourId": b["id"]},
+                why_now=f"你说过「{a['content'][:40]}」，而记录里有「{b['content'][:40]}」",
+                message=f"你说过「{a['content'][:40]}」。我这边记着的是「{b['content'][:40]}」。这两件事放在一起，我没看明白——是我记错了，还是有我不知道的原因？",
+                scheduled_for=_iso(current),
+                dedupe_days=45,
+                now=_iso(current),
+            )
             continue
         if kind == "tension":
             if verdict == "contradict":
@@ -239,6 +335,8 @@ def run(*, store: OntologyStore | None = None, conv_store: ConversationStore | N
         if sources <= 1 and current - last >= timedelta(days=STALE_DEFER_DAYS) and not claim.get("deferredUntil"):
             store.system_defer(claim["id"], _iso(current + timedelta(days=365)))
             report["deferred"] += 1
+
+    _stalled_burdens(store, conv_store, active, charter, current, report)
 
     store.meta_set("last_consolidate_at", _iso(current))
     store.meta_set("claims_at_last_consolidate", str(store.stats()["claims"]["working"] + store.stats()["claims"]["confirmed"]))

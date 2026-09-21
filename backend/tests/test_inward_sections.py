@@ -117,6 +117,107 @@ class NoPryingTests(unittest.TestCase):
                         "self_view 是张力检测的锚，比 burdens 更晚丢")
 
 
+class ExtractionRestraintTests(unittest.TestCase):
+    """PRD 6.1：这两个分区的抽取比别的都紧。错记一条会让用户下次不敢说。"""
+
+    class _Meta:
+        def __init__(self): self.v = {}
+        def meta_get(self, k, d=None): return self.v.get(k, d)
+        def meta_set(self, k, val): self.v[k] = val
+
+    def test_a_burden_needs_two_mentions_before_it_becomes_a_candidate(self):
+        from mindos.zhijun import burdens
+        store = self._Meta()
+        self.assertEqual(burdens.record_and_count(store, "和林岚那次谈话一直没谈",
+                                                  object_name="林岚", message_id="m1"), 1)
+        self.assertEqual(burdens.record_and_count(store, "一直推着没跟林岚谈",
+                                                  object_name="林岚", message_id="m2"), 2,
+                         "换个说法仍是同一件事")
+
+    def test_retrying_the_same_message_does_not_count_twice(self):
+        """否则任务重试一次就能把第一次提及变成「提过两次」，正好绕开这道闸。"""
+        from mindos.zhijun import burdens
+        store = self._Meta()
+        burdens.record_and_count(store, "年底融资的节奏压得慌", message_id="m1")
+        self.assertEqual(burdens.record_and_count(store, "年底融资的节奏压得慌", message_id="m1"), 1)
+
+    def test_mention_count_is_read_only(self):
+        from mindos.zhijun import burdens
+        store = self._Meta()
+        burdens.record_and_count(store, "年底融资的节奏压得慌", message_id="m1")
+        for _ in range(3):
+            self.assertEqual(burdens.mention_count(store, "年底融资的节奏压得慌"), 1)
+
+    def test_self_view_only_accepts_an_explicit_self_evaluation_quote(self):
+        """替人断定他怎么看自己，越界且几乎必错，所以只收原话里的自评句式。"""
+        from mindos.zhijun.extract import _SELF_VIEW_RE
+        for quote in ("我觉得自己不够狠", "我是个失败者", "我这人就是心软"):
+            with self.subTest(quote=quote):
+                self.assertTrue(_SELF_VIEW_RE.search(quote))
+        for quote in ("我今天很忙", "我太累了", "这个方案不够好"):
+            with self.subTest(quote=quote):
+                self.assertFalse(_SELF_VIEW_RE.search(quote), quote)
+
+    def test_burden_language_requires_persistence_not_a_bad_day(self):
+        from mindos.zhijun.extract import _BURDEN_RE
+        self.assertTrue(_BURDEN_RE.search("和林岚那次谈话我一直推着没谈"))
+        self.assertTrue(_BURDEN_RE.search("这件事压在心里很久了"))
+        self.assertFalse(_BURDEN_RE.search("今天有点累"))
+
+
+class StalledBurdenTests(unittest.TestCase):
+    """张力 B（说了没动）：反复回来却一直没动静。不调模型——这是数出来的，不是判出来的。"""
+
+    def _run(self, claims, *, mentions=5, days=60):
+        from datetime import datetime, timedelta, timezone
+        from mindos.zhijun import consolidate
+        now = datetime.now(timezone.utc)
+        nudges = []
+        conv = type("C", (), {"create_nudge": lambda self, **kw: nudges.append(kw)})()
+        store = object()
+        report = {"tensions": 0}
+        with patch("mindos.zhijun.charter_policy.check_action", return_value={"allowed": True}), \
+                patch("mindos.zhijun.burdens.mention_count", return_value=mentions):
+            for c in claims:
+                c.setdefault("firstSeen", (now - timedelta(days=days)).isoformat())
+                c.setdefault("lastReaffirmed", now.isoformat())
+                c.setdefault("trustState", "confirmed")
+            consolidate._stalled_burdens(store, conv, claims, {}, now, report)
+        return nudges, report
+
+    def _burden(self, text="和林岚那次谈话一直没谈", entity="ent_linlan"):
+        return {"id": "b1", "section": "burdens", "content": text, "objectEntityId": entity}
+
+    def test_a_long_running_burden_with_no_progress_is_raised(self):
+        nudges, report = self._run([self._burden()])
+        self.assertEqual(len(nudges), 1)
+        self.assertEqual(report["tensions"], 1)
+        self.assertEqual(nudges[0]["kind"], "burden_stalled")
+        self.assertIn("60 天", nudges[0]["message"], "要给出跨度这个事实")
+        self.assertIn("5 次", nudges[0]["message"], "要给出次数这个事实")
+
+    def test_related_progress_silences_it(self):
+        """相关事项有了新进展就不该再提——他已经动了。"""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        # 指向同一个人：分词会把「林岚」和「林岚谈」切开，按词面几乎必然漏判。
+        matter = {"id": "m1", "section": "matters", "content": "和林岚谈一次",
+                  "objectEntityId": "ent_linlan",
+                  "firstSeen": (now - timedelta(days=5)).isoformat()}
+        nudges, _ = self._run([self._burden(), matter])
+        self.assertEqual(nudges, [])
+
+    def test_too_few_mentions_or_too_short_a_span_stay_quiet(self):
+        self.assertEqual(self._run([self._burden()], mentions=2)[0], [], "提得不够多")
+        self.assertEqual(self._run([self._burden()], days=10)[0], [], "跨度不够长")
+
+    def test_at_most_one_per_run(self):
+        """这种话说多了就成了催。"""
+        many = [dict(self._burden(f"第 {i} 件压着的事", entity=f"ent_{i}"), id=f"b{i}") for i in range(4)]
+        nudges, _ = self._run(many)
+        self.assertEqual(len(nudges), 1)
+
+
 class SchemaMigrationTests(unittest.TestCase):
     """老库的 CHECK 里没有新分区，写入会被 SQLite 直接拒绝。"""
 
