@@ -34,7 +34,19 @@ except Exception:  # noqa: BLE001
 ME_ENTITY_ID = "ent_me"
 ME_ENTITY_NAME = "我"
 
-SECTIONS = ("who", "people", "matters", "principles", "ways", "direction")
+SECTIONS = ("who", "people", "matters", "principles", "ways", "direction", "burdens", "self_view")
+
+# PRD V2 的 C7「内心不外流」。这两个分区是用户袒露心声的产物：反复压在心里的事、
+# 他对自己的评价。它们永不进入任何到达**其他 AI 或其他软件**的通道（MCP、上下文包、
+# USER.md 投影、给别人用的导出包），**没有开关**。
+#
+# 不在此列的两件事（数据层 6.3）：知君自己调用的模型看得到它们，否则在线模式下知君
+# 根本无法承担知己的角色；用户自己的全量备份包含它们，那是他自己的东西。
+#
+# 这是全产品唯一一条替用户做主的规则，理由是它保护的是袒露本身的前提：用户在某个
+# 瞬间点掉一个开关，不该导致他三个月前最脆弱的一句话流向另一个 AI。
+INWARD_SECTIONS = ("burdens", "self_view")
+TAKEAWAY_SECTIONS = tuple(s for s in SECTIONS if s not in INWARD_SECTIONS)
 LAYERS = ("observed", "self_declared", "aspirational", "hypothesis")
 TRUST_STATES = ("working", "confirmed", "retracted", "superseded")
 TRUST_ORIGINS = ("utterance", "user_confirm", "user_edit", "user_created", "material", "model")
@@ -65,6 +77,11 @@ PREDICATES: dict[str, tuple[str, ...]] = {
     "principles": ("holds_principle", "boundary"),
     "ways": ("prefers", "tends_to", "decides_by", "wants_zhijun_to"),
     "direction": ("wants_to", "goal", "avoids"),
+    # 内观两分区。avoids_facing 与 direction 的 avoids 有意用不同的词：后者是
+    # 「不想要的方向」（我不想做管理），前者是「知道该做但在躲」（我知道该和他谈）。
+    # 混用会让张力检测失效。
+    "burdens": ("weighs_on", "drains", "avoids_facing", "worries_about"),
+    "self_view": ("sees_self_as", "blames_self_for"),
 }
 DEFAULT_PREDICATE = {
     "who": "is",
@@ -73,6 +90,8 @@ DEFAULT_PREDICATE = {
     "principles": "holds_principle",
     "ways": "tends_to",
     "direction": "wants_to",
+    "burdens": "weighs_on",
+    "self_view": "sees_self_as",
 }
 
 SECTION_TITLES = {
@@ -82,6 +101,8 @@ SECTION_TITLES = {
     "principles": "我的原则",
     "ways": "我的做法",
     "direction": "我的方向",
+    "burdens": "心里的事",
+    "self_view": "我眼中的我",
 }
 LAYER_TITLES = {
     "self_declared": "你告诉我的",
@@ -124,7 +145,7 @@ CREATE TABLE IF NOT EXISTS claims (
     predicate TEXT NOT NULL,
     object_entity_id TEXT REFERENCES entities(id),
     content TEXT NOT NULL,
-    section TEXT NOT NULL CHECK(section IN ('who','people','matters','principles','ways','direction')),
+    section TEXT NOT NULL CHECK(section IN ('who','people','matters','principles','ways','direction','burdens','self_view')),
     self_model_layer TEXT NOT NULL CHECK(self_model_layer IN ('observed','self_declared','aspirational','hypothesis')),
     trust_state TEXT NOT NULL CHECK(trust_state IN ('working','confirmed','retracted','superseded')),
     trust_origin TEXT NOT NULL CHECK(trust_origin IN ('utterance','user_confirm','user_edit','user_created','material','model')),
@@ -348,6 +369,62 @@ class OntologyNotFoundError(OntologyError):
     """目标不存在，API 层映射为 404。"""
 
 
+_OLD_SECTION_CHECK = "CHECK(section IN ('who','people','matters','principles','ways','direction'))"
+
+
+def _migrate_claims_sections(conn) -> bool:
+    """老库的 claims.section CHECK 里没有内观两分区，写入会被 SQLite 直接拒绝。
+
+    SQLite 改不掉 CHECK，只能重建表。这里按官方的重建流程走，但有一处刻意的做法：
+    **新表的 DDL 是把老表自己的建表语句改一个 CHECK 得来的**，不是另写一份列清单。
+    老库可能通过 ALTER 补过列（promotion_ready / why_it_matters 等），硬写列清单会漏。
+
+    幂等：CHECK 里已经有 burdens 就直接返回。
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='claims'"
+    ).fetchone()
+    old_sql = (row[0] if row else "") or ""
+    if not old_sql or "'burdens'" in old_sql:
+        return False
+    if _OLD_SECTION_CHECK not in old_sql:
+        # 约束长得不认识，宁可不动：重建一张核心表的风险远高于少支持两个分区。
+        # Python 层（:799 / :1093）仍然会挡住非法 section，不会写坏数据。
+        return False
+
+    new_check = "CHECK(section IN (" + ",".join(f"'{s}'" for s in SECTIONS) + "))"
+    new_sql = old_sql.replace(_OLD_SECTION_CHECK, new_check)
+    new_sql = re.sub(r"CREATE TABLE (?:IF NOT EXISTS )?[\"'`\[]?claims[\"'`\]]?",
+                     "CREATE TABLE claims_migrated", new_sql, count=1)
+
+    columns = [r[1] for r in conn.execute("PRAGMA table_info(claims)")]
+    listing = ",".join(f'"{c}"' for c in columns)
+    # 索引会随旧表一起消失。从旧表自己的索引 DDL 复原，而不是重跑整份 _SCHEMA：
+    # 后者会连带执行与 claims 无关的语句，一旦有一条失败，数据已经搬完却抛了异常。
+    index_sql = [r[0] for r in conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name='claims' AND sql IS NOT NULL"
+    )]
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN")
+        conn.execute(new_sql)
+        conn.execute(f"INSERT INTO claims_migrated ({listing}) SELECT {listing} FROM claims")
+        conn.execute("DROP TABLE claims")
+        conn.execute("ALTER TABLE claims_migrated RENAME TO claims")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+    for statement in index_sql:
+        conn.execute(statement)
+    conn.commit()
+    return True
+
+
 class OntologyConflictError(OntologyError):
     """违反信任状态机或活跃理解重复，API 层映射为 409。"""
 
@@ -423,6 +500,9 @@ class OntologyStore:
                     conn.execute("ALTER TABLE claims ADD COLUMN why_it_matters TEXT")
                 if "how_to_apply" not in columns:
                     conn.execute("ALTER TABLE claims ADD COLUMN how_to_apply TEXT")
+                # P1 内观：section 的 CHECK 要放行 burdens / self_view。
+                # 这条改的是约束不是列，SQLite 只能重建表，所以单独一个函数。
+                _migrate_claims_sections(conn)
                 from .learning_store import SCHEMA as learning_schema
                 conn.executescript(learning_schema)
                 from .alignment_store import SCHEMA as alignment_schema

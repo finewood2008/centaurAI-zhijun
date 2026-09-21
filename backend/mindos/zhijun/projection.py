@@ -14,7 +14,7 @@ from pathlib import Path
 
 from runtime_paths import MEMORY_DIR
 
-from ..stores.ontology_store import LAYER_TITLES, SECTION_TITLES, SECTIONS, OntologyStore
+from ..stores.ontology_store import INWARD_SECTIONS, LAYER_TITLES, SECTION_TITLES, SECTIONS, OntologyStore
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,11 @@ def render(store: OntologyStore, *, scope: str = "global") -> tuple[str, str]:
     export = [f"# 用户画像（由知君本体投影，仅含允许导出的已确认理解）", f"", f"> 生成于 {stamp}。", ""]
     exported = 0
     for section in SECTIONS:
+        # C7：内观两分区两半都不写。export 那半是 USER.md，别的 AI 读得到；full 那半
+        # 虽是本机文件，但落在 MEMORY_DIR 里、旧记忆层能索引、mcp_tools 也从那里读。
+        # 用户要看自己的心里事，在应用里看。
+        if section in INWARD_SECTIONS:
+            continue
         items = by_section.get(section) or []
         if not items:
             continue

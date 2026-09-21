@@ -10,7 +10,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from ..stores.ontology_store import LAYER_TITLES, SECTION_TITLES, SECTIONS, OntologyError, OntologyStore
+from ..stores.ontology_store import (
+    INWARD_SECTIONS, LAYER_TITLES, SECTION_TITLES, SECTIONS, TAKEAWAY_SECTIONS,
+    OntologyError, OntologyStore,
+)
 
 DEFAULT_MAX_CLAIMS = 50
 HARD_MAX_CLAIMS = 200
@@ -24,7 +27,7 @@ def _now() -> str:
 def exportable_claims(store: OntologyStore, *, sections: tuple[str, ...] | None = None, limit: int = DEFAULT_MAX_CLAIMS) -> list[dict]:
     from .projection import _visible_claims
     claims = _visible_claims(store, "global")
-    allowed = set(sections or SECTIONS)
+    allowed = set(sections or TAKEAWAY_SECTIONS) - set(INWARD_SECTIONS)  # C7：内心不外流
     from .source_policy import SourcePolicy
     policy = SourcePolicy(store)
     picked = [
@@ -81,7 +84,7 @@ def build_pack(*, purpose: str, sections: list[str] | None = None, max_claims: i
 def _count_not_exportable(store: OntologyStore, sections: tuple[str, ...] | None) -> int:
     from .projection import _visible_claims
     claims = _visible_claims(store, "global")
-    allowed = set(sections or SECTIONS)
+    allowed = set(sections or TAKEAWAY_SECTIONS) - set(INWARD_SECTIONS)  # C7：内心不外流
     return sum(1 for c in claims if c["section"] in allowed and not (c.get("exportAllowed") and c.get("privacyLevel") in EXPORTABLE_PRIVACY))
 
 

@@ -2038,7 +2038,10 @@ export interface TurnReceipt {
   createdAt: string
 }
 
-export type Section = 'who' | 'people' | 'matters' | 'principles' | 'ways' | 'direction'
+// 内观两分区（burdens / self_view）只有你和知君看得到：它们永不经 MCP、上下文包、
+// USER.md 投影或「给别人用」的导出包离开这台电脑（数据层 C7）。
+export type Section = 'who' | 'people' | 'matters' | 'principles' | 'ways' | 'direction' | 'burdens' | 'self_view'
+export const INWARD_SECTIONS: readonly Section[] = ['burdens', 'self_view']
 export type Layer = 'observed' | 'self_declared' | 'aspirational' | 'hypothesis'
 export type TrustState = 'working' | 'confirmed' | 'retracted' | 'superseded'
 export type TrustOrigin = 'utterance' | 'user_confirm' | 'user_edit' | 'user_created' | 'material' | 'model'

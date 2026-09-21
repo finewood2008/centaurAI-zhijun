@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 本体分区导航：六个抽屉 + 「知君最近学到的」（待确认收件箱）。
+// 本体分区导航：八个抽屉 + 「知君最近学到的」（待确认收件箱）。
+// 后两个是内观分区，界面上要明说只有本人和知君看得到（数据层 C7）。
 import type { OntologyStats, Section } from '@/services/api'
-import { SECTIONS } from '@/shared/ontology'
+import { INWARD_SECTION_NOTE, SECTIONS, isInwardSection } from '@/shared/ontology'
 
 export type NavKey = Section | 'inbox' | 'proposals'
 
@@ -48,12 +49,14 @@ const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
     >
       <span class="zj-secnav__label">{{ s.label }}</span>
       <span class="zj-secnav__hint">{{ s.hint }}</span>
+      <span v-if="isInwardSection(s.key)" class="zj-secnav__inward">{{ INWARD_SECTION_NOTE }}</span>
       <span class="zj-secnav__count">
         {{ stats?.bySection?.[s.key]?.confirmed ?? 0 }}<span v-if="stats?.bySection?.[s.key]?.working" class="zj-secnav__pending" :title="`${stats.bySection[s.key].working} 条等你点头`">+{{ stats.bySection[s.key].working }}</span>
       </span>
     </button>
   </nav>
 </template>
+
 
 <style scoped>
 .zj-secnav {
@@ -127,4 +130,6 @@ const emit = defineEmits<{ (e: 'select', key: NavKey): void }>()
     display: none;
   }
 }
+/* 不做成徽章：这是一句承诺，不是一个标签。 */
+.zj-secnav__inward { grid-column: 1 / -1; font-size: 11px; line-height: 1.5; color: var(--ws-text-tertiary-color, #8d8f8a); }
 </style>

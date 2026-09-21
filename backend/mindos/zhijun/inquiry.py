@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from ..chat_imports import service_info
-from ..stores.ontology_store import ME_ENTITY_ID, SECTIONS
+from ..stores.ontology_store import INWARD_SECTIONS, ME_ENTITY_ID, SECTIONS
 
 COOLDOWN_DAYS = 7
 RECENT_LIMIT = 20
@@ -131,7 +131,10 @@ def targets(store, convs, growth, scope="global", *, now=None, limit=12):
     mine = [c for c in confirmed if c.get("subjectEntityId") == ME_ENTITY_ID]
     # gap：分区已确认 < 2
     if confirmed:
-        for section in SECTIONS:
+        # 内观两分区**不参与缺口提问**。「你有什么事压在心里」当成一道待填的空去问，
+        # 正是 PRD 警告的窥探：心里的事只能从反复提及里看出来，自我评价只收用户
+        # 自己说出口的原话（PRD 6.1）。这也是为什么第 11 节不给它们定覆盖指标。
+        for section in (s for s in SECTIONS if s not in INWARD_SECTIONS):
             count = sum(1 for c in confirmed if c["section"] == section)
             if count < GAP_MIN_CONFIRMED:
                 found.append(_target("gap", key="gap:" + section, question=GAP_QUESTIONS[section], why=GAP_WHY[section],

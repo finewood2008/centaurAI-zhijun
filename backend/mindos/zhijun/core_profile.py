@@ -35,8 +35,11 @@ SECTION_LABELS = {
     "recent": "近期脉络",
 }
 # 超预算时按此顺序丢，每段至少留 1 行。
-DROP_ORDER = ("recent", "direction", "ways", "people", "principles", "matters", "who")
-CAPS = {"who": 4, "people": 3, "principles": 4, "ways": 3, "direction": 3}
+# 内观两分区的位置是想过的（数据层 5.4）：burdens 排中间——单条困扰的时效性强于原则；
+# self_view 排得靠后——它是张力检测的锚，掉了就照见不出来。
+DROP_ORDER = ("recent", "direction", "ways", "people", "burdens", "principles", "matters", "self_view", "who")
+# 内观两分区刻意压到 2：贵在准不贵在多，而且每一条都占用用户读画像时最敏感的注意力。
+CAPS = {"who": 4, "people": 3, "principles": 4, "ways": 3, "direction": 3, "burdens": 2, "self_view": 2}
 MATTER_CAPS = {"matter": 2, "committed_to": 3, "working_on": 2}
 RECENT_CAPS = {"theme": 3, "loop": 4, "due": 2}
 RECENT_CONVERSATIONS = 3

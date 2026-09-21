@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import math
 
 from mindos.zhijun.source_policy import SourcePolicy
+from mindos.stores.ontology_store import INWARD_SECTIONS
 from .models import SECTIONS
 
 
@@ -84,6 +85,9 @@ class PersonalContext:
         return False
 
     def candidates(self, sections=SECTIONS, excluded=()):
+        # C7「内心不外流」：MCP 侧再挡一次。数据层的 exportable_claims 已经挡过，
+        # 这里重复是刻意的——这是唯一一条漏了就无法补救的约束（MCP 契约 I6、U9）。
+        sections = tuple(s for s in sections if s not in INWARD_SECTIONS)
         from mindos.zhijun.alignment import visible
         now = self.access.clock()
         policy = SourcePolicy(self.ontology, self.conversations, self.growth)

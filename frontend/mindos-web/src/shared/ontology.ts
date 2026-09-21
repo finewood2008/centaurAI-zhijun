@@ -9,7 +9,17 @@ export const SECTIONS: ReadonlyArray<{ key: Section; label: string; hint: string
   { key: 'principles', label: '我的原则', hint: '原则与边界' },
   { key: 'ways', label: '我的做法', hint: '偏好、习惯、判断方式' },
   { key: 'direction', label: '我的方向', hint: '目标、想成为的样子' },
+  { key: 'burdens', label: '心里的事', hint: '反复压在心里的、在回避的、消耗你的' },
+  { key: 'self_view', label: '我眼中的我', hint: '你对自己的评价' },
 ]
+
+/** 只有你和知君看得到的分区。界面上要把这件事说出来，不能只在代码里守着。 */
+export const INWARD_SECTION_KEYS: ReadonlyArray<Section> = ['burdens', 'self_view']
+export const INWARD_SECTION_NOTE = '只有你和知君看得到'
+
+export function isInwardSection(section: string): boolean {
+  return (INWARD_SECTION_KEYS as readonly string[]).includes(section)
+}
 
 export function sectionLabel(section: string): string {
   return SECTIONS.find((s) => s.key === section)?.label ?? section

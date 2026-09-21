@@ -6,8 +6,6 @@ import os
 import unittest
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 import server
 from runtime_paths import (
     MODELS_CACHE_DIR,
@@ -20,9 +18,12 @@ BACKEND_DIR = Path(server.__file__).resolve().parent
 
 class StandaloneEntryTests(unittest.TestCase):
     def test_root_opens_the_app_not_the_legacy_lan_page(self):
-        """独立软件的首页就是知君本身。/lan 仍在原地，只是不再是根路径的去处。"""
-        with TestClient(server.app) as client:
-            response = client.get("/", follow_redirects=False)
+        """独立软件的首页就是知君本身。/lan 仍在原地，只是不再是根路径的去处。
+
+        直接调端点函数，不用 TestClient：后者会跑 startup 事件、把一堆单例按默认数据根
+        初始化，污染同一进程里后面的用例（本次踩到过，core_profile 整片挂掉）。
+        """
+        response = server.root()
         self.assertIn(response.status_code, (301, 302, 307, 308))
         self.assertEqual(response.headers["location"], "/mindos/")
 
